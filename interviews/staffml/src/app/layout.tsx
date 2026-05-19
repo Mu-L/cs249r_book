@@ -10,6 +10,9 @@ import { QUESTION_COUNT_DISPLAY } from "@/lib/corpus";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://mlsysbook.ai"),
+  alternates: {
+    canonical: "https://mlsysbook.ai/staffml/",
+  },
   title: {
     default: "StaffML — ML Systems Interview Prep",
     template: "%s | StaffML",
