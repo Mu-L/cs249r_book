@@ -69,7 +69,13 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
             f"Increase precision or set allow_zero=True if this was intentional."
         )
 
-    return MarkdownStr(result)
+    out = MarkdownStr(result)
+    assert isinstance(out, MarkdownStr), (
+        "fmt() must return MarkdownStr — this guard exists so a future refactor "
+        "of this module cannot silently break Quarto's _repr_markdown_ detection. "
+        "See .claude/rules/math.md."
+    )
+    return out
 
 
 def fmt_percent(ratio, precision=1, commas=False):
@@ -167,8 +173,9 @@ def md(latex_str):
     """
     Wrap a LaTeX string in Markdown() to preserve formatting in inline code.
     """
-    Markdown = _get_markdown()
-    return Markdown(latex_str)
+    out = MarkdownStr(latex_str)
+    assert isinstance(out, MarkdownStr), "md() must return MarkdownStr"
+    return out
 
 
 def md_frac(numerator, denominator, result=None, unit=None):
@@ -176,21 +183,23 @@ def md_frac(numerator, denominator, result=None, unit=None):
     Create a LaTeX fraction with optional result and unit.
     Returns: $\frac{num}{denom}$ or $\frac{num}{denom} = result$ unit
     """
-    Markdown = _get_markdown()
     latex = f'$\\frac{{{numerator}}}{{{denominator}}}$'
     if result is not None:
         latex += f' = {result}'
     if unit is not None:
         latex += f' {unit}'
-    return Markdown(latex)
+    out = MarkdownStr(latex)
+    assert isinstance(out, MarkdownStr), "md_frac() must return MarkdownStr"
+    return out
 
 
 def md_sci(val, precision=2):
     """
     Format a number in LaTeX scientific notation, wrapped in Markdown().
     """
-    Markdown = _get_markdown()
-    return Markdown(f"${sci_latex(val, precision=precision)}$")
+    out = MarkdownStr(f"${sci_latex(val, precision=precision)}$")
+    assert isinstance(out, MarkdownStr), "md_sci() must return MarkdownStr"
+    return out
 
 
 def check(condition, message):
