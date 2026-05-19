@@ -13,10 +13,10 @@ import zipfile
 from pathlib import Path
 
 
-# Import the fix_cross_references module functions directly
+# Import the resolve_cross_references module functions directly
 # This avoids subprocess complications and works cross-platform
 sys.path.insert(0, str(Path(__file__).parent))
-from fix_cross_references import (
+from resolve_cross_references import (
     build_epub_section_mapping,
     process_html_file
 )
