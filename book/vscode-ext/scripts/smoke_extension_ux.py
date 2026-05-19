@@ -144,7 +144,7 @@ def build_cases(repo_root: Path) -> list[Case]:
         Case("debug chapter pdf", f"./book/binder debug pdf --vol1 --chapter {chapter}", 180, allow_timeout_as_started=True),
         Case("debug chapter html", f"./book/binder debug html --vol1 --chapter {chapter}", 180, allow_timeout_as_started=True),
         Case("debug chapter epub", f"./book/binder debug epub --vol1 --chapter {chapter}", 180, allow_timeout_as_started=True),
-        Case("maintain glossary build", "./book/binder maintain glossary build", 120),
+        Case("maintain glossary paths", "./book/binder maintain glossary paths", 120),
         Case("maintain images compress", "./book/binder maintain images compress --all --smart-compression", 120),
         Case("maintain repo-health", "./book/binder maintain repo-health", 120),
         Case("publish script help vol1", "bash book/tools/scripts/publish/mit-press-release.sh --help", 30, allow_nonzero_exit=True),

@@ -1,7 +1,6 @@
 ---
 quiz: data_selection_quizzes.json
 concepts: data_selection_concepts.yml
-glossary: data_selection_glossary.json
 crossrefs: data_selection_xrefs.json
 engine: jupyter
 ---
@@ -78,18 +77,6 @@ For decades, the dominant strategy was straightforward: more data, better models
 # │ Exports: gpu_growth_str, gpu_period_str, web_data_growth_str, etc.
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt_percent, fmt, check
-
-# ┌── LEGO ───────────────────────────────────────────────
-class SelectionEconomicsAnchor:
-    """
-    Namespace for coreset selection overhead anchor.
-    """
-    dataset_size_m = 1
-    scoring_time_hrs = 2.8
-    coreset_pct = 10
-
-    scoring_time_str = f"{scoring_time_hrs:.1f} hours"
-    coreset_pct_str = f"{coreset_pct}%"
 
 # ┌── LEGO ───────────────────────────────────────────────
 class ScalingAsymmetry:
@@ -325,55 +312,53 @@ To make this concrete, consider training a model in the **GPT-2/Llama Lighthouse
 #| label: gpt-llama-calc
 #| echo: false
 
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ COMPUTE-DATA GAP EXAMPLE
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: "Defining Data Selection" section - 70B Llama model example
-# │
-# │ Goal: Demonstrate the "Data Wall" with a concrete scale example.
-# │ Show: That cluster capacity can exceed a single curated corpus scale even when
-# │       the broader public text stock is much larger.
-# │ How: Contrast H100 compute throughput with public and filtered corpus estimates.
-# │
-# │ Imports: mlsysim.book (fmt)
-# │ Exports: llama_params_str, h100_count_str, tokens_capacity_str, etc.
-# └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import Bparam, BILLION, TRILLION, SEC_PER_HOUR, MILLION, THOUSAND
-from mlsysim import Models
-from mlsysim.fmt import fmt_percent, fmt, check
+import mlsysim.core.constants as c
+from mlsysim.core.defaults import REFERENCE_MFU_SUSTAINED
+from mlsysim.fmt import check, fmt, fmt_percent
 
-# ┌── LEGO ───────────────────────────────────────────────
 class ComputeDataGap:
-    """
-    Namespace for Compute-Data Gap calculation.
-    Scenario: 10k H100s vs Available Quality Tokens.
-    """
-
-    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    # LOAD
     h100_count = 10000
     months = 3
-    model = Models.Language.Llama2_70B
+    filtered_corpus_tokens = 5e12
+    public_text_stock = 300e12
+    sustained_mfu = REFERENCE_MFU_SUSTAINED
+    training_flops_per_token = 6 * c.LLAMA2_70B_PARAMS.m_as(c.param)
+    seconds = months * c.DAYS_PER_MONTH * c.HOURS_PER_DAY * c.SEC_PER_HOUR
 
-    filtered_corpus_tokens = 5e12 # 5T tokens (single filtered-corpus scale)
-    public_text_stock = 300e12    # quality/repetition-adjusted public text stock estimate
-    tokens_capacity = 10e12       # capacity of the cluster
-
-    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    # EXECUTE
+    total_flops = (
+        h100_count
+        * c.H100_FLOPS_FP16_TENSOR.m_as(c.flop / c.second)
+        * seconds
+        * sustained_mfu
+    )
+    tokens_capacity = total_flops / training_flops_per_token
     corpus_reuse_ratio = tokens_capacity/filtered_corpus_tokens
+    cluster_cost = (
+        h100_count
+        * months
+        * c.DAYS_PER_MONTH
+        * c.HOURS_PER_DAY
+        * c.CLOUD_GPU_TRAINING_PER_HOUR.m_as(c.USD / c.hour)
+    )
 
-    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    # GUARD
     check(public_text_stock > tokens_capacity, "Public stock estimate should exceed the example training run capacity.")
+    check(corpus_reuse_ratio > 10, f"Cluster should be able to traverse the filtered corpus many times; got {corpus_reuse_ratio:.1f}x.")
 
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    # OUTPUT
     h100_count_str = fmt(h100_count, precision=0, commas=True)
-    tokens_capacity_str = fmt(tokens_capacity/TRILLION, precision=0, commas=False) + "T"
-    filtered_corpus_tokens_str = fmt(filtered_corpus_tokens/TRILLION, precision=0, commas=False) + "T"
-    public_text_stock_str = fmt(public_text_stock/TRILLION, precision=0, commas=False) + "T"
+    tokens_capacity_str = fmt(tokens_capacity/c.TRILLION, precision=0, commas=False) + "T"
+    filtered_corpus_tokens_str = fmt(filtered_corpus_tokens/c.TRILLION, precision=0, commas=False) + "T"
+    public_text_stock_str = fmt(public_text_stock/c.TRILLION, precision=0, commas=False) + "T"
     corpus_reuse_ratio_str = fmt(corpus_reuse_ratio, precision=0, commas=False)
     training_months_str = fmt(months, precision=0, commas=False)
+    sustained_mfu_pct_str = fmt_percent(sustained_mfu, precision=0, commas=False)
+    cluster_cost_m_str = fmt(cluster_cost/c.MILLION, precision=0, commas=False)
 ```
 
-The compute budget (`{python} ComputeDataGap.h100_count_str` H100 GPUs for `{python} ComputeDataGap.training_months_str` months) represents tens of millions of dollars and can process over `{python} ComputeDataGap.tokens_capacity_str` tokens. Estimates of quality- and repetition-adjusted public human-generated text are on the order of `{python} ComputeDataGap.public_text_stock_str` tokens, far larger than a single curated web corpus. The practical bottleneck is narrower: how much of that stock is accessible, legally usable, high quality, deduplicated, and useful for the target distribution. If a team has only a `{python} ComputeDataGap.filtered_corpus_tokens_str` filtered corpus ready for use, the compute budget can already process it roughly `{python} ComputeDataGap.corpus_reuse_ratio_str`$\times$ over. The team faces three options: train on the same data for multiple epochs (diminishing returns after epochs 2--3), lower quality thresholds to include more data (which can degrade model quality), or invest in data selection through better filtering, curriculum design, and synthetic augmentation to extract more learning from each token. The third option is increasingly the dominant approach.
+The compute budget (`{python} ComputeDataGap.h100_count_str` H100 GPUs for `{python} ComputeDataGap.training_months_str` months) represents roughly USD `{python} ComputeDataGap.cluster_cost_m_str` M at the chapter's cloud-training price anchor and can process about `{python} ComputeDataGap.tokens_capacity_str` tokens at `{python} ComputeDataGap.sustained_mfu_pct_str` percent sustained MFU. Estimates of quality- and repetition-adjusted public human-generated text are on the order of `{python} ComputeDataGap.public_text_stock_str` tokens, far larger than a single curated web corpus. The practical bottleneck is narrower: how much of that stock is accessible, legally usable, high quality, deduplicated, and useful for the target distribution. If a team has only a `{python} ComputeDataGap.filtered_corpus_tokens_str` filtered corpus ready for use, the compute budget can already process it roughly `{python} ComputeDataGap.corpus_reuse_ratio_str`$\times$ over. The team faces three options: train on the same data for multiple epochs (diminishing returns after epochs 2--3), lower quality thresholds to include more data (which can degrade model quality), or invest in data selection through better filtering, curriculum design, and synthetic augmentation to extract more learning from each token. The third option is increasingly the dominant approach.
 
 The data selection imperative applies across model architectures, though the bottlenecks differ. Unlike our compute-bound ResNet-50 Lighthouse, GPT-2/Llama models are memory bandwidth-bound during inference (though often compute-bound during training as well) and still benefit enormously from data selection during training. Each token processed requires the same forward/backward pass cost regardless of model bottleneck, so fewer tokens means fewer FLOPs. Because data selection benefits every architecture regardless of its dominant bottleneck, the appropriate framing is systemic rather than purely statistical.
 
@@ -991,7 +976,8 @@ To make the Information-Compute Ratio concrete, consider how coreset selection i
 # │ Imports: mlsysim.core.constants (RESNET50_FLOPs, GFLOPs, IMAGENET_IMAGES)
 # │ Exports: imagenet_size_str, icr_ratio_str, SelectionEconomicsAnchor.coreset_pct_str, etc.
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import RESNET50_FLOPs, GFLOPs, IMAGENET_IMAGES, MILLION, THOUSAND
+from mlsysim import Models
+from mlsysim.core.constants import BILLION, RESNET50_FLOPs, GFLOPs, IMAGENET_IMAGES, MILLION, THOUSAND
 from mlsysim.fmt import fmt_percent, fmt, check
 
 class IcrCoresetComparison:
@@ -1975,9 +1961,81 @@ Random sampling will miss these rare failures. Instead, the Wake Vision team use
 ### Semi-supervised learning: Using unlabeled data {#sec-data-selection-semisupervised-learning-using-unlabeled-data-51fc}
 
 \index{Semi-supervised Learning!definition}
+```{python}
+#| label: clinical-labeling-economics-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ CLINICAL LABELING ECONOMICS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Semi-supervised learning footnote [^fn-labeling-economics] in
+# │          @sec-data-selection-semisupervised-learning-using-unlabeled-data-51fc.
+# │
+# │ Goal:    Quantify the cost gap between labeling a 1% seed set vs. the full
+# │          chest X-ray pool that motivates semi-supervised learning.
+# │ Show:    Specialist hours and dollar ranges for seed vs. full labeling, and
+# │          the work-weeks of radiologist time the full pool would require.
+# │ How:     Multiply scan counts by review-rate and hourly-rate ranges; convert
+# │          full-pool hours into full-time work-weeks.
+# │
+# │ Imports: math; mlsysim.fmt (check, fmt)
+# │ Exports: ClinicalLabelingEconomics.labeled_scans_str,
+# │          .full_pool_scans_str, .review_rate_range_str,
+# │          .hourly_rate_range_str, .labeled_hours_range_str,
+# │          .labeled_cost_range_str, .full_hours_range_str,
+# │          .full_weeks_range_str, .full_cost_range_str
+# └─────────────────────────────────────────────────────────────────────────────
+import math
+
+from mlsysim.fmt import check, fmt
+
+class ClinicalLabelingEconomics:
+    # LOAD
+    labeled_scans = 500
+    full_pool_scans = 50_000
+    review_rate_low = 50
+    review_rate_high = 80
+    hourly_rate_low = 150
+    hourly_rate_high = 300
+    workweek_hours = 40
+
+    # EXECUTE
+    labeled_hours_low = labeled_scans / review_rate_high
+    labeled_hours_high = labeled_scans / review_rate_low
+    labeled_cost_low = labeled_hours_low * hourly_rate_low
+    labeled_cost_high = labeled_hours_high * hourly_rate_high
+
+    full_hours_low = full_pool_scans / review_rate_high
+    full_hours_high = full_pool_scans / review_rate_low
+    full_cost_low = full_hours_low * hourly_rate_low
+    full_cost_high = full_hours_high * hourly_rate_high
+    full_weeks_low = full_hours_low / workweek_hours
+    full_weeks_high = full_hours_high / workweek_hours
+    labeled_hours_low_display = math.ceil(labeled_hours_low)
+    labeled_hours_high_display = math.ceil(labeled_hours_high)
+    labeled_cost_low_display = round(labeled_cost_low, -3)
+    labeled_cost_high_display = round(labeled_cost_high, -3)
+    full_cost_low_display = round(full_cost_low, -3)
+    full_cost_high_display = round(full_cost_high, -3)
+
+    # GUARD
+    check(labeled_cost_low < labeled_cost_high, "Initial labeling cost range must be ordered.")
+    check(full_cost_low > labeled_cost_high, "Full labeling must cost far more than the 1% seed set.")
+
+    # OUTPUT
+    labeled_scans_str = fmt(labeled_scans, precision=0, commas=True)
+    full_pool_scans_str = fmt(full_pool_scans, precision=0, commas=True)
+    review_rate_range_str = f"{review_rate_low}–{review_rate_high}"
+    hourly_rate_range_str = f"{hourly_rate_low}–{hourly_rate_high}"
+    labeled_hours_range_str = f"{fmt(labeled_hours_low_display, precision=0, commas=False)}–{fmt(labeled_hours_high_display, precision=0, commas=False)}"
+    labeled_cost_range_str = f"{fmt(labeled_cost_low_display, precision=0, commas=True)}–{fmt(labeled_cost_high_display, precision=0, commas=True)}"
+    full_hours_range_str = f"{fmt(full_hours_low, precision=0, commas=True)}–{fmt(full_hours_high, precision=0, commas=True)}"
+    full_weeks_range_str = f"{fmt(full_weeks_low, precision=0, commas=False)}–{fmt(full_weeks_high, precision=0, commas=False)}"
+    full_cost_range_str = f"{fmt(full_cost_low_display, precision=0, commas=True)}–{fmt(full_cost_high_display, precision=0, commas=True)}"
+```
+
 Consider a medical imaging dataset: a hospital has 50,000 chest X-rays, but only 500 have been reviewed and labeled[^fn-labeling-economics] by radiologists---a labeling rate of 1 percent. Training a supervised model on 500 examples yields poor accuracy, but the structural patterns in the remaining 49,500 unlabeled images contain information about what healthy and abnormal lungs look like. Semi-supervised learning exploits this abundant unlabeled data to improve the model trained on the scarce labeled examples.
 
-[^fn-labeling-economics]: **Clinical Labeling Economics**: A radiologist reviews approximately 50--80 chest X-rays per hour; labeling 500 scans from a pool of 50,000 requires 7--10 hours of specialist time at \$150--300 per hour—a \$1,000--3,000 investment. Full supervised labeling of all 50,000 would cost \$75,000--150,000 and require months of specialist availability. The 1 percent labeling threshold is not a pedagogical convenience but a reflection of healthcare economics: semi-supervised learning is not optional in clinical ML, it is the only approach that fits within clinical research budgets. This cost structure generalizes—any domain requiring credentialed specialists (legal, financial, scientific) faces the same arithmetic. \index{Data Labeling!clinical economics}
+[^fn-labeling-economics]: **Clinical Labeling Economics**: A radiologist reviews approximately `{python} ClinicalLabelingEconomics.review_rate_range_str` chest X-rays per hour; labeling `{python} ClinicalLabelingEconomics.labeled_scans_str` scans from a pool of `{python} ClinicalLabelingEconomics.full_pool_scans_str` requires `{python} ClinicalLabelingEconomics.labeled_hours_range_str` hours of specialist time at \$`{python} ClinicalLabelingEconomics.hourly_rate_range_str` per hour---a \$`{python} ClinicalLabelingEconomics.labeled_cost_range_str` investment. Full supervised labeling of all `{python} ClinicalLabelingEconomics.full_pool_scans_str` would cost \$`{python} ClinicalLabelingEconomics.full_cost_range_str` and require `{python} ClinicalLabelingEconomics.full_hours_range_str` radiologist-hours, or roughly `{python} ClinicalLabelingEconomics.full_weeks_range_str` full-time work-weeks. The 1 percent labeling threshold is not a pedagogical convenience but a reflection of healthcare economics: semi-supervised learning is not optional in clinical ML, it is the only approach that fits within clinical research budgets. This cost structure generalizes—any domain requiring credentialed specialists (legal, financial, scientific) faces the same arithmetic. \index{Data Labeling!clinical economics}
 
 Active learning optimizes which samples to label but still requires human annotation for every selected example. **Semi-supervised learning** takes a more aggressive approach: rather than asking *which* samples to label, it asks whether we can extract learning signal from unlabeled data directly. It uses a small set of labeled examples to guide learning on a much larger unlabeled pool, typically achieving 80–95 percent of fully supervised accuracy with only 10–20 percent of the labels.
 
@@ -2487,25 +2545,85 @@ The optimal mix depends on simulation fidelity, domain complexity, and the cost 
 
 [^fn-model-collapse-mechanism]: **Model Collapse**: Formally analyzed by @shumailov2024, this phenomenon occurs because generative models systematically underrepresent tail distributions -- rare but important patterns that appear infrequently in training data. When generation $n+1$ trains on output from generation $n$, each successive generation further compresses the tails, producing increasingly homogeneous data. The degradation is rapid: original diversity can drop below 50 percent by generation five, which is why the Fallacies section of this chapter warns against pure synthetic training. \index{Model Collapse!tail distribution compression}
 
+```{python}
+#| label: kws-data-selection-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ KWS DATA SELECTION ECONOMICS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "KWS data selection" callout-example in the synthetic-data section
+# │          immediately below this cell.
+# │
+# │ Goal:    Anchor the seed/augmentation/noise-injection sample counts and the
+# │          recording cost for the Keyword Spotting Lighthouse data pipeline.
+# │ Show:    Seed sample count, augmented total, target sample count, full
+# │          recording cost range, and seed fraction of the target.
+# │ How:     Multiply speakers by utterances and augmentation factor; multiply
+# │          target samples by the per-sample recording cost range.
+# │
+# │ Imports: mlsysim.core.constants (THOUSAND); mlsysim.fmt (check, fmt)
+# │ Exports: KwsDataSelectionCalc.speakers_str,
+# │          .utterances_per_speaker_str, .seed_samples_str,
+# │          .augmented_samples_str, .target_samples_str,
+# │          .target_samples_plus_str, .full_cost_range_str,
+# │          .cost_per_sample_range_str, .augmentation_multiplier_str,
+# │          .seed_cost_pct_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import THOUSAND
+from mlsysim.fmt import check, fmt
+
+class KwsDataSelectionCalc:
+    # LOAD
+    speakers = 50
+    utterances_per_speaker = 10
+    augmentation_multiplier = 10
+    target_samples = 10_000
+    cost_per_sample_low = 2
+    cost_per_sample_high = 5
+
+    # EXECUTE
+    seed_samples = speakers * utterances_per_speaker
+    augmented_samples = seed_samples * augmentation_multiplier
+    full_cost_low = target_samples * cost_per_sample_low
+    full_cost_high = target_samples * cost_per_sample_high
+    seed_cost_pct = seed_samples / target_samples * 100
+
+    # GUARD
+    check(seed_samples == 500, "Seed recording count should remain 50 speakers × 10 utterances.")
+    check(seed_cost_pct <= 5, "Seed recording should stay near 5% of full recording cost.")
+
+    # OUTPUT
+    speakers_str = fmt(speakers, precision=0, commas=False)
+    utterances_per_speaker_str = fmt(utterances_per_speaker, precision=0, commas=False)
+    seed_samples_str = fmt(seed_samples, precision=0, commas=True)
+    augmented_samples_str = fmt(augmented_samples, precision=0, commas=True)
+    target_samples_str = fmt(target_samples, precision=0, commas=True)
+    target_samples_plus_str = f"{target_samples_str}+"
+    full_cost_range_str = f"{fmt(full_cost_low / THOUSAND, precision=0, commas=False)}–{fmt(full_cost_high / THOUSAND, precision=0, commas=False)}K"
+    cost_per_sample_range_str = f"{cost_per_sample_low}–{cost_per_sample_high}"
+    augmentation_multiplier_str = fmt(augmentation_multiplier, precision=0, commas=False)
+    seed_cost_pct_str = fmt(seed_cost_pct, precision=0, commas=False)
+```
+
 ::: {.callout-example title="KWS data selection"}
 
-**Context**: Our **Keyword Spotting Lighthouse model** from @sec-network-architectures-lighthouse-roster-model-biographies-a763, a depthwise-separable convolutional neural network (CNN) known as DS-CNN, with **200 K** parameters, represents the extreme end of data selection challenges. Building a wake-word detector ("Hey Device") for a microcontroller with 256 KB SRAM (see @sec-ml-systems-tinyml-ubiquitous-sensing-scale-a67b for hardware constraints) requires a tiny model (~200 KB quantized weights before runtime buffers) and 10,000+ labeled audio samples to train it, samples that do not yet exist.
+**Context**: Our **Keyword Spotting Lighthouse model** from @sec-network-architectures-lighthouse-roster-model-biographies-a763, a depthwise-separable convolutional neural network (CNN) known as DS-CNN, with **200 K** parameters, represents the extreme end of data selection challenges. Building a wake-word detector ("Hey Device") for a microcontroller with 256 KB SRAM (see @sec-ml-systems-tinyml-ubiquitous-sensing-scale-a67b for hardware constraints) requires a tiny model (~200 KB quantized weights before runtime buffers) and `{python} KwsDataSelectionCalc.target_samples_plus_str` labeled audio samples to train it, samples that do not yet exist.
 
 **Insight**:
 
-- Recording 10,000 real utterances requires 500+ speakers for diversity
-- Professional recording costs \$2–5 per sample (\$20–50K total)
+- Recording `{python} KwsDataSelectionCalc.target_samples_str` real utterances requires hundreds of speakers for diversity
+- Professional recording costs \$`{python} KwsDataSelectionCalc.cost_per_sample_range_str` per sample (\$`{python} KwsDataSelectionCalc.full_cost_range_str` total)
 - Target deployment environment (noisy kitchen, car interior) differs from recording studio
 
 To solve this, we use a Data Selection Solution Stack:
 
-1. **Seed data (500 samples)**: Record 50 speakers with 10 utterances each in controlled conditions
-2. **Augmentation (5,000 samples)**: Apply pitch shift, time stretch, speed variation to 10$\times$ the seed data
-3. **Noise injection (10,000 samples)**: Mix clean audio with environmental noise (kitchen appliances, HVAC, traffic) sampled from AudioSet
+1. **Seed data (`{python} KwsDataSelectionCalc.seed_samples_str` samples)**: Record `{python} KwsDataSelectionCalc.speakers_str` speakers with `{python} KwsDataSelectionCalc.utterances_per_speaker_str` utterances each in controlled conditions
+2. **Augmentation (`{python} KwsDataSelectionCalc.augmented_samples_str` samples)**: Apply pitch shift, time stretch, speed variation to `{python} KwsDataSelectionCalc.augmentation_multiplier_str`$\times$ the seed data
+3. **Noise injection (`{python} KwsDataSelectionCalc.target_samples_str` samples)**: Mix clean audio with environmental noise (kitchen appliances, HVAC, traffic) sampled from AudioSet
 4. **Negative mining**: Use acoustic similarity to find hard negatives ("Hey Siri", "Hey Google") from public datasets
 5. **Simulation (optional)**: Text-to-speech synthesis with diverse voice models
 
-**Systems lesson**: When the target model is tiny, the data selection challenge shifts from "reduce terabytes to gigabytes" to "create a useful dataset from almost nothing." Augmentation and simulation become essential rather than optional. 500 real recordings become 10,000+ training samples at 5 percent of the cost. The noise injection serves as domain randomization, improving deployment robustness.
+**Systems lesson**: When the target model is tiny, the data selection challenge shifts from "reduce terabytes to gigabytes" to "create a useful dataset from almost nothing." Augmentation and simulation become essential rather than optional. `{python} KwsDataSelectionCalc.seed_samples_str` real recordings become `{python} KwsDataSelectionCalc.target_samples_str`+ training samples at `{python} KwsDataSelectionCalc.seed_cost_pct_str` percent of the recording cost. The noise injection serves as domain randomization, improving deployment robustness.
 
 :::
 
@@ -2668,7 +2786,47 @@ Choosing the right data selection technique is necessary but not sufficient. The
 ### The selection bottleneck {#sec-data-selection-selection-bottleneck-4d00}
 
 \index{Latency!selection, dynamic selection bottleneck}
-Dynamic data selection introduces a new bottleneck: *selection latency*. In standard training, the data loader reads the next batch sequentially. In active learning or curriculum learning, the system must evaluate a selection function $f(x)$ over a large candidate pool to determine the next batch. Concretely, scoring a 1M image dataset with a large model can take `{python} SelectionEconomicsAnchor.scoring_time_str`, potentially negating the savings from a 10 percent coreset (the configuration used in the worked example below) if not performed with a smaller proxy model.
+```{python}
+#| label: selection-bottleneck-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ SELECTION BOTTLENECK ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Selection bottleneck paragraph immediately below.
+# │
+# │ Goal: Keep the candidate-pool and coreset values local to the bottleneck prose.
+# │ Show: A 1M-image pool, 2.8-hour full-model scoring pass, and 10% coreset.
+# │ How: Format the same scenario used by the selection inequality worked example.
+# │
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: SelectionBottleneckAnchor.dataset_size_str,
+# │          .scoring_time_str, .coreset_pct_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class SelectionBottleneckAnchor:
+    """Local anchor for the selection-latency bottleneck scenario."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    dataset_size_m = 1
+    scoring_time_hrs = 2.8
+    coreset_pct = 10
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    # Values are the scenario constants for the prose below.
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(scoring_time_hrs > 2, "Full-model scoring should be hours, not minutes.")
+    check(coreset_pct == 10, "Worked example assumes a 10% coreset.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    dataset_size_str = fmt(dataset_size_m, precision=0, commas=False) + "M"
+    scoring_time_str = f"{scoring_time_hrs:.1f} hours"
+    coreset_pct_str = f"{coreset_pct}%"
+```
+
+Dynamic data selection introduces a new bottleneck: *selection latency*. In standard training, the data loader reads the next batch sequentially. In active learning or curriculum learning, the system must evaluate a selection function $f(x)$ over a large candidate pool to determine the next batch. Concretely, scoring a `{python} SelectionBottleneckAnchor.dataset_size_str` image dataset with a large model can take `{python} SelectionBottleneckAnchor.scoring_time_str`, potentially negating the savings from a `{python} SelectionBottleneckAnchor.coreset_pct_str` coreset (the configuration used in the worked example below) if not performed with a smaller proxy model.
 
 \index{Selection Inequality!definition}
 For a selection strategy to be systems-efficient, it must satisfy the **Selection Inequality** expressed in @eq-selection-inequality:
@@ -2692,6 +2850,7 @@ Here $T_{\text{selection}}$ is the time spent scoring the pool and $T_{\text{tra
 # │ Imports: mlsysim.book (fmt)
 # │ Exports: score_a_str, savings_b_pct_str, trap_pct_str, etc.
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import MILLION, SEC_PER_HOUR, THOUSAND
 from mlsysim.fmt import fmt_percent, fmt, check
 
 class SelectionInequalityCalc:
@@ -2704,6 +2863,7 @@ class SelectionInequalityCalc:
     resnet50_time_per_image_value = 0.01                        # sec/image (full model)
     resnet18_time_per_image_value = 0.002                       # sec/image (proxy)
     trap_sel_hrs_value = 50                                     # hrs for 7B model scoring
+    coreset_fraction_value = n_coreset_value/n_images_value
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     score_a_sec_value = n_images_value * resnet50_time_per_image_value
@@ -2750,27 +2910,34 @@ class SelectionInequalityCalc:
     b_beats_a_str = fmt(b_beats_a_hrs_value, precision=1, commas=False)
     trap_total_str = fmt(trap_total_hrs_value, precision=1, commas=False)
     trap_pct_str = fmt(trap_overhead_pct_value, precision=0, commas=False)
+    n_images_str = fmt(n_images_value/MILLION, precision=0, commas=False) + "M"
+    n_coreset_str = fmt(n_coreset_value/THOUSAND, precision=0, commas=False) + "k"
+    n_epochs_str = fmt(n_epochs_value, precision=0, commas=False)
+    coreset_pct_str = fmt_percent(coreset_fraction_value, precision=0, commas=False)
+    resnet50_time_per_image_str = fmt(resnet50_time_per_image_value, precision=2, commas=False)
+    resnet18_time_per_image_str = fmt(resnet18_time_per_image_value, precision=3, commas=False)
+    trap_sel_hrs_str = fmt(trap_sel_hrs_value, precision=0, commas=False)
 ```
 
 ::: {.callout-example title="Selection inequality in practice"}
 
-**Scenario**: Given one million training images, the goal is to select a 100k coreset (10 percent) using EL2N scoring.
+**Scenario**: Given `{python} SelectionInequalityCalc.n_images_str` training images, the goal is to select a `{python} SelectionInequalityCalc.n_coreset_str` coreset (`{python} SelectionInequalityCalc.coreset_pct_str` percent) using EL2N scoring.
 
 **Option A: Full Model Selection**
 
-- Score all 1M images with the target ResNet-50: 1M $\times$ 0.01 s = **`{python} SelectionInequalityCalc.score_a_str` seconds** (`{python} SelectionInequalityCalc.score_a_hrs_str` hours)
-- Train on 100k coreset for 100 epochs: 100k $\times 100 \times 0.01$ s = **`{python} SelectionInequalityCalc.train_a_str` seconds** (`{python} SelectionInequalityCalc.train_a_hrs_str` hours)
+- Score all `{python} SelectionInequalityCalc.n_images_str` images with the target ResNet-50: `{python} SelectionInequalityCalc.n_images_str` $\times$ `{python} SelectionInequalityCalc.resnet50_time_per_image_str` s = **`{python} SelectionInequalityCalc.score_a_str` seconds** (`{python} SelectionInequalityCalc.score_a_hrs_str` hours)
+- Train on `{python} SelectionInequalityCalc.n_coreset_str` coreset for `{python} SelectionInequalityCalc.n_epochs_str` epochs: `{python} SelectionInequalityCalc.n_coreset_str` $\times$ `{python} SelectionInequalityCalc.n_epochs_str` $\times$ `{python} SelectionInequalityCalc.resnet50_time_per_image_str` s = **`{python} SelectionInequalityCalc.train_a_str` seconds** (`{python} SelectionInequalityCalc.train_a_hrs_str` hours)
 - **Total: `{python} SelectionInequalityCalc.total_a_hrs_str` hours**
 
 **Option B: Proxy Model Selection**
 
-- Score all 1M images with a small proxy (ResNet-18): 1M $\times$ 0.002 s = **`{python} SelectionInequalityCalc.score_b_str` seconds** (`{python} SelectionInequalityCalc.score_b_hrs_str` hours)
-- Train on 100k coreset for 100 epochs: **`{python} SelectionInequalityCalc.train_a_str` seconds** (`{python} SelectionInequalityCalc.train_a_hrs_str` hours)
+- Score all `{python} SelectionInequalityCalc.n_images_str` images with a small proxy (ResNet-18): `{python} SelectionInequalityCalc.n_images_str` $\times$ `{python} SelectionInequalityCalc.resnet18_time_per_image_str` s = **`{python} SelectionInequalityCalc.score_b_str` seconds** (`{python} SelectionInequalityCalc.score_b_hrs_str` hours)
+- Train on `{python} SelectionInequalityCalc.n_coreset_str` coreset for `{python} SelectionInequalityCalc.n_epochs_str` epochs: **`{python} SelectionInequalityCalc.train_a_str` seconds** (`{python} SelectionInequalityCalc.train_a_hrs_str` hours)
 - **Total: `{python} SelectionInequalityCalc.total_b_hrs_str` hours**
 
 **Baseline: No Selection**
 
-- Train on full 1M dataset for 100 epochs: 1M $\times 100 \times 0.01$ s = **`{python} SelectionInequalityCalc.baseline_str` seconds** (`{python} SelectionInequalityCalc.baseline_hrs_str` hours)
+- Train on the full `{python} SelectionInequalityCalc.n_images_str` dataset for `{python} SelectionInequalityCalc.n_epochs_str` epochs: `{python} SelectionInequalityCalc.n_images_str` $\times$ `{python} SelectionInequalityCalc.n_epochs_str` $\times$ `{python} SelectionInequalityCalc.resnet50_time_per_image_str` s = **`{python} SelectionInequalityCalc.baseline_str` seconds** (`{python} SelectionInequalityCalc.baseline_hrs_str` hours)
 
 **Analysis**:
 
@@ -2778,7 +2945,7 @@ class SelectionInequalityCalc:
 - Option B saves `{python} SelectionInequalityCalc.savings_b_str` hours vs. baseline (`{python} SelectionInequalityCalc.savings_b_pct_str` percent reduction) ✓
 - Option B beats Option A by `{python} SelectionInequalityCalc.b_beats_a_str` hours. Proxy selection yields better ROI.
 
-**Trap**: If selection required 50 hours (for example, running a 7B parameter model), the total would reach `{python} SelectionInequalityCalc.trap_total_str` hours, still better than baseline, but the selection overhead equals `{python} SelectionInequalityCalc.trap_pct_str` percent of the remaining net savings.
+**Trap**: If selection required `{python} SelectionInequalityCalc.trap_sel_hrs_str` hours (for example, running a 7B parameter model), the total would reach `{python} SelectionInequalityCalc.trap_total_str` hours, still better than baseline, but the selection overhead equals `{python} SelectionInequalityCalc.trap_pct_str` percent of the remaining net savings.
 
 **System implication**: Selection time should stay below 10 percent of full-training time for good ROI, and it must remain smaller than the compute saved by discarding low-value samples.
 
@@ -2952,12 +3119,77 @@ Data selection is not free. It introduces a new term to the iron law.
 
 The selection inequality addresses compute overhead, but data selection introduces a second, often overlooked cost: I/O pattern degradation. Data selection strategies like coresets or dynamic sampling often require random access to samples across the dataset, jumping to sample 47,231, then 892,104, then 3,417 based on selection scores. Standard training uses sequential reads that benefit from hardware readahead and OS page caching; random access patterns devastate throughput, especially on distributed filesystems or traditional hard drives. @tbl-io-performance quantifies this penalty across storage tiers.
 
-| **Storage Tier** | **Sequential Throughput** | **Random I/O (IOPS)** | **Random Throughput (approx)** | **Random Penalty** |
-|:-----------------|:-------------------------:|:---------------------:|:------------------------------:|:------------------:|
-| **HDD (7.2k)**   |         ~150 MB/s         |          ~80          |           ~0.3 MB/s            |  **500$\times$**   |
-| **SATA SSD**     |         ~550 MB/s         |          ~10k         |            ~40 MB/s            |   **14$\times$**   |
-| **NVMe SSD**     |        ~3,500 MB/s        |         ~500k         |          ~2,000 MB/s           |  **1.75$\times$**  |
-| **Cloud (S3)**   |    ~100 MB/s (per conn)   |    ~10–50 ms (lat)    |      Very Low (per conn)       |    **Extreme**     |
+```{python}
+#| label: random-access-penalty-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ RANDOM-ACCESS PENALTY ACROSS STORAGE TIERS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-io-performance ("The Cost of Randomness") in the selection
+# │          I/O-bottleneck discussion immediately above the table.
+# │
+# │ Goal:    Quantify the throughput gap between sequential and random 4 KB
+# │          reads across HDD, SATA SSD, and NVMe SSD storage tiers.
+# │ Show:    Sequential throughput, random IOPS, derived random throughput, and
+# │          the sequential-vs-random penalty factor for each tier.
+# │ How:     Convert IOPS at 4 KB reads to MB/s, then divide sequential by
+# │          random throughput to get the penalty factor.
+# │
+# │ Imports: mlsysim.core.constants (THOUSAND); mlsysim.fmt (check, fmt)
+# │ Exports: RandomAccessPenalty.hdd_seq_mb_s_str, .hdd_iops_str,
+# │          .hdd_random_mb_s_str, .hdd_penalty_str,
+# │          .sata_seq_mb_s_str, .sata_iops_str, .sata_random_mb_s_str,
+# │          .sata_penalty_str, .nvme_seq_mb_s_str, .nvme_iops_str,
+# │          .nvme_random_mb_s_str, .nvme_penalty_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import THOUSAND
+from mlsysim.fmt import check, fmt
+
+class RandomAccessPenalty:
+    # LOAD
+    random_read_kb = 4
+    hdd_seq_mb_s = 150
+    hdd_iops = 80
+    sata_seq_mb_s = 550
+    sata_iops = 10_000
+    nvme_seq_mb_s = 3_500
+    nvme_iops = 500_000
+
+    # EXECUTE
+    hdd_random_mb_s = hdd_iops * random_read_kb / THOUSAND
+    sata_random_mb_s = sata_iops * random_read_kb / THOUSAND
+    nvme_random_mb_s = nvme_iops * random_read_kb / THOUSAND
+    hdd_penalty = hdd_seq_mb_s / hdd_random_mb_s
+    sata_penalty = sata_seq_mb_s / sata_random_mb_s
+    nvme_penalty = nvme_seq_mb_s / nvme_random_mb_s
+
+    # GUARD
+    check(hdd_penalty > sata_penalty > nvme_penalty, "Random penalty should shrink as storage latency improves.")
+    check(nvme_random_mb_s < nvme_seq_mb_s, "Random NVMe throughput should remain below sequential throughput.")
+
+    # OUTPUT
+    hdd_seq_mb_s_str = fmt(hdd_seq_mb_s, precision=0, commas=False)
+    hdd_iops_str = fmt(hdd_iops, precision=0, commas=False)
+    hdd_random_mb_s_str = fmt(hdd_random_mb_s, precision=1, commas=False)
+    hdd_penalty_str = fmt(round(hdd_penalty, -2), precision=0, commas=False)
+
+    sata_seq_mb_s_str = fmt(sata_seq_mb_s, precision=0, commas=False)
+    sata_iops_str = fmt(sata_iops / THOUSAND, precision=0, commas=False) + "k"
+    sata_random_mb_s_str = fmt(sata_random_mb_s, precision=0, commas=False)
+    sata_penalty_str = fmt(sata_penalty, precision=0, commas=False)
+
+    nvme_seq_mb_s_str = fmt(nvme_seq_mb_s, precision=0, commas=True)
+    nvme_iops_str = fmt(nvme_iops / THOUSAND, precision=0, commas=False) + "k"
+    nvme_random_mb_s_str = fmt(nvme_random_mb_s, precision=0, commas=True)
+    nvme_penalty_str = fmt(nvme_penalty, precision=2, commas=False)
+```
+
+| **Storage Tier** |               **Sequential Throughput**                |             **Random I/O (IOPS)**             |               **Random Throughput (approx)**              |                      **Random Penalty**                     |
+|:-----------------|:------------------------------------------------------:|:---------------------------------------------:|:---------------------------------------------------------:|:-----------------------------------------------------------:|
+| **HDD (7.2k)**   | ~`{python} RandomAccessPenalty.hdd_seq_mb_s_str` MB/s  |  ~`{python} RandomAccessPenalty.hdd_iops_str` |  ~`{python} RandomAccessPenalty.hdd_random_mb_s_str` MB/s |  **`{python} RandomAccessPenalty.hdd_penalty_str`$\times$** |
+| **SATA SSD**     | ~`{python} RandomAccessPenalty.sata_seq_mb_s_str` MB/s | ~`{python} RandomAccessPenalty.sata_iops_str` | ~`{python} RandomAccessPenalty.sata_random_mb_s_str` MB/s | **`{python} RandomAccessPenalty.sata_penalty_str`$\times$** |
+| **NVMe SSD**     | ~`{python} RandomAccessPenalty.nvme_seq_mb_s_str` MB/s | ~`{python} RandomAccessPenalty.nvme_iops_str` | ~`{python} RandomAccessPenalty.nvme_random_mb_s_str` MB/s | **`{python} RandomAccessPenalty.nvme_penalty_str`$\times$** |
+| **Cloud (S3)**   |                  ~100 MB/s (per conn)                  |                ~10–50 ms (lat)                |                    Very Low (per conn)                    |                         **Extreme**                         |
 
 : **The Cost of Randomness**: Comparative I/O throughput for sequential vs. random 4 KB reads across different storage tiers. Standard data loaders optimize for sequential throughput, while data selection strategies often incur the random access penalty. {#tbl-io-performance .striped .hover tbl-colwidths="[20,20,20,20,20]"}
 
@@ -4134,9 +4366,63 @@ The frontier provides a practical diagnostic framework:
 
 #### The Chinchilla rule of thumb {.unnumbered}
 
-In the compute-optimal regime described by the Chinchilla scaling laws[^fn-chinchilla-ratio], training tokens and model parameters should scale together in a fixed ratio (roughly 20 tokens per parameter). As a simplified consequence, when the model size is held proportional to its compute-optimal allocation, the number of training tokens grows roughly as $D_{\text{opt}} \propto \sqrt{C}$; doubling the compute budget then implies about $\sqrt{2} - 1 \approx 41$ percent more tokens, not 100 percent. This explains why the data wall is so constraining: as compute grows exponentially, the demand for quality data grows roughly as its square root, but even that slower growth outpaces the supply of high-quality human-generated content.
+```{python}
+#| label: chinchilla-diagnostic-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ CHINCHILLA D/N DIAGNOSTIC ANCHORS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "The Chinchilla rule of thumb" subsection prose and the
+# │          [^fn-chinchilla-ratio] footnote.
+# │
+# │ Goal:    Anchor the tokens-per-parameter thresholds (starved, optimal,
+# │          diminishing) and the GPT-3 / LLaMA-2 70B reference D/N ratios.
+# │ Show:    Threshold values, reference D/N ratios for both models, and the
+# │          token-count growth implied by doubling the compute budget.
+# │ How:     Divide training tokens by parameter counts for each reference
+# │          model; compute sqrt(2) - 1 for the doubling growth percent.
+# │
+# │ Imports: math; mlsysim.core.constants (GPT3_TRAINING_TOKENS, GPT3_PARAMS,
+# │          LLAMA2_70B_PARAMS, TRILLION, param); mlsysim.fmt (check, fmt)
+# │ Exports: ChinchillaDiagnostic.tokens_per_param_opt_str,
+# │          .starvation_ratio_str, .diminishing_ratio_str,
+# │          .gpt3_dn_ratio_str, .llama2_dn_ratio_str,
+# │          .doubling_token_growth_pct_str
+# └─────────────────────────────────────────────────────────────────────────────
+import math
 
-[^fn-chinchilla-ratio]: **Chinchilla Ratio Diagnostic**: The Chinchilla scaling law provides a practical data-starvation diagnostic: the $D/N$ ratio (training tokens per model parameter). A ratio below ten indicates severe data starvation; around 20 is compute-optimal; above 40 yields diminishing returns. For reference, GPT-3 was trained at $D/N \approx 1.7$ (175B parameters, 300B tokens)—chronically undertrained. LLaMA-2 70B at $D/N \approx 28$ is near-optimal. This single ratio is the fastest diagnostic for determining whether a training run is data-limited (add more tokens) or compute-limited (train a smaller model longer) before committing to an expensive run. \index{Chinchilla!D/N ratio diagnostic}
+import mlsysim.core.constants as c
+from mlsysim.fmt import check, fmt
+
+class ChinchillaDiagnostic:
+    # LOAD
+    tokens_per_param_opt = 20
+    starvation_ratio = 10
+    diminishing_ratio = 40
+    llama2_70b_training_tokens = 2.0 * c.TRILLION
+    compute_multiplier = 2.0
+
+    # EXECUTE
+    gpt3_dn_ratio = c.GPT3_TRAINING_TOKENS.m_as("count") / c.GPT3_PARAMS.m_as(c.param)
+    llama2_dn_ratio = llama2_70b_training_tokens / c.LLAMA2_70B_PARAMS.m_as(c.param)
+    doubling_token_growth_pct = (math.sqrt(compute_multiplier) - 1) * 100
+
+    # GUARD
+    check(gpt3_dn_ratio < starvation_ratio, "GPT-3 should fall in the data-starved regime.")
+    check(starvation_ratio < tokens_per_param_opt < diminishing_ratio, "Thresholds must bracket the compute-optimal ratio.")
+
+    # OUTPUT
+    tokens_per_param_opt_str = fmt(tokens_per_param_opt, precision=0, commas=False)
+    starvation_ratio_str = fmt(starvation_ratio, precision=0, commas=False)
+    diminishing_ratio_str = fmt(diminishing_ratio, precision=0, commas=False)
+    gpt3_dn_ratio_str = fmt(gpt3_dn_ratio, precision=1, commas=False)
+    llama2_dn_ratio_str = fmt(llama2_dn_ratio, precision=0, commas=False)
+    doubling_token_growth_pct_str = fmt(doubling_token_growth_pct, precision=0, commas=False)
+```
+
+In the compute-optimal regime described by the Chinchilla scaling laws[^fn-chinchilla-ratio], training tokens and model parameters should scale together in a fixed ratio (roughly `{python} ChinchillaDiagnostic.tokens_per_param_opt_str` tokens per parameter). As a simplified consequence, when the model size is held proportional to its compute-optimal allocation, the number of training tokens grows roughly as $D_{\text{opt}} \propto \sqrt{C}$; doubling the compute budget then implies about $\sqrt{2} - 1$, or `{python} ChinchillaDiagnostic.doubling_token_growth_pct_str` percent, more tokens, not 100 percent. This explains why the data wall is so constraining: as compute grows exponentially, the demand for quality data grows roughly as its square root, but even that slower growth outpaces the supply of high-quality human-generated content.
+
+[^fn-chinchilla-ratio]: **Chinchilla Ratio Diagnostic**: The Chinchilla scaling law provides a practical data-starvation diagnostic: the $D/N$ ratio (training tokens per model parameter). A ratio below `{python} ChinchillaDiagnostic.starvation_ratio_str` indicates severe data starvation; around `{python} ChinchillaDiagnostic.tokens_per_param_opt_str` is compute-optimal; above `{python} ChinchillaDiagnostic.diminishing_ratio_str` yields diminishing returns. For reference, GPT-3 was trained at $D/N \approx$ `{python} ChinchillaDiagnostic.gpt3_dn_ratio_str` (175B parameters, 300B tokens)---chronically undertrained. LLaMA-2 70B at $D/N \approx$ `{python} ChinchillaDiagnostic.llama2_dn_ratio_str` is near-optimal. This single ratio is the fastest diagnostic for determining whether a training run is data-limited (add more tokens) or compute-limited (train a smaller model longer) before committing to an expensive run. \index{Chinchilla!D/N ratio diagnostic}
 
 #### Applying the diagnostic {.unnumbered}
 
