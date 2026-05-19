@@ -6,22 +6,31 @@ Keep science in core/formulas.py; keep display here.
 
 from .core.constants import ureg
 
-# Lazy import for IPython.display.Markdown
-_Markdown = None
+
+class MarkdownStr(str):
+    """A string that ALSO renders as raw Markdown when consumed by Quarto/Jupyter.
+
+    Quarto's inline ``{python} x`` substitution escapes commas and decimals in
+    plain ``str`` outputs (``2,039.4`` → ``2\\,039\\.4``). Outside math mode the
+    escapes are harmless (``\\.`` reads as a literal period), but **inside**
+    ``$...$`` math mode they become LaTeX commands — ``\\,`` is ``\\thinspace``
+    and ``\\.`` is a dot accent — and the value is silently corrupted to
+    ``2 0394``.
+
+    Quarto detects ``_repr_markdown_`` and inserts the content **verbatim**
+    without escaping. By subclassing ``str``, every string operation
+    (``f"{x}"``, ``x + y``, ``x.replace(...)``, ``len(x)``, slicing) continues
+    to work, so this drop-in replacement for plain-``str`` formatters is fully
+    backward-compatible with existing call sites.
+    """
+
+    def _repr_markdown_(self):
+        return str.__str__(self)
 
 
 def _get_markdown():
-    """Lazily import IPython.display.Markdown when first needed."""
-    global _Markdown
-    if _Markdown is None:
-        from IPython.display import Markdown as IPythonMarkdown
-        
-        class MarkdownStr(IPythonMarkdown):
-            def __str__(self):
-                return str(self.data)
-                
-        _Markdown = MarkdownStr
-    return _Markdown
+    """Return the MarkdownStr class. Retained for backward compatibility."""
+    return MarkdownStr
 
 
 def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
@@ -60,7 +69,7 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
             f"Increase precision or set allow_zero=True if this was intentional."
         )
 
-    return result
+    return MarkdownStr(result)
 
 
 def fmt_percent(ratio, precision=1, commas=False):
@@ -95,7 +104,7 @@ def sci(val, precision=2):
     base, exp = s.split("e")
     exp_int = int(exp)
     exp_str = "".join(superscripts.get(c, c) for c in str(exp_int))
-    return f"{float(base):.{precision}f} × 10{exp_str}"
+    return MarkdownStr(f"{float(base):.{precision}f} × 10{exp_str}")
 
 
 def display_value(value, unit=None, precision=1, commas=True):
@@ -234,7 +243,7 @@ def fmt_full(quantity, precision=1, commas=True):
             f"fmt_full() Precision Error: {val} formatted as '{value_str}' "
             f"with precision={precision}. Increase precision."
         )
-    return f"{value_str} {unit_str}"
+    return MarkdownStr(f"{value_str} {unit_str}")
 
 
 def fmt_split(quantity, precision=1, commas=True):
@@ -246,4 +255,6 @@ def fmt_split(quantity, precision=1, commas=True):
     """
     full = fmt_full(quantity, precision=precision, commas=commas)
     parts = full.rsplit(" ", 1)
-    return (parts[0], parts[1]) if len(parts) == 2 else (full, "")
+    if len(parts) == 2:
+        return (MarkdownStr(parts[0]), MarkdownStr(parts[1]))
+    return (MarkdownStr(full), MarkdownStr(""))
