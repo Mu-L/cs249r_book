@@ -97,8 +97,12 @@ ASSIGN_PATTERN = re.compile(r"^([A-Za-z_]\w*)\s*=")
 TUPLE_ASSIGN_PATTERN = re.compile(r"^((?:[A-Za-z_]\w*\s*,\s*)+[A-Za-z_]\w*)\s*=")
 CLASS_DEF_PATTERN = re.compile(r"^class\s+(\w+)\s*[:(]")
 GRID_TABLE_SEP_PATTERN = re.compile(r"^\+[-:=+]+\+$")
-LATEX_INLINE_PATTERN = re.compile(r"(?<!\\)\$\s*`\{python\}\s+(?!\w+(?:\.\w+)?_str)[^`]+`|`\{python\}\s+(?!\w+(?:\.\w+)?_str)[^`]+`\s*(?<!\\)\$")
-LATEX_ADJACENT_PATTERN = re.compile(r"`\{python\}\s+(?!\w+(?:\.\w+)?_str)[^`]+`\s*\$\\(times|approx|ll|gg|mu)\$")
+# NOTE: The LATEX_INLINE_PATTERN and LATEX_ADJACENT_PATTERN checks were retired
+# along with mlsysim.fmt's MarkdownStr migration. They had been guarding against
+# Quarto's auto-escape silently corrupting commas and decimals inside $..$ math
+# mode — a bug class that no longer exists now that fmt() returns a Markdown-
+# rendering string that bypasses the escape. See mlsysim/mlsysim/fmt.py and
+# .claude/rules/math.md.
 
 CITATION_REF_PATTERN = re.compile(r"@([A-Za-z0-9_:\-.]+)")
 CITATION_BRACKET_PATTERN = re.compile(r"\[-?@[A-Za-z0-9_:\-.]+(?:;\s*-?@[A-Za-z0-9_:\-.]+)*\]")
@@ -2225,24 +2229,6 @@ class ValidateCommand:
                 in_grid = False
                 for idx, line in enumerate(lines, 1):
                     stripped = line.strip()
-                    if LATEX_INLINE_PATTERN.search(line):
-                        issues.append(ValidationIssue(
-                            file=self._relative_file(file),
-                            line=idx,
-                            code="latex_math_inline_python",
-                            message="Inline Python inside LaTeX math can strip decimals",
-                            severity="warning",
-                            context=stripped[:160],
-                        ))
-                    if LATEX_ADJACENT_PATTERN.search(line):
-                        issues.append(ValidationIssue(
-                            file=self._relative_file(file),
-                            line=idx,
-                            code="latex_adjacent_inline_python",
-                            message="Inline Python adjacent to LaTeX operator is fragile",
-                            severity="warning",
-                            context=stripped[:160],
-                        ))
                     if GRID_TABLE_SEP_PATTERN.match(stripped):
                         in_grid = True
                     elif in_grid and stripped and not stripped.startswith("|"):
