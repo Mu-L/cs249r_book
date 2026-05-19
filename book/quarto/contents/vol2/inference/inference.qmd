@@ -2210,15 +2210,18 @@ The following *KV-cache capacity estimator* applies this formula to determine th
 # │ Show: 327,680 bytes/token, ~43 GB/request, max batch 11.
 # │ How: 2 * layers * KV_heads * head_dim * bytes_per_elem * context_tokens.
 # │
-# │ Imports: mlsysim.fmt (check)
+# │ Imports: mlsysim.fmt (check, md)
 # │ Exports: KVCacheCapacityEstimator.kv_bytes_per_token_str,
 # │          KVCacheCapacityEstimator.kv_mb_per_token_str,
 # │          KVCacheCapacityEstimator.context_tokens_str,
 # │          KVCacheCapacityEstimator.kv_gb_per_request_str,
 # │          KVCacheCapacityEstimator.available_kv_gb_str,
-# │          KVCacheCapacityEstimator.max_batch_str
+# │          KVCacheCapacityEstimator.max_batch_str,
+# │          KVCacheCapacityEstimator.step1_kv_per_token_math,
+# │          KVCacheCapacityEstimator.step2_cache_per_request_math,
+# │          KVCacheCapacityEstimator.step3_max_batch_math
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import check
+from mlsysim.fmt import check, md
 
 class KVCacheCapacityEstimator:
     """KV-cache capacity estimator for a long-context 70B GQA deployment."""
@@ -2251,6 +2254,22 @@ class KVCacheCapacityEstimator:
     kv_gb_per_request_str = f"{kv_gb_per_request:.0f}"
     available_kv_gb_str = f"{available_kv_gb:.0f}"
     max_batch_str = f"{max_batch}"
+
+    # Display-math expressions for the three step equations (pre-compute LaTeX
+    # in Python to avoid `{python}` refs inside $$..$$ — §7 anti-pattern).
+    step1_kv_per_token_math = md(
+        f"$$ M_{{\\text{{KV}}}} = 2 \\times {n_layers} \\times {n_kv_heads} \\times {d_head} \\times {bytes_per_elem} "
+        f"= {kv_bytes_per_token:,} \\text{{ bytes}} \\approx "
+        f"\\mathbf{{{kv_mb_per_token:.2f} \\text{{ MB/token}}}} $$"
+    )
+    step2_cache_per_request_math = md(
+        f"$$ {context_tokens:,} \\text{{ tokens}} \\times {kv_mb_per_token:.2f} \\text{{ MB/token}} \\approx "
+        f"\\mathbf{{{kv_gb_per_request:.0f} \\text{{ GB/request}}}} $$"
+    )
+    step3_max_batch_math = md(
+        f"$$ \\text{{Max Batch}} = \\left\\lfloor \\frac{{{available_kv_gb:.0f}}}{{{kv_gb_per_request:.0f}}} \\right\\rfloor "
+        f"= \\mathbf{{{max_batch}}} $$"
+    )
 ```
 
 ::: {.callout-example title="KV-cache capacity estimator"}
@@ -2268,14 +2287,14 @@ $$ \text{Total Memory} = M_{\text{weights}} + (\text{Batch} \times \text{Context
 *   Context $= 131,072$ tokens.
 
 **Step 1**: Calculate memory per token.
-$$ M_{\text{KV}} = 2 \times 80 \times 8 \times 128 \times 2 = \text{`{python} KVCacheCapacityEstimator.kv_bytes_per_token_str`} \text{ bytes} \approx \mathbf{\text{`{python} KVCacheCapacityEstimator.kv_mb_per_token_str`} \text{ MB/token}} $$
+`{python} KVCacheCapacityEstimator.step1_kv_per_token_math`
 
 **Step 2**: Calculate cache per request.
-$$ \text{`{python} KVCacheCapacityEstimator.context_tokens_str`} \text{ tokens} \times \text{`{python} KVCacheCapacityEstimator.kv_mb_per_token_str`} \text{ MB/token} \approx \mathbf{\text{`{python} KVCacheCapacityEstimator.kv_gb_per_request_str`} \text{ GB/request}} $$
+`{python} KVCacheCapacityEstimator.step2_cache_per_request_math`
 
 **Step 3**: Determine max batch size.
 Available Memory for KV = $640 \text{ GB (Total)} - 140 \text{ GB (Weights)} - 20 \text{ GB (System)} =$ `{python} KVCacheCapacityEstimator.available_kv_gb_str` GB.
-$$ \text{Max Batch} = \left\lfloor \frac{\text{`{python} KVCacheCapacityEstimator.available_kv_gb_str`}}{\text{`{python} KVCacheCapacityEstimator.kv_gb_per_request_str`}} \right\rfloor = \mathbf{\text{`{python} KVCacheCapacityEstimator.max_batch_str`}} $$
+`{python} KVCacheCapacityEstimator.step3_max_batch_math`
 
 **Conclusion**: Even with GQA, 128K-context requests consume tens of gigabytes of KV cache, so the system serves only a small number of concurrent long-context requests before memory becomes the binding constraint. Addressing this requires **PagedAttention** (to reduce fragmentation) and KV-cache quantization or sharding.
 

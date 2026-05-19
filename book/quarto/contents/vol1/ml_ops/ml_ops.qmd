@@ -1,7 +1,6 @@
 ---
 quiz: ml_ops_quizzes.json
 concepts: ops_concepts.yml
-glossary: ops_glossary.json
 engine: jupyter
 ---
 
@@ -1360,7 +1359,8 @@ The following calculation demonstrates how to determine optimal retraining frequ
 # │ How: Apply the square-root law using retraining costs and accuracy decay rates.
 # │
 # │ Imports: math, mlsysim.book (fmt), IPython.display (Markdown)
-# │ Exports: retrain_cost_str, Q_str, T_star_str, T_star_eq, etc.
+# │ Exports: retrain_cost_str, Q_str, T_star_eq, V_str, A0_str, lam_str,
+# │          lam_pct_str
 # └─────────────────────────────────────────────────────────────────────────────
 import math
 from mlsysim.fmt import fmt, check
@@ -1394,9 +1394,6 @@ class RetrainingInterval:
     A0_str = fmt(A0, precision=2, commas=False)
     lam_str = fmt(lam, precision=2, commas=False)
     lam_pct_str = f"{lam * 100:.0f}"
-    numerator_str = fmt(numerator, precision=0, commas=True)
-    denominator_str = fmt(denominator, precision=0, commas=True)
-    T_star_str = fmt(T_star, precision=0, commas=False)
     T_star_eq = Markdown(
         f"$$ T^* \\approx \\sqrt{{\\frac{{2 \\times {int(retrain_cost):,}}}"
         f"{{{int(Q):,} \\times {V:.2f} \\times {A0:.2f} \\times {lam:.2f}}}}}"
@@ -2071,21 +2068,21 @@ Model serving performance depends critically on memory hierarchy utilization. Da
 # │
 # │ Goal:    Quantify the FP16 KV-cache footprint per active sequence and for
 # │          eight concurrent sequences.
-# │ Show:    About 2.5 GiB per sequence; 20 GiB across eight concurrent ones.
+# │ Show:    About 2.7 GB per sequence; 21 GB across eight concurrent ones.
 # │ How:     Multiply layers, KV heads, sequence length, head dimension, and
 # │          bytes per element from the Llama-2-70B constants.
 # │
-# │ Imports: mlsysim.core.constants (BYTES_FP16, GiB, byte, LLAMA2_70B_*),
+# │ Imports: mlsysim.core.constants (BYTES_FP16, GB, byte, LLAMA2_70B_*),
 # │          mlsysim.fmt (fmt, check)
 # │ Exports: KVCacheFootprint.layers_str, KVCacheFootprint.kv_heads_str,
 # │          KVCacheFootprint.seq_len_str, KVCacheFootprint.head_dim_str,
 # │          KVCacheFootprint.bytes_per_element_str,
-# │          KVCacheFootprint.kv_cache_gib_str,
-# │          KVCacheFootprint.concurrent_8_gib_str
+# │          KVCacheFootprint.kv_cache_gb_str,
+# │          KVCacheFootprint.concurrent_8_gb_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import (
     BYTES_FP16,
-    GiB,
+    GB,
     byte,
     LLAMA2_70B_LAYERS,
     LLAMA2_70B_HIDDEN_DIM,
@@ -2109,13 +2106,13 @@ class KVCacheFootprint:
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     head_dim = hidden_dim // attention_heads
     kv_cache_bytes = layers * 2 * kv_heads * seq_len * head_dim * bytes_per_element
-    kv_cache_gib = kv_cache_bytes.m_as(GiB)
-    concurrent_8_gib = 8 * kv_cache_gib
+    kv_cache_gb = kv_cache_bytes.m_as(GB)
+    concurrent_8_gb = 8 * kv_cache_gb
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(hidden_dim % attention_heads == 0, "Hidden dimension must divide evenly by attention heads.")
-    check(2 <= kv_cache_gib <= 4,
-          f"Expected 2-4 GiB per active sequence, got {kv_cache_gib:.2f} GiB.")
+    check(2.5 <= kv_cache_gb <= 4,
+          f"Expected 2.5-4 GB per active sequence, got {kv_cache_gb:.2f} GB.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     layers_str = fmt(layers, precision=0, commas=False)
@@ -2123,11 +2120,11 @@ class KVCacheFootprint:
     seq_len_str = fmt(seq_len, precision=0, commas=True)
     head_dim_str = fmt(head_dim, precision=0, commas=False)
     bytes_per_element_str = fmt(bytes_per_element.m_as(byte), precision=0, commas=False)
-    kv_cache_gib_str = fmt(kv_cache_gib, precision=1, commas=False)
-    concurrent_8_gib_str = fmt(concurrent_8_gib, precision=0, commas=False)
+    kv_cache_gb_str = fmt(kv_cache_gb, precision=1, commas=False)
+    concurrent_8_gb_str = fmt(concurrent_8_gb, precision=0, commas=False)
 ```
 
-For large language model (LLM) serving on a single GPU or server, the KV-cache\index{KV Cache!LLM serving bottleneck} (storing attention keys and values for each token) often becomes the memory bottleneck. For a 70B-class grouped-query attention model with `{python} KVCacheFootprint.layers_str` layers, `{python} KVCacheFootprint.kv_heads_str` KV heads, an `{python} KVCacheFootprint.seq_len_str`-token context, and FP16 cache entries, each active sequence stores about `{python} KVCacheFootprint.kv_cache_gib_str` GiB of KV cache. Eight concurrent sequences therefore consume about `{python} KVCacheFootprint.concurrent_8_gib_str` GiB before scheduler headroom, fragmentation, or activations, limiting how many requests a single node can batch together. Monitoring KV-cache utilization on each serving node enables capacity planning: when KV-cache approaches GPU memory limits, additional requests queue rather than batch, degrading latency.
+For large language model (LLM) serving on a single GPU or server, the KV-cache\index{KV Cache!LLM serving bottleneck} (storing attention keys and values for each token) often becomes the memory bottleneck. For a 70B-class grouped-query attention model with `{python} KVCacheFootprint.layers_str` layers, `{python} KVCacheFootprint.kv_heads_str` KV heads, an `{python} KVCacheFootprint.seq_len_str`-token context, and FP16 cache entries, each active sequence stores about `{python} KVCacheFootprint.kv_cache_gb_str` GB of KV cache. Eight concurrent sequences therefore consume about `{python} KVCacheFootprint.concurrent_8_gb_str` GB before scheduler headroom, fragmentation, or activations, limiting how many requests a single node can batch together. Monitoring KV-cache utilization on each serving node enables capacity planning: when KV-cache approaches GPU memory limits, additional requests queue rather than batch, degrading latency.
 
 ##### Cost-per-inference tracking {.unnumbered}
 
