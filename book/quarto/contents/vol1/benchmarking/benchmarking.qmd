@@ -1,7 +1,6 @@
 ---
 quiz: benchmarking_quizzes.json
 concepts: benchmarking_concepts.yml
-glossary: benchmarking_glossary.json
 engine: jupyter
 ---
 
@@ -62,7 +61,7 @@ Every preceding chapter introduced decisions with measurable consequences: which
 # │ How: Retrieve MobileNet and ResNet specs from Digital Twins.
 # │
 # │ Imports: mlsysim (Hardware, Models), mlsysim.constants (*),
-# │          mlsysim.book (fmt)
+# │          mlsysim.fmt (fmt, check)
 # │ Exports: mobilenet_v2_size_mb_str, mobilenet_v2_int8_size_mb_str,
 # │          mobilenet_v2_compression_ratio_str, edgetpu_latency_ms_str,
 # │          cpu_latency_ms_str, mobilenet_flops_ratio_str,
@@ -71,7 +70,7 @@ Every preceding chapter introduced decisions with measurable consequences: which
 
 from mlsysim import Hardware, Models
 from mlsysim.core.constants import *
-from mlsysim.fmt import fmt_percent, fmt, sci
+from mlsysim.fmt import fmt, check
 
 class BenchmarkingSetup:
     """MobileNet lighthouse constants for the opening callout and energy benchmarks section."""
@@ -85,6 +84,9 @@ class BenchmarkingSetup:
     _mv2_int8_mb = _mobilenet_v2_m * 1
     _mv2_compress = _mv2_size_mb / _mv2_int8_mb
     _flops_ratio = RESNET50_FLOPs.m_as(GFLOPs) / MOBILENETV2_FLOPs.m_as(GFLOPs)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(_mv2_compress == 4.0, f"Expected 4x INT8 compression, got {_mv2_compress:.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     mobilenet_v2_size_mb_str = fmt(_mv2_size_mb, precision=0, commas=False)
@@ -162,8 +164,53 @@ First, *benchmarks are proxies, not truth.* Every benchmark measures specific co
 
 Second, Goodhart's Law applies everywhere.[^fn-goodharts-law]\index{Goodhart's Law!metric trap} "When a measure becomes a target, it ceases to be a good measure." Teams that optimize for benchmark rankings often produce systems that excel in evaluation but fail in production. Benchmark-specific optimizations frequently degrade characteristics that matter for deployment: robustness, calibration, and efficiency.
 
+```{python}
+#| label: component-latency-example-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ COMPONENT VS. END-TO-END SPEEDUP EXAMPLE
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: End-to-end-beats-component prose paragraph immediately below.
+# │
+# │ Goal:    Quantify how a component-only speedup dilutes once non-model
+# │          pipeline work is included.
+# │ Show:    Component speedup, model latency, end-to-end latency, and the
+# │          resulting end-to-end speedup.
+# │ How:     Apply the Amdahl-style decomposition with a fixed non-model
+# │          remainder and a faster model stage.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: ComponentLatencyExample.model_latency_ms_str,
+# │          ComponentLatencyExample.e2e_latency_ms_str,
+# │          ComponentLatencyExample.component_speedup_str,
+# │          ComponentLatencyExample.e2e_speedup_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class ComponentLatencyExample:
+    """A component-only speedup diluted by non-model pipeline work."""
+    # LOAD
+    model_latency_ms = 10
+    e2e_latency_ms = 50
+    component_speedup = 3
+
+    # EXECUTE
+    optimized_e2e_ms = e2e_latency_ms - model_latency_ms + (model_latency_ms / component_speedup)
+    e2e_speedup = e2e_latency_ms / optimized_e2e_ms
+
+    # GUARD
+    check(e2e_speedup < component_speedup, "End-to-end speedup must be bounded by non-model work.")
+    check(round(e2e_speedup, 1) == 1.2, f"Expected about 1.2x end-to-end speedup, got {e2e_speedup:.1f}x")
+
+    # OUTPUT
+    model_latency_ms_str = fmt(model_latency_ms, precision=0, commas=False)
+    e2e_latency_ms_str = fmt(e2e_latency_ms, precision=0, commas=False)
+    component_speedup_str = fmt(component_speedup, precision=0, commas=False)
+    e2e_speedup_str = fmt(e2e_speedup, precision=1, commas=False)
+```
+
 \index{Benchmarking!end-to-end vs. component metrics}
-Third, end-to-end beats component metrics. Vendors report component latency (5–10 ms for model inference), but production latency includes preprocessing, queuing, and postprocessing (50–100 ms total). A 3$\times$ inference speedup in isolation might yield only 1.3$\times$ end-to-end improvement, or worse if the optimization increases memory pressure.
+Third, end-to-end beats component metrics. Vendors report component latency (5–10 ms for model inference), but production latency includes preprocessing, queuing, and postprocessing (50–100 ms total). A `{python} ComponentLatencyExample.component_speedup_str`$\times$ inference speedup applied to a `{python} ComponentLatencyExample.model_latency_ms_str` ms model stage inside a `{python} ComponentLatencyExample.e2e_latency_ms_str` ms pipeline yields only about `{python} ComponentLatencyExample.e2e_speedup_str`$\times$ end-to-end improvement, or worse if the optimization increases memory pressure.
 
 [^fn-goodharts-law]: **Goodhart's Law**: @goodhart1984 articulated the original 1975 Bank of England observation on monetary policy; @strathern1997improving generalized it into the form quoted above. The original context was macroeconomics: once a monetary aggregate became an official policy target, banks changed behavior to game the metric, destroying its predictive value. In ML, the same failure mode recurs structurally: BLEU scores incentivize n-gram matching over fluency, ImageNet accuracy rewards architecture tricks over robustness, and benchmark leaderboards incentivize test-set overfitting---each a case where the metric's success as a target caused its failure as a measure. \index{Goodhart's Law!etymology}
 
@@ -224,7 +271,7 @@ The multi-objective evaluation paradigm naturally extended to energy efficiency 
 
 [^fn-spec-power]: **SPEC Power**: Introduced in 2007, SPEC Power measures performance per watt across 11 load levels from idle (0 percent) through 100 percent in 10 percent increments. This granularity matters for ML serving: inference workloads rarely sustain 100 percent load, and servers that are efficient at peak but wasteful at 30 percent utilization inflate the energy cost of real-world deployment, where average utilization typically hovers between 20--50 percent. \index{SPEC Power!energy efficiency}
 
-[^fn-green500]: **Green500**: Started in 2007 as a counterpart to the Top500, Green500 ranks systems by FLOPS per watt rather than raw performance. The shift from less than 1 GFLOPS/watt in the early 2000s to over 60 GFLOPS/watt today reveals that efficiency gains have outpaced raw performance gains, a pattern ML systems inherit: the most cost-effective training clusters are not the fastest but the most efficient. \index{Green500!energy efficiency ranking}
+[^fn-green500]: **Green500**: Started in 2007 as a counterpart to the Top500, Green500 ranks systems by FLOPS per watt rather than raw performance. The shift from less than 1 GFLOPS/watt in the early 2000s to tens of GFLOPS/watt in recent lists reveals that efficiency gains have outpaced raw performance gains, a pattern ML systems inherit: the most cost-effective training clusters are not the fastest but the most efficient. \index{Green500!energy efficiency ranking}
 
 \index{MLPerf!power, ML energy measurement}
 Diverse workload patterns and system configurations continue to challenge power benchmarking across computing environments. MLPerf Power [@mlperf_power_website] addresses this with specialized methodologies for measuring the energy impact of machine learning workloads, reflecting energy efficiency's central role in AI system design.
@@ -298,26 +345,159 @@ Representative workload selection determines benchmark validity. Synthetic micro
 
 Beyond workload representativeness, the distinction between statistical significance and practical significance requires careful interpretation. A small performance improvement might achieve statistical significance across hundreds of trials but prove operationally irrelevant if it falls within measurement noise or costs exceed benefits. This creates what we call *the statistical confidence trap*, where seemingly rigorous evaluation still misleads.
 
+```{python}
+#| label: statistical-confidence-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ STATISTICAL CONFIDENCE TRAP CALCULATION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "The statistical confidence trap" callout-notebook immediately
+# │          below.
+# │
+# │ Goal:    Show that a 1,000-image test set cannot reliably distinguish a
+# │          95 percent baseline from a 94 percent compressed model.
+# │ Show:    Expected errors, binomial standard deviation, 95 percent CI, and
+# │          the one-proportion sample-size estimate.
+# │ How:     Use the binomial formula sqrt(N p (1-p)) and the one-proportion
+# │          margin-of-error inversion.
+# │
+# │ Imports: math (sqrt, ceil); mlsysim.fmt (fmt, check)
+# │ Exports: StatisticalConfidenceTrap.n_images_str,
+# │          StatisticalConfidenceTrap.baseline_accuracy_pct_str,
+# │          StatisticalConfidenceTrap.compressed_accuracy_pct_str,
+# │          StatisticalConfidenceTrap.baseline_errors_str,
+# │          StatisticalConfidenceTrap.compressed_errors_str,
+# │          StatisticalConfidenceTrap.sigma_errors_str,
+# │          StatisticalConfidenceTrap.ci_range_str,
+# │          StatisticalConfidenceTrap.one_prop_n_str,
+# │          StatisticalConfidenceTrap.target_margin_pct_str,
+# │          StatisticalConfidenceTrap.z_95
+# └─────────────────────────────────────────────────────────────────────────────
+from math import sqrt, ceil
+from mlsysim.fmt import fmt, check
+
+class StatisticalConfidenceTrap:
+    """Binomial uncertainty for a 95% vs. 94% accuracy comparison on 1,000 images."""
+    # LOAD
+    n_images = 1000
+    baseline_accuracy = 0.95
+    compressed_accuracy = 0.94
+    z_95 = 1.96
+    target_margin = 0.01
+
+    # EXECUTE
+    baseline_error_rate = 1 - baseline_accuracy
+    compressed_error_rate = 1 - compressed_accuracy
+    baseline_errors = n_images * baseline_error_rate
+    compressed_errors = n_images * compressed_error_rate
+    sigma_errors = sqrt(n_images * baseline_error_rate * baseline_accuracy)
+    ci_low = baseline_errors - z_95 * sigma_errors
+    ci_high = baseline_errors + z_95 * sigma_errors
+    one_prop_n = ceil((z_95**2 * baseline_accuracy * (1 - baseline_accuracy)) / (target_margin**2))
+
+    # GUARD
+    check(round(baseline_errors) == 50, f"Expected 50 baseline errors, got {baseline_errors:.1f}")
+    check(round(compressed_errors) == 60, f"Expected 60 compressed errors, got {compressed_errors:.1f}")
+    check(ci_low < compressed_errors < ci_high, "Compressed errors should fall inside baseline CI.")
+    check(1800 < one_prop_n < 2000, f"One-proportion sample estimate changed: {one_prop_n}")
+
+    # OUTPUT
+    n_images_str = fmt(n_images, precision=0, commas=True)
+    baseline_accuracy_pct_str = fmt(baseline_accuracy * 100, precision=0, commas=False)
+    compressed_accuracy_pct_str = fmt(compressed_accuracy * 100, precision=0, commas=False)
+    baseline_errors_str = fmt(baseline_errors, precision=0, commas=False)
+    compressed_errors_str = fmt(compressed_errors, precision=0, commas=False)
+    sigma_errors_str = fmt(sigma_errors, precision=1, commas=False)
+    ci_range_str = f"[{round(ci_low):.0f}, {round(ci_high):.0f}]"
+    one_prop_n_str = fmt(one_prop_n, precision=0, commas=True)
+    target_margin_pct_str = fmt(target_margin * 100, precision=0, commas=False)
+```
+
 ::: {.callout-notebook title="The statistical confidence trap"}
 
-**Problem**: An image classifier currently has **95 percent accuracy**. A "compressed" version is deployed and its accuracy measured on a **1,000-image** test set, yielding **94 percent**. Did the optimization cause a real regression, or is it noise?
+**Problem**: An image classifier currently has **`{python} StatisticalConfidenceTrap.baseline_accuracy_pct_str` percent accuracy**. A "compressed" version is deployed and its accuracy measured on a **`{python} StatisticalConfidenceTrap.n_images_str`-image** test set, yielding **`{python} StatisticalConfidenceTrap.compressed_accuracy_pct_str` percent**. Did the optimization cause a real regression, or is it noise?
 
 **Math**:
 
-1.  **Expected errors**: At 95 percent accuracy, the test set produces 50 errors. At 94 percent, 60 errors.
+1.  **Expected errors**: At `{python} StatisticalConfidenceTrap.baseline_accuracy_pct_str` percent accuracy, the test set produces `{python} StatisticalConfidenceTrap.baseline_errors_str` errors. At `{python} StatisticalConfidenceTrap.compressed_accuracy_pct_str` percent, it produces `{python} StatisticalConfidenceTrap.compressed_errors_str` errors.
 2.  **Standard Deviation** $(\sigma)$: Using the binomial distribution $\sqrt{N p (1-p)}$:
 
-    $$ \sigma \approx \sqrt{1000 \times 0.05 \times 0.95} \approx \mathbf{6.9 \text{ images}} $$
+    $$ \sigma \approx \sqrt{1000 \times 0.05 \times 0.95} $$
 
-3.  **95 percent Confidence Interval**: $50 \pm 1.96 \times 6.9 \approx \mathbf{[36, 64]}$.
+    This yields approximately **`{python} StatisticalConfidenceTrap.sigma_errors_str` images**.
 
-    **Systems conclusion**: Both 50 and 60 fall inside the **same confidence interval**. A 1,000-sample test set **cannot reliably detect** a 1 percentage point accuracy drop. Roughly $\mathbf{2{,}000}$ samples are enough to estimate a 95 percent accuracy rate with a 95 percent confidence interval of about $\pm 1$ percentage point; detecting a 1-point regression between two independently evaluated models requires a larger two-proportion power calculation.
+3.  **95 percent Confidence Interval**: `{python} StatisticalConfidenceTrap.baseline_errors_str` $\pm$ `{python} StatisticalConfidenceTrap.z_95` $\times$ `{python} StatisticalConfidenceTrap.sigma_errors_str` $\approx$ **`{python} StatisticalConfidenceTrap.ci_range_str`**.
+
+    **Systems conclusion**: Both `{python} StatisticalConfidenceTrap.baseline_errors_str` and `{python} StatisticalConfidenceTrap.compressed_errors_str` fall inside the **same confidence interval**. A `{python} StatisticalConfidenceTrap.n_images_str`-sample test set **cannot reliably detect** a 1 percentage point accuracy drop. About **`{python} StatisticalConfidenceTrap.one_prop_n_str` samples** are enough to estimate a `{python} StatisticalConfidenceTrap.baseline_accuracy_pct_str` percent accuracy rate with a 95 percent confidence interval of about **±`{python} StatisticalConfidenceTrap.target_margin_pct_str` percentage point**; detecting a 1-point regression between two independently evaluated models requires a larger two-proportion power calculation.
 
 **Systems lesson**: Small benchmarks exhibit what amounts to a laboratory fallacy. The test set, viewed as a measurement instrument, must be sized to match the precision of the change it is meant to detect.
 
 :::
 
 This principle manifests concretely in practice through *Goodhart's Law in action*:
+
+```{python}
+#| label: goodhart-bleu-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ GOODHART'S LAW BLEU-VS-LATENCY CALCULATION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "Goodhart's Law in action" callout-notebook immediately below.
+# │
+# │ Goal:    Quantify how a beam-search-driven BLEU gain trades against the
+# │          inference latency budget.
+# │ Show:    Original vs. optimized BLEU, beam size, latency, and the resulting
+# │          slowdown and candidate-ratio multipliers.
+# │ How:     Direct ratios on the team's reported numbers, with invariants that
+# │          fix the 4x slowdown and 10x beam expansion.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: GoodhartBLEUCalc.original_bleu_str,
+# │          GoodhartBLEUCalc.optimized_bleu_str,
+# │          GoodhartBLEUCalc.bleu_gain_str,
+# │          GoodhartBLEUCalc.original_latency_ms_str,
+# │          GoodhartBLEUCalc.optimized_latency_ms_str,
+# │          GoodhartBLEUCalc.latency_slowdown_str,
+# │          GoodhartBLEUCalc.original_beam_size_str,
+# │          GoodhartBLEUCalc.optimized_beam_size_str,
+# │          GoodhartBLEUCalc.candidate_ratio_str,
+# │          GoodhartBLEUCalc.latency_budget_ms_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class GoodhartBLEUCalc:
+    """BLEU leaderboard gain that violates the serving latency budget."""
+    # LOAD
+    original_bleu = 28.0
+    optimized_bleu = 28.5
+    original_latency_ms = 50
+    optimized_latency_ms = 200
+    original_beam_size = 1
+    optimized_beam_size = 10
+    latency_budget_ms = 100
+
+    # EXECUTE
+    bleu_gain = optimized_bleu - original_bleu
+    candidate_ratio = optimized_beam_size / original_beam_size
+    latency_slowdown = optimized_latency_ms / original_latency_ms
+
+    # GUARD
+    check(latency_slowdown == 4.0, f"Expected 4x latency slowdown, got {latency_slowdown:.1f}x")
+    check(candidate_ratio == 10.0, f"Expected 10x candidate expansion, got {candidate_ratio:.1f}x")
+    check(optimized_latency_ms > latency_budget_ms, "Optimized model should violate the latency budget.")
+
+    # OUTPUT
+    original_bleu_str = fmt(original_bleu, precision=1, commas=False)
+    optimized_bleu_str = fmt(optimized_bleu, precision=1, commas=False)
+    bleu_gain_str = fmt(bleu_gain, precision=1, commas=False)
+    original_latency_ms_str = fmt(original_latency_ms, precision=0, commas=False)
+    optimized_latency_ms_str = fmt(optimized_latency_ms, precision=0, commas=False)
+    latency_slowdown_str = fmt(latency_slowdown, precision=0, commas=False)
+    original_beam_size_str = fmt(original_beam_size, precision=0, commas=False)
+    optimized_beam_size_str = fmt(optimized_beam_size, precision=0, commas=False)
+    candidate_ratio_str = fmt(candidate_ratio, precision=0, commas=False)
+    latency_budget_ms_str = fmt(latency_budget_ms, precision=0, commas=False)
+```
 
 ::: {.callout-notebook title="Goodhart's Law in action"}
 
@@ -327,16 +507,16 @@ This principle manifests concretely in practice through *Goodhart's Law in actio
 \index{BLEU Score!metric trap example}
 **Scenario**: A team optimizes a translation model for **BLEU score**.
 
-*   **Original Model**: BLEU = 28.0, Inference = 50 ms.
-*   **Optimized Model**: BLEU = 28.5 (a 0.5-point gain), Inference = 200 ms (4$\times$ slower).
+*   **Original Model**: BLEU = `{python} GoodhartBLEUCalc.original_bleu_str`, Inference = `{python} GoodhartBLEUCalc.original_latency_ms_str` ms.
+*   **Optimized Model**: BLEU = `{python} GoodhartBLEUCalc.optimized_bleu_str` (a `{python} GoodhartBLEUCalc.bleu_gain_str`-point gain), Inference = `{python} GoodhartBLEUCalc.optimized_latency_ms_str` ms (`{python} GoodhartBLEUCalc.latency_slowdown_str`$\times$ slower).
 
 **Math**:
 
-*   The 0.5 BLEU gain comes from using a larger beam search (beam_size=10 vs. beam_size=1).
-*   **Cost**: 10$\times$ more candidate evaluations per step.
+*   The `{python} GoodhartBLEUCalc.bleu_gain_str` BLEU gain comes from using a larger beam search (beam_size=`{python} GoodhartBLEUCalc.optimized_beam_size_str` vs. beam_size=`{python} GoodhartBLEUCalc.original_beam_size_str`).
+*   **Cost**: `{python} GoodhartBLEUCalc.candidate_ratio_str`$\times$ more candidate evaluations per step.
 *   **Result**: The optimized model wins the leaderboard while violating the deployed system's latency budget.
 
-**Systems conclusion**: Always constrain the optimization. Maximize Accuracy *subject to* Latency < 100 ms.
+**Systems conclusion**: Always constrain the optimization. Maximize Accuracy *subject to* Latency < `{python} GoodhartBLEUCalc.latency_budget_ms_str` ms.
 
 :::
 
@@ -952,7 +1132,7 @@ Measuring these operations correctly requires discipline. The following *micro-b
 # │ Imports: mlsysim (Hardware), mlsysim.constants (H100_FLOPS_FP8_TENSOR,
 # │          TFLOPs, second, watt), mlsysim.book (fmt)
 # │ Exports: h100_tflops_fp16_str, h100_tflops_fp8_str,
-# │          h100_tflops_int8_str, h100_bw_tbs_str, h100_tdp_str
+# │          h100_tflops_int8_str, h100_tdp_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 class H100Specs:
@@ -968,7 +1148,6 @@ class H100Specs:
     h100_tflops_fp16_str = fmt(_h100_fp16, precision=0, commas=False)
     h100_tflops_fp8_str = fmt(_h100_fp8, precision=0, commas=True)
     h100_tflops_int8_str = fmt(_h100_int8, precision=0, commas=False)
-    h100_bw_tbs_str = fmt(_h100_bw_tbs, precision=2, commas=False)
     h100_tdp_str = fmt(_h100_tdp, precision=0, commas=False)
 ```
 
@@ -1486,6 +1665,73 @@ Code provenance completes the reproducibility chain. Contemporary benchmarks typ
 
 Producing benchmark numbers is the easy part; interpreting them correctly is where most engineers go wrong. A raw throughput figure or accuracy score is meaningless without understanding the conditions that produced it, the statistical confidence behind it, and the deployment context that determines whether the number matters. <!-- {#sec-benchmarking-benchmark-result-interpretation-framework-16a7} -->
 
+```{python}
+#| label: mobilenet-tradeoff-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MOBILENETV2 FP32-VS-INT8 EDGE TRADE-OFF
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "Benchmarking a vision model for edge deployment" callout-example
+# │          and @tbl-benchmarking-mobilenet-int8-tradeoff immediately below.
+# │
+# │ Goal:    Quantify the FP32-vs-INT8 trade-off for MobileNetV2 on a
+# │          Raspberry Pi 4 wildlife-camera deployment.
+# │ Show:    Latency, accuracy, model size, derived speedup, size reduction,
+# │          accuracy drop, and frames-per-second for each precision.
+# │ How:     Direct ratios on the reported FP32 and INT8 measurements.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: MobileNetTradeoffCalc.latency_fp32_ms_str,
+# │          MobileNetTradeoffCalc.latency_int8_ms_str,
+# │          MobileNetTradeoffCalc.acc_fp32_str,
+# │          MobileNetTradeoffCalc.acc_int8_str,
+# │          MobileNetTradeoffCalc.size_fp32_mb_str,
+# │          MobileNetTradeoffCalc.size_int8_mb_str,
+# │          MobileNetTradeoffCalc.latency_speedup_str,
+# │          MobileNetTradeoffCalc.size_reduction_str,
+# │          MobileNetTradeoffCalc.acc_drop_str,
+# │          MobileNetTradeoffCalc.fps_fp32_str,
+# │          MobileNetTradeoffCalc.fps_int8_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class MobileNetTradeoffCalc:
+    """MobileNetV2 FP32 vs INT8 edge-deployment trade-off."""
+    # LOAD
+    latency_fp32_ms = 120
+    latency_int8_ms = 35
+    acc_fp32 = 71.8
+    acc_int8 = 70.9
+    size_fp32_mb = 14.0
+    size_int8_mb = 3.5
+    milliseconds_per_second = 1000
+
+    # EXECUTE
+    latency_speedup = latency_fp32_ms / latency_int8_ms
+    size_reduction = size_fp32_mb / size_int8_mb
+    acc_drop = acc_fp32 - acc_int8
+    fps_fp32 = milliseconds_per_second / latency_fp32_ms
+    fps_int8 = milliseconds_per_second / latency_int8_ms
+
+    # GUARD
+    check(size_reduction == 4.0, f"Expected 4x size reduction, got {size_reduction:.1f}x")
+    check(latency_speedup > 3, f"Expected >3x latency speedup, got {latency_speedup:.1f}x")
+    check(acc_drop < 1.0, f"Accuracy drop should stay below 1 point, got {acc_drop:.1f}")
+
+    # OUTPUT
+    latency_fp32_ms_str = fmt(latency_fp32_ms, precision=0, commas=False)
+    latency_int8_ms_str = fmt(latency_int8_ms, precision=0, commas=False)
+    acc_fp32_str = fmt(acc_fp32, precision=1, commas=False)
+    acc_int8_str = fmt(acc_int8, precision=1, commas=False)
+    size_fp32_mb_str = fmt(size_fp32_mb, precision=1, commas=False)
+    size_int8_mb_str = fmt(size_int8_mb, precision=1, commas=False)
+    latency_speedup_str = fmt(latency_speedup, precision=1, commas=False)
+    size_reduction_str = fmt(size_reduction, precision=0, commas=False)
+    acc_drop_str = fmt(acc_drop, precision=1, commas=False)
+    fps_fp32_str = fmt(fps_fp32, precision=0, commas=False)
+    fps_int8_str = fmt(fps_int8, precision=0, commas=False)
+```
+
 ::: {.callout-example title="Benchmarking a vision model for edge deployment"}
 
 **Scenario**: A team validates MobileNetV2 for a wildlife camera trap running on a Raspberry Pi 4.
@@ -1494,13 +1740,13 @@ Producing benchmark numbers is the easy part; interpreting them correctly is whe
 
 | **Precision** | **Latency (ms)** | **Accuracy (Top-1)** | **Model Size (MB)** |
 |:--------------|:----------------:|:--------------------:|:-------------------:|
-| **FP32**      |      120 ms      |     71.8 percent     |         14.0        |
-| **INT8**      |      35 ms       |     71.2 percent     |         3.5         |
+| **FP32**      | `{python} MobileNetTradeoffCalc.latency_fp32_ms_str` ms | `{python} MobileNetTradeoffCalc.acc_fp32_str` percent | `{python} MobileNetTradeoffCalc.size_fp32_mb_str` |
+| **INT8**      | `{python} MobileNetTradeoffCalc.latency_int8_ms_str` ms | `{python} MobileNetTradeoffCalc.acc_int8_str` percent | `{python} MobileNetTradeoffCalc.size_int8_mb_str` |
 
-: **MobileNet INT8 Quantization Trade-Off**: Latency, accuracy, and model size for FP32 and INT8 precisions on MobileNet. INT8 delivers a 3.4$\times$ latency reduction and 4$\times$ size reduction at a 0.6 percentage-point accuracy cost. {#tbl-benchmarking-mobilenet-int8-tradeoff}
+: **MobileNet INT8 Quantization Trade-Off**: Latency, accuracy, and model size for FP32 and INT8 precisions on MobileNet. INT8 delivers a `{python} MobileNetTradeoffCalc.latency_speedup_str`$\times$ latency reduction and `{python} MobileNetTradeoffCalc.size_reduction_str`$\times$ size reduction at a `{python} MobileNetTradeoffCalc.acc_drop_str` percentage-point accuracy cost. {#tbl-benchmarking-mobilenet-int8-tradeoff}
 
 **Interpretation**:
-The 3.4$\times$ speedup and 4$\times$ size reduction from quantization come at a minimal cost of 0.6 percent accuracy drop. For a battery-powered real-time system, INT8 is the clear choice, enabling 28 FPS processing compared to 8 FPS with FP32.
+The `{python} MobileNetTradeoffCalc.latency_speedup_str`$\times$ speedup and `{python} MobileNetTradeoffCalc.size_reduction_str`$\times$ size reduction from quantization come at a cost of `{python} MobileNetTradeoffCalc.acc_drop_str` percentage points of top-1 accuracy. For a battery-powered real-time system with this tolerance, INT8 is the clear choice, enabling about `{python} MobileNetTradeoffCalc.fps_int8_str` FPS processing compared to about `{python} MobileNetTradeoffCalc.fps_fp32_str` FPS with FP32.
 
 :::
 
@@ -1545,12 +1791,13 @@ Which of these metrics matters most depends entirely on the deployment context. 
 # │
 # │ Goal: Provide MobileNetV2 and ResNet-50 parameter counts for the
 # │       compression efficiency comparison.
-# │ Show: Parameter counts in millions for both models.
+# │ Show: Parameter counts, parameter ratio, and accuracy-per-parameter ratio.
 # │ How:  Read from Digital Twins via Models.Vision.
 # │
 # │ Imports: mlsysim (Models), mlsysim.constants (Mparam),
-# │          mlsysim.book (fmt)
-# │ Exports: mobilenet_params_m_str, resnet50_params_m_str
+# │          mlsysim.book (fmt, check)
+# │ Exports: mobilenet_params_m_str, resnet50_params_m_str,
+# │          param_ratio_str, accuracy_per_param_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 class CompressionModelSpecs:
@@ -1558,15 +1805,29 @@ class CompressionModelSpecs:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     _mobilenet_m = Models.Vision.MobileNetV2.parameters.m_as(Mparam)
     _resnet50_m = Models.Vision.ResNet50.parameters.m_as(Mparam)
+    _mobilenet_top1 = 72
+    _resnet50_top1 = 76
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    _param_ratio = _resnet50_m / _mobilenet_m
+    _accuracy_per_param_ratio = (_mobilenet_top1 / _mobilenet_m) / (_resnet50_top1 / _resnet50_m)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(_param_ratio > 7, f"Expected MobileNetV2 to have >7x fewer params, got {_param_ratio:.1f}x")
+    check(_accuracy_per_param_ratio > 6, f"Expected >6x accuracy-per-parameter ratio, got {_accuracy_per_param_ratio:.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     mobilenet_params_m_str = fmt(_mobilenet_m, precision=1, commas=False)
     resnet50_params_m_str = fmt(_resnet50_m, precision=1, commas=False)
+    mobilenet_top1_str = fmt(_mobilenet_top1, precision=0, commas=False)
+    resnet50_top1_str = fmt(_resnet50_top1, precision=0, commas=False)
+    param_ratio_str = fmt(_param_ratio, precision=1, commas=False)
+    accuracy_per_param_ratio_str = fmt(_accuracy_per_param_ratio, precision=0, commas=False)
 ```
 
 Neural network compression (pruning, quantization, knowledge distillation, and architecture optimization) requires specialized benchmarks because compression reshapes the trade-off landscape: every byte saved or operation eliminated must be weighed against potential accuracy loss and hardware compatibility.
 
-The most basic compression metric is raw size reduction: parameter count, memory footprint in bytes, and compressed storage requirements. Size alone, however, is misleading. MobileNetV2 achieves approximately 72 percent ImageNet top-1 accuracy with `{python} CompressionModelSpecs.mobilenet_params_m_str` million parameters vs. ResNet-50's 76 percent accuracy with `{python} CompressionModelSpecs.resnet50_params_m_str` million parameters—about 7.3$\times$ fewer parameters at comparable accuracy, or roughly 7$\times$ more accuracy per parameter.
+The most basic compression metric is raw size reduction: parameter count, memory footprint in bytes, and compressed storage requirements. Size alone, however, is misleading. MobileNetV2 achieves approximately `{python} CompressionModelSpecs.mobilenet_top1_str` percent ImageNet top-1 accuracy with `{python} CompressionModelSpecs.mobilenet_params_m_str` million parameters vs. ResNet-50's `{python} CompressionModelSpecs.resnet50_top1_str` percent accuracy with `{python} CompressionModelSpecs.resnet50_params_m_str` million parameters—about `{python} CompressionModelSpecs.param_ratio_str`$\times$ fewer parameters at comparable accuracy, or roughly `{python} CompressionModelSpecs.accuracy_per_param_ratio_str`$\times$ more accuracy per parameter.
 
 Pruning benchmarks must distinguish between structured and unstructured approaches, because they produce qualitatively different results on real hardware. Structured pruning removes entire neurons or filters, achieving consistent speedups but typically lower compression ratios (2--4$\times$). Unstructured pruning eliminates individual weights for higher compression ratios (10--100$\times$), but realizing actual speedups requires specialized sparse computation support—meaning benchmark protocols must specify hardware platform and software implementation.
 
@@ -1666,12 +1927,12 @@ The differences cascade through every aspect of system design. Training involves
 # │ Show: Power draw, latency, joule cost, and watt-hour cost per query.
 # │ How:  E = P × t identity with two latency points (fast/slow).
 # │
-# │ Imports: mlsysim.fmt (fmt, md_math)
+# │ Imports: mlsysim.fmt (fmt, md_math, check)
 # │ Exports: accel_power_w_str, latency_fast_ms_str, latency_slow_ms_str,
 # │          energy_fast_j_str, energy_fast_wh_str, energy_slow_wh_str,
 # │          energy_fast_calc_math (worked-example math via md_math())
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, md_math
+from mlsysim.fmt import fmt, md_math, check
 from mlsysim.core.constants import ms, second
 
 class InferenceEnergy:
@@ -1687,6 +1948,10 @@ class InferenceEnergy:
     _energy_fast_wh = _energy_fast_j / 3600                  # watt-hours
     _energy_slow_j = _power_w * (_latency_slow_ms * ms).m_as(second)
     _energy_slow_wh = _energy_slow_j / 3600
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(_energy_fast_j == 3.0, f"Expected 3 J at 300 W for 10 ms, got {_energy_fast_j:.1f}")
+    check(_energy_slow_j == _energy_fast_j * 10, "100 ms scenario should use 10x the 10 ms energy.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     accel_power_w_str = fmt(_power_w, precision=0, commas=False)
@@ -2036,6 +2301,9 @@ class ScalingEfficiencyCalc:
     efficiency_pct = t1_hours / (n_gpus * tn_hours) * 100
     loss_pct = 100 - efficiency_pct
     eff_denom = n_gpus * tn_hours
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(efficiency_pct == 75.0, f"Expected 75% scaling efficiency, got {efficiency_pct:.1f}%")
+    check(ideal_hours < tn_hours, "Actual multi-GPU time should be slower than perfect scaling.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     ideal_str = fmt(ideal_hours, precision=0, commas=False)
     eff_str = fmt(efficiency_pct, precision=0, commas=False)
@@ -2107,34 +2375,39 @@ Training large-scale machine learning models requires substantial computational 
 # │ Goal: Demonstrate that INT8 quantization saves energy primarily through
 # │       reduced DRAM traffic (4× fewer bytes loaded), not cheaper arithmetic.
 # │ Show: FP32 vs INT8 load and compute energy costs, and total savings ratio.
-# │ How: Multiply MobileNet parameter count and MAC count by pJ-per-operation
+# │ How: Multiply MobileNetV2 parameter count and operation count by pJ-per-op
 # │      constants; compare FP32 and INT8 totals to get savings ratios.
 # │
-# │ Imports: mlsysim.core.constants (ENERGY_DRAM_PJ_PER_BYTE, ENERGY_FLOP_FP32_PJ,
-# │          ENERGY_FLOP_INT8_PJ), mlsysim.book (fmt)
-# │ Exports: EnergyBreakdownCalc.dram_energy_pj_str, m_params_str, m_macs_str, m_fp32_mb_str,
+# │ Imports: mlsysim (Models), mlsysim.core.constants (ENERGY_DRAM_PJ_PER_BYTE,
+# │          ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_INT8_PJ, MOBILENETV2_FLOPs),
+# │          mlsysim.fmt (fmt, check)
+# │ Exports: EnergyBreakdownCalc.dram_energy_pj_str, m_params_str, m_ops_str, m_fp32_mb_str,
 # │          m_int8_mb_str, e_fp32_load_str, e_fp32_compute_str,
 # │          e_fp32_total_str, e_int8_load_str, e_int8_compute_str,
 # │          e_int8_total_str, s_load_str, s_compute_str, s_total_str,
 # │          e_fp32_load_mj_str, e_fp32_compute_mj_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_percent, fmt, check
-from mlsysim.core.constants import ENERGY_DRAM_PJ_PER_BYTE, ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_INT8_PJ, ureg, byte, MILLION
+from mlsysim import Models
+from mlsysim.fmt import fmt, check
+from mlsysim.core.constants import (
+    ENERGY_DRAM_PJ_PER_BYTE, ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_INT8_PJ,
+    MOBILENETV2_FLOPs, ureg, byte, MILLION, Mparam, MFLOPs
+)
 
 class EnergyBreakdownCalc:
     """FP32 vs INT8 MobileNet inference energy: memory load dominates; INT8 attacks both sources."""
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    m_params = 4.3                                                              # Million params
-    m_macs = 300                                                                # Million MACs
+    m_params = Models.Vision.MobileNetV2.parameters.m_as(Mparam)                # Million params
+    m_ops = MOBILENETV2_FLOPs.m_as(MFLOPs)                                      # Million ops
     _dram_pj = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/byte)
     _fp32_pj = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.flop)
     _int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.flop)
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # FP32: 4 bytes/param for load; INT8: 1 byte/param
     e_fp32_load = (m_params * MILLION * 4 * _dram_pj) / MILLION               # uJ
-    e_fp32_compute = (m_macs * MILLION * _fp32_pj) / MILLION                  # uJ
+    e_fp32_compute = (m_ops * MILLION * _fp32_pj) / MILLION                   # uJ
     e_int8_load = (m_params * MILLION * 1 * _dram_pj) / MILLION               # uJ
-    e_int8_compute = (m_macs * MILLION * _int8_pj) / MILLION                  # uJ
+    e_int8_compute = (m_ops * MILLION * _int8_pj) / MILLION                   # uJ
     m_fp32_mb = m_params * 4
     m_int8_mb = m_params
     e_fp32_total = e_fp32_load + e_fp32_compute
@@ -2144,12 +2417,16 @@ class EnergyBreakdownCalc:
     s_total = e_fp32_total/e_int8_total
     e_fp32_load_mj = (e_fp32_load * ureg.microjoule).m_as(ureg.millijoule)
     e_fp32_compute_mj = (e_fp32_compute * ureg.microjoule).m_as(ureg.millijoule)
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(m_fp32_mb) == 14, f"MobileNetV2 FP32 size should be about 14 MB, got {m_fp32_mb:.1f}")
+    check(s_load == 4.0, f"Expected 4x load-energy reduction, got {s_load:.1f}x")
+    check(s_compute > 15, f"Expected INT8 compute to be much cheaper, got {s_compute:.1f}x")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     dram_energy_pj_str = fmt(_dram_pj, precision=0, commas=False)
-    m_params_str = f"{m_params}"
-    m_macs_str = fmt(m_macs, precision=0, commas=False)
+    m_params_str = fmt(m_params, precision=1, commas=False)
+    m_ops_str = fmt(m_ops, precision=0, commas=False)
     m_fp32_mb_str = fmt(m_fp32_mb, precision=0, commas=False)
-    m_int8_mb_str = f"{m_int8_mb}"
+    m_int8_mb_str = fmt(m_int8_mb, precision=1, commas=False)
     e_fp32_load_str = fmt(e_fp32_load, precision=0, commas=False)
     e_fp32_compute_str = fmt(e_fp32_compute, precision=0, commas=True)
     e_fp32_total_str = fmt(e_fp32_total, precision=0, commas=True)
@@ -2181,11 +2458,17 @@ class EnergyBreakdownCalc:
 # │ Imports: mlsysim.core.constants (ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_FP16_PJ,
 # │          ENERGY_FLOP_INT8_PJ, ENERGY_REG_PJ, ENERGY_SRAM_L1_PJ,
 # │          ENERGY_SRAM_L2_PJ, GPT3_TRAINING_ENERGY_MWH),
-# │          mlsysim.book (fmt)
+# │          mlsysim.fmt (fmt)
 # │ Exports: energy_fp32_str, energy_fp16_str, energy_int8_str,
 # │          energy_reg_str, energy_l1_str, energy_l2_str,
 # │          gpt3_energy_mwh_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt
+from mlsysim.core.constants import (
+    ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_FP16_PJ, ENERGY_FLOP_INT8_PJ,
+    ENERGY_REG_PJ, ENERGY_SRAM_L1_PJ, ENERGY_SRAM_L2_PJ,
+    GPT3_TRAINING_ENERGY_MWH
+)
 
 class EnergyPerOp:
     """Energy per operation and memory access for precision comparison tables."""
@@ -2242,7 +2525,7 @@ Memory access dominates: reading one byte from DRAM costs over 10,000$\times$ mo
 | **Component**                                                  | **FP32 (`{python} EnergyBreakdownCalc.m_fp32_mb_str` MB)** | **INT8 (`{python} EnergyBreakdownCalc.m_int8_mb_str` MB)** |                      **Savings**                       |
 |:---------------------------------------------------------------|:----------------------------------------------------------:|:----------------------------------------------------------:|:------------------------------------------------------:|
 | **Model load from DRAM**                                       |     `{python} EnergyBreakdownCalc.e_fp32_load_str` μJ      |     `{python} EnergyBreakdownCalc.e_int8_load_str` μJ      |   `{python} EnergyBreakdownCalc.s_load_str`$\times$    |
-| **Compute (`{python} EnergyBreakdownCalc.m_macs_str` M MACs)** |    `{python} EnergyBreakdownCalc.e_fp32_compute_str` μJ    |    `{python} EnergyBreakdownCalc.e_int8_compute_str` μJ    |  `{python} EnergyBreakdownCalc.s_compute_str`$\times$  |
+| **Compute (`{python} EnergyBreakdownCalc.m_ops_str` M ops)**   |    `{python} EnergyBreakdownCalc.e_fp32_compute_str` μJ    |    `{python} EnergyBreakdownCalc.e_int8_compute_str` μJ    |  `{python} EnergyBreakdownCalc.s_compute_str`$\times$  |
 | **Total**                                                      |   **`{python} EnergyBreakdownCalc.e_fp32_total_str` μJ**   |   **`{python} EnergyBreakdownCalc.e_int8_total_str` μJ**   | **`{python} EnergyBreakdownCalc.s_total_str`$\times$** |
 
 : **MobileNet INT8 Energy Breakdown**: Per-inference energy decomposed into model-load and compute terms for FP32 vs. INT8, showing that INT8 quantization attacks DRAM-traffic energy as the dominant component. {#tbl-benchmarking-mobilenet-int8-energy}
@@ -2543,6 +2826,9 @@ class AmdahlBenchmarkCalc:
     bench_e2e_improvement = bench_total_ms/bench_opt_total_ms
     preprocess_fraction = bench_preprocess_ms/bench_total_ms
     amdahl_ceiling = 1 / preprocess_fraction
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(bench_opt_inference_ms == 2.0, f"Expected optimized inference at 2 ms, got {bench_opt_inference_ms:.1f}")
+    check(bench_e2e_improvement < bench_inf_speedup, "End-to-end speedup must be below component speedup.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     bench_preprocess_ms_str = fmt(bench_preprocess_ms, precision=0, commas=False)
     bench_inference_ms_str = fmt(bench_inference_ms, precision=0, commas=False)
@@ -2678,15 +2964,96 @@ A model with excellent throughput or latency may be unsuitable for mobile or edg
 
 In serverless environments, where models are loaded on demand, cold-start latency[^fn-cold-start] is a critical factor. Ignoring the time it takes to initialize a model and process the first request can result in unrealistic expectations for responsiveness. Evaluating both model load time and first-inference latency ensures that systems are designed to meet real-world responsiveness requirements.
 
-[^fn-cold-start]: **Cold-Start Latency**: The initialization time from idle state, dominated by model weight loading from storage to accelerator memory. For a 7B-parameter model in FP16 (~14 GB), cold start on PCIe 4.0 (25 GB/s effective) takes ~560 ms for weight transfer alone, plus framework initialization overhead. This physical lower bound means that cold-start mitigation (model caching, speculative loading) is a systems design requirement, not just an operational convenience. \index{Cold Start Latency!physical lower bound}
+```{python}
+#| label: cold-start-transfer-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ COLD-START WEIGHT-TRANSFER LOWER BOUND
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: fn-cold-start footnote definition immediately below.
+# │
+# │ Goal:    Compute the physical lower bound on cold-start latency for a 7B
+# │          FP16 model over PCIe 4.0.
+# │ Show:    Parameter count, model size in GB, PCIe effective bandwidth, and
+# │          weight-transfer time in milliseconds.
+# │ How:     Model size equals params times bytes per param; transfer time
+# │          equals model size divided by effective PCIe bandwidth.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: ColdStartTransferCalc.params_b_str,
+# │          ColdStartTransferCalc.model_size_gb_str,
+# │          ColdStartTransferCalc.pcie_effective_gbs_str,
+# │          ColdStartTransferCalc.transfer_ms_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class ColdStartTransferCalc:
+    """FP16 weight transfer lower bound for a 7B model on PCIe 4.0."""
+    # LOAD
+    params_b = 7
+    bytes_per_param = 2
+    pcie_effective_gbs = 25
+
+    # EXECUTE
+    model_size_gb = params_b * bytes_per_param
+    transfer_s = model_size_gb / pcie_effective_gbs
+    transfer_ms = transfer_s * 1000
+
+    # GUARD
+    check(round(model_size_gb) == 14, f"Expected ~14 GB FP16 weights, got {model_size_gb:.1f}")
+    check(round(transfer_ms) == 560, f"Expected ~560 ms transfer, got {transfer_ms:.0f}")
+
+    # OUTPUT
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    model_size_gb_str = fmt(model_size_gb, precision=0, commas=False)
+    pcie_effective_gbs_str = fmt(pcie_effective_gbs, precision=0, commas=False)
+    transfer_ms_str = fmt(transfer_ms, precision=0, commas=False)
+```
+
+[^fn-cold-start]: **Cold-Start Latency**: The initialization time from idle state, dominated by model weight loading from storage to accelerator memory. For a `{python} ColdStartTransferCalc.params_b_str`B-parameter model in FP16 (~`{python} ColdStartTransferCalc.model_size_gb_str` GB), cold start on PCIe 4.0 (`{python} ColdStartTransferCalc.pcie_effective_gbs_str` GB/s effective) takes ~`{python} ColdStartTransferCalc.transfer_ms_str` ms for weight transfer alone, plus framework initialization overhead. This physical lower bound means that cold-start mitigation (model caching, speculative loading) is a systems design requirement, not just an operational convenience. \index{Cold Start Latency!physical lower bound}
 
 #### Isolated metrics evaluation {#sec-benchmarking-isolated-metrics-evaluation-922d}
 
 Benchmarking inference systems often involves balancing competing metrics. For example, maximizing batch throughput might degrade latency, while aggressive precision reduction could reduce accuracy. Focusing on a single metric without considering its impact on others can lead to incomplete or misleading evaluations.
 
+```{python}
+#| label: tops-footnote-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ TOPS FOOTNOTE ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: TOPS footnote immediately below.
+# │
+# │ Goal: Keep the H100 INT8 TOPS figure local to the comparability warning.
+# │ Show: H100 dense INT8 throughput in tera-ops/sec units.
+# │ How: Read the H100 INT8 hardware constant and format it for prose.
+# │
+# │ Imports: mlsysim.core.constants (H100_FLOPS_INT8, TFLOPs, second)
+# │ Exports: TopsFootnoteAnchor.h100_tflops_int8_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import H100_FLOPS_INT8, TFLOPs, second
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class TopsFootnoteAnchor:
+    """Local H100 INT8 TOPS anchor for the metric-comparability footnote."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    h100_tflops_int8 = H100_FLOPS_INT8.m_as(TFLOPs/second)
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    # Direct hardware-constant lookup.
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(h100_tflops_int8 > 1000, "H100 INT8 peak should exceed 1000 TOPS.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    h100_tflops_int8_str = fmt(h100_tflops_int8, precision=0, commas=False)
+```
+
 Numerical precision optimization\index{Numerical Precision Optimization|see{Quantization}} exemplifies this challenge particularly well. Individual accelerator benchmarks show INT8 operations achieving 4$\times$ higher TOPS[^fn-tops] (Tera Operations Per Second) compared to FP32, creating compelling performance narratives.
 
-[^fn-tops]: **TOPS (Tera Operations Per Second)**: A measure of raw computational throughput (trillions of operations/second). The H100 delivers `{python} H100Specs.h100_tflops_int8_str` TOPS INT8 vs. the Apple M2 Neural Engine at 15.8 TOPS and Edge TPU at 4 TOPS, but these numbers conflate different operation types—multiply-accumulate (MAC) vs. accumulate vs. activation. TOPS comparisons across vendors are meaningful only when the operation definition, precision, and sparsity assumptions are identical, conditions rarely met in vendor specifications. \index{TOPS!comparability limitation}
+[^fn-tops]: **TOPS (Tera Operations Per Second)**: A measure of raw computational throughput (trillions of operations/second). The H100 delivers `{python} TopsFootnoteAnchor.h100_tflops_int8_str` TOPS INT8 vs. the Apple M2 Neural Engine at 15.8 TOPS and Edge TPU at 4 TOPS, but these numbers conflate different operation types—multiply-accumulate (MAC) vs. accumulate vs. activation. TOPS comparisons across vendors are meaningful only when the operation definition, precision, and sparsity assumptions are identical, conditions rarely met in vendor specifications. \index{TOPS!comparability limitation}
 
 #### Linear scaling assumption {#sec-benchmarking-linear-scaling-assumption-6a7a}
 
@@ -2817,6 +3184,9 @@ class EdgeTPUSpeedupCalc:
     cpu_energy_mj = cpu_power_mw * cpu_latency_ms / 1000
     edgetpu_energy_mj = edgetpu_power_mw * edgetpu_latency_ms / 1000
     energy_ratio = cpu_energy_mj/edgetpu_energy_mj
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(e2e_speedup < inference_speedup, "Preprocessing overhead should narrow the end-to-end speedup.")
+    check(energy_ratio > 1, "EdgeTPU should use less active inference energy despite higher power.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     edgetpu_latency_ms_str = fmt(edgetpu_latency_ms, precision=0, commas=False)
     cpu_latency_ms_str = fmt(cpu_latency_ms, precision=0, commas=False)
@@ -2867,10 +3237,59 @@ Training benchmarks measure learning speed; inference benchmarks measure serving
 
 ## Power Measurement Techniques {#sec-benchmarking-power-measurement-techniques-bcc2}
 
-A chip vendor advertises "10 TOPS at 0.5 W," but under sustained inference load, thermal throttling drops actual throughput to 3 TOPS at 2 W. Without standardized power measurement, this 6.7$\times$ efficiency gap between the datasheet and reality goes undetected until deployment.
+```{python}
+#| label: power-claim-gap-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DATASHEET-VS-SUSTAINED EFFICIENCY GAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Opening example of @sec-benchmarking-power-measurement-techniques-bcc2
+# │          immediately below.
+# │
+# │ Goal:    Quantify the TOPS/W gap between a peak datasheet claim and
+# │          sustained inference under thermal throttling.
+# │ Show:    Datasheet TOPS and watts, sustained TOPS and watts, and the
+# │          resulting efficiency-gap multiplier.
+# │ How:     Direct TOPS/W ratios for each operating point and their quotient.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: PowerClaimGapCalc.datasheet_tops_str,
+# │          PowerClaimGapCalc.datasheet_w_str,
+# │          PowerClaimGapCalc.sustained_tops_str,
+# │          PowerClaimGapCalc.sustained_w_str,
+# │          PowerClaimGapCalc.efficiency_gap_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class PowerClaimGapCalc:
+    """TOPS/W gap between a peak datasheet claim and sustained inference."""
+    # LOAD
+    datasheet_tops = 10
+    datasheet_w = 0.5
+    sustained_tops = 3
+    sustained_w = 2
+
+    # EXECUTE
+    datasheet_tops_per_w = datasheet_tops / datasheet_w
+    sustained_tops_per_w = sustained_tops / sustained_w
+    efficiency_gap = datasheet_tops_per_w / sustained_tops_per_w
+
+    # GUARD
+    check(round(efficiency_gap, 1) == 13.3, f"Expected 13.3x efficiency gap, got {efficiency_gap:.1f}x")
+    check(sustained_tops_per_w < datasheet_tops_per_w, "Sustained efficiency should trail the datasheet claim.")
+
+    # OUTPUT
+    datasheet_tops_str = fmt(datasheet_tops, precision=0, commas=False)
+    datasheet_w_str = fmt(datasheet_w, precision=1, commas=False)
+    sustained_tops_str = fmt(sustained_tops, precision=0, commas=False)
+    sustained_w_str = fmt(sustained_w, precision=0, commas=False)
+    efficiency_gap_str = fmt(efficiency_gap, precision=1, commas=False)
+```
+
+A chip vendor advertises "`{python} PowerClaimGapCalc.datasheet_tops_str` TOPS at `{python} PowerClaimGapCalc.datasheet_w_str` W," but under sustained inference load, thermal throttling drops actual throughput to `{python} PowerClaimGapCalc.sustained_tops_str` TOPS at `{python} PowerClaimGapCalc.sustained_w_str` W. Without standardized power measurement, this `{python} PowerClaimGapCalc.efficiency_gap_str`$\times$ efficiency gap between the datasheet and reality goes undetected until deployment.
 
 \index{TOPS per Watt!primary design objective}
-This third dimension is critical because @sec-hardware-acceleration established TOPS/Watt as a primary design objective alongside raw TOPS. Power benchmarks validate whether efficiency-optimized accelerators deliver their promised energy savings. Power claims are particularly susceptible to gaming: a chip advertising "10 TOPS at 0.5 W" might achieve that ratio only at minimal utilization; under sustained load, thermal throttling and voltage scaling may deliver 3 TOPS at 2 W. Power benchmarks expose these gaps.
+This third dimension is critical because @sec-hardware-acceleration established TOPS/Watt as a primary design objective alongside raw TOPS. Power benchmarks validate whether efficiency-optimized accelerators deliver their promised energy savings. Power claims are particularly susceptible to gaming: a chip advertising "`{python} PowerClaimGapCalc.datasheet_tops_str` TOPS at `{python} PowerClaimGapCalc.datasheet_w_str` W" might achieve that ratio only at minimal utilization; under sustained load, thermal throttling and voltage scaling may deliver `{python} PowerClaimGapCalc.sustained_tops_str` TOPS at `{python} PowerClaimGapCalc.sustained_w_str` W. Power benchmarks expose these gaps.
 
 However, measuring power consumption in machine learning systems presents challenges distinct from measuring time or throughput. Power varies with temperature, workload phase, and system configuration in ways that performance metrics do not. @tbl-power quantifies how energy demands of ML models vary dramatically across deployment environments, spanning multiple orders of magnitude from TinyML devices consuming mere microwatts to data center racks requiring kilowatts. This wide spectrum illustrates the central challenge in creating standardized benchmarking methodologies [@henderson2020towards].
 
@@ -2998,7 +3417,7 @@ Compute Node 1 (Measured)};
 \node[BoxFill2,below=\ra of 4C1.south,minimum width=41mm,minimum height=6mm,anchor=north](4C2){
 Compute Node 2 (Measured)};
 \node[BoxFill2,below=\ra of 4C2.south,minimum width=41mm,minimum height=9mm,anchor=north](4C3){
-Network Switches\\ (Measured/Estimated))};
+Network Switches\\ (Measured/Estimated)};
 \node[BoxDash2,below=\ra of 4C3.south,minimum width=41mm,minimum height=6mm,anchor=north](4C4){
 Storage Node};
 \node[BoxFill2,below=\ra of 4C4.south,minimum width=41mm,minimum height=6mm,anchor=north](4C5){
@@ -3996,23 +4415,27 @@ Acceptable degradation depends on deployment context. A 2 percent accuracy drop 
 # │ Show: That INT8 quantization preserves accuracy while yielding 4× size reduction.
 # │ How: Compare accuracy, ECE, and model size for FP32 vs. INT8 MobileNetV2.
 # │
-# │ Imports: mlsysim.book (fmt)
+# │ Imports: mlsysim (Models), mlsysim.core.constants (Mparam),
+# │          mlsysim.fmt (fmt, check)
 # │ Exports: mv2_acc_fp32_str, mv2_params_m_str, mv2_size_fp32_mb_str,
 # │          mv2_size_int8_mb_str, mv2_acc_int8_str, mv2_acc_drop_str,
 # │          mv2_top5_fp32_str, mv2_top5_int8_str, mv2_ece_fp32_str,
 # │          mv2_ece_int8_str, mv2_edge_fp32_str, mv2_edge_int8_str,
 # │          mv2_edge_drop_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_percent, fmt, check
+from mlsysim import Models
+from mlsysim.core.constants import Mparam
+from mlsysim.fmt import fmt, check
 
 class MobileNetINT8Calc:
     """MobileNetV2 FP32 vs INT8: aggregate accuracy holds but calibration and edge cases degrade."""
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    acc_fp32 = 71.8
-    params_m = 3.5
-    size_fp32_mb = 14.0
-    size_int8_mb = 3.5                                                          # 14 / 4
-    acc_int8 = 70.9
+    # Reuse the earlier trade-off baseline so the two MobileNet tables stay aligned.
+    acc_fp32 = MobileNetTradeoffCalc.acc_fp32
+    params_m = Models.Vision.MobileNetV2.parameters.m_as(Mparam)
+    size_fp32_mb = MobileNetTradeoffCalc.size_fp32_mb
+    size_int8_mb = MobileNetTradeoffCalc.size_int8_mb
+    acc_int8 = MobileNetTradeoffCalc.acc_int8
     top5_fp32 = 91.0
     top5_int8 = 90.4
     ece_fp32 = 0.031
@@ -4022,6 +4445,11 @@ class MobileNetINT8Calc:
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     acc_drop = acc_fp32 - acc_int8
     edge_drop = edge_fp32 - edge_int8
+    size_reduction = size_fp32_mb / size_int8_mb
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(size_reduction == 4.0, f"Expected 4x size reduction, got {size_reduction:.1f}x")
+    check(acc_drop < 1.0, f"Expected <1 point top-1 drop, got {acc_drop:.1f}")
+    check(edge_drop > acc_drop, "Edge-case drop should exceed aggregate top-1 drop.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     mv2_acc_fp32_str = fmt(acc_fp32, precision=1, commas=False)
     mv2_params_m_str = fmt(params_m, precision=1, commas=False)
@@ -4035,7 +4463,7 @@ class MobileNetINT8Calc:
     mv2_ece_int8_str = fmt(ece_int8, precision=3, commas=False)
     mv2_edge_fp32_str = fmt(edge_fp32, precision=1, commas=False)
     mv2_edge_int8_str = fmt(edge_int8, precision=1, commas=False)
-    mv2_edge_drop_str = fmt(edge_drop, precision=0, commas=False)              # ~7%
+    mv2_edge_drop_str = fmt(edge_drop, precision=1, commas=False)
 ```
 
 ::: {.callout-lighthouse title="MobileNet INT8 compression"}
@@ -4053,7 +4481,7 @@ Returning to our MobileNet lighthouse example, consider the complete validation 
 | **Top-1 accuracy**     | `{python} MobileNetINT8Calc.mv2_acc_fp32_str` percent  | `{python} MobileNetINT8Calc.mv2_acc_int8_str` percent  | ✓ (`{python} MobileNetINT8Calc.mv2_acc_drop_str` percentage point drop; below 1 percentage point threshold) |
 | **Top-5 accuracy**     | `{python} MobileNetINT8Calc.mv2_top5_fp32_str` percent | `{python} MobileNetINT8Calc.mv2_top5_int8_str` percent | ✓                                                                                                           |
 | **Calibration ECE**    |     `{python} MobileNetINT8Calc.mv2_ece_fp32_str`      |     `{python} MobileNetINT8Calc.mv2_ece_int8_str`      | ⚠ (degraded)                                                                                                |
-| **Edge-case accuracy** | `{python} MobileNetINT8Calc.mv2_edge_fp32_str` percent | `{python} MobileNetINT8Calc.mv2_edge_int8_str` percent | ⚠ (`{python} MobileNetINT8Calc.mv2_edge_drop_str` percent drop)                                             |
+| **Edge-case accuracy** | `{python} MobileNetINT8Calc.mv2_edge_fp32_str` percent | `{python} MobileNetINT8Calc.mv2_edge_int8_str` percent | ⚠ (`{python} MobileNetINT8Calc.mv2_edge_drop_str` percentage point drop)                                    |
 
 : **MobileNetV2 INT8 Postcompression Metrics**: FP32 vs. INT8 comparison across top-1 and top-5 accuracy, calibration error, and edge-case accuracy, revealing how aggregate accuracy can mask calibration and tail-case degradation. {#tbl-benchmarking-mobilenet-int8-validation}
 
@@ -4065,11 +4493,11 @@ Returning to our MobileNet lighthouse example, consider the complete validation 
 - $0.05 < \text{ECE} < 0.10$: Moderate calibration; use confidence scores with caution
 - $\text{ECE} > 0.10$: Poorly calibrated; confidence scores are unreliable
 
-The INT8 model's ECE of 0.089 indicates borderline calibration: confidence scores are becoming unreliable for automated decision thresholds.
+The INT8 model's ECE of `{python} MobileNetINT8Calc.mv2_ece_int8_str` indicates borderline calibration: confidence scores are becoming unreliable for automated decision thresholds.
 
 **Edge-case definition**: Images with >50 percent occlusion, <100 lux lighting, or >30° rotation from training distribution (approximately 5 percent of real-world inputs).
 
-**What this reveals**: Average-case accuracy looks acceptable (0.9 percent drop), but calibration degraded significantly and edge-case accuracy dropped `{python} MobileNetINT8Calc.mv2_edge_drop_str` percent. If the deployment context uses confidence thresholds (for example, "only act if confidence > 85 percent") or encounters many edge cases (unusual lighting, partial occlusions), INT8 MobileNet may fail despite passing aggregate benchmarks.
+**What this reveals**: Average-case accuracy looks acceptable (`{python} MobileNetINT8Calc.mv2_acc_drop_str` percentage point drop), but calibration degraded significantly and edge-case accuracy dropped `{python} MobileNetINT8Calc.mv2_edge_drop_str` percentage points. If the deployment context uses confidence thresholds (for example, "only act if confidence > 85 percent") or encounters many edge cases (unusual lighting, partial occlusions), INT8 MobileNet may fail despite passing aggregate benchmarks.
 
 **Fix**: Apply temperature scaling\index{Temperature Scaling!calibration restoration} post-hoc to restore calibration. Temperature scaling learns a single scalar $T$ to divide logits before softmax: $\text{softmax}(z_i/T)$. Typical values: $T = 1.5$–$2.5$ for quantized models. In parallel, add edge-case examples to the test set to monitor that specific failure mode continuously.
 
@@ -4690,6 +5118,53 @@ Benchmarking completes Part III's optimization pipeline by validating whether th
 
 The validation sequence reflects how problems manifest: hardware issues surface immediately (wrong throughput, thermal throttling), model quality issues emerge under evaluation (accuracy degradation, calibration loss), and data issues often reveal themselves only in production (distribution shift, demographic bias). System benchmarks like MLPerf Training and Inference validate hardware claims with standardized workloads. Model quality benchmarks verify that compression preserved critical properties beyond top-line accuracy. Data benchmarks expose representativeness gaps that no amount of hardware optimization can compensate for.
 
+```{python}
+#| label: precision-energy-summary-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ PRECISION ENERGY SUMMARY ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Summary takeaway on precision as an energy lever.
+# │
+# │ Goal: Keep the MobileNet FP32-to-INT8 total energy ratio local to the summary.
+# │ Show: Combined memory-load and compute-energy savings for MobileNetV2.
+# │ How: Recompute the same FP32 and INT8 totals from model and energy constants.
+# │
+# │ Imports: mlsysim (Models), mlsysim.core.constants, mlsysim.book
+# │ Exports: PrecisionEnergySummary.s_total_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import (
+    ENERGY_DRAM_PJ_PER_BYTE, ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_INT8_PJ,
+    MOBILENETV2_FLOPs, ureg, byte, MILLION, Mparam, MFLOPs
+)
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class PrecisionEnergySummary:
+    """Local summary ratio for MobileNetV2 FP32 vs. INT8 inference energy."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    m_params = Models.Vision.MobileNetV2.parameters.m_as(Mparam)
+    m_ops = MOBILENETV2_FLOPs.m_as(MFLOPs)
+    dram_pj = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/byte)
+    fp32_pj = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.flop)
+    int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.flop)
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    e_fp32_load = (m_params * MILLION * 4 * dram_pj) / MILLION
+    e_fp32_compute = (m_ops * MILLION * fp32_pj) / MILLION
+    e_int8_load = (m_params * MILLION * 1 * dram_pj) / MILLION
+    e_int8_compute = (m_ops * MILLION * int8_pj) / MILLION
+    s_total = (e_fp32_load + e_fp32_compute) / (e_int8_load + e_int8_compute)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(5 < s_total < 6, f"Expected MobileNetV2 INT8 total-energy ratio near 5.4x, got {s_total:.1f}x.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    s_total_str = fmt(s_total, precision=0, commas=False)
+```
+
 ::: {.callout-takeaways title="Measuring what matters"}
 
 * **Benchmarking is three-dimensional**: System, model, and data benchmarks each test different failure modes, and the full validation sequence must address all three.
@@ -4697,7 +5172,7 @@ The validation sequence reflects how problems manifest: hardware issues surface 
 * **Granularity determines diagnostic power**: Micro-benchmarks pinpoint which kernel is slow but miss system bottlenecks; end-to-end benchmarks capture production behavior but obscure root causes. Effective evaluation combines all three levels.
 * **The tail determines the user experience**: Average latency obscures performance failures. Benchmarking for interactive systems must report p95 and p99 tail latencies to ensure SLO compliance under load.
 * **Amdahl's Law sets the optimization ceiling**: Model speedup is limited by the nonmodel fraction of the pipeline. If preprocessing consumes 50 percent of the latency, even an infinite-speed model can only achieve 2$\times$ total system improvement.
-* **Precision is an energy lever**: INT8 quantization provides 4$\times$ memory reduction and can reduce multiplier energy by roughly 20$\times$; in the MobileNet example, the combined memory-plus-compute effect is about `{python} EnergyBreakdownCalc.s_total_str`$\times$ total inference-energy reduction.
+* **Precision is an energy lever**: INT8 quantization provides 4$\times$ memory reduction and can reduce multiplier energy by roughly 20$\times$; in the MobileNet example, the combined memory-plus-compute effect is about `{python} PrecisionEnergySummary.s_total_str`$\times$ total inference-energy reduction.
 * **Compression validation requires more than accuracy**: INT8 quantization may preserve top-line accuracy while degrading calibration and edge-case robustness, failures invisible to aggregate metrics but critical for deployment.
 
 :::

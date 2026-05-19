@@ -550,7 +550,7 @@ class LlamaBudgetCalc:
 
     nvlink_bw   = NVLINK_H100_BW.m_as(GB/second)         # GB/s (H100 NVLink 4.0)
     nvlink_alpha = 1.5                                    # us
-    ib_bw        = (INFINIBAND_NDR_BW / 8).m_as(GB/second)  # GB/s per port (NDR 400 Gbps)
+    ib_bw        = INFINIBAND_NDR_BW.m_as(GB/second)        # GB/s per port (NDR 400 Gbps)
     ib_alpha     = 3                                      # us
     compute_per_step_ms = 200  # approximate for illustration
 
@@ -630,7 +630,7 @@ If a GPU simply opens a socket and sends a massive gradient to another GPU, the 
 
 ::: {.callout-definition title="Collective operation"}
 
-***Collective Operation***\index{Collective Operation!definition} is a distributed communication pattern in which all processes in a group participate simultaneously to aggregate, broadcast, or redistribute data, with the correctness guarantee that every participant receives the same result regardless of message ordering or arrival time.
+***Collective Operation***\index{Collective Operation!definition} is a distributed communication pattern in which all processes in a group participate simultaneously to aggregate, broadcast, or redistribute data, with the correctness guarantee that each participant receives the result prescribed by the collective's semantics regardless of message ordering or arrival time.
 
 1.  **Significance (quantitative)**: The right collective algorithm determines whether communication scales with cluster size or remains constant. Ring AllReduce achieves bandwidth-optimal $2(N-1)/N \times n / \beta$ per node (constant in $N$), while a naive reduce-then-broadcast approach costs $O(N \times n / \beta)$, making it 500$\times$ worse for $N=1024$. Algorithm selection thus directly determines whether the $\text{BW}$ term in the iron law is the training bottleneck.
 2.  **Distinction (durable)**: Unlike point-to-point communication (where one sender and one receiver exchange data independently), a collective operation coordinates the entire process group—every participant must invoke the collective before any can complete it, and the library guarantees a consistent result even when different processes contribute different data.
@@ -662,7 +662,7 @@ Different model architectures stress different operations, and selecting the wro
 4.  **AllGather**: Every worker sends its data to every other worker. The result is a concatenation of all inputs.
     *   *Use Case*: Sharded Data Parallelism (FSDP[^fn-fsdp-memory]/ZeRO). Collecting sharded parameters before a forward/backward pass.
     *   *Semantics*: Worker $i$ starts with $x_i$, ends with $[x_0, x_1, \dots, x_{N-1}]$.
-    *   *Complexity*: Ring achieves $\frac{N-1}{N}\frac{M}{\beta}$ bandwidth cost; total data grows to $N \times M$ per worker.
+    *   *Complexity*: Ring achieves $\frac{N-1}{N}\frac{M}{\beta}$ bandwidth cost when $M$ is the full gathered tensor; each worker's resident data grows from a local $M/N$ shard to the full $M$.
 
 5.  ReduceScatter\index{ReduceScatter}: Data is reduced (summed), but the result is scattered such that each worker receives only a distinct chunk of the result.
     *   *Use Case*: Sharded Data Parallelism. Reducing gradients but keeping them sharded to save memory. Also used in Sequence Parallelism to distribute activations.
@@ -764,7 +764,7 @@ Each of the 7 transfers is a `{python} MoeAllToAll.data_per_transfer_kb_str` KB 
 
 If serialized: 7 $\times$ `{python} MoeAllToAll.per_transfer_us_str` $\mu\text{s}$ = `{python} MoeAllToAll.serialized_us_str` $\mu\text{s}$. If all 7 transfers run in parallel (full-duplex, non-blocking): $\approx$ `{python} MoeAllToAll.parallel_us_str` $\mu\text{s}$.
 
-**Systems insight**: The per-message sizes in MoE are small (hundreds of KB), placing them firmly in the latency-bound regime. This is why MoE scaling is constrained by alpha (latency), not beta (bandwidth), and why MoE systems benefit from low-latency switches and RDMA rather than raw bandwidth upgrades. The AllToAll also runs *twice per layer* (once for token dispatch, once for result collection), doubling the latency tax.
+**Systems insight**: The per-transfer sizes in this MoE example sit near the critical-message-size boundary, so startup overhead remains comparable to serialization time. This is why MoE scaling is often constrained by alpha (latency), fan-out, and contention rather than raw beta (bandwidth) alone, and why MoE systems benefit from low-latency switches, RDMA, message fusion, and topology-aware routing. The AllToAll also runs *twice per layer* (once for token dispatch, once for result collection), doubling the startup tax.
 
 :::
 
@@ -779,7 +779,7 @@ In practice, MoE routing is rarely perfectly uniform. Popular experts receive mo
 | **Tensor Parallelism**   | AllReduce, AllGather       | Latency-bound (requires NVLink)       |
 | **Pipeline Parallelism** | Point-to-Point (Send/Recv) | Latency-bound (microbatch handoffs)   |
 | **Sequence Parallelism** | AllGather, ReduceScatter   | Bandwidth-bound (activation exchange) |
-| **MoE (Experts)**        | AllToAll                   | Latency-bound (dynamic token routing) |
+| **MoE (Experts)**        | AllToAll                   | Latency-sensitive + contention        |
 | **DLRM (RecSys)**        | AllToAll                   | Latency & Bandwidth (sparse lookups)  |
 
 : **Collective Operation Selection Guide**\index{Collective Operation Selection Guide}: Matching training strategies to their primary collective operations enables efficient distributed communication design. MoE and DLRM serve as canonical "lighthouse" workloads throughout this book, representing sparse expert architectures and recommendation systems respectively. Pipeline Parallelism uniquely relies on point-to-point rather than collective communication. {#tbl-collective-selection}
@@ -790,7 +790,7 @@ The FSDP/ZeRO strategy deserves special attention because its communication patt
 
 The memory optimization transforms the communication pattern. Before each layer's forward pass, the GPU must reconstruct the full parameter tensor by calling AllGather to collect the shards from all other GPUs. After the backward pass, the gradients are reduced and redistributed via ReduceScatter, so each GPU holds gradients only for its own parameter shard. The sharded parameters can then be discarded (freed from memory) until the next forward pass needs them.
 
-The consequence is a trade-off between memory and communication frequency. Standard data parallelism communicates once per training step (a single AllReduce of the full gradient). FSDP communicates twice per layer per step (AllGather in forward, ReduceScatter in backward), but each communication is smaller (only $1/N$ of the layer's parameters per GPU). For a model with $L_{\text{layers}}$ layers, FSDP issues $2L_{\text{layers}}$ collective operations per step instead of 1, but each operation transfers approximately the same total bytes as the single AllReduce would. The total communication volume is comparable, but the communication is spread across more, smaller operations.
+The consequence is a trade-off between memory and communication frequency. Standard data parallelism communicates once per training step (a single AllReduce of the full gradient). FSDP communicates twice per layer per step (AllGather in forward, ReduceScatter in backward), but each communication is smaller (only that layer's parameters, sharded across ranks). For a model with $L_{\text{layers}}$ layers, FSDP issues $2L_{\text{layers}}$ collective operations per step instead of 1; across all those operations, the total communication volume can be comparable to the single full-gradient AllReduce, but it is spread across many smaller operations.
 
 The higher operation count makes FSDP more sensitive to latency ($\alpha$) than standard data parallelism. If each of the $2L_{\text{layers}}$ collectives pays the full NCCL startup overhead (25--50 $\mu$s per operation from @tbl-nccl-vs-theory), the aggregate overhead for a 100-layer model is 5--10 ms, which can represent a meaningful fraction of step time. FSDP implementations mitigate this through prefetching\index{Prefetching} (launching the next layer's AllGather while the current layer is computing) and **communication stream pipelining** (using dedicated CUDA streams for communication that overlap with compute streams).
 
@@ -884,7 +884,7 @@ Each GPU "owns" one chunk: GPU 0 owns chunk A (element 0), GPU 1 owns chunk B (e
 
 **Phase 1: Scatter-Reduce (3 steps)**
 
-Each GPU sends its "owned" chunk to its right neighbor, which adds the received value to its local copy. @tbl-collective-communication-ring-scatter-reduce-trace traces the three sequential steps across all four GPUs:
+Each GPU sends one chunk or partial sum to its right neighbor, which adds the received value to its local copy. @tbl-collective-communication-ring-scatter-reduce-trace traces the three sequential steps across all four GPUs:
 
 | **Step** | **GPU 0 sends**          | **GPU 1 sends**          | **GPU 2 sends**          | **GPU 3 sends**          | **After receive and add**:                                                                     |
 |:---------|:-------------------------|:-------------------------|:-------------------------|:-------------------------|:-----------------------------------------------------------------------------------------------|
@@ -954,7 +954,7 @@ $$ T_{\text{tree-like}} \approx \underbrace{2\log_2 N \cdot \alpha}_{\text{Laten
 
 This bandwidth penalty is catastrophic for large-scale data parallelism when the implementation repeatedly exchanges full messages or creates root/interior bottlenecks. For our 175B parameter model's 350 GB gradient AllReduce across 1,000 GPUs, a bandwidth-inefficient tree-like variant can erase the latency advantage that motivated it. Optimized double-tree algorithms exist precisely to keep logarithmic latency without imposing that naive bandwidth penalty.
 
-Tree AllReduce is, however, the correct choice when latency is the primary bottleneck, typically for smaller collectives with small message sizes. The canonical use case is the AllReduce required for tensor parallelism, which operates on activations or weight gradients within a single layer. For an 8-GPU group inside a node communicating a 50 MB tensor, the latency drops from Ring's $2(8-1)\alpha = 14\alpha$ to Tree's $2\log_2(8)\alpha = 6\alpha$. The bandwidth penalty is a mere factor of $\log_2(8)=3$, a small price to pay for more than halving the latency.
+Tree AllReduce is, however, the correct choice when latency is the primary bottleneck, typically for smaller collectives with small message sizes. The canonical use case is a latency-sensitive AllReduce required by tensor parallelism, which operates on activations or weight gradients within a single layer. For an 8-GPU group inside a node communicating a small 1 MB tensor, the latency drops from Ring's $2(8-1)\alpha = 14\alpha$ to Tree's $2\log_2(8)\alpha = 6\alpha$. The bandwidth penalty is modest at that size, so reducing sequential startup steps can win.
 
 ### Recursive halving-doubling (butterfly) {#sec-communication-butterfly}
 
@@ -1241,7 +1241,7 @@ class CommInfraScenario:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     nvlink_gbs = nvlink_raw.m_as(GB/second)
-    ib_gbs = (ib_ndr_raw / 8).m_as(GB/second)
+    ib_gbs = ib_ndr_raw.m_as(GB/second)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
@@ -1300,17 +1300,17 @@ The net effect: inter-node traffic is reduced by a factor of $G$ (GPUs per node)
 # │ Goal: Compare flat Ring AllReduce vs. 3-step hierarchical AllReduce for a
 # │       1 GB gradient on 8 nodes × 8 GPUs to quantify the speedup from
 # │       exploiting NVLink vs. InfiniBand bandwidth hierarchy.
-# │ Show: speedup_str ≈ 5.7×—inline in callout insight sentence.
+# │ Show: speedup_str ≈ 6.3×—inline in callout insight sentence.
 # │ How: Flat: T = 2M/β_IB; Hierarchical: T = T_rs + T_inter + T_ag with
 # │      NVLink for intra-node phases and IB for inter-node phase.
 # │
 # │ Imports: mlsysim.core.constants (MB, GB, second, ms, NVLINK_H100_BW,
-# │          INFINIBAND_NDR_BW)
+# │          INFINIBAND_NDR_BW, MS_PER_SEC)
 # │ Exports: flat_time_ms_str, intra_data_mb_str, intra_rs_ms_str,
 # │          inter_data_mb_str, inter_time_ms_str, intra_ag_ms_str,
 # │          hier_total_ms_str, speedup_str, ib_bw_gbs_str, nvlink_bw_gbs_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import MB, GB, second, ms, NVLINK_H100_BW, INFINIBAND_NDR_BW
+from mlsysim.core.constants import MB, GB, second, ms, NVLINK_H100_BW, INFINIBAND_NDR_BW, MS_PER_SEC
 
 class HierarchicalAllreduceCalc:
     """Flat vs. 3-step hierarchical AllReduce timing for a 1 GB gradient on 64 GPUs."""
@@ -1318,8 +1318,9 @@ class HierarchicalAllreduceCalc:
     n_nodes_har    = 8
     gpus_per_node  = 8
     gradient_gb    = 1       # 1 GB gradient buffer
-    ib_bw_gbs      = (INFINIBAND_NDR_BW / 8).m_as(GB/second)  # InfiniBand NDR 400 Gbps per port
+    ib_bw_gbs      = INFINIBAND_NDR_BW.m_as(GB/second)        # InfiniBand NDR 400 Gbps per port
     nvlink_bw_gbs  = NVLINK_H100_BW.m_as(GB/second)            # NVLink 4.0 (H100)
+    ib_alpha_us    = 3
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     flat_data_gb  = 2 * gradient_gb   # bandwidth-optimal Ring sends ~2×
@@ -1329,7 +1330,10 @@ class HierarchicalAllreduceCalc:
     intra_rs_ms   = ((intra_data_mb * MB) / (nvlink_bw_gbs * GB / second)).m_as(ms)
 
     inter_data_mb = int(gradient_gb * 1000 / gpus_per_node)  # 125 MB
-    inter_time_ms = 5  # approximate with ring overhead for the example
+    inter_ring_factor = 2 * (n_nodes_har - 1) / n_nodes_har
+    inter_bw_ms = ((inter_ring_factor * inter_data_mb * MB) / (ib_bw_gbs * GB / second)).m_as(ms)
+    inter_lat_ms = 2 * (n_nodes_har - 1) * ib_alpha_us / MS_PER_SEC
+    inter_time_ms = inter_bw_ms + inter_lat_ms
 
     intra_ag_ms   = intra_rs_ms   # symmetric
 
@@ -1339,6 +1343,7 @@ class HierarchicalAllreduceCalc:
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
     check(speedup > 1.0, "Hierarchical should be faster than Flat AllReduce")
+    check(abs(inter_time_ms - 4.4) < 0.1, f"Inter-node time = {inter_time_ms:.1f} ms, expected ~4.4")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     flat_time_ms_str  = f"{flat_time_ms:.0f}"
@@ -1393,11 +1398,12 @@ The hierarchical approach generalizes beyond two levels. Large clusters with mul
 # │ Goal: Extend 2-level analysis to 3 tiers (NVLink → IB → oversubscribed
 # │       spine) for 128 GPUs across 4 racks to show how hierarchical reduction
 # │       cuts cross-rack traffic by 32× compared to flat AllReduce.
-# │ Show: total_3l_ms_str ≈ 22.6 ms vs. flat_3l_ms_str ≈ 160 ms—inline.
+# │ Show: total_3l_ms_str ≈ 15.1 ms vs. flat_3l_ms_str ≈ 160 ms—inline.
 # │ How: α-β model per tier; each level reduces payload by GPUs-per-unit before
 # │      crossing the next, slower boundary (oversubscription ratio 2:1).
 # │
-# │ Imports: (none from mlsys—bare arithmetic for pedagogical clarity)
+# │ Imports: mlsysim.core.constants (NVLINK_H100_BW, INFINIBAND_NDR_BW,
+# │          GB, second)
 # │ Exports: total_gpus_3l_str, gradient_3l_gb_str, step1_payload_gb_str,
 # │          step1_time_ms_str, step2_payload_gb_str, step2_ring_bw_ms_str,
 # │          step3_payload_gb_str, step3_ring_bw_ms_str, total_3l_ms_str,
@@ -1416,7 +1422,7 @@ class ThreeLevelNapkin:
     from mlsysim.core.constants import NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second as _sec_3l
     gradient_3l_gb = 2    # 2 GB gradient (BF16 for a ~250B model)
     nvlink_bw_3l   = NVLINK_H100_BW.m_as(GB/_sec_3l)            # H100 NVLink 4.0
-    ib_bw_3l       = (INFINIBAND_NDR_BW / 8).m_as(GB/_sec_3l)   # InfiniBand NDR 400 Gbps per port
+    ib_bw_3l       = INFINIBAND_NDR_BW.m_as(GB/_sec_3l)         # InfiniBand NDR 400 Gbps per port
     cross_rack_bw  = ib_bw_3l / 2                                # 2:1 oversubscription
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -1433,13 +1439,14 @@ class ThreeLevelNapkin:
     step3_ring_bw_ms  = 2 * (n_racks - 1) / n_racks * step3_payload_gb/cross_rack_bw * 1000
 
     # Totals
-    total_3l_ms      = 2 * step1_time_ms + 2 * step2_ring_bw_ms + step3_ring_bw_ms
+    total_3l_ms      = 2 * step1_time_ms + step2_ring_bw_ms + step3_ring_bw_ms
     flat_3l_ms       = 2 * gradient_3l_gb/cross_rack_bw * 1000
     reduction_factor = gradient_3l_gb/step3_payload_gb
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
     check(flat_3l_ms > total_3l_ms, "Flat 3L should be much slower than Total 3L")
+    check(abs(total_3l_ms - 15.1) < 0.1, f"Total 3L = {total_3l_ms:.1f} ms, expected ~15.1")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     total_gpus_3l_str    = f"{total_gpus_3l}"
@@ -1464,11 +1471,11 @@ class ThreeLevelNapkin:
 
 **Level 1 (Intra-Node, NVLink)**: ReduceScatter reduces each GPU's contribution by 8$\times$. Each GPU sends `{python} ThreeLevelNapkin.step1_payload_gb_str` GB at `{python} ThreeLevelNapkin.nvlink_bw_3l_str` GB/s = `{python} ThreeLevelNapkin.step1_time_ms_str` ms.
 
-**Level 2 (Intra-Rack, InfiniBand)**: Ring AllReduce among 4 nodes on the same rack. Each GPU AllReduces a `{python} ThreeLevelNapkin.step2_payload_gb_str` GB rack-level payload; Ring traffic is roughly $2(N-1)/N$ times that payload at `{python} ThreeLevelNapkin.ib_bw_3l_str` GB/s. Time: `{python} ThreeLevelNapkin.step2_ring_bw_ms_str` ms.
+**Level 2 (Intra-Rack, InfiniBand)**: The intra-rack ReduceScatter/AllGather pair among 4 nodes moves a `{python} ThreeLevelNapkin.step2_payload_gb_str` GB rack-level payload. Combined ring traffic is roughly $2(N-1)/N$ times that payload at `{python} ThreeLevelNapkin.ib_bw_3l_str` GB/s. Time: `{python} ThreeLevelNapkin.step2_ring_bw_ms_str` ms.
 
 **Level 3 (Cross-Rack, Spine)**: Ring AllReduce among 4 racks. Each GPU AllReduces only a `{python} ThreeLevelNapkin.step3_payload_gb_str` GB cross-rack payload; Ring traffic again applies the $2(N-1)/N$ multiplier at `{python} ThreeLevelNapkin.cross_rack_bw_str` GB/s. Time: `{python} ThreeLevelNapkin.step3_ring_bw_ms_str` ms.
 
-**Result**: Cross-rack payload per GPU is reduced by `{python} ThreeLevelNapkin.reduction_factor_str`$\times$ compared to the original gradient before the Ring traffic multiplier is applied. Total time: `{python} ThreeLevelNapkin.total_3l_ms_str` ms vs. `{python} ThreeLevelNapkin.flat_3l_ms_str` ms for flat AllReduce. The hierarchical decomposition concentrates traffic where bandwidth is abundant and minimizes traffic where bandwidth is scarce.
+**Result**: Cross-rack payload per GPU is reduced by `{python} ThreeLevelNapkin.reduction_factor_str`$\times$ compared to the original gradient before the Ring traffic multiplier is applied. Total time, including the matching return-path gather phases, is `{python} ThreeLevelNapkin.total_3l_ms_str` ms vs. `{python} ThreeLevelNapkin.flat_3l_ms_str` ms for flat AllReduce. The hierarchical decomposition concentrates traffic where bandwidth is abundant and minimizes traffic where bandwidth is scarce.
 
 :::
 
@@ -1482,7 +1489,7 @@ Hierarchical AllReduce reduces the *volume* of cross-node traffic, but the aggre
 
 [^fn-sharp-innetwork]: **SHARP (Scalable Hierarchical Aggregation and Reduction Protocol)**: In-network computing on Quantum InfiniBand switches that performs reduction (sum, min, max) in the switch ASIC with sub-microsecond latency [@graham2020], eliminating the store-and-forward overhead at each intermediate GPU. Production deployments report 2--3$\times$ AllReduce speedups for 1--64 MB gradients, though the number of concurrent aggregation trees is limited by switch resources, creating contention in multi-tenant clusters. \index{SHARP!in-network reduction}
 
-The benefit is twofold. First, SHARP reduces the number of bytes traversing each network link because intermediate partial sums are aggregated at each switch level rather than forwarded individually. In a tree topology with $L$ levels of switches, a standard Tree AllReduce sends the full message $L$ times (once per level). With SHARP, the switch at each level combines incoming data and forwards only the aggregated result, reducing total link utilization by approximately $L \times$. Second, SHARP eliminates the store-and-forward latency at each intermediate GPU. In a software-based tree reduction, data arrives at a GPU, is written to memory, summed with local data, and then transmitted to the next level. Each hop adds the full alpha-beta cost. With in-switch aggregation, the reduction happens in the switch ASIC pipeline with sub-microsecond latency.
+The benefit is twofold. First, SHARP reduces endpoint memory traffic and can reduce pressure on upper-level links by aggregating packets before they leave a switch tier. In a software-based tree reduction, data arrives at a GPU, is written to memory, summed with local data, and then transmitted to the next level. With SHARP, the switch combines incoming packets in flight and forwards the aggregate for the reduction tree. Second, SHARP eliminates the store-and-forward latency at each intermediate GPU. Each software hop adds the full alpha-beta cost; with in-switch aggregation, the reduction happens in the switch ASIC pipeline with sub-microsecond latency.
 
 The practical impact is most pronounced for medium-sized messages (1--64 MB) where latency contributes meaningfully to total AllReduce time. For messages greater than 1 GB, bandwidth dominates regardless of algorithm, and SHARP's latency reduction becomes proportionally smaller. For messages below 1 KB, SHARP's benefit is limited by the switch's own processing overhead. Production deployments at NVIDIA and Microsoft have reported 2--3$\times$ AllReduce speedups for typical training gradient sizes when SHARP is enabled on Quantum InfiniBand switches.
 
@@ -2050,6 +2057,28 @@ Since communication takes only `{python} NapkinOverlap.overlap_pct_str` percent 
 
 :::
 
+```{python}
+#| label: fallacy-bandwidth-refs
+#| echo: false
+from mlsysim.core.constants import NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second
+from mlsysim.fmt import check
+
+class FallacyBandwidthRefs:
+    """Local bandwidth constants for the fallacies section."""
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    nvlink_raw = NVLINK_H100_BW
+    ib_raw = INFINIBAND_NDR_BW
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    nvlink_h100_bw_gbs_val = nvlink_raw.m_as(GB/second)
+    ib_ndr_bw_gbs_val = ib_raw.m_as(GB/second)
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(abs(nvlink_h100_bw_gbs_val - 900) < 1, f"NVLink = {nvlink_h100_bw_gbs_val:.0f} GB/s")
+    check(abs(ib_ndr_bw_gbs_val - 50) < 1, f"IB NDR = {ib_ndr_bw_gbs_val:.0f} GB/s")
+    # ┌── 4. OUTPUT ────────────────────────────────────────
+    nvlink_h100_bw_gbs = f"{nvlink_h100_bw_gbs_val:.0f}"
+    ib_ndr_bw_gbs = f"{ib_ndr_bw_gbs_val:.0f}"
+```
+
 ## Fallacies and Pitfalls {#sec-communication-collective-operations-collective-operations-fallacies-pitfalls-9cd0}
 
 Communication optimization attracts persistent misconceptions because the interaction between latency, bandwidth, topology, and compression creates nonobvious failure modes that simple mental models miss.
@@ -2064,7 +2093,7 @@ AllReduce creates a global barrier and assumes all participants contribute ident
 
 **Fallacy**: *Ring AllReduce is always optimal.*
 
-Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but pays $O(N)$ latency. For a 1 MB gradient across 64 GPUs with $\alpha = 10\ \mu s$, Tree AllReduce wins because Ring's 1,260 μs latency penalty exceeds Tree's 1,000 μs bandwidth penalty. The crossover formula $M_{\text{crossover}} \approx N \cdot \alpha \cdot \beta$ determines when to switch algorithms.
+Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but pays $O(N)$ latency. For a 1 MB gradient across 64 GPUs with $\alpha = 10\ \mu s$, Tree AllReduce wins because Ring's 1,260 μs latency penalty exceeds Tree's 1,000 μs bandwidth penalty. The log-aware crossover estimate $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N$ determines when to switch algorithms; $N\alpha\beta$ is only a coarse upper-scale heuristic.
 
 **Pitfall**: *Compressing gradients without error feedback.*
 
@@ -2080,7 +2109,7 @@ Networks are not perfect. A bad cable can flip bits. Unlike TCP (which checksums
 
 **Fallacy**: *Flat AllReduce is good enough for multi-node training.*
 
-A flat Ring AllReduce treats all links as equal, routing data across `{python} CommInfraScenario.ib_ndr_bw_gbs` GB/s InfiniBand when `{python} CommInfraScenario.nvlink_h100_bw_gbs` GB/s NVLink is available within the node. For an 8-node cluster with 8 GPUs per node, hierarchical AllReduce reduces inter-node traffic by 8$\times$ compared to flat Ring, achieving 5--6$\times$ speedup. Ignoring the bandwidth hierarchy leaves the majority of intra-node bandwidth unused while overloading the scarce inter-node bandwidth.
+A flat Ring AllReduce treats all links as equal, routing data across `{python} FallacyBandwidthRefs.ib_ndr_bw_gbs` GB/s InfiniBand when `{python} FallacyBandwidthRefs.nvlink_h100_bw_gbs` GB/s NVLink is available within the node. For an 8-node cluster with 8 GPUs per node, hierarchical AllReduce reduces inter-node traffic by 8$\times$ compared to flat Ring, achieving roughly a 6$\times$ speedup. Ignoring the bandwidth hierarchy leaves the majority of intra-node bandwidth unused while overloading the scarce inter-node bandwidth.
 
 **Pitfall**: *Ignoring rank-to-GPU mapping for topology-aware routing.*
 
@@ -2092,7 +2121,7 @@ Communication is the friction of scale. Computation is local, but learning is gl
 
 The Collective Primitives (AllReduce, AllGather/ReduceScatter, AllToAll) map directly to parallelism strategies, and each primitive determines a distinct scaling ceiling. AllReduce workloads are bandwidth-bound and scale gracefully, while AllToAll workloads are contention-bound and hit practical limits at smaller cluster sizes.
 
-The Ring and Tree AllReduce\index{Tree AllReduce} algorithms occupy opposite ends of the latency-bandwidth trade-off, with the crossover formula $M_{\text{crossover}} \approx N \cdot \alpha \cdot \beta$ determining which is optimal for a given configuration. Hierarchical AllReduce and Rail-Optimized Routing exploit the bandwidth hierarchy of modern GPU clusters to multiply effective inter-node bandwidth, while in-network reduction (SHARP) eliminates round-trips entirely by performing aggregation inside network switches.
+The Ring and Tree AllReduce\index{Tree AllReduce} algorithms occupy opposite ends of the latency-bandwidth trade-off, with the log-aware crossover estimate $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N$ determining which is optimal for a given configuration. Hierarchical AllReduce and Rail-Optimized Routing exploit the bandwidth hierarchy of modern GPU clusters to multiply effective inter-node bandwidth, while in-network reduction (SHARP) eliminates round-trips entirely by performing aggregation inside network switches.
 
 When even the fastest wires are not enough, gradient compression provides the final squeeze. Quantization, sparsification, and compression-aware optimizers like 1-bit Adam reduce communication volume by 4--1000$\times$. Error Feedback ensures that while the journey may be compressed or delayed, no vital information is permanently lost, preserving the mathematical truth of the model's convergence. Finally, communication-computation overlap through layer-by-layer pipelining and bucket fusion\index{Bucket Fusion} hides the remaining communication time behind useful computation, reducing the effective communication overhead to 5--15 percent of total step time in well-configured systems.
 

@@ -1,7 +1,6 @@
 ---
 quiz: ml_ops_quizzes.json
 concepts: ops_concepts.yml
-glossary: ops_glossary.json
 engine: jupyter
 ---
 
@@ -203,13 +202,6 @@ where **Base Error Rate** is the fraction of queries affected by training-servin
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import MILLION, DAYS_PER_YEAR
 from mlsysim.fmt import fmt, check
-
-class RetrainingAnchor:
-    """
-    Namespace for retraining economics anchor.
-    """
-    daily_decay_pct = 2
-    daily_decay_str = f"{daily_decay_pct}%"
 
 class SkewEconomics:
     """
@@ -1273,6 +1265,43 @@ Automated training pipelines introduce a critical decision regarding their execu
 
 ###### Triggered retraining {.unnumbered}
 
+```{python}
+#| label: triggered-retraining-anchor-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ TRIGGERED RETRAINING ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Triggered retraining prose immediately below (fraud detection
+# │          example) and listing @lst-ops-triggered-retraining.
+# │
+# │ Goal:    Anchor the fraud-detection daily decay rate used to motivate
+# │          triggered retraining.
+# │ Show:    A 2 percent daily accuracy decay anchor.
+# │ How:     Format the daily decay rate as a percentage string.
+# │
+# │ Imports: mlsysim.fmt (check)
+# │ Exports: RetrainingAnchor.daily_decay_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class RetrainingAnchor:
+    """Anchor drift rate used to preview the fraud retraining economics."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    daily_decay = 0.02
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    daily_decay_pct = daily_decay * 100
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(daily_decay_pct == 2,
+          f"Expected 2 percent daily decay anchor, got {daily_decay_pct:.1f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    daily_decay_str = f"{daily_decay_pct:.0f}%"
+```
+
 \index{Triggered Retraining!drift-based updates}Retrain when monitoring detects performance degradation or drift beyond thresholds. This optimizes compute costs by retraining only when necessary but requires robust monitoring infrastructure and careful threshold calibration to avoid false positives or missed degradation. @lst-ops-triggered-retraining illustrates a configuration that initiates retraining based on accuracy drops, feature drift, or prediction distribution shifts. Concretely, for a fraud detection model with a `{python} RetrainingAnchor.daily_decay_str` daily decay rate, daily retraining is the economic "sweet spot" where retraining cost matches the loss from stale predictions.
 
 ::: {#lst-ops-triggered-retraining lst-cap="**Triggered Retraining Configuration**: This example defines three trigger conditions for automatic retraining (accuracy degradation, feature drift measured by PSI, and prediction distribution shift) with configurable thresholds and time windows."}
@@ -1281,7 +1310,7 @@ Automated training pipelines introduce a critical decision regarding their execu
 # Example triggered retraining configuration
 triggers:
   - metric: accuracy
-    threshold: 0.05  # 5% accuracy drop
+    threshold: 0.05  # 5 percentage-point accuracy drop
     window: 7d
   - metric: feature_drift_psi
     threshold: 0.2
@@ -1330,7 +1359,8 @@ The following calculation demonstrates how to determine optimal retraining frequ
 # │ How: Apply the square-root law using retraining costs and accuracy decay rates.
 # │
 # │ Imports: math, mlsysim.book (fmt), IPython.display (Markdown)
-# │ Exports: retrain_cost_str, Q_str, T_star_str, T_star_eq, etc.
+# │ Exports: retrain_cost_str, Q_str, T_star_eq, V_str, A0_str, lam_str,
+# │          lam_pct_str
 # └─────────────────────────────────────────────────────────────────────────────
 import math
 from mlsysim.fmt import fmt, check
@@ -1353,6 +1383,10 @@ class RetrainingInterval:
     ratio = numerator/denominator
     T_star = math.sqrt(ratio)
 
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(0.9 <= T_star <= 1.1,
+          f"Fraud detection example should justify daily retraining, got {T_star:.2f} days.")
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     retrain_cost_str = fmt(retrain_cost, precision=0, commas=True)
     Q_str = fmt(Q, precision=0, commas=True)
@@ -1360,9 +1394,6 @@ class RetrainingInterval:
     A0_str = fmt(A0, precision=2, commas=False)
     lam_str = fmt(lam, precision=2, commas=False)
     lam_pct_str = f"{lam * 100:.0f}"
-    numerator_str = fmt(numerator, precision=0, commas=True)
-    denominator_str = fmt(denominator, precision=0, commas=True)
-    T_star_str = fmt(T_star, precision=0, commas=False)
     T_star_eq = Markdown(
         f"$$ T^* \\approx \\sqrt{{\\frac{{2 \\times {int(retrain_cost):,}}}"
         f"{{{int(Q):,} \\times {V:.2f} \\times {A0:.2f} \\times {lam:.2f}}}}}"
@@ -1647,13 +1678,82 @@ A/B testing\index{A/B Testing!statistical model validation} provides the statist
 
 ###### Experimental design {.unnumbered}
 
+```{python}
+#| label: ab-sample-size-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ A/B TEST SAMPLE SIZE
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: A/B testing experimental design prose and @eq-ab-sample-size in
+# │          @sec-ml-operations-experimental-design.
+# │
+# │ Goal:    Size a two-arm A/B deployment test for a conversion-rate lift.
+# │ Show:    Roughly 745K users per variant detect a 2 percent relative lift.
+# │ How:     Apply the standard two-proportion sample-size formula with
+# │          NormalDist quantiles for confidence and power.
+# │
+# │ Imports: math (ceil, sqrt), statistics (NormalDist), mlsysim.fmt (fmt, check)
+# │ Exports: ABSampleSize.confidence_pct_str, ABSampleSize.power_pct_str,
+# │          ABSampleSize.baseline_pct_str, ABSampleSize.target_pct_str,
+# │          ABSampleSize.relative_lift_pct_str,
+# │          ABSampleSize.users_per_variant_str,
+# │          ABSampleSize.comparison_users_per_variant_str,
+# │          ABSampleSize.detectable_pct_points_str
+# └─────────────────────────────────────────────────────────────────────────────
+from math import ceil, sqrt
+from statistics import NormalDist
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class ABSampleSize:
+    """Two-arm conversion-rate sample sizing for an A/B deployment test."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    confidence = 0.95
+    power = 0.80
+    baseline_rate = 0.05
+    relative_lift = 0.02
+    comparison_users_per_variant = 25_000
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    alpha = 1 - confidence
+    target_rate = baseline_rate * (1 + relative_lift)
+    absolute_lift = target_rate - baseline_rate
+    variance = baseline_rate * (1 - baseline_rate)
+    z_alpha_2 = NormalDist().inv_cdf(1 - alpha / 2)
+    z_beta = NormalDist().inv_cdf(power)
+    users_per_variant = ceil(
+        2 * (z_alpha_2 + z_beta) ** 2 * variance / absolute_lift ** 2
+    )
+    detectable_abs_lift = sqrt(
+        2 * (z_alpha_2 + z_beta) ** 2 * variance / comparison_users_per_variant
+    )
+    detectable_pct_points = detectable_abs_lift * 100
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(740_000 <= users_per_variant <= 750_000,
+          f"Expected about 745K users/variant, got {users_per_variant:,}.")
+    check(0.5 <= detectable_pct_points <= 0.6,
+          f"Expected about 0.5-0.6 percentage points, got {detectable_pct_points:.2f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    confidence_pct_str = fmt(confidence * 100, precision=0, commas=False)
+    power_pct_str = fmt(power * 100, precision=0, commas=False)
+    baseline_pct_str = fmt(baseline_rate * 100, precision=1, commas=False)
+    target_pct_str = fmt(target_rate * 100, precision=1, commas=False)
+    relative_lift_pct_str = fmt(relative_lift * 100, precision=0, commas=False)
+    users_per_variant_str = fmt(users_per_variant, precision=0, commas=True)
+    comparison_users_per_variant_str = fmt(comparison_users_per_variant, precision=0, commas=True)
+    detectable_pct_points_str = fmt(detectable_pct_points, precision=1, commas=False)
+```
+
 A valid A/B test requires:
 
 1. **Randomization Unit**\index{A/B Testing!randomization unit}: Define what gets randomly assigned to treatment vs. control. User-level randomization ensures consistent experience but requires larger sample sizes. Request-level randomization enables faster experiments but can confuse users seeing different results.
 
 2. **Sample size calculation**: Determine required traffic before launch using @eq-ab-sample-size:
 $$n = \frac{2(z_{\alpha/2} + z_{\beta})^2 \sigma^2}{\delta^2}$$ {#eq-ab-sample-size}
-where $\delta$ is the minimum detectable effect, $\sigma$ is outcome standard deviation, and $z$ values depend on desired confidence (typically 95 percent) and power (typically 80 percent). For a 2 percent *relative* lift on a 5 percent baseline conversion rate (5.0 percent to 5.1 percent) and 80 percent power, expect roughly 745,000 users per variant; ~25,000 users per variant would only detect a much larger lift, about 0.5–0.6 percentage points absolute.
+where $\delta$ is the minimum detectable effect, $\sigma$ is outcome standard deviation, and $z$ values depend on desired confidence (typically `{python} ABSampleSize.confidence_pct_str` percent) and power (typically `{python} ABSampleSize.power_pct_str` percent). For a `{python} ABSampleSize.relative_lift_pct_str` percent *relative* lift on a `{python} ABSampleSize.baseline_pct_str` percent baseline conversion rate (`{python} ABSampleSize.baseline_pct_str` percent to `{python} ABSampleSize.target_pct_str` percent) and `{python} ABSampleSize.power_pct_str` percent power, expect roughly `{python} ABSampleSize.users_per_variant_str` users per variant; `{python} ABSampleSize.comparison_users_per_variant_str` users per variant would only detect a much larger lift, about `{python} ABSampleSize.detectable_pct_points_str` percentage points absolute.
 
 3. **Guardrail Metrics**\index{Guardrail Metrics!A/B test constraints}: Define metrics that must not degrade even if primary metric improves. A recommendation model improving click-through rate by 10 percent while increasing page load time by 500 ms may fail guardrail checks.
 
@@ -1753,10 +1853,10 @@ Regardless of which serving paradigm is used (online, offline, or near-online, a
 # │
 # │ Goal: Contrast model inference time with total end-to-end latency.
 # │ Show: That inference is only 45% of the latency budget, capping speedup potential.
-# │ How: Sum latency components for network, feature retrieval, and inference phases.
+# │ How: Sum request-lifecycle components and apply Amdahl-style speedup math.
 # │
 # │ Imports: mlsysim.book (fmt)
-# │ Exports: slo_p99_str, network_str, feature_fetch_str, inference_str, post_proc_str
+# │ Exports: slo_p99_str, network_str, inference_str, end_to_end_speedup_str, etc.
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check
 
@@ -1772,43 +1872,59 @@ class LatencyBudget:
 
     network = 15
     feature_fetch = 25
+    request_parse = 5
     inference = 45
-    post_proc = 15
+    post_proc = 5
+    serialization = 5
+    model_speedup = 2.0
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    total = network + feature_fetch + inference + post_proc
+    total = network + feature_fetch + request_parse + inference + post_proc + serialization
+    non_inference = total - inference
+    inference_fraction = inference / total
+    new_total_after_model_speedup = non_inference + inference / model_speedup
+    end_to_end_speedup = total / new_total_after_model_speedup
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(total == slo_p99, f"Component budgets sum to {total}ms, but SLO is {slo_p99}ms.")
+    check(round(end_to_end_speedup, 1) == 1.3,
+          f"Expected 2x model speedup to yield about 1.3x end-to-end, got {end_to_end_speedup:.2f}x.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     slo_p99_str = f"{slo_p99}"
     network_str = f"{network}"
     feature_fetch_str = f"{feature_fetch}"
+    request_parse_str = f"{request_parse}"
     inference_str = f"{inference}"
     post_proc_str = f"{post_proc}"
+    serialization_str = f"{serialization}"
+    non_inference_str = f"{non_inference}"
+    inference_pct_str = fmt(inference_fraction * 100, precision=0, commas=False)
+    model_speedup_str = fmt(model_speedup, precision=0, commas=False)
+    new_total_after_model_speedup_str = fmt(new_total_after_model_speedup, precision=1, commas=False)
+    end_to_end_speedup_str = fmt(end_to_end_speedup, precision=1, commas=False)
 ```
 
 ::: {.callout-perspective title="The latency budget"}
 
-**Problem**: A service has a 100 ms P99 SLO, and the model inference budget is 45 ms. Where must the remaining 55 ms go? @tbl-latency-budget-components allocates the budget across the request lifecycle:
+**Problem**: A service has a `{python} LatencyBudget.slo_p99_str` ms P99 SLO, and the model inference budget is `{python} LatencyBudget.inference_str` ms. Where must the remaining `{python} LatencyBudget.non_inference_str` ms go? @tbl-latency-budget-components allocates the budget across the request lifecycle:
 
 ::: {tbl-colwidths="[23,17,20,40]"}
 
-| **Component**                                     | **Typical %** | **P99 Contribution** | **Optimization Lever**                       |
-|:--------------------------------------------------|:-------------:|:--------------------:|:---------------------------------------------|
-| **Network RTT**\index{Network RTT!latency budget} | 10–25 percent |       15–45 ms       | Edge deployment, connection pooling          |
-| **Feature retrieval**                             | 15–35 percent |       25–65 ms       | Feature caching, precomputation              |
-| **Request parsing**                               |  3–8 percent  |       5–15 ms        | Binary protocols (gRPC), schema optimization |
-| **Model inference**                               | 25–45 percent |       45–80 ms       | Quantization, batching, model distillation   |
-| **Postprocessing**                                |  5–12 percent |       10–20 ms       | Async processing, result caching             |
-| **Response serialization**                        |  3–8 percent  |       5–15 ms        | Efficient formats (Protobuf, MessagePack)    |
+| **Component**                                     | **Budget Share** | **P99 Budget** | **Optimization Lever**                       |
+|:--------------------------------------------------|:----------------:|:--------------:|:---------------------------------------------|
+| **Network RTT**\index{Network RTT!latency budget} |    15 percent    | `{python} LatencyBudget.network_str` ms | Edge deployment, connection pooling          |
+| **Feature retrieval**                             |    25 percent    | `{python} LatencyBudget.feature_fetch_str` ms | Feature caching, precomputation              |
+| **Request parsing**                               |     5 percent    | `{python} LatencyBudget.request_parse_str` ms | Binary protocols (gRPC), schema optimization |
+| **Model inference**                               |    `{python} LatencyBudget.inference_pct_str` percent    | `{python} LatencyBudget.inference_str` ms | Quantization, batching, model distillation   |
+| **Postprocessing**                                |     5 percent    | `{python} LatencyBudget.post_proc_str` ms | Async processing, result caching             |
+| **Response serialization**                        |     5 percent    | `{python} LatencyBudget.serialization_str` ms | Efficient formats (Protobuf, MessagePack)    |
 
-: **Latency Budget Components**: Allocation of a 100 ms P99 SLO across the request lifecycle. Model inference accounts for 25–45 percent of total latency, leaving the majority to network, feature retrieval, and serialization. The optimization-lever column shows where each component can be reduced. {#tbl-latency-budget-components}
+: **Latency Budget Components**: Representative allocation of a `{python} LatencyBudget.slo_p99_str` ms P99 SLO across the request lifecycle. Model inference accounts for `{python} LatencyBudget.inference_pct_str` percent of total latency, leaving the majority to network, feature retrieval, parsing, postprocessing, and serialization. The optimization-lever column shows where each component can be reduced. {#tbl-latency-budget-components}
 
 :::
 
-**Engineering insight**: Model optimization alone often captures less than 50 percent of the latency opportunity. A model that runs 2$\times$ faster provides only 1.3$\times$ end-to-end improvement if inference is 45 percent of total latency.
+**Engineering insight**: Model optimization alone often captures less than 50 percent of the latency opportunity. A model that runs `{python} LatencyBudget.model_speedup_str`$\times$ faster reduces this example from `{python} LatencyBudget.slo_p99_str` ms to `{python} LatencyBudget.new_total_after_model_speedup_str` ms, only `{python} LatencyBudget.end_to_end_speedup_str`$\times$ end-to-end improvement, because inference is `{python} LatencyBudget.inference_pct_str` percent of total latency.
 
 Systems thinking demands end-to-end analysis. Apply the D·A·M taxonomy to diagnose the root cause:
 
@@ -1822,8 +1938,10 @@ Dave Patterson's principle applies: "Measure everything, optimize the bottleneck
 
 - Network: `{python} LatencyBudget.network_str` ms (use regional deployment)
 - Feature fetch: `{python} LatencyBudget.feature_fetch_str` ms (require feature store P99 < `{python} LatencyBudget.feature_fetch_str` ms)
+- Request parsing: `{python} LatencyBudget.request_parse_str` ms (prefer compact binary protocols)
 - Inference: `{python} LatencyBudget.inference_str` ms (sets model complexity ceiling)
 - Postprocessing: `{python} LatencyBudget.post_proc_str` ms (allows light business logic)
+- Response serialization: `{python} LatencyBudget.serialization_str` ms (avoid oversized payloads)
 
 If feature retrieval exceeds its budget, no amount of model optimization will achieve the SLO.
 
@@ -1939,7 +2057,74 @@ Model serving performance depends critically on memory hierarchy utilization. Da
 
 : **GPU Memory Hierarchy and Bandwidth**: Each level in the memory hierarchy trades capacity for speed. Effective model serving requires keeping hot weights in L2 cache and full model parameters in HBM, while batched inputs queue in system RAM. When model size exceeds GPU memory, NVMe swap introduces orders-of-magnitude latency penalties that dominate inference time. {#tbl-gpu-memory-hierarchy}
 
-For large language model (LLM) serving on a single GPU or server, the KV-cache\index{KV Cache!LLM serving bottleneck} (storing attention keys and values for each token) often becomes the memory bottleneck. A 70B parameter model may require 2–4 GB of KV-cache per active sequence, limiting how many requests a single node can batch together. Monitoring KV-cache utilization on each serving node enables capacity planning: when KV-cache approaches GPU memory limits, additional requests queue rather than batch, degrading latency.
+```{python}
+#| label: kv-cache-footprint-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ KV CACHE FOOTPRINT
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: LLM serving prose on KV-cache memory bottleneck for a 70B-class
+# │          grouped-query attention model.
+# │
+# │ Goal:    Quantify the FP16 KV-cache footprint per active sequence and for
+# │          eight concurrent sequences.
+# │ Show:    About 2.7 GB per sequence; 21 GB across eight concurrent ones.
+# │ How:     Multiply layers, KV heads, sequence length, head dimension, and
+# │          bytes per element from the Llama-2-70B constants.
+# │
+# │ Imports: mlsysim.core.constants (BYTES_FP16, GB, byte, LLAMA2_70B_*),
+# │          mlsysim.fmt (fmt, check)
+# │ Exports: KVCacheFootprint.layers_str, KVCacheFootprint.kv_heads_str,
+# │          KVCacheFootprint.seq_len_str, KVCacheFootprint.head_dim_str,
+# │          KVCacheFootprint.bytes_per_element_str,
+# │          KVCacheFootprint.kv_cache_gb_str,
+# │          KVCacheFootprint.concurrent_8_gb_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import (
+    BYTES_FP16,
+    GB,
+    byte,
+    LLAMA2_70B_LAYERS,
+    LLAMA2_70B_HIDDEN_DIM,
+    LLAMA2_70B_HEADS,
+    LLAMA2_70B_KV_HEADS,
+)
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class KVCacheFootprint:
+    """FP16 KV-cache footprint for a Llama-2-70B-style GQA model."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    layers = LLAMA2_70B_LAYERS
+    hidden_dim = LLAMA2_70B_HIDDEN_DIM
+    attention_heads = LLAMA2_70B_HEADS
+    kv_heads = LLAMA2_70B_KV_HEADS
+    seq_len = 8_192
+    bytes_per_element = BYTES_FP16
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    head_dim = hidden_dim // attention_heads
+    kv_cache_bytes = layers * 2 * kv_heads * seq_len * head_dim * bytes_per_element
+    kv_cache_gb = kv_cache_bytes.m_as(GB)
+    concurrent_8_gb = 8 * kv_cache_gb
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(hidden_dim % attention_heads == 0, "Hidden dimension must divide evenly by attention heads.")
+    check(2.5 <= kv_cache_gb <= 4,
+          f"Expected 2.5-4 GB per active sequence, got {kv_cache_gb:.2f} GB.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    layers_str = fmt(layers, precision=0, commas=False)
+    kv_heads_str = fmt(kv_heads, precision=0, commas=False)
+    seq_len_str = fmt(seq_len, precision=0, commas=True)
+    head_dim_str = fmt(head_dim, precision=0, commas=False)
+    bytes_per_element_str = fmt(bytes_per_element.m_as(byte), precision=0, commas=False)
+    kv_cache_gb_str = fmt(kv_cache_gb, precision=1, commas=False)
+    concurrent_8_gb_str = fmt(concurrent_8_gb, precision=0, commas=False)
+```
+
+For large language model (LLM) serving on a single GPU or server, the KV-cache\index{KV Cache!LLM serving bottleneck} (storing attention keys and values for each token) often becomes the memory bottleneck. For a 70B-class grouped-query attention model with `{python} KVCacheFootprint.layers_str` layers, `{python} KVCacheFootprint.kv_heads_str` KV heads, an `{python} KVCacheFootprint.seq_len_str`-token context, and FP16 cache entries, each active sequence stores about `{python} KVCacheFootprint.kv_cache_gb_str` GB of KV cache. Eight concurrent sequences therefore consume about `{python} KVCacheFootprint.concurrent_8_gb_str` GB before scheduler headroom, fragmentation, or activations, limiting how many requests a single node can batch together. Monitoring KV-cache utilization on each serving node enables capacity planning: when KV-cache approaches GPU memory limits, additional requests queue rather than batch, degrading latency.
 
 ##### Cost-per-inference tracking {.unnumbered}
 
@@ -1977,6 +2162,10 @@ class CostPerInference:
     cost_per_inference = hourly_gpu_cost/inferences_per_hour
     cost_per_batch = cost_per_inference * batch_size
 
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(cost_per_batch, 2) == 0.06,
+          f"Cost per 1K should be $0.06, got ${cost_per_batch:.4f}.")
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     hourly_gpu_cost_str = f"{hourly_gpu_cost:.0f}"
     inferences_per_hour_str = fmt(inferences_per_hour, precision=0, commas=True)
@@ -2004,7 +2193,7 @@ Effective monitoring spans both model behavior and infrastructure performance. O
 # │
 # │ Goal: Demonstrate that drift detection speed is physically limited by sample rate.
 # │ Show: That low-traffic models can remain in "silent failure" for weeks.
-# │ How: Calculate the time needed to detect a 5% accuracy drop across traffic tiers.
+# │ How: Calculate the time needed to detect a 5 percentage-point accuracy drop.
 # │
 # │ Imports: mlsysim.book (fmt)
 # │ Exports: baseline_acc_pct_str, samples_needed_str, minutes_needed_high_str, etc.
@@ -2014,7 +2203,7 @@ from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class DriftDetectionDelay:
-    """Minimum time to detect a 5% accuracy drop at 1 QPS vs. 100 req/day."""
+    """Minimum time to detect a 5 percentage-point accuracy drop."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     baseline_acc = 0.95    # original accuracy
@@ -2029,6 +2218,12 @@ class DriftDetectionDelay:
     seconds_needed_high = samples_needed/qps_high
     minutes_needed_high = seconds_needed_high / SECONDS_PER_MINUTE
     days_needed_low = samples_needed / 100    # 100 requests per day
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(minutes_needed_high) == 17,
+          f"1 QPS detection latency should be about 17 minutes, got {minutes_needed_high:.1f}.")
+    check(round(days_needed_low) == 10,
+          f"100 requests/day detection latency should be about 10 days, got {days_needed_low:.1f}.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     baseline_acc_pct_str = f"{baseline_acc * 100:.0f}"
@@ -2045,13 +2240,13 @@ class DriftDetectionDelay:
 
 ::: {.callout-notebook title="The drift detection delay"}
 
-**Problem**: A model has **`{python} DriftDetectionDelay.baseline_acc_pct_str` percent baseline accuracy**. The goal is to detect a **`{python} DriftDetectionDelay.drop_pct_str` percent drop** (to `{python} DriftDetectionDelay.target_acc_pct_str` percent) with `{python} DriftDetectionDelay.confidence_pct_str` percent statistical confidence. The system handles **`{python} DriftDetectionDelay.qps_high_str` request per second (`{python} DriftDetectionDelay.qps_high_str` QPS)**. How long will it take to "prove" the model has drifted?
+**Problem**: A model has **`{python} DriftDetectionDelay.baseline_acc_pct_str` percent baseline accuracy**. The goal is to detect a **`{python} DriftDetectionDelay.drop_pct_str` percentage-point drop** (to `{python} DriftDetectionDelay.target_acc_pct_str` percent) with `{python} DriftDetectionDelay.confidence_pct_str` percent statistical confidence. The system handles **`{python} DriftDetectionDelay.qps_high_str` request per second (`{python} DriftDetectionDelay.qps_high_str` QPS)**. How long will it take to "prove" the model has drifted?
 
 **Math**:
 
 1.  **Required samples**: To distinguish `{python} DriftDetectionDelay.baseline_acc_pct_str` percent from `{python} DriftDetectionDelay.target_acc_pct_str` percent with high confidence, detection requires ≈ **`{python} DriftDetectionDelay.samples_needed_str`** labeled samples.
 2.  **Detection latency**: `{python} DriftDetectionDelay.samples_needed_str` samples / `{python} DriftDetectionDelay.qps_high_str` QPS = **`{python} DriftDetectionDelay.seconds_needed_high_str` seconds** ≈ **`{python} DriftDetectionDelay.minutes_needed_high_str` minutes**.
-3.  **Low-traffic case**: If the model only processes **`{python} DriftDetectionDelay.requests_per_day_low_str` requests per day**, detecting the same `{python} DriftDetectionDelay.drop_pct_str` percent drift takes **`{python} DriftDetectionDelay.days_needed_low_str` days**.
+3.  **Low-traffic case**: If the model only processes **`{python} DriftDetectionDelay.requests_per_day_low_str` requests per day**, detecting the same `{python} DriftDetectionDelay.drop_pct_str` percentage-point drift takes **`{python} DriftDetectionDelay.days_needed_low_str` days**.
 
 **Systems conclusion**: The "Sample Rate" of monitoring is physically limited by traffic volume. For low-traffic, high-stakes models (like medical diagnosis), drift detection can take *days or weeks*, leaving the system in a long-term "Silent Failure" state. This is why high-stakes systems must supplement statistical monitoring with proactive **Model Audits**\index{Model Audit!high-stakes systems}.
 
@@ -2188,19 +2383,78 @@ Thermal monitoring integrates into operational scheduling decisions, particularl
 
 Collecting all of these signals at production scale introduces its own cost constraints. *The economics of observability* force engineering teams to make deliberate trade-offs between monitoring granularity and infrastructure expense.
 
+```{python}
+#| label: observability-sampling-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ OBSERVABILITY SAMPLING COST
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Callout "The economics of observability" and
+# │          @tbl-observability-sampling-cost contrasting 1 s and 60 s sampling.
+# │
+# │ Goal:    Quantify the data-volume swing between high- and low-frequency
+# │          telemetry sampling at 1M requests per second.
+# │ Show:    1 GB/s at 1 s sampling vs. 16.7 MB/s at 60 s — a 60x ratio.
+# │ How:     Multiply request rate by per-request telemetry size and divide by
+# │          the sampling interval; convert with pint to GB and MB.
+# │
+# │ Imports: mlsysim.core.constants (MILLION, KB, MB, GB),
+# │          mlsysim.fmt (fmt, check)
+# │ Exports: ObservabilitySampling.request_rate_m_str,
+# │          ObservabilitySampling.high_seconds_str,
+# │          ObservabilitySampling.low_seconds_str,
+# │          ObservabilitySampling.high_gb_s_str,
+# │          ObservabilitySampling.low_mb_s_str,
+# │          ObservabilitySampling.sampling_ratio_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import MILLION, KB, MB, GB
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class ObservabilitySampling:
+    """Average ingest volume for high- and low-frequency request sampling."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    requests_per_second = MILLION
+    telemetry_per_request = 1 * KB
+    high_frequency_seconds = 1
+    low_frequency_seconds = 60
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    high_bytes_per_second = requests_per_second * telemetry_per_request / high_frequency_seconds
+    low_bytes_per_second = requests_per_second * telemetry_per_request / low_frequency_seconds
+    sampling_ratio = (high_bytes_per_second / low_bytes_per_second).m_as("")
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(high_bytes_per_second.m_as(GB), 1) == 1.0,
+          f"Expected ~1 GB/s, got {high_bytes_per_second.m_as(GB):.2f} GB/s.")
+    check(round(low_bytes_per_second.m_as(MB), 1) == 16.7,
+          f"Expected ~16.7 MB/s, got {low_bytes_per_second.m_as(MB):.2f} MB/s.")
+    check(round(sampling_ratio) == 60,
+          f"Expected 60x sampling ratio, got {sampling_ratio:.1f}x.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    request_rate_m_str = fmt(requests_per_second / MILLION, precision=0, commas=False)
+    high_seconds_str = fmt(high_frequency_seconds, precision=0, commas=False)
+    low_seconds_str = fmt(low_frequency_seconds, precision=0, commas=False)
+    high_gb_s_str = fmt(high_bytes_per_second.m_as(GB), precision=0, commas=False)
+    low_mb_s_str = fmt(low_bytes_per_second.m_as(MB), precision=1, commas=False)
+    sampling_ratio_str = fmt(sampling_ratio, precision=0, commas=False)
+```
+
 ::: {.callout-notebook title="The economics of observability"}
 
 **The monitoring trade-off**: "Measure everything" is physically impossible at scale. @eq-observability-cost shows that observability cost scales linearly with sampling frequency and metric cardinality:
 $$ \text{Cost} \approx \text{Frequency} \times \text{Metrics} \times (\text{Ingest Cost} + \text{Storage Cost}) $$ {#eq-observability-cost}
 
-@tbl-observability-sampling-cost contrasts the data-volume swing between high- and low-frequency sampling regimes at 1 M requests per second:
+@tbl-observability-sampling-cost contrasts the data-volume swing between high- and low-frequency sampling regimes at `{python} ObservabilitySampling.request_rate_m_str` M requests per second:
 
-| **Sampling** | **Granularity** | **Data Volume (1M req/sec)** | **Cost Impact**                   |
+| **Sampling** | **Granularity** | **Data Volume (`{python} ObservabilitySampling.request_rate_m_str`M req/sec)** | **Cost Impact**                   |
 |:------------:|:----------------|:----------------------------:|:----------------------------------|
-|  **1 sec**   | Micro-bursts    |          ~1 GB/sec           | High (Requires dedicated cluster) |
-|  **60 sec**  | Trends          |          ~16 MB/sec          | Low (Standard sidecar)            |
+|  **`{python} ObservabilitySampling.high_seconds_str` sec**   | Micro-bursts    |          ~`{python} ObservabilitySampling.high_gb_s_str` GB/sec           | High (Requires dedicated cluster) |
+|  **`{python} ObservabilitySampling.low_seconds_str` sec**  | Trends          |          ~`{python} ObservabilitySampling.low_mb_s_str` MB/sec          | Low (Standard sidecar)            |
 
-: **Sampling Frequency vs. Observability Cost**: Two-order-of-magnitude data-volume swing between 1 s and 60 s sampling at 1 M requests per second. High-frequency sampling captures micro-bursts but requires dedicated infrastructure; coarse sampling shows only trends. The choice frames the dynamic-sampling decision below. {#tbl-observability-sampling-cost tbl-colwidths="[14,28,28,30]"}
+: **Sampling Frequency vs. Observability Cost**: Roughly `{python} ObservabilitySampling.sampling_ratio_str`$\times$ data-volume swing between 1 s and 60 s sampling at `{python} ObservabilitySampling.request_rate_m_str` M requests per second, assuming about 1 KB of telemetry per request. High-frequency sampling captures micro-bursts but requires dedicated infrastructure; coarse sampling shows only trends. The choice frames the dynamic-sampling decision below. {#tbl-observability-sampling-cost tbl-colwidths="[14,28,28,30]"}
 
 **Engineering Decision**: Use **dynamic sampling**. Sample 1 percent of successful requests but 100 percent of errors. Use high-frequency (1s) monitoring only for aggregate counters (like error rate), but low-frequency (60s) for high-cardinality data (like user-level distribution sketches). @sec-ml-operations-monitoring-cost-model-7fe3 provides worked examples for budgeting monitoring infrastructure.
 
@@ -2283,18 +2537,75 @@ $$ D_{\text{KL}}(P \parallel Q) = \sum_{x} P(x) \log\left(\frac{P(x)}{Q(x)}\righ
 
 To see this in practice, consider a recommendation system monitoring user age. A shift from "younger" to "older" demographics might look subtle on a histogram but generates a clear PSI signal, decomposed bin by bin in @tbl-psi-age-example:
 
+```{python}
+#| label: psi-age-example-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ PSI AGE DISTRIBUTION EXAMPLE
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-psi-age-example and the prose decomposing user-age drift
+# │          bin by bin in the PSI worked example.
+# │
+# │ Goal:    Compute the Population Stability Index for a six-bin user-age
+# │          distribution shift from training to serving.
+# │ Show:    Total PSI of 0.029, well below the 0.1 warning threshold.
+# │ How:     Sum (serving - training) * ln(serving / training) across bins.
+# │
+# │ Imports: math, mlsysim.fmt (fmt, check)
+# │ Exports: PSIAgeExample.training_pct_str, PSIAgeExample.serving_pct_str,
+# │          PSIAgeExample.difference_str, PSIAgeExample.log_ratio_str,
+# │          PSIAgeExample.contribution_str, PSIAgeExample.total_psi_str,
+# │          PSIAgeExample.warning_threshold_str
+# └─────────────────────────────────────────────────────────────────────────────
+import math
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class PSIAgeExample:
+    """Population Stability Index for a six-bin user-age distribution."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    age_bins = ["18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
+    training = [0.15, 0.25, 0.20, 0.18, 0.12, 0.10]
+    serving = [0.12, 0.22, 0.18, 0.20, 0.15, 0.13]
+    warning_threshold = 0.1
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    differences = [actual - expected for expected, actual in zip(training, serving)]
+    log_ratios = [math.log(actual / expected) for expected, actual in zip(training, serving)]
+    contributions = [diff * log_ratio for diff, log_ratio in zip(differences, log_ratios)]
+    total_psi = sum(contributions)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(abs(sum(training) - 1.0) < 1e-12, "Training proportions must sum to 1.")
+    check(abs(sum(serving) - 1.0) < 1e-12, "Serving proportions must sum to 1.")
+    check(abs(total_psi - 0.0293) < 0.0001,
+          f"Expected PSI about 0.0293, got {total_psi:.4f}.")
+    check(total_psi < warning_threshold,
+          f"PSI should be below warning threshold, got {total_psi:.4f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    training_pct_str = [fmt(value * 100, precision=1, commas=False) for value in training]
+    serving_pct_str = [fmt(value * 100, precision=1, commas=False) for value in serving]
+    difference_str = [f"{value:+.2f}" for value in differences]
+    log_ratio_str = [f"{value:+.3f}" for value in log_ratios]
+    contribution_str = [fmt(value, precision=4, commas=False) for value in contributions]
+    total_psi_str = fmt(total_psi, precision=3, commas=False)
+    warning_threshold_str = fmt(warning_threshold, precision=1, commas=False)
+```
+
 | **Age Bin** | **Training %** | **Serving %** | **Difference** | **ln(Serving/Training)** | **Contribution** |
 |:-----------:|:--------------:|:-------------:|:--------------:|:------------------------:|:----------------:|
-|  **18–25**  |      15.0      |      12.0     |     -0.03      |          -0.223          |      0.0067      |
-|  **26–35**  |      25.0      |      22.0     |     -0.03      |          -0.128          |      0.0038      |
-|  **36–45**  |      20.0      |      18.0     |     -0.02      |          -0.105          |      0.0021      |
-|  **46–55**  |      18.0      |      20.0     |     +0.02      |          +0.105          |      0.0021      |
-|  **56–65**  |      12.0      |      15.0     |     +0.03      |          +0.223          |      0.0067      |
-|   **66+**   |      10.0      |      13.0     |     +0.03      |          +0.262          |      0.0079      |
+|  **18–25**  |      `{python} PSIAgeExample.training_pct_str[0]`      |      `{python} PSIAgeExample.serving_pct_str[0]`     |     `{python} PSIAgeExample.difference_str[0]`      |          `{python} PSIAgeExample.log_ratio_str[0]`          |      `{python} PSIAgeExample.contribution_str[0]`      |
+|  **26–35**  |      `{python} PSIAgeExample.training_pct_str[1]`      |      `{python} PSIAgeExample.serving_pct_str[1]`     |     `{python} PSIAgeExample.difference_str[1]`      |          `{python} PSIAgeExample.log_ratio_str[1]`          |      `{python} PSIAgeExample.contribution_str[1]`      |
+|  **36–45**  |      `{python} PSIAgeExample.training_pct_str[2]`      |      `{python} PSIAgeExample.serving_pct_str[2]`     |     `{python} PSIAgeExample.difference_str[2]`      |          `{python} PSIAgeExample.log_ratio_str[2]`          |      `{python} PSIAgeExample.contribution_str[2]`      |
+|  **46–55**  |      `{python} PSIAgeExample.training_pct_str[3]`      |      `{python} PSIAgeExample.serving_pct_str[3]`     |     `{python} PSIAgeExample.difference_str[3]`      |          `{python} PSIAgeExample.log_ratio_str[3]`          |      `{python} PSIAgeExample.contribution_str[3]`      |
+|  **56–65**  |      `{python} PSIAgeExample.training_pct_str[4]`      |      `{python} PSIAgeExample.serving_pct_str[4]`     |     `{python} PSIAgeExample.difference_str[4]`      |          `{python} PSIAgeExample.log_ratio_str[4]`          |      `{python} PSIAgeExample.contribution_str[4]`      |
+|   **66+**   |      `{python} PSIAgeExample.training_pct_str[5]`      |      `{python} PSIAgeExample.serving_pct_str[5]`     |     `{python} PSIAgeExample.difference_str[5]`      |          `{python} PSIAgeExample.log_ratio_str[5]`          |      `{python} PSIAgeExample.contribution_str[5]`      |
 
-: **PSI Worked Example**: User age distribution drift from training to serving, decomposed across six age bins. The total PSI is 0.029, well below the 0.1 warning threshold, even though several bins shifted by 3 percentage points. The contribution column shows why aggregate PSI is more reliable than per-bin inspection: small individual shifts cancel out across the distribution. {#tbl-psi-age-example tbl-colwidths="[14,17,17,17,18,17]"}
+: **PSI Worked Example**: User age distribution drift from training to serving, decomposed across six age bins. The total PSI is `{python} PSIAgeExample.total_psi_str`, well below the `{python} PSIAgeExample.warning_threshold_str` warning threshold, even though several bins shifted by 3 percentage points. The contribution column shows why aggregate PSI is more reliable than per-bin inspection: individual bin movement can look noticeable while the summed evidence remains below the alert threshold. {#tbl-psi-age-example tbl-colwidths="[14,17,17,17,18,17]"}
 
-The total PSI is $0.029$ (Stable). The percentage values in the table are expressed as proportions (summing to 1.0, not 100), so a 3 percentage-point shift appears as $\pm 0.03$ in the difference column. Even though specific bins shifted by 3 percentage points, the aggregate drift is well below the 0.1 warning threshold. This calculation prevents false alarms from minor fluctuations while remaining sensitive to systematic shifts.
+The total PSI is `{python} PSIAgeExample.total_psi_str` (Stable). The training and serving columns are shown as percentages, while the difference column is expressed in proportion units, so a 3 percentage-point shift appears as $\pm 0.03$. Even though specific bins shifted by 3 percentage points, the aggregate drift is well below the `{python} PSIAgeExample.warning_threshold_str` warning threshold. This calculation prevents false alarms from minor fluctuations while remaining sensitive to systematic shifts.
 
 ##### Data freshness monitoring {#sec-ml-operations-data-freshness-monitoring-cd9c}
 
@@ -2415,6 +2726,12 @@ class MonitoringBudget:
     query_cost = queries_mo * query_cost_per
     total_cost = ingestion_cost + storage_cost + query_cost
 
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(datapoints_mo_m) == 26,
+          f"Expected about 26M monthly datapoints, got {datapoints_mo_m:.2f}M.")
+    check(round(total_cost) == 261,
+          f"Expected total monitoring cost about $261/month, got ${total_cost:.2f}.")
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     n_variants_str = f"{n_variants}"
     metrics_per_variant_str = f"{metrics_per_variant}"
@@ -2506,6 +2823,10 @@ class MonitoringROI:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     monitoring_roi = (incidents_prevented * avg_incident_cost) / annual_monitoring_cost
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(monitoring_roi == 5,
+          f"Expected monitoring ROI of 5x, got {monitoring_roi:.1f}x.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     incidents_prevented_str = fmt(incidents_prevented, precision=0, commas=False)
@@ -2812,14 +3133,26 @@ class FraudDetectionImprovement:
     current_rate = 0.92
     target_rate = 0.94
     infra_cost_increase = 0.30       # 30% higher infrastructure cost
-    annual_loss_prevented = 2_000_000
-    false_positives_reduced = 50_000  # fewer false alerts/month
+    annual_fraud_exposure = 100_000_000
+    monthly_false_positive_alerts = 250_000
+    false_positive_reduction = 0.20
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    detection_gain = target_rate - current_rate
+    annual_loss_prevented = detection_gain * annual_fraud_exposure
+    false_positives_reduced = monthly_false_positive_alerts * false_positive_reduction
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(annual_loss_prevented) == 2_000_000,
+          f"Expected $2M annual loss prevented, got ${annual_loss_prevented:,.0f}.")
+    check(round(false_positives_reduced) == 50_000,
+          f"Expected 50K fewer false positives, got {false_positives_reduced:,.0f}.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     current_rate_pct_str = f"{current_rate * 100:.0f}"
     target_rate_pct_str = f"{target_rate * 100:.0f}"
     infra_cost_increase_pct_str = f"{infra_cost_increase * 100:.0f}"
-    annual_loss_prevented_str = f"{annual_loss_prevented // MILLION} million"
+    annual_loss_prevented_str = f"{fmt(annual_loss_prevented / MILLION, precision=0, commas=False)} million"
     false_positives_reduced_str = fmt(false_positives_reduced, precision=0, commas=True)
 ```
 
@@ -3081,6 +3414,10 @@ class SingleModelROI:
     time_savings = hours_saved_monthly * 12 * hourly_cost
     single_model_roi = (incident_savings + time_savings) / mlops_investment
 
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(single_model_roi, 1) == 4.5,
+          f"Expected single-model ROI of 4.5x, got {single_model_roi:.2f}x.")
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     incidents_avoided_str = f"{incidents_avoided}"
     incident_cost_str = f"{incident_cost // THOUSAND:.0f}K"
@@ -3111,7 +3448,7 @@ The preceding technical infrastructure and economic framework provide the founda
 
 ## Case Studies {#sec-ml-operations-case-studies-641d}
 
-A sleep-tracking ring with 16 KB of RAM and a blood-pressure monitor governed by FDA regulations both run ML models in production [@fda2021artificial], yet their operational constraints share almost nothing in common. The principles, patterns, and infrastructure examined throughout this chapter converge differently depending on the deployment context. We examine two cases: the Oura Ring, where pipeline debt and configuration management challenge resource-constrained edge environments, and ClinAIOps, where feedback loops and governance requirements drive specialized healthcare operations. The following *principle mapping guide* structures the comparison.
+A battery-powered sleep-tracking ring and a blood-pressure monitor governed by FDA regulations both run ML models in production [@fda2021artificial], yet their operational constraints share almost nothing in common. The principles, patterns, and infrastructure examined throughout this chapter converge differently depending on the deployment context. We examine two cases: the Oura Ring, where pipeline debt and configuration management challenge resource-constrained edge environments, and ClinAIOps, where feedback loops and governance requirements drive specialized healthcare operations. The following *principle mapping guide* structures the comparison.
 
 ::: {.callout-example title="Principle mapping guide"}
 
@@ -3143,9 +3480,67 @@ Each case study demonstrates that domain constraints (edge hardware, clinical re
 
 The Oura Ring is a consumer-grade wearable monitoring sleep, activity, and physiological recovery through embedded sensing and computation. By measuring motion, heart rate, and body temperature, the device estimates sleep stages and delivers personalized feedback. Unlike traditional cloud-based systems, much of the data processing and inference occurs directly on the device.
 
-The central objective was improving sleep stage classification accuracy to align more closely with polysomnography (PSG)[^fn-psg-ground-truth], the clinical gold standard. Initial evaluations showed 57 percent four-stage sleep classification accuracy for an accelerometer-only model, compared with 79 percent when autonomic nervous system and circadian features were included. Published human PSG inter-scorer reliability is about 82 to 83 percent, framing the remaining gap between wearable inference and expert clinical scoring. This discrepancy prompted an effort to re-evaluate data collection, preprocessing, and model development workflows.
+```{python}
+#| label: oura-validation-gap-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ OURA SLEEP-STAGE VALIDATION GAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Oura case study context and motivation prose plus the PSG ground
+# │          truth footnote and model development evaluation prose.
+# │
+# │ Goal:    Quantify the Oura sleep-stage accuracy gain and how much of the
+# │          PSG inter-scorer-agreement ceiling it closes.
+# │ Show:    22 percentage-point gain closes about 85-88 percent of the gap.
+# │ How:     Compare accelerometer-only and enhanced model accuracies against
+# │          the published 82-83 percent human inter-scorer agreement band.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: OuraValidationGap.accel_only_pct_str,
+# │          OuraValidationGap.enhanced_pct_str,
+# │          OuraValidationGap.scorer_low_pct_str,
+# │          OuraValidationGap.scorer_high_pct_str,
+# │          OuraValidationGap.gain_points_str,
+# │          OuraValidationGap.gap_closed_range_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
 
-[^fn-psg-ground-truth]: **Polysomnography (PSG)**: A multi-parameter sleep study that provides the clinical ground truth data for this classification task. This 'truth' is inherently noisy; expert human scorers interpreting the same PSG recordings agree with each other at about 82–83 percent reliability. This inter-rater agreement establishes a practical accuracy ceiling, framing the Oura study's 57 percent accelerometer-only baseline and 79 percent enhanced model as a meaningful but still imperfect approach to clinical sleep staging. \index{PSG!ground truth ceiling}
+# ┌── LEGO ───────────────────────────────────────────────
+class OuraValidationGap:
+    """Oura sleep-stage accuracy relative to PSG inter-scorer agreement."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    accel_only_accuracy = 0.57
+    enhanced_accuracy = 0.79
+    scorer_agreement_low = 0.82
+    scorer_agreement_high = 0.83
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    accuracy_gain = enhanced_accuracy - accel_only_accuracy
+    gap_closed_high_ceiling = accuracy_gain / (scorer_agreement_high - accel_only_accuracy)
+    gap_closed_low_ceiling = accuracy_gain / (scorer_agreement_low - accel_only_accuracy)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(accuracy_gain * 100) == 22,
+          f"Expected 22 percentage-point gain, got {accuracy_gain * 100:.1f}.")
+    check(0.84 <= gap_closed_high_ceiling <= gap_closed_low_ceiling <= 0.89,
+          "Oura enhanced model should close about 85-88% of the PSG agreement gap.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    accel_only_pct_str = fmt(accel_only_accuracy * 100, precision=0, commas=False)
+    enhanced_pct_str = fmt(enhanced_accuracy * 100, precision=0, commas=False)
+    scorer_low_pct_str = fmt(scorer_agreement_low * 100, precision=0, commas=False)
+    scorer_high_pct_str = fmt(scorer_agreement_high * 100, precision=0, commas=False)
+    gain_points_str = fmt(accuracy_gain * 100, precision=0, commas=False)
+    gap_closed_range_str = (
+        f"{fmt(gap_closed_high_ceiling * 100, precision=0, commas=False)}-"
+        f"{fmt(gap_closed_low_ceiling * 100, precision=0, commas=False)}"
+    )
+```
+
+The central objective was improving sleep stage classification accuracy to align more closely with polysomnography (PSG)[^fn-psg-ground-truth], the clinical gold standard. Initial evaluations showed `{python} OuraValidationGap.accel_only_pct_str` percent four-stage sleep classification accuracy for an accelerometer-only model, compared with `{python} OuraValidationGap.enhanced_pct_str` percent when autonomic nervous system and circadian features were included. Published human PSG inter-scorer reliability is about `{python} OuraValidationGap.scorer_low_pct_str` to `{python} OuraValidationGap.scorer_high_pct_str` percent, framing the remaining gap between wearable inference and expert clinical scoring. The `{python} OuraValidationGap.gain_points_str` percentage-point gain closes roughly `{python} OuraValidationGap.gap_closed_range_str` percent of the baseline-to-human-agreement gap, so the remaining improvement target is real but bounded by the noisiness of the clinical reference itself. This discrepancy prompted an effort to re-evaluate data collection, preprocessing, and model development workflows.
+
+[^fn-psg-ground-truth]: **Polysomnography (PSG)**: A multi-parameter sleep study that provides the clinical ground truth data for this classification task. This 'truth' is inherently noisy; expert human scorers interpreting the same PSG recordings agree with each other at about `{python} OuraValidationGap.scorer_low_pct_str`–`{python} OuraValidationGap.scorer_high_pct_str` percent reliability. This inter-rater agreement establishes a practical accuracy ceiling, framing the Oura study's `{python} OuraValidationGap.accel_only_pct_str` percent accelerometer-only baseline and `{python} OuraValidationGap.enhanced_pct_str` percent enhanced model as a meaningful but still imperfect approach to clinical sleep staging. \index{PSG!ground truth ceiling}
 
 #### Data acquisition and preprocessing {#sec-ml-operations-data-acquisition-preprocessing-7fe6}
 
@@ -3161,7 +3556,7 @@ With high-quality data in place, the team developed models classifying sleep sta
 
 Two model configurations were explored: one using only accelerometer data for minimal energy consumption, and another incorporating heart rate variability and body temperature to capture autonomic nervous system activity and circadian rhythms.
 
-Through five-fold cross-validation against PSG annotations and iterative tuning, the enhanced models achieved 79 percent four-stage classification accuracy, a significant improvement from the 57 percent accelerometer-only baseline toward the clinical benchmark.
+Through five-fold cross-validation against PSG annotations and iterative tuning, the enhanced models achieved `{python} OuraValidationGap.enhanced_pct_str` percent four-stage classification accuracy, a significant improvement from the `{python} OuraValidationGap.accel_only_pct_str` percent accelerometer-only baseline toward the clinical benchmark.
 
 These gains reflect the broader impact of an MLOps approach integrating data collection, reproducible training pipelines, and disciplined evaluation. Structured documentation and version control of model parameters avoided the fragmented settings that often undermine embedded ML deployments, while requiring close collaboration among data scientists, ML engineers, and DevOps engineers.
 
@@ -3175,7 +3570,7 @@ The team developed a modular toolchain for converting models into optimized form
 
 #### Key operational insights {#sec-ml-operations-key-operational-insights-ba35}
 
-The Oura Ring case demonstrates how operational challenges manifest in edge environments. Consider the DS-CNN (Tiny Constraint) archetype from @tbl-monitoring-archetype-strategy, where monitoring relies on operational metrics (duty cycle, false positive rate) rather than ground truth labels, and retraining occurs quarterly via OTA updates. The team's modular tiered architectures with clear interfaces avoided the "pipeline jungle" problem while enabling runtime trade-offs between accuracy and efficiency. The transition from 57 percent accelerometer-only accuracy to 79 percent multi-sensor accuracy required systematic configuration management across data collection, feature sets, model architectures, and deployment targets. Success emerged from coordinated collaboration across data engineers, ML researchers, embedded systems developers, and operations personnel. The following summary captures how the five foundational MLOps principles manifested in this edge deployment:
+The Oura Ring case demonstrates how operational challenges manifest in edge environments. Consider the DS-CNN (Tiny Constraint) archetype from @tbl-monitoring-archetype-strategy, where monitoring relies on operational metrics (duty cycle, false positive rate) rather than ground truth labels, and retraining occurs quarterly via OTA updates. The team's modular tiered architectures with clear interfaces avoided the "pipeline jungle" problem while enabling runtime trade-offs between accuracy and efficiency. The transition from `{python} OuraValidationGap.accel_only_pct_str` percent accelerometer-only accuracy to `{python} OuraValidationGap.enhanced_pct_str` percent multi-sensor accuracy required systematic configuration management across data collection, feature sets, model architectures, and deployment targets. Success emerged from coordinated collaboration across data engineers, ML researchers, embedded systems developers, and operations personnel. The following summary captures how the five foundational MLOps principles manifested in this edge deployment:
 
 ::: {.callout-lighthouse title="Oura Ring: Principles summary"}
 
@@ -3183,7 +3578,7 @@ The Oura Ring case demonstrates how operational challenges manifest in edge envi
 
 **Separation of concerns**: Modular tiered architecture separates data collection, model training, and on-device serving layers. Automated conversion from training frameworks to embedded formats (quantization, pruning) keeps each stage independently evolvable.
 
-**Consistency**: PSG-aligned preprocessing ensures consistent feature computation across training and on-device inference. Five-fold cross-validation against the clinical gold standard verifies that model updates do not regress below the 79 percent four-stage accuracy target established by the enhanced feature set.
+**Consistency**: PSG-aligned preprocessing ensures consistent feature computation across training and on-device inference. Five-fold cross-validation against the clinical gold standard verifies that model updates do not regress below the `{python} OuraValidationGap.enhanced_pct_str` percent four-stage accuracy target established by the enhanced feature set.
 
 **Observable degradation**: Battery and compute monitoring detect when models underperform due to resource constraints. Limited privacy-preserving telemetry tracks duty cycle, battery impact, inference failures, confidence and anomaly rates, and other population-level health signals; periodic labeled studies or validation cohorts estimate accuracy.
 
@@ -3383,7 +3778,7 @@ For example, in diabetes management, a clinician may use AI-summarized data to g
 
 #### Hypertension case example {#sec-ml-operations-hypertension-case-example-7b1f}
 
-\index{Hypertension!ClinAIOps case study}Hypertension management illustrates how the three ClinAIOps loops work in practice. Affecting nearly half of US adults (119.9 million individuals), hypertension requires individualized, ongoing therapy adjustments. This makes it an ideal candidate for continuous therapeutic monitoring.
+\index{Hypertension!ClinAIOps case study}Hypertension management illustrates how the three ClinAIOps loops work in practice. Because it affects a large share of adults and requires individualized, ongoing therapy adjustments, it is an ideal candidate for continuous therapeutic monitoring.
 
 ##### Data infrastructure {#sec-ml-operations-data-infrastructure-b481}
 
@@ -3653,11 +4048,11 @@ The following fallacies and pitfalls capture common errors that waste engineerin
 
 **Fallacy**: *MLOps is just applying traditional DevOps practices to machine learning models.*
 
-\index{MLOps Fallacies!DevOps equivalence}Engineers assume standard CI/CD pipelines transfer directly to ML, but production ML requires specialized infrastructure. As @sec-ml-operations-cicd-pipelines-a9de showed, ML pipelines add data validation, model training, performance evaluation, artifact registration, and deployment gates that make them slower and more stateful than conventional software pipelines. Traditional DevOps achieves daily or hourly deployments; ML systems without specialized tooling deploy weekly to monthly. Standard CI/CD tools cannot handle feature stores, model registries, or drift detection. A recommendation system deployed using conventional DevOps experienced 8 percent accuracy loss because the pipeline lacked training-serving consistency checks. Organizations that adopt DevOps without ML adaptations encounter silent model degradation, training-serving skew, and data quality failures that evade conventional testing.
+\index{MLOps Fallacies!DevOps equivalence}Engineers assume standard CI/CD pipelines transfer directly to ML, but production ML requires specialized infrastructure. As @sec-ml-operations-cicd-pipelines-a9de showed, ML pipelines add data validation, model training, performance evaluation, artifact registration, and deployment gates that make them slower and more stateful than conventional software pipelines. Traditional DevOps can release deterministic services frequently; ML systems without specialized tooling often slow down because retraining and validation are stateful. Standard CI/CD tools do not by themselves handle feature stores, model registries, or drift detection. A recommendation system deployed using conventional DevOps can lose accuracy because the pipeline lacks training-serving consistency checks. Organizations that adopt DevOps without ML adaptations encounter silent model degradation, training-serving skew, and data quality failures that evade conventional testing.
 
 **Pitfall**: *Treating model deployment as a one-time event rather than an ongoing process.*
 
-\index{MLOps Pitfalls!one-time deployment}Teams view deployment as a terminal milestone analogous to shipping software releases, but models degrade continuously due to data drift and distribution shift. @sec-ml-operations-data-quality-monitoring-c6b6 establishes that PSI values exceeding 0.2 indicate significant distribution shift requiring investigation. A fraud detection model with PSI = 0.18 at deployment reached PSI = 0.31 within three months, causing accuracy to drop from 94 percent to 87 percent. The optimal retraining interval follows $T^* \approx \sqrt{\frac{2C}{QVA_0\gamma}}$ from @sec-ml-operations-quantitative-retraining-economics-1579, where high-volume systems require daily retraining while low-drift domains sustain monthly intervals. Without automated retraining pipelines, Mean Time To Recovery (MTTR) for accuracy degradation averages 5 to 14 days; with automation, MTTR drops to hours, and highly automated systems can approach sub-hour recovery for well-instrumented, low-risk updates. Production ML requires continuous monitoring of feature distributions, performance metrics, and automated retraining triggers throughout the operational lifecycle.
+\index{MLOps Pitfalls!one-time deployment}Teams view deployment as a terminal milestone analogous to shipping software releases, but models degrade continuously due to data drift and distribution shift. @sec-ml-operations-data-quality-monitoring-c6b6 establishes that PSI values exceeding 0.2 indicate significant distribution shift requiring investigation. A fraud detection model can move from below the warning threshold to above the review threshold within months, turning initially acceptable accuracy into material degradation. The optimal retraining interval follows $T^* \approx \sqrt{\frac{2C}{QVA_0\gamma}}$ from @sec-ml-operations-quantitative-retraining-economics-1579, where high-volume systems require daily retraining while low-drift domains sustain monthly intervals. Without automated retraining pipelines, Mean Time To Recovery (MTTR) for accuracy degradation is often measured in days; with automation, MTTR can drop to hours for well-instrumented, low-risk updates. Production ML requires continuous monitoring of feature distributions, performance metrics, and automated retraining triggers throughout the operational lifecycle.
 
 **Fallacy**: *Automated retraining ensures optimal model performance without human oversight.*
 
@@ -3669,11 +4064,11 @@ The following fallacies and pitfalls capture common errors that waste engineerin
 
 **Fallacy**: *Training and serving environments automatically remain consistent once pipelines are established.*
 
-\index{MLOps Fallacies!automatic consistency}Teams assume that feature computation produces identical values across training and serving after initial pipeline setup, but training-serving skew emerges from subtle inconsistencies in preprocessing logic, timezone handling, or dependency versions. @sec-ml-operations-feature-stores-c01c demonstrates that skew causes 5 to 15 percent accuracy degradation even when models perform well in offline validation. An e-commerce ranking model computed `session_length` using wall-clock time in training but processing time in serving, creating 12 percent accuracy loss that persisted for six weeks before detection. Google reported that eliminating training-serving skew in ad prediction improved performance by 8 percent, worth millions in annual revenue. Without centralized feature stores and automated consistency validation, skew detection requires three to eight weeks as degradation gradually becomes visible in aggregate metrics. Organizations using feature stores with built-in consistency checks detect skew within 1–3 days through automated validation that compares feature distributions across environments.
+\index{MLOps Fallacies!automatic consistency}Teams assume that feature computation produces identical values across training and serving after initial pipeline setup, but training-serving skew emerges from subtle inconsistencies in preprocessing logic, timezone handling, or dependency versions. @sec-ml-operations-feature-stores-c01c demonstrates that skew causes 5 to 15 percent accuracy degradation even when models perform well in offline validation. An e-commerce ranking model that computes `session_length` using wall-clock time in training but processing time in serving can suffer double-digit accuracy loss that persists until someone compares feature distributions directly. Documented production systems report meaningful gains from eliminating skew, often worth substantial revenue when the model drives high-volume decisions. Without centralized feature stores and automated consistency validation, skew detection can take weeks as degradation gradually becomes visible in aggregate metrics; feature stores with built-in consistency checks shorten that loop by comparing feature distributions across environments automatically.
 
 **Pitfall**: *Assuming comprehensive monitoring prevents all production incidents.*
 
-\index{MLOps Pitfalls!monitoring overconfidence}Engineers believe sufficient metrics and dashboards eliminate surprise failures, but monitoring creates blind spots when teams track outputs without validating inputs. @sec-ml-operations-data-quality-monitoring-c6b6 establishes that input validation detects issues before they degrade predictions, yet many ML systems in practice monitor only accuracy and latency. A recommendation system tracked click-through rate but ignored feature staleness, missing that user embeddings were 18 hours stale due to database replication lag. This created 9 percent engagement degradation for three days before accuracy monitoring triggered alerts. Systems monitoring only outputs can exhibit multi-day Mean Time To Detection (MTTD); adding data quality monitoring can reduce MTTD to hours or less. Production ML requires layered monitoring with distinct SLAs: data freshness (15 minutes), schema validation (1 hour), feature distributions (4 hours), model outputs (1 hour), and business metrics (24 hours). Monitoring infrastructure itself needs redundancy to prevent blind operation during platform failures.
+\index{MLOps Pitfalls!monitoring overconfidence}Engineers believe sufficient metrics and dashboards eliminate surprise failures, but monitoring creates blind spots when teams track outputs without validating inputs. @sec-ml-operations-data-quality-monitoring-c6b6 establishes that input validation detects issues before they degrade predictions, yet many ML systems in practice monitor only accuracy and latency. A recommendation system can track click-through rate while ignoring feature staleness, missing embeddings that are hours out of date due to database replication lag. This can create engagement degradation for days before accuracy monitoring triggers alerts. Systems monitoring only outputs can exhibit multi-day Mean Time To Detection (MTTD); adding data quality monitoring can reduce MTTD to hours or less. Production ML requires layered monitoring with explicit SLAs for data freshness, schema validation, feature distributions, model outputs, and business metrics. Monitoring infrastructure itself needs redundancy to prevent blind operation during platform failures.
 
 ## Summary {#sec-ml-operations-summary-ac43}
 
@@ -3681,7 +4076,7 @@ MLOps exists because machine learning systems fail differently than traditional 
 
 The five foundational principles introduced at the chapter's opening (@sec-ml-operations-foundational-principles-44e6) provide an evaluation framework that applies regardless of scale or domain. Reproducibility through versioning addresses the root cause of most production incidents: untracked artifacts including data versions, configuration changes, and environment drift that make debugging impossible and rollbacks unreliable. Separation of concerns contains the blast radius when changes are required, preventing the boundary erosion and correction cascades that transform local fixes into system-wide regressions. The consistency imperative targets training-serving skew, the silent accuracy killer that caused 5–15 percent degradation in the examples above when feature computation diverged between pipelines; feature stores implement this principle by computing features once and serving them everywhere. Observable degradation transforms the abstract "silent failure" problem into actionable alerts through layered monitoring that tracks data freshness, feature distributions, model outputs, and business metrics. Cost-aware automation replaces arbitrary retraining schedules with principled economics, using the staleness cost function $(T^* \approx \sqrt{\frac{2C}{QVA_0\gamma}})$ to quantify when accuracy decay justifies retraining expense.
 
-The infrastructure components examined throughout the chapter directly implement these principles across the three critical interfaces introduced at the chapter's opening. Feature stores and data versioning address the Data-Model Interface by ensuring training-serving consistency. CI/CD pipelines and model registries address the Model-Infrastructure Interface by enforcing reproducibility and enabling rollback. Monitoring systems, incident response frameworks, and on-call practices address the Production-Monitoring Interface by making degradation observable and actionable. The retraining decision framework enables cost-aware automation by connecting drift detection to economic thresholds. The case studies demonstrated that domain constraints reshape *how* principles are implemented without changing *which* principles matter: Oura Ring showed how edge constraints force proactive graceful degradation design, with the 57 percent to 79 percent accuracy improvement coming from systematic data management and feature integration rather than algorithmic innovation alone. ClinAIOps showed how regulatory requirements transform graceful degradation from optional to mandatory, with human-in-the-loop governance serving as the primary safety mechanism and the three feedback loops (patient treatment, clinician oversight, developer feedback) functioning as architectural patterns rather than operational overhead.
+The infrastructure components examined throughout the chapter directly implement these principles across the three critical interfaces introduced at the chapter's opening. Feature stores and data versioning address the Data-Model Interface by ensuring training-serving consistency. CI/CD pipelines and model registries address the Model-Infrastructure Interface by enforcing reproducibility and enabling rollback. Monitoring systems, incident response frameworks, and on-call practices address the Production-Monitoring Interface by making degradation observable and actionable. The retraining decision framework enables cost-aware automation by connecting drift detection to economic thresholds. The case studies demonstrated that domain constraints reshape *how* principles are implemented without changing *which* principles matter: Oura Ring showed how edge constraints force proactive graceful degradation design, with the `{python} OuraValidationGap.accel_only_pct_str` percent to `{python} OuraValidationGap.enhanced_pct_str` percent accuracy improvement coming from systematic data management and feature integration rather than algorithmic innovation alone. ClinAIOps showed how regulatory requirements transform graceful degradation from optional to mandatory, with human-in-the-loop governance serving as the primary safety mechanism and the three feedback loops (patient treatment, clinician oversight, developer feedback) functioning as architectural patterns rather than operational overhead.
 
 ::: {.callout-takeaways title="Perfectly available, perfectly wrong"}
 
