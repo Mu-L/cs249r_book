@@ -33,10 +33,19 @@ def _get_markdown():
     return MarkdownStr
 
 
-def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
+def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False,
+        prefix="", suffix=""):
     """
-    Format a Pint Quantity for narrative text.
-    Returns ONLY the number string (no unit suffix).
+    Format a Pint Quantity (or plain number) for narrative text.
+    Returns a MarkdownStr so Quarto inserts the value verbatim (no escape).
+
+    The prefix and suffix arguments collapse the old MarkdownStr(f"...")
+    escape-hatch idiom into a single canonical helper. Common uses:
+
+        fmt(price, precision=0, prefix="$")         # "$1,000"
+        fmt(rate * 100, precision=1, commas=False, suffix="%")  # "12.4%"
+        fmt(bw_mb_s, precision=1, commas=False, suffix=" MB/s")  # "2.4 MB/s"
+        fmt(speedup, precision=0, commas=False, suffix="x")     # "8x"
 
     Safety: Raises ValueError if a non-zero value is formatted as "0"
     due to insufficient precision (unless allow_zero=True).
@@ -69,7 +78,8 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
             f"Increase precision or set allow_zero=True if this was intentional."
         )
 
-    out = MarkdownStr(result)
+    decorated = f"{prefix}{result}{suffix}"
+    out = MarkdownStr(decorated)
     assert isinstance(out, MarkdownStr), (
         "fmt() must return MarkdownStr — this guard exists so a future refactor "
         "of this module cannot silently break Quarto's _repr_markdown_ detection. "
