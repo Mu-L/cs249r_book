@@ -861,7 +861,7 @@ class ValidateCommand:
              "Same as bib-url-* above"),
             ("RSC-012",
              "Broken fragment ID",
-             "fix_cross_references.py handles this"),
+             "resolve_cross_references.py handles this"),
             ("OPF-014",
              "Missing mathml / other OPF property",
              "epub_postprocess aligns nav mathml property"),

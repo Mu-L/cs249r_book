@@ -2,7 +2,7 @@
 
 This directory contains scripts that run after Quarto builds to fix various issues.
 
-## fix_cross_references.py
+## resolve_cross_references.py
 
 ### Problem It Solves
 
@@ -29,7 +29,7 @@ The script is configured as a post-render hook in the Quarto configuration files
 project:
   post-render:
     - scripts/clean_svgs.py
-    - scripts/fix_cross_references.py  # Fixes cross-references
+    - scripts/resolve_cross_references.py  # Fixes cross-references
 ```
 
 ### Maintenance
@@ -57,10 +57,10 @@ CHAPTER_TITLES = {
 
 ```bash
 # Test on all HTML files
-python3 scripts/fix_cross_references.py
+python3 scripts/resolve_cross_references.py
 
 # Test on specific file
-python3 scripts/fix_cross_references.py _build/html/contents/backmatter/glossary/glossary.html
+python3 scripts/resolve_cross_references.py _build/html/contents/backmatter/glossary/glossary.html
 ```
 
 ### Output

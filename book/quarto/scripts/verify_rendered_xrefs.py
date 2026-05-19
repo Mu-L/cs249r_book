@@ -6,7 +6,7 @@ Post-render guard: fail the build if any unresolved cross-reference literal
 WHY THIS EXISTS
 ---------------
 vol1/vol2 build as `project.type: website`, so Quarto cannot resolve
-cross-chapter `@xref`s natively. `scripts/fix_cross_references.py` patches
+cross-chapter `@xref`s natively. `scripts/resolve_cross_references.py` patches
 them up using a manually-maintained label registry. That registry has had
 gaps in the past — most recently, the regex only handled `sec-`/`pri-` and
 silently dropped every cross-chapter `@fig-`/`@tbl-`/`@eq-`/`@lst-` ref,
@@ -166,7 +166,7 @@ def main() -> int:
             )
             print(
                 "  Fix: define the missing labels in source, or extend "
-                "scripts/fix_cross_references.py to handle the prefix.",
+                "scripts/resolve_cross_references.py to handle the prefix.",
                 file=sys.stderr,
             )
         else:

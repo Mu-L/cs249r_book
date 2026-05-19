@@ -1,41 +1,43 @@
 #!/usr/bin/env python3
 """
-Post-process ALL HTML files to fix unresolved cross-reference links.
+Post-render step: resolve cross-chapter cross-references in HTML output.
 
 WHY THIS SCRIPT EXISTS:
 -----------------------
-When using selective rendering (only building specific chapters like index + introduction),
-Quarto cannot resolve cross-references to chapters that aren't being built. These show up
-in the HTML output as unresolved references like: ?@sec-ml-systems
+vol1 and vol2 build as `project.type: website` (each chapter is its own Pandoc
+invocation), so Quarto cannot resolve `@sec-`, `@fig-`, `@tbl-`, `@eq-`, `@lst-`,
+`@pri-`, or `@nb-` references that point into a sibling chapter. They ship as
+literal `?@xxx-yyy` text in the rendered HTML. Selective builds (only rendering
+a few chapters during development) hit this for every cross-chapter ref.
 
-This is a problem because:
-1. The glossary has 800+ cross-references to all chapters
-2. The introduction references many other chapters
-3. We want fast builds during development (only building 2-3 files instead of 20+)
-4. But we still want all cross-reference links to work properly
+This script is the **resolution step** of the render pipeline — not a "fix" for
+a bug. The website-mode build pipeline relies on it to wire cross-chapter
+references end-to-end.
 
 WHAT THIS SCRIPT DOES:
 ----------------------
-1. Scans QMD source files to dynamically build a mapping of section IDs → HTML paths and titles
-2. Scans ALL HTML files in the build directory after Quarto finishes
+1. Scans QMD source files to dynamically build a mapping of section/figure/table
+   IDs → HTML paths and titles.
+2. Scans ALL HTML files in the build directory after Quarto finishes.
 3. Finds unresolved references that appear as: <strong>?@sec-xxx</strong>
+   (and the parallel forms for `<a href="@xxx-yyy">` and quarto-unresolved spans).
 4. Converts them to proper HTML links: <strong><a href="../path/to/chapter.html#sec-xxx">Title</a></strong>
 
-The dynamic approach means you never need to update this script when adding chapters or
-renaming sections — it reads the source QMDs directly.
+The dynamic approach means you never need to update this script when adding
+chapters or renaming sections — it reads the source QMDs directly.
 
 WHEN IT RUNS:
 -------------
 This script runs as a post-render hook in the Quarto configuration:
   post-render:
     - scripts/clean_svgs.py
-    - scripts/fix_cross_references.py  # <-- Runs after all HTML is generated
+    - scripts/resolve_cross_references.py  # <-- Runs after all HTML is generated
 
 HOW TO USE:
 -----------
 1. Automatic: Runs automatically during `quarto render` as a post-render hook
-2. Manual: python3 scripts/fix_cross_references.py [specific-file.html]
-3. Test all: python3 scripts/fix_cross_references.py  # processes all HTML files
+2. Manual: python3 scripts/resolve_cross_references.py [specific-file.html]
+3. Test all: python3 scripts/resolve_cross_references.py  # processes all HTML files
 """
 
 import re
@@ -280,6 +282,7 @@ def _find_qmd_roots() -> list[tuple[Path, Path]]:
 # Build the mapping once at import time (lazy cache via module-level variable)
 _CHAPTER_MAPPING: dict | None = None
 _CHAPTER_TITLES: dict | None = None
+_PRINCIPLE_NUMBERS: dict | None = None
 
 
 def get_mappings() -> tuple[dict, dict]:
@@ -291,6 +294,94 @@ def get_mappings() -> tuple[dict, dict]:
         else:
             _CHAPTER_MAPPING, _CHAPTER_TITLES = {}, {}
     return _CHAPTER_MAPPING, _CHAPTER_TITLES
+
+
+# ---------------------------------------------------------------------------
+# Principle numbering
+#
+# Principle callouts use a per-volume global counter that increments across the
+# four parts/*_principles.qmd files in declared order. The Lua filter does this
+# at render time, but the count is only available within the Pandoc invocation
+# that's currently rendering a parts file — sibling chapters that reference
+# principles via `Principle \ref{pri-X}` never see the number.
+#
+# We replay the count here so cross-chapter references in HTML can substitute
+# the resolved `Principle N` text. The parts file render order must match what
+# Quarto + Lua see during a full build (the order in config/_quarto-html-vol*.yml).
+# ---------------------------------------------------------------------------
+
+# Stable parts-file order per volume. Matches the declared order in
+# config/_quarto-html-vol*.yml and config/_quarto-pdf-vol*-copyedit.yml.
+PRINCIPLE_PARTS_ORDER: dict[str, list[str]] = {
+    "vol1": [
+        "contents/vol1/parts/foundations_principles.qmd",
+        "contents/vol1/parts/build_principles.qmd",
+        "contents/vol1/parts/optimize_principles.qmd",
+        "contents/vol1/parts/deploy_principles.qmd",
+    ],
+    "vol2": [
+        "contents/vol2/parts/fleet_principles.qmd",
+        "contents/vol2/parts/distributed_ml_principles.qmd",
+        "contents/vol2/parts/deployment_principles.qmd",
+        "contents/vol2/parts/responsible_fleet_principles.qmd",
+    ],
+}
+
+
+def build_principle_numbers(roots: list[tuple[Path, Path]]) -> dict[str, str]:
+    """
+    Walk the parts/*_principles.qmd files in declared order and count
+    `.callout-principle` divs to compute each principle's assigned number.
+
+    Returns {pri_id: number_str}. Per-volume independent numbering.
+    """
+    # Match a div opener that carries BOTH `.callout-principle` and `#pri-X`.
+    # Attributes can appear in any order inside the {...} block.
+    div_opener_re = re.compile(r'^\s*:{2,}\s*\{([^}]*)\}')
+    pri_id_re = re.compile(r'#(pri-[\w-]+)')
+    has_callout_principle = re.compile(r'\.callout-principle\b')
+
+    result: dict[str, str] = {}
+    for _, path_root in roots:
+        if not isinstance(path_root, Path):
+            continue
+        for vol, parts_paths in PRINCIPLE_PARTS_ORDER.items():
+            counter = 0
+            for rel in parts_paths:
+                qmd = path_root / rel
+                if not qmd.exists():
+                    continue
+                try:
+                    lines = qmd.read_text(encoding="utf-8").splitlines()
+                except Exception:
+                    continue
+                for line in lines:
+                    m_open = div_opener_re.match(line)
+                    if not m_open:
+                        continue
+                    attrs = m_open.group(1)
+                    if not has_callout_principle.search(attrs):
+                        continue
+                    m_id = pri_id_re.search(attrs)
+                    if not m_id:
+                        continue
+                    counter += 1
+                    pri_id = m_id.group(1)
+                    if pri_id not in result:
+                        result[pri_id] = str(counter)
+        break  # roots[0] is the project root we want
+    return result
+
+
+def get_principle_numbers() -> dict:
+    global _PRINCIPLE_NUMBERS
+    if _PRINCIPLE_NUMBERS is None:
+        roots = _find_qmd_roots()
+        if roots:
+            _PRINCIPLE_NUMBERS = build_principle_numbers(roots)
+        else:
+            _PRINCIPLE_NUMBERS = {}
+    return _PRINCIPLE_NUMBERS
 
 
 # ---------------------------------------------------------------------------
@@ -417,14 +508,14 @@ def fix_cross_reference_link(match, from_file, build_dir, epub_mapping=None):
         return full_match
 
 
-def fix_cross_references(
+def resolve_cross_references(
     html_content: str,
     from_file: Path,
     build_dir: Path,
     epub_mapping: dict | None = None,
 ) -> tuple[str, int, list]:
     """
-    Fix all cross-reference links in HTML/XHTML content.
+    Resolve all cross-reference links in HTML/XHTML content.
 
     Quarto generates three types of unresolved references when chapters aren't built:
     1. Full unresolved links: <a href="#sec-xxx" class="quarto-xref"><span class="quarto-unresolved-ref">...</span></a>
@@ -443,11 +534,19 @@ def fix_cross_references(
     pattern1 = rf'<a href="#({CROSSREF_PREFIXES}-[a-zA-Z0-9-]+)" class="quarto-xref"><span class="quarto-unresolved-ref">[^<]*</span></a>'
     pattern2 = rf'<strong>\?\@({CROSSREF_PREFIXES}-[a-zA-Z0-9-]+)</strong>'
     pattern3 = rf'<a href="@({CROSSREF_PREFIXES}-[a-zA-Z0-9-]+)"([^>]*)>([^<]*)</a>'
+    # Pattern 4 — `Principle \ref{pri-X}` leaks as an inline-math span.
+    # Source prose says: `Principle \ref{pri-data-as-code}`. Pandoc parses the
+    # `\ref{...}` as inline math, so it ships to HTML as:
+    #     <span class="math inline">\(\ref{pri-data-as-code}\)</span>
+    # MathJax then renders the undefined `\ref` as `???`. We replace the whole
+    # math span with a link to the principles page using the resolved number.
+    pattern4 = r'<span class="math inline">\\\(\\ref\{(pri-[a-zA-Z0-9-]+)\}\\\)</span>'
 
     matches1 = re.findall(pattern1, html_content)
     matches2 = re.findall(pattern2, html_content)
     matches3 = re.findall(pattern3, html_content)
-    total_matches = len(matches1) + len(matches2) + len(matches3)
+    matches4 = re.findall(pattern4, html_content)
+    total_matches = len(matches1) + len(matches2) + len(matches3) + len(matches4)
 
     # Fix Pattern 1
     fixed_content = re.sub(
@@ -496,10 +595,30 @@ def fix_cross_references(
 
     fixed_content = re.sub(pattern3, fix_epub_reference, fixed_content)
 
+    # Fix Pattern 4 — Principle \ref{pri-X} math-span leak
+    principle_numbers = get_principle_numbers()
+
+    def fix_principle_reference(match):
+        pri_ref = match.group(1)
+        number = principle_numbers.get(pri_ref)
+        abs_path = chapter_mapping.get(pri_ref)
+        if number and abs_path:
+            rel_path = calculate_relative_path(from_file, abs_path, build_dir, epub_mapping)
+            return f'<a href="{rel_path}">{number}</a>'
+        elif number:
+            # Have the number but no link target — emit number as plain text.
+            return number
+        else:
+            unmapped_refs.append(pri_ref)
+            return match.group(0)
+
+    fixed_content = re.sub(pattern4, fix_principle_reference, fixed_content)
+
     remaining1 = re.findall(pattern1, fixed_content)
     remaining2 = re.findall(pattern2, fixed_content)
     remaining3 = re.findall(pattern3, fixed_content)
-    fixed_count = total_matches - len(remaining1) - len(remaining2) - len(remaining3)
+    remaining4 = re.findall(pattern4, fixed_content)
+    fixed_count = total_matches - len(remaining1) - len(remaining2) - len(remaining3) - len(remaining4)
 
     return fixed_content, fixed_count, unmapped_refs
 
@@ -515,7 +634,7 @@ def process_html_file(html_file: Path, base_dir: Path, epub_mapping: dict | None
     except Exception:
         return None, 0, []
 
-    fixed_content, fixed_count, unmapped = fix_cross_references(
+    fixed_content, fixed_count, unmapped = resolve_cross_references(
         html_content, html_file, base_dir, epub_mapping
     )
 
@@ -642,7 +761,7 @@ def main():
             print("✅ No cross-reference fixes needed")
 
     else:
-        print("Usage: python3 fix_cross_references.py [<html-or-xhtml-file>]")
+        print("Usage: python3 resolve_cross_references.py [<html-or-xhtml-file>]")
         sys.exit(1)
 
 
