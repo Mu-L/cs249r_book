@@ -72,6 +72,12 @@ class LayoutCommand:
         )
         sub = parser.add_subparsers(dest="subcommand")
 
+        collisions = sub.add_parser(
+            "collisions",
+            help="Scan PDF for body content invading header / footer bands.",
+        )
+        collisions.add_argument("pdf", help="Path to PDF file to scan.")
+
         check = sub.add_parser("check", help="Scan PDF for whitespace gaps.")
         check.add_argument("pdf", help="Path to PDF file to scan.")
         check.add_argument(
@@ -114,6 +120,8 @@ class LayoutCommand:
             return False
 
         opts = parser.parse_args(args)
+        if opts.subcommand == "collisions":
+            return self._collisions(Path(opts.pdf))
         if opts.subcommand == "check":
             only = (
                 set(s.strip() for s in opts.only.split(",") if s.strip())
@@ -203,6 +211,110 @@ class LayoutCommand:
                 total_flagged=total_flagged,
             )
         return True
+
+    # ------------------------------------------------------------------
+    # collisions
+    # ------------------------------------------------------------------
+
+    def _collisions(self, pdf_path: Path) -> bool:
+        """Detect body content invading the header / footer band.
+
+        The header band (top 6%) is reserved for the running header and
+        page number; the footer band (bottom 6%) for the page number /
+        bottom rule. Any body text whose line lands inside either band
+        is a layout regression — most commonly caused by overly-tight
+        tcolorbox padding or margin overrides.
+
+        Chars sharing a y-baseline within 2pt are clustered as one
+        logical line, so running-header content (page number + chapter
+        title on slightly different baselines) is not double-counted.
+        """
+        if not pdf_path.exists():
+            console.print(f"[red]PDF not found:[/red] {pdf_path}")
+            return False
+        try:
+            import pdfplumber  # type: ignore
+        except ImportError:
+            console.print(
+                "[red]pdfplumber not installed.[/red] "
+                "Run: [cyan]pip install pdfplumber[/cyan]"
+            )
+            return False
+
+        header_collisions: List[Tuple[int, float, str]] = []
+        footer_collisions: List[Tuple[int, float, str]] = []
+
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            for i, page in enumerate(pdf.pages):
+                sheet = i + 1
+                ph = page.height
+                pw = page.width
+                header_bottom = ph * HEADER_FRAC
+                footer_top = ph * (1.0 - FOOTER_FRAC)
+
+                # Cluster chars within 2pt of same y as one logical line.
+                lines: Dict[float, list] = {}
+                for c in page.chars:
+                    if c["x0"] > pw * MAIN_COL_RIGHT_FRAC:
+                        continue
+                    placed = False
+                    for ly in list(lines.keys()):
+                        if abs(c["top"] - ly) < 2.0:
+                            lines[ly].append(c)
+                            placed = True
+                            break
+                    if not placed:
+                        lines[c["top"]] = [c]
+
+                ys = sorted(lines.keys())
+
+                # Header collision: more than one logical line in header band.
+                hdr = [y for y in ys if y < header_bottom + 5]
+                if len(hdr) > 1:
+                    snippet = self._line_text(lines[hdr[1]])
+                    header_collisions.append((sheet, hdr[1], snippet))
+
+                # Footer collision: more than one logical line in footer band.
+                ftr = [y for y in ys if y > footer_top - 5]
+                if len(ftr) > 1:
+                    snippet = self._line_text(lines[ftr[0]])
+                    footer_collisions.append((sheet, ftr[0], snippet))
+
+        if not header_collisions and not footer_collisions:
+            console.print(
+                Panel(
+                    f"No header or footer collisions across "
+                    f"{len(pdf.pages) if hasattr(pdf, 'pages') else '?'} "
+                    f"pages.",
+                    title="✅ Collision check clean",
+                    border_style="green",
+                )
+            )
+            return True
+
+        console.print()
+        console.print(
+            f"[bold yellow]⚠ Header collisions: "
+            f"{len(header_collisions)}[/bold yellow]"
+        )
+        for sheet, y, txt in header_collisions[:20]:
+            console.print(f"  sheet {sheet} y={y:.0f}: [dim]{txt}[/dim]")
+        if len(header_collisions) > 20:
+            console.print(
+                f"  [dim]…and {len(header_collisions) - 20} more[/dim]"
+            )
+        console.print(
+            f"[bold yellow]⚠ Footer collisions: "
+            f"{len(footer_collisions)}[/bold yellow]"
+        )
+        for sheet, y, txt in footer_collisions[:20]:
+            console.print(f"  sheet {sheet} y={y:.0f}: [dim]{txt}[/dim]")
+        return True
+
+    @staticmethod
+    def _line_text(line_chars: list) -> str:
+        line_chars = sorted(line_chars, key=lambda c: c["x0"])
+        return "".join(c.get("text", "") for c in line_chars).strip()[:60]
 
     # ------------------------------------------------------------------
     # CSV output
