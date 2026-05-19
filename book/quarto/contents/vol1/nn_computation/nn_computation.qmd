@@ -105,6 +105,66 @@ class MNISTInference:
     total_params_str = f"{total_params:,}"
 ```
 
+```{python}
+#| label: neural-computation-reference-calcs
+#| echo: false
+from mlsysim.core.constants import H100_FLOPS_FP16_TENSOR, TPUV1_FLOPS_INT8, TPUV1_TDP, TFLOPs, second, watt, byte, KB
+from mlsysim.fmt import fmt, sci, check
+
+class EarlySystemsClaims:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    sigmoid_depth = 20
+    sigmoid_peak_derivative = 0.25
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    gradient_scale = sigmoid_peak_derivative ** sigmoid_depth
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(gradient_scale < 1e-12, f"20 sigmoid layers should nearly zero gradients; got {gradient_scale:.2e}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    sigmoid_depth_str = fmt(sigmoid_depth, precision=0, commas=False)
+    gradient_scale_str = sci(gradient_scale, precision=1)
+
+class TensorLayoutCost:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    image_height = 224
+    image_width = 224
+    channels = 3
+    bytes_per_channel = 1
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    tensor_bytes = image_height * image_width * channels * bytes_per_channel
+    tensor_kb = (tensor_bytes * byte).m_as(KB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(tensor_bytes == 150_528, f"Unexpected ImageNet tensor byte count: {tensor_bytes}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    image_shape_str = f"{image_height}×{image_width}×{channels}"
+    tensor_kb_str = fmt(tensor_kb, precision=0, commas=False)
+
+class AcceleratorSpecRefs:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    h100_fp16_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs / second)
+    tpuv1_tops = TPUV1_FLOPS_INT8.m_as(TFLOPs / second)
+    tpuv1_tdp_w = TPUV1_TDP.m_as(watt)
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    # Hardware vendors report FMA as two FLOPs; one MAC is one multiply-accumulate.
+    h100_fp16_tmacs = h100_fp16_tflops / 2
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(h100_fp16_tflops > 900, f"H100 FP16 throughput unexpectedly low: {h100_fp16_tflops}")
+    check(tpuv1_tops == 92, f"TPU v1 INT8 throughput changed: {tpuv1_tops}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    h100_fp16_tflops_str = fmt(h100_fp16_tflops, precision=0, commas=False)
+    h100_fp16_tmacs_str = fmt(h100_fp16_tmacs, precision=0, commas=False)
+    tpuv1_tops_str = fmt(tpuv1_tops, precision=0, commas=False)
+    tpuv1_tdp_w_str = fmt(tpuv1_tdp_w, precision=0, commas=False)
+```
+
 ## From Logic to Arithmetic {#sec-neural-computation-deep-learning-systems-engineering-foundation-597f}
 
 \index{Deep Learning!definition}
@@ -357,9 +417,9 @@ narrowed its focus while dramatically expanding practical capability.};
 \index{Gradient Instabilities!training failure mode}
 This paradigm shift creates an engineering problem with no precedent in traditional software. When conventional software fails, an error message points to a line of code. When deep learning fails, the symptoms are subtler: gradient instabilities[^fn-gradient-instabilities] that silently prevent learning, numerical precision errors that corrupt model weights over thousands of iterations, or memory access patterns in tensor operations[^fn-tensor-operations] that leave GPUs idle for most of each training step. These are not algorithmic bugs that a debugger can catch. They are systems problems that require understanding the mathematical machinery underneath.
 
-[^fn-gradient-instabilities]: **Gradient Instabilities**: In a 20-layer sigmoid network, gradient magnitude after backpropagation is approximately $0.25^{20} \approx 10^{-12}$—effectively zero, making learning a mathematical impossibility without architectural intervention. These failures are invisible in standard logs (loss simply plateaus or becomes not a number (NaN)), making them among the hardest bugs to diagnose. Rectified linear unit (ReLU) activations (gradient of one for positive inputs) and residual connections (direct gradient highways that bypass layers) were the two architectural breakthroughs that made deep networks tractable; @sec-network-architectures-evolution-dense-spatial-processing-2761 treats the residual-connection depth solution in detail. \index{Gradient Instabilities!training failure}
+[^fn-gradient-instabilities]: **Gradient Instabilities**: In a `{python} EarlySystemsClaims.sigmoid_depth_str`-layer sigmoid network, gradient magnitude after backpropagation is approximately $0.25^{20}$, or `{python} EarlySystemsClaims.gradient_scale_str`—effectively zero, making learning a mathematical impossibility without architectural intervention. These failures are invisible in standard logs (loss simply plateaus or becomes not a number (NaN)), making them among the hardest bugs to diagnose. Rectified linear unit (ReLU) activations (gradient of one for positive inputs) and residual connections (direct gradient highways that bypass layers) were the two architectural breakthroughs that made deep networks tractable; @sec-network-architectures-evolution-dense-spatial-processing-2761 treats the residual-connection depth solution in detail. \index{Gradient Instabilities!training failure}
 
-[^fn-tensor-operations]: **Tensor Operations**: The logical structure of a tensor (for example, a 4D image batch) often requires nonsequential memory access patterns to retrieve elements from its flat, 1D physical storage. A concrete example: PyTorch defaults to NCHW (channel-first) layout while most mobile hardware and ARM processors prefer NHWC (channel-last). Transposing a $224{\times}224{\times}3$ ImageNet tensor between formats requires reading and rewriting ~150 KB—a pure memory operation that adds 0.3--1 ms per inference call with no arithmetic benefit. At 1,000 requests/second, this layout mismatch alone can consume 20--30 percent of total inference latency. \index{Tensor!n-dimensional arrays}\index{Tensor!memory layout}
+[^fn-tensor-operations]: **Tensor Operations**: The logical structure of a tensor (for example, a 4D image batch) often requires nonsequential memory access patterns to retrieve elements from its flat, 1D physical storage. A concrete example: PyTorch defaults to NCHW (channel-first) layout while most mobile hardware and ARM processors prefer NHWC (channel-last). Transposing a `{python} TensorLayoutCost.image_shape_str` ImageNet tensor between formats requires reading and rewriting about `{python} TensorLayoutCost.tensor_kb_str` KB per image—a pure memory operation with no arithmetic benefit. On tight latency budgets, this layout mismatch can consume a visible fraction of the end-to-end inference budget before the model does any useful math. \index{Tensor!n-dimensional arrays}\index{Tensor!memory layout}
 
 Diagnosing and solving such problems requires mathematical literacy that spans the full neural computation stack. The arc begins with learning paradigms, tracing how they evolved from explicit rules to handcrafted features to learned representations and establishing *why* deep learning demands qualitatively different system infrastructure than classical machine learning. Neural network fundamentals (neurons, layers, activation functions, and tensor operations) then receive treatment as both mathematical operations and computational workloads, with particular attention to the memory access patterns and arithmetic intensity that determine hardware utilization.
 
@@ -382,10 +442,10 @@ To ground this arc in a concrete systems story, we start by following a single M
 # │
 # │ Goal: Establish concrete operation and memory counts for each paradigm so
 # │       that prose can state the escalation factor precisely.
-# │ Show: The ~1,500× MAC increase from rule-based (~100 ops) to deep learning
+# │ Show: The 1,092× MAC increase from rule-based (~100 ops) to deep learning
 # │       (~109K MACs) and the proportional memory footprint growth.
-# │ How: Hard-code pixel count, HOG cell grid, and MLP layer dimensions; compute
-# │      ops and memory for each paradigm using arithmetic only.
+# │ How: Load pixel count, HOG cell grid, and MLP dimensions; compute ops and
+# │      memory for each paradigm using arithmetic only.
 # │
 # │ Imports: mlsysim.book (fmt, check),
 # │          mlsysim.constants (byte, KB, MILLION, THOUSAND)
@@ -393,11 +453,13 @@ To ground this arc in a concrete systems story, we start by following a single M
 # │          ParadigmSystemsCost.rb_ops_str, ParadigmSystemsCost.rb_mem_str,
 # │          ParadigmSystemsCost.hog_features_str,
 # │          ParadigmSystemsCost.hog_ops_approx_str,
+# │          ParadigmSystemsCost.hog_ops_ratio_str,
 # │          ParadigmSystemsCost.hog_mem_str,
 # │          ParadigmSystemsCost.dl_total_macs_str,
 # │          ParadigmSystemsCost.dl_params_str,
 # │          ParadigmSystemsCost.dl_weight_kb_str,
-# │          ParadigmSystemsCost.dl_ops_ratio_str
+# │          ParadigmSystemsCost.dl_ops_ratio_str,
+# │          ParadigmSystemsCost.training_examples_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim.fmt import fmt, check
@@ -407,41 +469,55 @@ from mlsysim.core.constants import byte, KB, MILLION, THOUSAND
 class ParadigmSystemsCost:
     """Namespace for Paradigm Systems Cost."""
 
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     # === Rule-Based Paradigm ===
     # Simple threshold comparisons on 28×28 = 784 pixels
     rb_pixels = 28 * 28                         # 784
     rb_ops = 100                                # ~100 comparisons (generous)
     rb_mem_bytes = rb_pixels                    # 784 bytes working set
 
-    rb_ops_str = fmt(rb_ops, precision=0, commas=False)            # "100"
-    rb_mem_str = fmt(rb_mem_bytes, precision=0, commas=True)       # "784"
-
     # === Classical ML (HOG + linear classifier) ===
     # HOG on 28×28: 7×7 grid of 4×4 cells, 9 orientation bins
     hog_cells = 7 * 7                           # 49 cells
     hog_bins = 9                                # orientation bins per cell
-    hog_features = hog_cells * hog_bins         # 441 features
     # Gradient computation: ~2 ops per pixel (dx, dy) + histogram binning
+    hog_ops_approx = 8 * THOUSAND               # rounded for prose
     hog_mem_kb = 2                              # ~2 KB (image + gradients + histograms)
-    hog_grid_str = "7"                                               # grid dimension
-    hog_bins_str = fmt(hog_bins, precision=0, commas=False)          # "9"
-    hog_features_str = fmt(hog_features, precision=0, commas=True)   # "441"
-    hog_ops_approx_str = "8,000"                                     # rounded for prose
-    hog_mem_str = fmt(hog_mem_kb, precision=0, commas=False)         # "2"
 
     # === Deep Learning (784→128→64→10 MLP) ===
     # Forward pass MACs (from MNISTInference)
     dl_total_macs = MNISTInference.total_macs
     # Parameters (from MNISTInference)
     dl_params_with_bias = MNISTInference.total_params
+    training_examples = 60_000
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    hog_features = hog_cells * hog_bins         # 441 features
+    hog_ops_ratio = hog_ops_approx / rb_ops
     dl_weight_bytes = dl_params_with_bias * 4              # FP32 = 4 bytes each
     dl_weight_kb = (dl_weight_bytes * byte).m_as(KB)             # ~438 KB
+    dl_ops_ratio = dl_total_macs/rb_ops                                  # ~1,092×
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(dl_total_macs == MNISTInference.total_macs, "Deep-learning MAC count drifted from MNISTInference.")
+    check(hog_ops_ratio == 80, f"Expected HOG/rule-based ops ratio of 80x, got {hog_ops_ratio:.1f}x")
+    check(round(dl_ops_ratio) == 1092, f"Expected ~1,092x ops ratio, got {dl_ops_ratio:.1f}x")
+    check(round(dl_weight_kb) == 438, f"Expected ~438 KB FP32 weight footprint, got {dl_weight_kb:.1f} KB")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    rb_ops_str = fmt(rb_ops, precision=0, commas=False)            # "100"
+    rb_mem_str = fmt(rb_mem_bytes, precision=0, commas=True)       # "784"
+    hog_grid_str = "7"                                               # grid dimension
+    hog_bins_str = fmt(hog_bins, precision=0, commas=False)          # "9"
+    hog_features_str = fmt(hog_features, precision=0, commas=True)   # "441"
+    hog_ops_approx_str = fmt(hog_ops_approx, precision=0, commas=True)  # "8,000"
+    hog_ops_ratio_str = fmt(hog_ops_ratio, precision=0, commas=False)   # "80"
+    hog_mem_str = fmt(hog_mem_kb, precision=0, commas=False)         # "2"
     dl_total_macs_str = fmt(dl_total_macs, precision=0, commas=True)       # "109,184"
     dl_params_str = fmt(dl_params_with_bias, precision=0, commas=True)     # "109,386"
     dl_weight_kb_str = fmt(dl_weight_kb, precision=0, commas=False)        # "438"
-    dl_ops_ratio = dl_total_macs/rb_ops                                  # ~1,092×
     dl_ops_ratio_str = fmt(dl_ops_ratio, precision=0, commas=True)         # "1,092"
+    training_examples_str = fmt(training_examples, precision=0, commas=True)
 ```
 
 The shift from logic to arithmetic reshapes how we encode real-world patterns in a form a computer can process. To make this evolution concrete, we track a single task across all three paradigms: classifying a handwritten digit from a $28{\times}28$ pixel image from the MNIST dataset (the same input used throughout this chapter). Watch how the computational profile changes as representation strategies evolve.
@@ -587,7 +663,7 @@ Complementary methods like SIFT[^fn-sift] [@lowe1999] (Scale-Invariant Feature T
 
 These engineering efforts enabled advances in computer vision during the 2000s. Systems could now recognize objects with some robustness to real-world variations, leading to applications in face detection, pedestrian detection, and object recognition. Despite these successes, the approach had limitations. Experts needed to carefully design feature extractors for each new problem, and the resulting features might miss important patterns that were not anticipated in their design. The bottleneck remained: human expertise could not scale to the complexity and diversity of real-world visual patterns.
 
-Return to the same $28{\times}28$ digit. HOG divides the image into a `{python} ParadigmSystemsCost.hog_grid_str` by `{python} ParadigmSystemsCost.hog_grid_str` grid of $4{\times}4$ cells, computes gradient magnitudes and orientations at each pixel, bins them into `{python} ParadigmSystemsCost.hog_bins_str` orientation histograms per cell, and produces a `{python} ParadigmSystemsCost.hog_features_str`-element feature vector. A linear classifier (SVM) then performs ten dot products over that vector. Total: roughly `{python} ParadigmSystemsCost.hog_ops_approx_str` arithmetic operations and ~`{python} ParadigmSystemsCost.hog_mem_str` KB of working memory—about 80$\times$ more compute than the rule-based approach, but still structured, predictable, and well-served by CPU vector units using single instruction, multiple data (SIMD). Resource demands scale linearly with image count, not with model complexity.
+Return to the same $28{\times}28$ digit. HOG divides the image into a `{python} ParadigmSystemsCost.hog_grid_str` by `{python} ParadigmSystemsCost.hog_grid_str` grid of $4{\times}4$ cells, computes gradient magnitudes and orientations at each pixel, bins them into `{python} ParadigmSystemsCost.hog_bins_str` orientation histograms per cell, and produces a `{python} ParadigmSystemsCost.hog_features_str`-element feature vector. A linear classifier (SVM) then performs ten dot products over that vector. Total: roughly `{python} ParadigmSystemsCost.hog_ops_approx_str` arithmetic operations and ~`{python} ParadigmSystemsCost.hog_mem_str` KB of working memory—about `{python} ParadigmSystemsCost.hog_ops_ratio_str`$\times$ more compute than the rule-based approach, but still structured, predictable, and well-served by CPU vector units using single instruction, multiple data (SIMD). Resource demands scale linearly with image count, not with model complexity.
 
 ### Automatic pattern discovery {#sec-neural-computation-deep-learning-automatic-pattern-discovery-214d}
 
@@ -722,7 +798,7 @@ Neural network performance often follows empirical scaling relationships that im
 
 Learning directly from raw data reshapes AI system construction. Eliminating manual feature engineering introduces new demands: infrastructure to handle massive datasets, high-throughput hardware to process that data, and specialized accelerators to perform mathematical calculations efficiently. These computational requirements have driven the development of specialized chips optimized for neural network operations. Empirical evidence confirms this pattern across domains: the success of deep learning in computer vision, speech recognition, game playing, and natural language understanding has established it as the dominant paradigm in artificial intelligence.
 
-Return to the same $28{\times}28$ digit, now processed by even a modest three-layer neural network (784→128→64→10). The forward pass alone requires `{python} ParadigmSystemsCost.dl_total_macs_str` MAC operations, `{python} ParadigmSystemsCost.dl_ops_ratio_str`$\times$ more than the rule-based approach. The `{python} ParadigmSystemsCost.dl_params_str` learned parameters consume ~`{python} ParadigmSystemsCost.dl_weight_kb_str` KB in FP32, exceeding most L1 caches and forcing memory traffic between cache levels on every inference. Training multiplies the cost further: each image must be processed *forward*, then *backward* (computing gradients for all `{python} ParadigmSystemsCost.dl_params_str` parameters), then updated, at roughly 3$\times$ the forward cost per image, repeated over 60,000 images for multiple epochs. The computation is no longer sequential; it is dominated by dense matrix multiplications that leave a standard CPU mostly idle. This is the systems explosion that drives everything that follows.
+Return to the same $28{\times}28$ digit, now processed by even a modest three-layer neural network (784→128→64→10). The forward pass alone requires `{python} ParadigmSystemsCost.dl_total_macs_str` MAC operations, `{python} ParadigmSystemsCost.dl_ops_ratio_str`$\times$ more than the rule-based approach. The `{python} ParadigmSystemsCost.dl_params_str` learned parameters consume ~`{python} ParadigmSystemsCost.dl_weight_kb_str` KB in FP32, exceeding most L1 caches and forcing memory traffic between cache levels on every inference. Training multiplies the cost further: each image must be processed *forward*, then *backward* (computing gradients for all `{python} ParadigmSystemsCost.dl_params_str` parameters), then updated, at roughly 3$\times$ the forward cost per image, repeated over `{python} ParadigmSystemsCost.training_examples_str` images for multiple epochs. The computation is no longer sequential; it is dominated by dense matrix multiplications that leave a standard CPU mostly idle. This is the systems explosion that drives everything that follows.
 
 The scaling advantage comes with computational costs that raise a practical question about when engineers should invest in neural networks vs. simpler alternatives.
 
@@ -737,7 +813,7 @@ Not every problem benefits from deep learning. Before investing in neural networ
 | **Dataset size**         | > 10,000 labeled examples                     | Below this, simpler models often match or exceed NN performance    |
 | **Input dimensionality** | > 100 raw features                            | NNs excel at automatic feature learning from high-dimensional data |
 | **Data has structure**   | Spatial, sequential, or hierarchical patterns | Architecture can encode inductive bias                             |
-| **Accuracy requirement** | Need > 5 percent improvement over baseline    | Each +1 percent typically costs ~10$\times$ compute                |
+| **Accuracy requirement** | Need clear improvement over baseline          | Late-stage gains often require disproportionate extra compute      |
 | **Problem complexity**   | Nonlinear relationships dominate              | Linear models handle linear relationships more efficiently         |
 
 : **Neural-Network Candidates**: Conditions under which deep learning is likely to outperform classical methods. {#tbl-nn-when-to-use}
@@ -783,9 +859,9 @@ The computational paradigm shift becomes apparent when comparing these approache
 \index{Memory Wall!data movement bottleneck}
 The shift toward parallelism creates new bottlenecks that differ qualitatively from those in sequential computing. The central challenge is the **memory wall**[^fn-memory-wall-nn]: while computational capacity can be increased by adding more processing units, memory bandwidth to feed those units does not scale as favorably. Matrix multiplication, the core neural network operation, is often limited by memory bandwidth rather than raw computational capability[^fn-memory-bound-nn]—adding more processing units does not proportionally improve performance. Hardware responses to this challenge are examined in @sec-hardware-acceleration-understanding-ai-memory-wall-3ea9, the complete derivation of training memory costs (weights, gradients, optimizer state, activations) appears in @sec-algorithm-foundations-true-cost-training-memory-e54e, and the formal memory hierarchy with quantitative latency comparisons is in @sec-machine-foundations-memory-hierarchy-2278.
 
-[^fn-memory-wall-nn]: **Memory Wall**: L1 cache delivers data in ~1 ns; main memory takes ~100 ns, a 100$\times$ gap. Neural network weights rarely fit in cache (even our MNIST model exceeds typical 64 KB L1), forcing repeated main-memory fetches that leave compute units idle. This bandwidth bottleneck, not arithmetic capacity, is why accelerators invest die area in HBM and on-chip SRAM. \index{Memory Wall!neural network impact}
+[^fn-memory-wall-nn]: **Memory Wall**: Fast on-chip storage responds in nanoseconds, while larger off-chip memory is orders of magnitude farther away in latency and energy. Neural network weights rarely fit in the smallest caches (even our MNIST model is hundreds of KB in FP32), forcing repeated memory fetches that can leave compute units idle. This bandwidth bottleneck, not arithmetic capacity alone, is why accelerators invest die area in HBM and on-chip SRAM. \index{Memory Wall!neural network impact}
 
-[^fn-memory-bound-nn]: **Memory-Bound Operations**: Matrix multiplication's arithmetic intensity (FLOPs per byte loaded) determines whether a layer is compute bound or memory bound. Most neural network layers fall below the hardware's roofline crossover point, meaning the accelerator finishes its arithmetic before the next tile of weights arrives from memory. The result: effective hardware utilization often drops below 50 percent, and adding more compute units yields no speedup until memory bandwidth increases proportionally. \index{Memory-Bound!arithmetic intensity}
+[^fn-memory-bound-nn]: **Memory-Bound Operations**: Matrix multiplication's arithmetic intensity (FLOPs per byte loaded) determines whether a layer is compute bound or memory bound. Layers that fall below the hardware's roofline crossover point finish their arithmetic before the next tile of weights arrives from memory. The result: effective hardware utilization can drop sharply, and adding more compute units yields little speedup until memory bandwidth or data reuse improves. \index{Memory-Bound!arithmetic intensity}
 
 \index{Data Movement!energy dominance}
 The deeper constraint is energy, not speed. Moving data from main memory to processing units consumes more energy than the actual mathematical operations. This energy hierarchy explains why neural network accelerators focus on maximizing data reuse\index{Data Reuse!energy efficiency}: keeping frequently accessed weights in fast local storage and carefully scheduling operations to minimize data movement. GPUs address this through both higher memory bandwidth and massive parallelism, but the underlying physics remains unchanged: data movement dominates computation cost, driving the adoption of specialized hardware architectures from data center GPUs to TinyML accelerators.
@@ -796,7 +872,7 @@ These single-machine constraints compound when scaling across multiple machines:
 
 The infrastructure demands traced earlier (massive parallelism, memory walls, energy-dominated data movement) arise from four properties of neural computation: *adaptive parameterization* (weights change during training), *parallel integration* (many simple units operate simultaneously), *hierarchical representation* (layers compose low-level features into high-level concepts), and *resource economy* (data reuse minimizes energy-intensive movement). These properties manifest concretely in the fundamental building block of neural computation: the artificial neuron[^fn-neuron-mcculloch-pitts]. Just as understanding a single transistor reveals how complex processors work, understanding the artificial neuron reveals how million-parameter networks operate.
 
-[^fn-neuron-mcculloch-pitts]: **Neuron**: @mcculloch1943 established the first mathematical model with the "multiply-accumulate then activate" pattern, which is the direct origin of the computational properties discussed in the text. The model's structure enables *parallel integration* (many simple units), its weights provide the mechanism for *adaptive parameterization*, and its output feeds subsequent layers to create *hierarchical representations*. The entire hardware stack descends from this abstraction, forcing accelerators to dedicate >99 percent of their silicon to the fused multiply-add (FMA) units that implement it. \index{Neuron!McCulloch-Pitts model}
+[^fn-neuron-mcculloch-pitts]: **Neuron**: @mcculloch1943 established the first mathematical model with the "multiply-accumulate then activate" pattern, which is the direct origin of the computational properties discussed in the text. The model's structure enables *parallel integration* (many simple units), its weights provide the mechanism for *adaptive parameterization*, and its output feeds subsequent layers to create *hierarchical representations*. Modern accelerators descend from this abstraction by devoting much of their datapath area and scheduling machinery to the fused multiply-add (FMA) units that implement it efficiently. \index{Neuron!McCulloch-Pitts model}
 
 ### The artificial neuron as a computing primitive {#sec-neural-computation-artificial-neuron-computing-primitive-45b4}
 
@@ -1252,7 +1328,7 @@ node[below,pos=0.7]{\textbf{Output}};
 \foreach \x[count =\a]  in {0.14,0.38,0.62,0.85}{
 \fill[black!30]($(TG)!\x!(TD)$) circle(2pt)coordinate(Q\a);
 }
-\node[above=2pt of Q1,Txt]{Dendrides};
+\node[above=2pt of Q1,Txt]{Dendrites};
 \node[below=2pt of Q1,Txt]{= Inputs};
 
 \node[above=2pt of Q2,Txt]{Synapses};
@@ -1293,7 +1369,46 @@ Follow the signal path through the right panel of @fig-bio_nn2ai_nn to see this 
 
 From a systems engineering perspective, this translation reveals *why* neural networks have such demanding computational requirements. Each "simple" neuron requires $N$ multiply-accumulate (MAC)[^fn-multiply-accumulate]\index{MAC Operations!neuron computation} operations and $2N+2$ memory accesses (loading $N$ inputs and $N$ weights, plus the bias and output). When replicated millions of times across a network, these primitives create the massive arithmetic and bandwidth demands that define modern AI infrastructure.
 
-[^fn-multiply-accumulate]: **MAC (Multiply-Accumulate)**: The atomic operation of neural computation: $a \leftarrow a + (b \times c)$. Modern accelerators are rated in MACs per second because this single fused instruction, not addition or multiplication alone, determines the throughput ceiling for matrix multiplication. An NVIDIA H100 performs roughly $10^{15}$ MACs/s in FP16; every layer size and batch size decision ultimately reduces to how many MACs fit within the latency and power budget. \index{MAC!multiply-accumulate operation}
+```{python}
+#| label: mac-accelerator-spec-local
+#| echo: false
+from mlsysim.core.constants import H100_FLOPS_FP16_TENSOR, TFLOPs, second
+from mlsysim.fmt import fmt, check
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MAC ACCELERATOR SPEC LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: MAC footnote in the neuron computation section.
+# │
+# │ Goal: Keep the H100 FLOP-to-MAC convention beside the explanatory footnote.
+# │ Show: Dense FP16 H100 FLOP/s converts to half as many MAC/s by convention.
+# │ How: Convert the H100 constant to TFLOP/s and divide by two.
+# │
+# │ Imports: mlsysim.constants (H100_FLOPS_FP16_TENSOR, TFLOPs, second),
+# │          mlsysim.book (fmt, check)
+# │ Exports: MacAcceleratorSpecLocal.h100_fp16_tflops_str,
+# │          MacAcceleratorSpecLocal.h100_fp16_tmacs_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+# ┌── LEGO ───────────────────────────────────────────────
+class MacAcceleratorSpecLocal:
+    """Namespace for local MAC footnote accelerator specs."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    h100_fp16_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs / second)
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    h100_fp16_tmacs = h100_fp16_tflops / 2
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(h100_fp16_tflops > 900, f"H100 FP16 throughput unexpectedly low: {h100_fp16_tflops}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    h100_fp16_tflops_str = fmt(h100_fp16_tflops, precision=0, commas=False)
+    h100_fp16_tmacs_str = fmt(h100_fp16_tmacs, precision=0, commas=False)
+```
+
+[^fn-multiply-accumulate]: **MAC (Multiply-Accumulate)**: The atomic operation of neural computation: $a \leftarrow a + (b \times c)$. Modern accelerators are often marketed in FLOPs because a fused multiply-add is counted as two floating-point operations. On that convention, an NVIDIA H100 is rated at `{python} MacAcceleratorSpecLocal.h100_fp16_tflops_str` dense FP16 TFLOP/s, or about `{python} MacAcceleratorSpecLocal.h100_fp16_tmacs_str` trillion MAC/s if one MAC is counted as one multiply-accumulate. Every layer size and batch size decision ultimately reduces to how many MACs fit within the latency and power budget. \index{MAC!multiply-accumulate operation}
 
 The transition from individual neurons to integrated systems requires navigating the central trade-off\index{Neural Network!capacity vs. cost trade-off} between representational capacity and computational cost. While silicon transistors operate at gigahertz frequencies, millions of times faster than biological chemical signaling, the sheer volume of operations in deep networks creates unique bottlenecks.
 
@@ -1327,7 +1442,7 @@ The historical trajectory demonstrates a recurring systems engineering lesson: a
 
 [^fn-backprop-credit-assignment]: **Backpropagation**: Short for "backward propagation of errors," the algorithm solves the credit assignment problem by determining which of millions of weights caused a given error, using the chain rule. Werbos applied it to neural networks in 1974, but the 1986 Rumelhart, Hinton, and Williams publication demonstrated practical effectiveness. The systems cost: backprop requires storing forward-pass activations and additional training state, creating the several-times-higher memory footprint quantified later in the chapter. \index{Backpropagation!memory cost}
 
-::: {#fig-trends fig-env="figure" fig-pos="htb" fig-cap="**Computational Growth**: Log-scale scatter plot showing total training compute in FLOPs from 1952 to 2025. Computational demand grew at a 1.4× annual rate from 1952 to 2010, then accelerated to a doubling about every 3.4 months in the fitted 2012--2025 deep-learning frontier. Large-scale models after 2015 sit orders of magnitude above the pre-2010 trend, addressing the historical bottleneck of training complex neural networks." fig-alt="Log-scale scatter plot showing total training compute in FLOPs from 1950 to 2025. Points represent AI models, with different colors for pre-deep-learning era and deep learning era. Trend lines show the acceleration of compute usage over time."}
+::: {#fig-trends fig-env="figure" fig-pos="htb" fig-cap="**Computational Growth**: Log-scale scatter plot showing total training compute in FLOPs across seven decades of AI models. Fitted trend lines show a slower pre-2010 regime followed by a much faster deep-learning frontier after 2012. Large-scale models after 2015 sit orders of magnitude above the pre-2010 trend, addressing the historical bottleneck of training complex neural networks." fig-alt="Log-scale scatter plot showing total training compute in FLOPs from early AI systems through recent frontier models. Points represent AI models, with different colors for pre-deep-learning era and deep learning era. Trend lines show the acceleration of compute usage over time."}
 
 ```{python}
 #| echo: false
@@ -1336,11 +1451,11 @@ The historical trajectory demonstrates a recurring systems engineering lesson: a
 # │ FIG-TRENDS—COMPUTATIONAL GROWTH SCATTER PLOT
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: @fig-trends in @sec-neural-computation-evolution-neural-network-computing-8754,
-# │          visually grounding the 4–5× annual compute growth cited in prose.
+# │          visually grounding the acceleration in training compute over time.
 # │
 # │ Goal: Plot seven decades of AI training compute on a log scale, exposing
-# │       the 1952–2010 linear trend (1.4×/year) and the 2012–2025 acceleration
-# │       (doubling every ~3.4 months) driven by the deep learning era.
+# │       the slower 1952–2010 trend and the faster post-2012 acceleration driven
+# │       by the deep learning era.
 # │ Show: The inflection point at AlexNet (2012) where compute growth detached
 # │       from Moore's Law, creating the hardware investment arms race.
 # │ How: Load data/all_ai_models.csv; extract training compute per year; fit
@@ -1560,19 +1675,19 @@ else:
 # │          @sec-neural-computation-evolution-neural-network-computing-8754,
 # │          providing the GPT-3 and GPT-4 cells that require live constants.
 # │
-# │ Goal: Supply exact GPT-3 parameter count (from mlsysim.core.constants) and an
-# │       estimated GPT-4 MoE count for the 1989–2023 historical comparison table.
+# │ Goal: Supply exact GPT-3 parameter count and estimated GPT-4 MoE count from
+# │       mlsysim.core.constants for the 1989–2023 historical comparison table.
 # │ Show: The 8-order-of-magnitude parameter leap from LeNet-1 (~9.8K) to
 # │       GPT-4 (~1.8T), anchoring the co-scaling narrative.
-# │ How: Read GPT3_PARAMS and convert to Bparam; treat GPT-4 as 1.8T (MoE
-# │      estimate); compute scale factor as a guardrail invariant.
+# │ How: Read GPT3_PARAMS and GPT4_EST_PARAMS; convert to Bparam/Tparam; compute
+# │      scale factor as a guardrail invariant.
 # │
-# │ Imports: mlsysim.core.constants (GPT3_PARAMS, Bparam, THOUSAND),
+# │ Imports: mlsysim.core.constants (GPT3_PARAMS, GPT4_EST_PARAMS, Bparam, Tparam),
 # │          mlsysim.book (fmt, check)
 # │ Exports: HistoricalScale.gpt3_params_b_str,
 # │          HistoricalScale.gpt4_params_t_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import GPT3_PARAMS, Bparam, THOUSAND
+from mlsysim.core.constants import GPT3_PARAMS, GPT4_EST_PARAMS, Bparam, Tparam
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -1584,10 +1699,10 @@ class HistoricalScale:
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     gpt3_params_b = GPT3_PARAMS.m_as(Bparam)
-    gpt4_params_t = 1.8 # Estimate (MoE)
+    gpt4_params_t = GPT4_EST_PARAMS.m_as(Tparam) # Unofficial public MoE estimate
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    gpt4_params_b = gpt4_params_t * THOUSAND
+    gpt4_params_b = GPT4_EST_PARAMS.m_as(Bparam)
     scale_factor = gpt4_params_b/gpt3_params_b
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
@@ -1598,7 +1713,61 @@ class HistoricalScale:
     gpt4_params_t_str = fmt(gpt4_params_t, precision=1, commas=False)
 ```
 
-While the preceding sections established the technical foundations of deep learning, the term itself gained prominence in the 2010s, coinciding with advances in computational power and data accessibility. The scale of this computational explosion is difficult to grasp without visualization. @fig-trends plots seven decades of AI training compute on a logarithmic scale, revealing two fitted regimes: total training compute, measured in floating-point operations (FLOPs), initially followed a 1.4$\times$ annual improvement pattern from 1952 to 2010, then the post-2012 deep-learning frontier accelerated to a doubling cycle of about 3.4 months in the 2012--2025 fit. Large-scale models after 2015 sit orders of magnitude above the pre-2010 trajectory, showing that modern progress reinvests hardware and algorithmic gains into much larger training runs.
+```{python}
+#| label: historical-training-energy
+#| echo: false
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ HISTORICAL TRAINING ENERGY
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Energy-scale prose following @tbl-historical-performance.
+# │
+# │ Goal: Ground the LeNet-vs-frontier-model energy comparison in executable
+# │       arithmetic using mlsysim's GPT-4 GPU-day and A100 TDP constants.
+# │ Show: A small-workstation LeNet training run is tens of kWh, while the GPT-4
+# │       public-estimate scale is tens of thousands of MWh after datacenter overhead.
+# │ How: Multiply training days × hours/day × power; for GPT-4, convert estimated
+# │      A100 GPU-days to accelerator energy and apply a simple datacenter overhead.
+# │
+# │ Imports: mlsysim.core.constants (GPT4_TRAINING_GPU_DAYS, A100_TDP, watt),
+# │          mlsysim.book (fmt, check)
+# │ Exports: TrainingEnergyScale.lenet_kwh_str,
+# │          TrainingEnergyScale.gpt4_energy_mwh_str,
+# │          TrainingEnergyScale.us_homes_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+from mlsysim.core.constants import GPT4_TRAINING_GPU_DAYS, A100_TDP, watt
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class TrainingEnergyScale:
+    """Namespace for historical training-energy estimates."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    hours_per_day = 24
+    lenet_train_days = 3
+    lenet_workstation_kw = 0.75
+    a100_kw = A100_TDP.m_as(watt) / 1000
+    datacenter_overhead = 2.0
+    household_mwh_per_year = 10.5
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    lenet_kwh = lenet_train_days * hours_per_day * lenet_workstation_kw
+    gpt4_accelerator_mwh = GPT4_TRAINING_GPU_DAYS * hours_per_day * a100_kw / 1000
+    gpt4_energy_mwh = gpt4_accelerator_mwh * datacenter_overhead
+    us_homes_equiv = gpt4_energy_mwh / household_mwh_per_year
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(lenet_kwh < 100, f"LeNet workstation energy should be tens of kWh, got {lenet_kwh:.1f}")
+    check(gpt4_energy_mwh > 10_000, f"GPT-4 energy estimate should be tens of thousands of MWh, got {gpt4_energy_mwh:.0f}")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    lenet_kwh_str = fmt(lenet_kwh, precision=0, commas=False)
+    gpt4_energy_mwh_str = fmt(gpt4_energy_mwh, precision=0, commas=True)
+    us_homes_str = fmt(us_homes_equiv, precision=0, commas=True)
+```
+
+While the preceding sections established the technical foundations of deep learning, the term itself gained prominence in the 2010s, coinciding with advances in computational power and data accessibility. The scale of this computational explosion is difficult to grasp without visualization. @fig-trends plots seven decades of AI training compute on a logarithmic scale, revealing two fitted regimes: total training compute, measured in floating-point operations (FLOPs), followed a comparatively slow pre-2010 trend, then the post-2012 deep-learning frontier accelerated sharply. Large-scale models after 2015 sit orders of magnitude above the pre-2010 trajectory, showing that modern progress reinvests hardware and algorithmic gains into much larger training runs.
 
 @tbl-historical-performance grounds these trends in concrete systems, showing how parameters, compute, and hardware co-evolved across four decades of neural network development.
 
@@ -1613,11 +1782,11 @@ While the preceding sections established the technical foundations of deep learn
 
 : **Historical Performance**: Four decades of neural network evolution showing the co-scaling of model parameters, training compute, and hardware infrastructure. Training FLOPs increased by approximately $10^{13}\times$ from LeNet-1 to GPT-4, while parameters grew by $10^{8}\times$. Uncertainty notes: Earlier systems (LeNet, AlexNet) have well-documented specifications; recent closed models (GPT-4) have only external estimates (OpenAI has not officially confirmed GPT-4's architecture or parameter count; the ~1.8T MoE estimate is based on public reporting and analysis). "OoM" = order of magnitude uncertainty. {#tbl-historical-performance tbl-colwidths="[6,11,17,16,19,12,19]"}
 
-Beyond raw compute, this exponential growth carries an energy cost that systems engineers cannot ignore. Training LeNet-1 in 1989 consumed roughly fifty kWh, about two days of household electricity. Training GPT-4 consumed an estimated 50,000 MWh, enough to power approximately 5,000 US homes for a year[^fn-energy-scale-training]. The energy cost of AI has moved from negligible to industrial, forcing engineers to treat energy efficiency (Joules per operation) as a primary design constraint alongside raw FLOPS. The quantitative energy analysis, including Horowitz's data-movement-dominates-compute numbers and the full energy hierarchy, appears in @sec-hardware-acceleration where it can be connected to concrete hardware architectures.
+Beyond raw compute, this exponential growth carries an energy cost that systems engineers cannot ignore. Training LeNet-1 in 1989 consumed roughly `{python} TrainingEnergyScale.lenet_kwh_str` kWh, about a few days of household electricity. A GPT-4-scale training run, using public GPU-day estimates and a datacenter-overhead factor, lands around `{python} TrainingEnergyScale.gpt4_energy_mwh_str` MWh—enough to power roughly `{python} TrainingEnergyScale.us_homes_str` US homes for a year[^fn-energy-scale-training]. The energy cost of AI has moved from negligible to industrial, forcing engineers to treat energy efficiency (Joules per operation) as a primary design constraint alongside raw FLOPS. The quantitative energy analysis, including Horowitz's data-movement-dominates-compute numbers and the full energy hierarchy, appears in @sec-hardware-acceleration where it can be connected to concrete hardware architectures.
 
-[^fn-energy-scale-training]: **Training Energy Scale**: The average US household consumes ~10.5 MWh/year (US Energy Information Administration). GPT-4's estimated 50,000 MWh training cost means the energy budget for a single frontier model now rivals that of a small industrial facility, making Joules-per-operation a first-order design constraint alongside FLOPS. \index{Energy!training scale}
+[^fn-energy-scale-training]: **Training Energy Scale**: This estimate uses `{python} TrainingEnergyScale.household_mwh_per_year` MWh/year as a representative US household electricity budget and treats GPT-4's public GPU-day estimate as A100-equivalent accelerator time with datacenter overhead. The point is order of magnitude, not an audited utility bill: a single frontier training run now rivals a small industrial facility's energy budget, making Joules-per-operation a first-order design constraint alongside FLOPS. \index{Energy!training scale}
 
-Three quantitative patterns emerge from this historical data. The plotted post-2012 training-compute frontier doubles roughly every 3--4 months, while broader summaries that smooth across model families and account for reporting uncertainty are closer to 4--5$\times$ per year, with a doubling time of roughly 5--6 months. Separately, the compute required to achieve a fixed benchmark halves approximately every eight months for language models due to algorithmic improvements alone. While compute grows quickly, training *costs* grow more slowly, roughly 2.4$\times$ per year, reflecting efficiency gains in hardware utilization and reduced precision arithmetic. Frontier model training costs have nonetheless risen from thousands of dollars (LeNet era) to over \$100 million (GPT-4 era). These patterns have direct implications for systems engineering: the compute scaling law determines infrastructure investment timelines, algorithmic efficiency justifies continuous architecture research, and the cost-compute gap shapes build-vs.-buy decisions for ML teams.
+Three quantitative patterns emerge from this historical data. The plotted post-2012 training-compute frontier doubles on the order of months, while broader summaries that smooth across model families and account for reporting uncertainty show similarly rapid annual growth. Separately, the compute required to achieve a fixed benchmark has improved substantially due to algorithmic and systems advances. Training *costs* grow more slowly than raw compute because hardware utilization, reduced precision, and software efficiency also improve. Frontier model training costs have nonetheless moved from workstation-scale budgets into industrial-scale investments. These patterns have direct implications for systems engineering: compute scaling determines infrastructure investment timelines, algorithmic efficiency justifies continuous architecture research, and the cost-compute gap shapes build-vs.-buy decisions for ML teams.
 
 Parallel advances across three dimensions drove these evolutionary trends: data availability, algorithmic innovations, and computing infrastructure. Follow the arrows in @fig-virtuous-cycle to see this reinforcing cycle in motion: faster computing infrastructure enabled processing larger datasets, larger datasets drove algorithmic innovations, and better algorithms demanded more sophisticated computing systems. This reinforcing cycle continues to drive progress today.
 
@@ -1881,7 +2050,48 @@ Algorithmic innovations made it possible to use this data effectively. New metho
 
 These algorithmic advances created demand for higher-throughput computing infrastructure, which evolved in response. On the hardware side, GPUs provided the parallel processing capabilities needed for efficient neural network computation, and specialized AI accelerators like TPUs[^fn-tpu-tensor-hardware] [@jouppi2023] pushed performance further. High-bandwidth memory systems and fast interconnects addressed data movement challenges. Software advances matched the hardware evolution: frameworks and libraries simplified building and training networks, distributed computing systems enabled training at scale, and tools for optimizing model deployment reduced the gap between research and production.
 
-[^fn-tpu-tensor-hardware]: **Tensor Processing Unit (TPU)**: Google's custom accelerator, first deployed internally in 2015, optimized specifically for the matrix multiplications that dominate neural network workloads. The TPU v1 achieved 92 TOPS for INT8 inference at 75 W, a power efficiency that general-purpose GPUs of the era could not match. The name "Tensor Processing Unit" reflects the design decision to sacrifice general-purpose flexibility for maximum throughput on the specific operation that neural networks need most. \index{TPU!design trade-off}
+```{python}
+#| label: tpu-hardware-footnote-local
+#| echo: false
+from mlsysim.core.constants import TPUV1_FLOPS_INT8, TPUV1_TDP, TFLOPs, second, watt
+from mlsysim.fmt import fmt, check
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ TPU HARDWARE FOOTNOTE LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: TPU footnote in the deep-learning emergence section.
+# │
+# │ Goal: Keep TPU v1 throughput and power values beside the hardware prose.
+# │ Show: TPU v1 provided 92 TOPS for INT8 inference at the constant TDP.
+# │ How: Convert the constants to TOPS and watts, then format for the footnote.
+# │
+# │ Imports: mlsysim.constants (TPUV1_FLOPS_INT8, TPUV1_TDP, TFLOPs, second, watt),
+# │          mlsysim.book (fmt, check)
+# │ Exports: TpuHardwareFootnoteLocal.tpuv1_tops_str,
+# │          TpuHardwareFootnoteLocal.tpuv1_tdp_w_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+# ┌── LEGO ───────────────────────────────────────────────
+class TpuHardwareFootnoteLocal:
+    """Namespace for local TPU hardware footnote specs."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    tpuv1_tops = TPUV1_FLOPS_INT8.m_as(TFLOPs / second)
+    tpuv1_tdp_w = TPUV1_TDP.m_as(watt)
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    efficiency_tops_per_w = tpuv1_tops / tpuv1_tdp_w
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(tpuv1_tops == 92, f"TPU v1 INT8 throughput changed: {tpuv1_tops}")
+    check(efficiency_tops_per_w > 1, f"Expected TPU v1 efficiency above 1 TOPS/W, got {efficiency_tops_per_w:.1f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    tpuv1_tops_str = fmt(tpuv1_tops, precision=0, commas=False)
+    tpuv1_tdp_w_str = fmt(tpuv1_tdp_w, precision=0, commas=False)
+```
+
+[^fn-tpu-tensor-hardware]: **Tensor Processing Unit (TPU)**: Google's custom accelerator, first deployed internally in 2015, optimized specifically for the matrix multiplications that dominate neural network workloads. The TPU v1 achieved `{python} TpuHardwareFootnoteLocal.tpuv1_tops_str` TOPS for INT8 inference at `{python} TpuHardwareFootnoteLocal.tpuv1_tdp_w_str` W, a power efficiency that general-purpose GPUs of the era could not match. The name "Tensor Processing Unit" reflects the design decision to sacrifice general-purpose flexibility for maximum throughput on the specific operation that neural networks need most. \index{TPU!design trade-off}
 
 The convergence of data availability, algorithmic innovation, and computational infrastructure created the foundation for modern deep learning. Understanding the computational operations that drive these infrastructure requirements is essential: when scaled across millions of parameters and billions of training examples, simple mathematical operations create the massive computational demands that shaped this evolution.
 
@@ -2270,7 +2480,7 @@ The mathematical relationship between input logits and output probabilities is d
 
 ::: {.callout-perspective title="Activation functions and hardware"}
 
-**Why ReLU Dominates in Practice**: Beyond its mathematical benefits like avoiding vanishing gradients, ReLU's hardware efficiency explains its widespread adoption. Computing $\max(0,x)$ requires a single comparison operation, while sigmoid and tanh require computing exponentials—operations that are orders of magnitude more expensive in both time and energy. This computational simplicity means ReLU can be executed faster on any processor and consumes 10--100$\times$ less power, a critical consideration for battery-powered devices. The computational and hardware implications of activation functions, including performance benchmarks and implementation strategies for modern accelerators, are explored in @sec-hardware-acceleration.
+**Why ReLU Dominates in Practice**: Beyond its mathematical benefits like avoiding vanishing gradients, ReLU's hardware efficiency explains its widespread adoption. Computing $\max(0,x)$ requires a single comparison operation, while sigmoid and tanh require computing exponentials—operations that are much more expensive in both time and energy. The transistor-tax calculation below models this gap as a logic-cost ratio, and @sec-hardware-acceleration covers the broader benchmark and accelerator-implementation implications.
 
 :::
 
@@ -2976,8 +3186,6 @@ These connection patterns have significant implications for both the theoretical
 # │     @sec-neural-computation-model-size-computational-complexity-1f0f
 # │   - "Memory: Training vs. Inference" callout (preceding mnist-training-memory-calc)
 # │   - Forward-pass FLOP analysis in @sec-neural-computation-forward-pass-computation-e5dd
-# │   - Backpropagation memory analysis in
-# │     @sec-neural-computation-gradient-computation-backpropagation-dacf
 # │
 # │ Goal: Establish the complete quantitative backbone—parameter counts, memory
 # │       footprint, activation sizes, FLOP totals, and arithmetic intensity—
@@ -2994,15 +3202,12 @@ These connection patterns have significant implications for both the theoretical
 # │ Exports: MNISTMemory.w1_str, MNISTMemory.w2_str, MNISTMemory.w3_str,
 # │          MNISTMemory.b1_str, MNISTMemory.b2_str, MNISTMemory.b3_str,
 # │          MNISTMemory.p1_str, MNISTMemory.p2_str, MNISTMemory.p3_str,
-# │          MNISTMemory.total_params_str, MNISTMemory.total_mem_kb_str,
+# │          MNISTMemory.total_params_str, MNISTMemory.param_mem_str,
 # │          MNISTMemory.training_ratio_str, MNISTMemory.inf_madd_l1_str,
-# │          MNISTMemory.inf_madd_l2_str, MNISTMemory.inf_madd_l3_str,
-# │          BackpropMemory.grad_l1_str, BackpropMemory.grad_l2_str,
-# │          BackpropMemory.grad_l3_str, BackpropMemory.total_grad_str,
-# │          BackpropMemory.total_backprop_mem_str
+# │          MNISTMemory.inf_madd_l2_str, MNISTMemory.inf_madd_l3_str
 # │
-# │ Note: MNISTMemory and BackpropMemory attributes are consumed by
-# │       mnist-training-memory-calc and mnist-flops-calc cells (~300 lines below).
+# │ Note: MNISTMemory attributes are consumed by mnist-training-memory-calc
+# │       and mnist-flops-calc cells below.
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check
 from mlsysim.core.constants import BYTES_FP32, byte, KB, flop, MFLOPs, KFLOPs, MILLION, THOUSAND
@@ -3015,8 +3220,14 @@ class MNISTMemory:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    layers_dims = [784, 128, 64, 10]
+    layers_dims = [
+        MnistArchitectureConstants.mnist_l1_dim,
+        MnistArchitectureConstants.mnist_l2_dim,
+        MnistArchitectureConstants.mnist_l3_dim,
+        MnistArchitectureConstants.mnist_l4_dim,
+    ]
     batch_size = 32
+    training_examples = ParadigmSystemsCost.training_examples
     bytes_per_param = 4  # FP32
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
@@ -3062,11 +3273,16 @@ class MNISTMemory:
     # Per-image arithmetic intensity: divide FLOPs by batch_size so numerator and
     # denominator are both per-image (inference_total_kb is per-image memory).
     arith_intensity = (total_flops / batch_size) / (inference_total_kb * THOUSAND) # FLOPs/Byte (per-image, decimal KB→byte)
+    epoch_batches = training_examples // batch_size
+    inf_output_act_elements = sum(layers_dims[1:])
+    batch_output_act_elements = batch_size * inf_output_act_elements
 
-    # ┌── 3. INVARIANTS ────────────────────────────────────────────────────────
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(training_total_kb >= inference_total_kb * 2, "Training memory must be >2x Inference.")
+    check(training_examples % batch_size == 0, "MNIST batch count should be exact for the narrative example.")
+    check(inf_output_act_elements == 202, f"Expected 202 non-input activations, got {inf_output_act_elements}")
 
-    # ┌── 4. OUTPUTS ───────────────────────────────────────────────────────────
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────────────────────
     # Standard Exports
     param_mem_str = fmt(param_mem_kb, precision=1, commas=False)
     inference_kb_str = fmt(inference_total_kb, precision=0, commas=False)
@@ -3074,9 +3290,15 @@ class MNISTMemory:
     training_ratio_str = fmt(training_total_kb/inference_total_kb, precision=1, commas=False)
 
     # Detailed Breakdowns
-    w1_str = f"{weights[0]:,}"; w2_str = f"{weights[1]:,}"; w3_str = f"{weights[2]:,}"
-    b1_str = f"{biases[0]}"; b2_str = f"{biases[1]}"; b3_str = f"{biases[2]}"
-    p1_str = f"{params_per_layer[0]:,}"; p2_str = f"{params_per_layer[1]:,}"; p3_str = f"{params_per_layer[2]:,}"
+    w1_str = f"{weights[0]:,}"
+    w2_str = f"{weights[1]:,}"
+    w3_str = f"{weights[2]:,}"
+    b1_str = f"{biases[0]}"
+    b2_str = f"{biases[1]}"
+    b3_str = f"{biases[2]}"
+    p1_str = f"{params_per_layer[0]:,}"
+    p2_str = f"{params_per_layer[1]:,}"
+    p3_str = f"{params_per_layer[2]:,}"
 
     total_params_str = f"{total_params:,}"
     total_mops_str = fmt(total_mops, precision=1, commas=False)
@@ -3100,77 +3322,95 @@ class MNISTMemory:
     layer1_pct_str = fmt((weights[0]/total_macs)*100, precision=0, commas=False)
 
     total_inf_act_str = f"{inf_act_elements}"
+    inf_output_act_str = fmt(inf_output_act_elements, precision=0, commas=True)
+    batch_output_act_str = fmt(batch_output_act_elements, precision=0, commas=True)
+    training_examples_str = fmt(training_examples, precision=0, commas=True)
+    epoch_batches_str = fmt(epoch_batches, precision=0, commas=True)
 
-# ┌── LEGO: BACKPROP EXAMPLE (Wider Network) ──────────────────────
-class BackpropMemory:
-    """
-    Namespace for 'Backpropagation Mechanics' callout.
-    Uses a WIDER network (784->512->256->10) to show larger memory costs.
-    """
-    layers_dims = [784, 512, 256, 10]
-    batch_size = 32
-    bytes_per_param = 4
+```
 
-    # Calculate activations per layer (Batch * Width)
-    act_counts = []
-    for dim in layers_dims:
-        act_counts.append(batch_size * dim)
+```{python}
+#| label: mnist-model-size-local
+#| echo: false
+from mlsysim.fmt import fmt, check
 
-    act_kb = []
-    for cnt in act_counts:
-        act_kb.append((cnt * bytes_per_param * byte).m_as(KB))
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MNIST MODEL SIZE LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Parameter-count prose and the training-vs-inference memory callout
+# │          in @sec-neural-computation-model-size-computational-complexity-1f0f.
+# │
+# │ Goal: Keep the architecture and per-layer parameter counts adjacent to the
+# │       prose that explains them.
+# │ Show: 784→128→64→10 has 109,386 parameters and 109,184 forward MACs.
+# │ How: Recompute weights and biases from local layer dimensions, then guard
+# │      against drift from the canonical MNISTMemory cell above.
+# │
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: MnistModelSizeLocal.mnist_arch_str,
+# │          MnistModelSizeLocal.mnist_l1_dim,
+# │          MnistModelSizeLocal.mnist_l2_dim,
+# │          MnistModelSizeLocal.mnist_l3_dim,
+# │          MnistModelSizeLocal.mnist_l4_dim,
+# │          MnistModelSizeLocal.w1_str,
+# │          MnistModelSizeLocal.w2_str,
+# │          MnistModelSizeLocal.w3_str,
+# │          MnistModelSizeLocal.b1_str,
+# │          MnistModelSizeLocal.b2_str,
+# │          MnistModelSizeLocal.b3_str,
+# │          MnistModelSizeLocal.p1_str,
+# │          MnistModelSizeLocal.p2_str,
+# │          MnistModelSizeLocal.p3_str,
+# │          MnistModelSizeLocal.total_params_str,
+# │          MnistModelSizeLocal.dl_total_macs_str
+# └─────────────────────────────────────────────────────────────────────────────
 
-    # Calculate Params
-    weights = []
-    for i in range(len(layers_dims) - 1):
-        din, dout = layers_dims[i], layers_dims[i+1]
-        weights.append(din * dout)
+# ┌── LEGO ───────────────────────────────────────────────
+class MnistModelSizeLocal:
+    """Namespace for local MNIST model-size prose."""
 
-    # Gradient Memory (same as params)
-    total_params = sum(weights) + sum(layers_dims[1:]) # Weights + Biases
-    grad_kb = (total_params * bytes_per_param * byte).m_as(KB)
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    mnist_l1_dim = 784
+    mnist_l2_dim = 128
+    mnist_l3_dim = 64
+    mnist_l4_dim = 10
+    layers_dims = [mnist_l1_dim, mnist_l2_dim, mnist_l3_dim, mnist_l4_dim]
 
-    # Outputs
-    act_l1_kb_str = fmt(act_kb[1], precision=0, commas=False) # 512 layer
-    act_l2_kb_str = fmt(act_kb[2], precision=0, commas=False) # 256 layer
-    total_act_kb_str = fmt(sum(act_kb), precision=0, commas=False)
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    weights = [
+        mnist_l1_dim * mnist_l2_dim,
+        mnist_l2_dim * mnist_l3_dim,
+        mnist_l3_dim * mnist_l4_dim,
+    ]
+    biases = [mnist_l2_dim, mnist_l3_dim, mnist_l4_dim]
+    params_per_layer = [w + b for w, b in zip(weights, biases)]
+    total_params = sum(params_per_layer)
+    total_macs = sum(weights)
 
-    grad_kb_str = fmt(grad_kb, precision=0, commas=False)
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(total_params == MNISTMemory.total_params, "Local MNIST parameter count drifted from MNISTMemory.")
+    check(total_macs == MNISTMemory.total_macs, "Local MNIST MAC count drifted from MNISTMemory.")
 
-    # Comparison
-    ratio = sum(act_kb) / grad_kb
-    ratio_str = fmt(ratio, precision=1, commas=False)
-    params = 0
-    for i in range(len(layers_dims)-1):
-        params += (layers_dims[i] * layers_dims[i+1]) + layers_dims[i+1]
-
-    # Outputs
-    bp_input_str = f"{act_counts[0]:,}"
-    bp_input_kb_str = fmt(act_kb[0], precision=0, commas=False)
-    bp_h1_str = f"{act_counts[1]:,}"
-    bp_h1_kb_str = fmt(act_kb[1], precision=0, commas=False)
-    bp_h2_str = f"{act_counts[2]:,}"
-    bp_h2_kb_str = fmt(act_kb[2], precision=0, commas=False)
-    bp_out_str = f"{act_counts[3]:,}"
-    bp_out_kb_str = fmt(act_kb[3], precision=1, commas=False)
-    bp_total_params_str = f"{params:,}"
-
-# ┌── EXPORTS (Bridge to Text) ─────────────────────────────────────────────────
-# Canonical
-
-# Backprop
-
-# Legacy aliases for prose compatibility
-param_mem_val = (MNISTMemory.total_params * 4 * byte).m_as(KB)
-param_mem_str = fmt(param_mem_val, precision=1, commas=False)
-
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    mnist_arch_str = f"{mnist_l1_dim}→{mnist_l2_dim}→{mnist_l3_dim}→{mnist_l4_dim}"
+    w1_str = fmt(weights[0], precision=0, commas=True)
+    w2_str = fmt(weights[1], precision=0, commas=True)
+    w3_str = fmt(weights[2], precision=0, commas=True)
+    b1_str = fmt(biases[0], precision=0, commas=False)
+    b2_str = fmt(biases[1], precision=0, commas=False)
+    b3_str = fmt(biases[2], precision=0, commas=False)
+    p1_str = fmt(params_per_layer[0], precision=0, commas=True)
+    p2_str = fmt(params_per_layer[1], precision=0, commas=True)
+    p3_str = fmt(params_per_layer[2], precision=0, commas=True)
+    total_params_str = fmt(total_params, precision=0, commas=True)
+    dl_total_macs_str = fmt(total_macs, precision=0, commas=True)
 ```
 
 #### Model size and computational complexity {#sec-neural-computation-model-size-computational-complexity-1f0f}
 
 How parameters\index{Model Size!parameter count}\index{Memory Footprint!computational requirements} (weights and biases) are arranged determines both learning capacity and computational cost—this is the model's side of the silicon contract (@sec-introduction-iron-law-ml-systems-c32a): the parameter count, their numerical precision, and the operations they require collectively define the computational bargain the model strikes with hardware. While topology defines the network's structure, parameter initialization and organization directly affect learning dynamics and final performance.
 
-Parameter count grows with network width and depth. For our MNIST example, consider a network with a `{python} MnistArchitectureConstants.mnist_l1_dim`-dimensional input layer, hidden layers of `{python} MnistArchitectureConstants.mnist_l2_dim` and `{python} MnistArchitectureConstants.mnist_l3_dim` neurons, and a `{python} MnistArchitectureConstants.mnist_l4_dim`-neuron output layer (`{python} MnistArchitectureConstants.mnist_arch_str`). The first layer requires `{python} MNISTMemory.w1_str` weights and `{python} MNISTMemory.b1_str` biases, the second layer `{python} MNISTMemory.w2_str` weights and `{python} MNISTMemory.b2_str` biases, and the output layer `{python} MNISTMemory.w3_str` weights and `{python} MNISTMemory.b3_str` biases, totaling `{python} MNISTMemory.total_params_str` parameters. Each must be stored in memory and updated during learning.
+Parameter count grows with network width and depth. For our MNIST example, consider a network with a `{python} MnistModelSizeLocal.mnist_l1_dim`-dimensional input layer, hidden layers of `{python} MnistModelSizeLocal.mnist_l2_dim` and `{python} MnistModelSizeLocal.mnist_l3_dim` neurons, and a `{python} MnistModelSizeLocal.mnist_l4_dim`-neuron output layer (`{python} MnistModelSizeLocal.mnist_arch_str`). The first layer requires `{python} MnistModelSizeLocal.w1_str` weights and `{python} MnistModelSizeLocal.b1_str` biases, the second layer `{python} MnistModelSizeLocal.w2_str` weights and `{python} MnistModelSizeLocal.b2_str` biases, and the output layer `{python} MnistModelSizeLocal.w3_str` weights and `{python} MnistModelSizeLocal.b3_str` biases, totaling `{python} MnistModelSizeLocal.total_params_str` parameters. Each must be stored in memory and updated during learning.
 
 ```{python}
 #| label: mnist-training-memory-calc
@@ -3186,11 +3426,10 @@ Parameter count grows with network width and depth. For our MNIST example, consi
 # │       batch=32, then contrast training vs. inference footprint.
 # │ Show: That training requires ~4× more memory than inference due to gradients
 # │       and Adam optimizer state, raising total from ~KB to ~MB.
-# │ How: Re-export precomputed values from MNISTMemory and BackpropMemory
-# │      (defined in the preceding mnist-memory-calc cell) with descriptive names
+# │ How: Re-export precomputed values from MNISTMemory with descriptive names
 # │      for the per-layer table in the callout.
 # │
-# │ Imports: mlsysim.book (fmt, check)
+# │ Imports: mlsysim.book (fmt), mlsysim.constants (byte, KB, THOUSAND)
 # │ Exports: MnistTrainingMemoryCalc.param_kib_str,
 # │          MnistTrainingMemoryCalc.grad_kib_str,
 # │          MnistTrainingMemoryCalc.opt_kib_str,
@@ -3205,12 +3444,10 @@ Parameter count grows with network width and depth. For our MNIST example, consi
 # │          MnistTrainingMemoryCalc.total_act_count_str,
 # │          MnistTrainingMemoryCalc.total_act_kib_str,
 # │          MnistTrainingMemoryCalc.total_train_mib_str,
-# │          MnistTrainingMemoryCalc.total_infer_kib_str,
-# │          BackpropMemory.bp_input_kb_str, BackpropMemory.bp_h1_kb_str,
-# │          BackpropMemory.bp_h2_kb_str, BackpropMemory.bp_out_kb_str
+# │          MnistTrainingMemoryCalc.total_infer_kib_str
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt
 from mlsysim.core.constants import byte, KB, THOUSAND
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -3218,11 +3455,9 @@ class MnistTrainingMemoryCalc:
     """Namespace for Mnist Training Memory Calc."""
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    # Use MNISTMemory and BackpropMemory as Single Source of Truth
-    # (Variables already exported in previous cell)
+    # Use MNISTMemory as the single source of truth.
 
     # Re-exporting specifically for the prose below this cell for clarity
-    # Canonical MNIST (MNISTMemory)
     param_kib_str = fmt(MNISTMemory.param_mem_kb, precision=1, commas=False)
     grad_kib_str = fmt(MNISTMemory.grad_mem_kb, precision=1, commas=False)
     opt_kib_str = fmt(MNISTMemory.opt_mem_kb, precision=1, commas=False)
@@ -3242,30 +3477,24 @@ class MnistTrainingMemoryCalc:
 
     total_train_mib_str = fmt(MNISTMemory.training_total_kb / THOUSAND, precision=1, commas=False)   # KB → MB (decimal)
     total_infer_kib_str = fmt(MNISTMemory.inference_total_kb, precision=0, commas=False)
-
-    # Backprop Wider Network (BackpropMemory)
-    bp_input_kb_str = BackpropMemory.bp_input_kb_str
-    bp_h1_kb_str = BackpropMemory.act_l1_kb_str
-    bp_h2_kb_str = BackpropMemory.act_l2_kb_str
-    bp_out_kb_str = fmt(((BackpropMemory.act_counts[3] * 4) * byte).m_as(KB), precision=1, commas=False)
 ```
 
 ::: {.callout-example title="Memory: Training vs. inference"}
 
-**Problem**: In "Computing with Patterns" we showed that a single forward pass through the `{python} MnistArchitectureConstants.mnist_arch_str` network costs `{python} ParadigmSystemsCost.dl_total_macs_str` MACs. What is the *memory* footprint for this network during training with batch size 32 in 32-bit (4-byte) floating-point precision, and how does it compare to inference requirements?
+**Problem**: In "Computing with Patterns" we showed that a single forward pass through the `{python} MnistModelSizeLocal.mnist_arch_str` network costs `{python} MnistModelSizeLocal.dl_total_macs_str` MACs. What is the *memory* footprint for this network during training with batch size 32 in 32-bit (4-byte) floating-point precision, and how does it compare to inference requirements?
 
 **Solution**:
 
-**Step 1**: Model parameters. @tbl-nn-computation-mnist-params tallies the weights and biases layer by layer:
+**Step 1**: Model parameters. The table below tallies the weights and biases layer by layer:
 
 ::: {.content-visible unless-format="pdf"}
 
 | **Layer**           |                   **Weights**                    |           **Biases**          |             **Total Parameters**            |
 |:--------------------|:------------------------------------------------:|:-----------------------------:|:-------------------------------------------:|
-| **Input→Hidden1**   | $784{\times}128$ = `{python} MNISTMemory.w1_str` | `{python} MNISTMemory.b1_str` |        `{python} MNISTMemory.p1_str`        |
-| **Hidden1→Hidden2** | $128{\times}64$ = `{python} MNISTMemory.w2_str`  | `{python} MNISTMemory.b2_str` |        `{python} MNISTMemory.p2_str`        |
-| **Hidden2→Output**  |  $64{\times}10$ = `{python} MNISTMemory.w3_str`  | `{python} MNISTMemory.b3_str` |        `{python} MNISTMemory.p3_str`        |
-| **Total**           |                                                  |                               | **`{python} MNISTMemory.total_params_str`** |
+| **Input→Hidden1**   | $784{\times}128$ = `{python} MnistModelSizeLocal.w1_str` | `{python} MnistModelSizeLocal.b1_str` |        `{python} MnistModelSizeLocal.p1_str`        |
+| **Hidden1→Hidden2** | $128{\times}64$ = `{python} MnistModelSizeLocal.w2_str`  | `{python} MnistModelSizeLocal.b2_str` |        `{python} MnistModelSizeLocal.p2_str`        |
+| **Hidden2→Output**  |  $64{\times}10$ = `{python} MnistModelSizeLocal.w3_str`  | `{python} MnistModelSizeLocal.b3_str` |        `{python} MnistModelSizeLocal.p3_str`        |
+| **Total**           |                                                         |                                      | **`{python} MnistModelSizeLocal.total_params_str`** |
 
 : **MNIST Parameter Memory by Layer**: Weight and bias counts for the 784-128-64-10 network. Layer 1 (Input -> Hidden1) dominates the parameter budget because it multiplies the 784-dimensional input by 128 hidden units; deeper layers shrink rapidly as the representation compresses toward the 10-class output. {#tbl-nn-computation-mnist-params tbl-colwidths="[25,25,25,25]"}
 
@@ -3278,18 +3507,18 @@ class MnistTrainingMemoryCalc:
 >{\centering}p{0.22\columnwidth}>{\centering}p{0.22\columnwidth}>{\centering\arraybackslash}p{0.22\columnwidth}}\toprule
 \textbf{Layer} &\textbf{Weights} & \textbf{Biases} & \textbf{Total Parameters} \\
 \midrule
-\textbf{Input→Hidden1}   &$784{\times}128$ = `{python} MNISTMemory.w1_str`  & `{python} MNISTMemory.b1_str` & `{python} MNISTMemory.p1_str`\\
-\textbf{Hidden1→Hidden2} & $128{\times}64$ = `{python} MNISTMemory.w2_str`  & `{python} MNISTMemory.b2_str` & `{python} MNISTMemory.p2_str`\\
-\textbf{Hidden2→Output}  &  $64{\times}10$ = `{python} MNISTMemory.w3_str`  & `{python} MNISTMemory.b3_str` & `{python} MNISTMemory.p3_str`\\
-\textbf{Total}           &                                                &  & \textbf{`{python} MNISTMemory.total_params_str`} \\\bottomrule
+\textbf{Input→Hidden1}   &$784{\times}128$ = `{python} MnistModelSizeLocal.w1_str`  & `{python} MnistModelSizeLocal.b1_str` & `{python} MnistModelSizeLocal.p1_str`\\
+\textbf{Hidden1→Hidden2} & $128{\times}64$ = `{python} MnistModelSizeLocal.w2_str`  & `{python} MnistModelSizeLocal.b2_str` & `{python} MnistModelSizeLocal.p2_str`\\
+\textbf{Hidden2→Output}  &  $64{\times}10$ = `{python} MnistModelSizeLocal.w3_str`  & `{python} MnistModelSizeLocal.b3_str` & `{python} MnistModelSizeLocal.p3_str`\\
+\textbf{Total}           &                                                &  & \textbf{`{python} MnistModelSizeLocal.total_params_str`} \\\bottomrule
 \end{tabular}
 \bigskip
 \endgroup
 :::
 
-**Parameter memory**: `{python} MNISTMemory.total_params_str`$\times$ 4 bytes = **`{python} MnistTrainingMemoryCalc.param_kib_str` KB**
+**Parameter memory**: `{python} MnistModelSizeLocal.total_params_str`$\times$ 4 bytes = **`{python} MnistTrainingMemoryCalc.param_kib_str` KB**
 
-**Step 2**: Activations. @tbl-nn-computation-mnist-activations records each layer's activation tensor and its memory cost at batch size 32:
+**Step 2**: Activations. The table below records each layer's activation tensor and its memory cost at batch size 32:
 
 ::: {.content-visible unless-format="pdf"}
 
@@ -3361,8 +3590,8 @@ The preceding memory requirements seem modest for our small MNIST classifier. Sc
 # │          @sec-neural-computation-model-size-computational-complexity-1f0f,
 # │          quantifying the scale gap that motivates production GPU requirements.
 # │
-# │ Goal: Contrast the toy MNIST MLP (~107K params, ~420 KB) with GPT-2
-# │       (124M params, ~475 MB) to make the 1,160× parameter scale-up visceral.
+# │ Goal: Contrast the toy MNIST MLP (~109K params, ~438 KB) with GPT-2
+# │       (1.5B params, ~6 GB) to make the 14K× parameter scale-up visceral.
 # │ Show: That crossing from toy to production scale requires GPU memory rather
 # │       than CPU RAM, justifying the accelerator infrastructure introduced in
 # │       @sec-hardware-acceleration.
@@ -3388,7 +3617,8 @@ from mlsysim.fmt import fmt, check
 class MemoryExplosionCalc:
     """Namespace for Memory Explosion Calc."""
 
-    #—Re-derived inputs (MNIST canonical architecture: 784→128→64→10) ---
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    # Re-derived inputs (MNIST canonical architecture: 784→128→64→10)
     mnist_l1_dim = 784                                       # input: 28×28 pixels
     mnist_l2_dim = 128                                       # hidden layer 1
     mnist_l3_dim = 64                                        # hidden layer 2
@@ -3404,6 +3634,11 @@ class MemoryExplosionCalc:
     gpt2_params_b_value = GPT2_PARAMS.m_as(Bparam)
     gpt2_mem_gb_value = model_memory(GPT2_PARAMS, BYTES_FP32, GB)
     mem_jump_value = gpt2_params_count_value/mnist_params_value
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(mnist_mem_kb_value) == 438, f"Expected MNIST FP32 memory ~438 KB, got {mnist_mem_kb_value:.1f}")
+    check(gpt2_params_b_value == 1.5, f"Expected GPT-2 constant to be 1.5B params, got {gpt2_params_b_value}")
+    check(mem_jump_value > 10_000, f"GPT-2 should be >10Kx MNIST params, got {mem_jump_value:.0f}x")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     mnist_params_count_str = f"{mnist_params_value:,}"                        # e.g. "109,386"
@@ -3528,7 +3763,7 @@ Our MNIST network currently holds `{python} MNISTMemory.total_params_str` random
 
 ### Supervised learning from labeled examples {#sec-neural-computation-supervised-learning-labeled-examples-5e6d}
 
-A randomly initialized network classifies digits no better than random guessing among ten classes (about 10 percent accuracy). Transforming it into a 95 percent-accurate classifier requires supervised learning\index{Supervised Learning!labeled examples}\index{Training!supervised learning}: showing the network labeled examples and adjusting its weights based on the errors it makes. Consider our MNIST digit recognition task: we have a dataset of 60,000 training images, each a $28{\times}28$ pixel grayscale image paired with its correct digit label. The network must learn the relationship between these images and their corresponding digits through an iterative process of prediction and weight adjustment. Ensuring the quality and integrity of training data is essential to model success, as established in @sec-data-engineering.
+A randomly initialized network classifies digits no better than random guessing among ten classes (about 10 percent accuracy). Transforming it into a 95 percent-accurate classifier requires supervised learning\index{Supervised Learning!labeled examples}\index{Training!supervised learning}: showing the network labeled examples and adjusting its weights based on the errors it makes. Consider our MNIST digit recognition task: we have a dataset of `{python} MNISTMemory.training_examples_str` training images, each a $28{\times}28$ pixel grayscale image paired with its correct digit label. The network must learn the relationship between these images and their corresponding digits through an iterative process of prediction and weight adjustment. Ensuring the quality and integrity of training data is essential to model success, as established in @sec-data-engineering.
 
 The relationship between inputs and outputs drives the training methodology. Training operates as a loop where each iteration processes a subset of training examples called a batch\index{Batch!training iteration}[^fn-batch-processing]. For each batch, the network performs four operations: forward computation through the network layers generates predictions, a loss function evaluates prediction accuracy, weight adjustments are computed based on prediction errors, and network weights are updated to improve future predictions.
 
@@ -3662,11 +3897,54 @@ The forward pass is only half the story.
 
 :::
 
+```{python}
+#| label: mnist-forward-intro-local
+#| echo: false
+from mlsysim.fmt import fmt, check
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MNIST FORWARD INTRO LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Opening prose for forward propagation in
+# │          @sec-neural-computation-forward-propagation-layer-by-layer-820a.
+# │
+# │ Goal: Keep the 28×28 input and first-layer MAC count beside the explanation.
+# │ Show: MNIST contributes 784 normalized input values; the first dense layer
+# │       performs 100,352 MACs per image.
+# │ How: Multiply image dimensions and first-hidden-layer width.
+# │
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: MnistForwardIntroLocal.input_values_str,
+# │          MnistForwardIntroLocal.first_layer_macs_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+# ┌── LEGO ───────────────────────────────────────────────
+class MnistForwardIntroLocal:
+    """Namespace for local MNIST forward-propagation introduction."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    image_height = 28
+    image_width = 28
+    first_hidden_units = 128
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    input_values = image_height * image_width
+    first_layer_macs = input_values * first_hidden_units
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(input_values == 784, f"Expected 784 MNIST input values, got {input_values}")
+    check(first_layer_macs == 100_352, f"Expected 100,352 first-layer MACs, got {first_layer_macs}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    input_values_str = fmt(input_values, precision=0, commas=False)
+    first_layer_macs_str = fmt(first_layer_macs, precision=0, commas=True)
+```
+
 When an image of a handwritten digit enters our network, it undergoes a series of transformations through the layers. Each transformation combines the weighted inputs with learned patterns to progressively extract relevant features. For the 784-128-64-10 digit classifier, a $28{\times}28$ pixel image is processed through multiple layers to ultimately produce probabilities for each possible digit (0--9).
 
-The process begins with the input layer, where each pixel's grayscale value becomes an input feature. For MNIST, this means `{python} MnistArchitectureConstants.mnist_input_str` input values ($28{\times}28$ = `{python} MnistArchitectureConstants.mnist_input_str`), each normalized between 0 and 1. These values then propagate forward through the hidden layers, where each neuron combines its inputs according to its learned weights and applies a nonlinear activation function.
+The process begins with the input layer, where each pixel's grayscale value becomes an input feature. For MNIST, this means `{python} MnistForwardIntroLocal.input_values_str` input values ($28{\times}28$ = `{python} MnistForwardIntroLocal.input_values_str`), each normalized between 0 and 1. These values then propagate forward through the hidden layers, where each neuron combines its inputs according to its learned weights and applies a nonlinear activation function.
 
-Each forward pass through our MNIST network (784-128-64-10) requires substantial matrix operations. The first layer alone performs nearly 100,000 multiply-accumulate operations per sample. When processing multiple samples in a batch, these operations multiply accordingly, requiring careful management of memory bandwidth and computational resources. Specialized hardware like GPUs executes these operations efficiently through parallel processing.
+Each forward pass through our MNIST network (784-128-64-10) requires substantial matrix operations. The first layer alone performs `{python} MnistForwardIntroLocal.first_layer_macs_str` multiply-accumulate operations per sample. When processing multiple samples in a batch, these operations multiply accordingly, requiring careful management of memory bandwidth and computational resources. Specialized hardware like GPUs executes these operations efficiently through parallel processing.
 
 #### Individual layer processing {#sec-neural-computation-individual-layer-processing-7ea9}
 
@@ -3780,7 +4058,7 @@ For each image in the batch, this produces a probability distribution over the p
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import flop, MFLOPs
+from mlsysim.core.constants import flop, MFLOPs, byte, KB
 
 # ┌── LEGO ───────────────────────────────────────────────
 class MnistFlopsCalc:
@@ -3814,6 +4092,28 @@ class MnistFlopsCalc:
         + flops_l3_bias_value
     )
     total_mops_value = (total_flops_value * flop).m_as(MFLOPs)
+    weights = [
+        in_dim_value * h1_value,
+        h1_value * h2_value,
+        h2_value * out_dim_value,
+    ]
+    biases = [h1_value, h2_value, out_dim_value]
+    params_per_layer = [w + b for w, b in zip(weights, biases)]
+    total_params = sum(params_per_layer)
+    total_macs = sum(weights)
+    bytes_per_value = 4
+    param_mem_kb = (total_params * bytes_per_value * byte).m_as(KB)
+    inf_act_elements = in_dim_value + h1_value + h2_value + out_dim_value
+    inf_act_kb = (inf_act_elements * bytes_per_value * byte).m_as(KB)
+    inference_total_kb = param_mem_kb + inf_act_kb
+    per_image_kops = (total_flops_value / batch_size_value) / 1000
+    arith_intensity = (total_flops_value / batch_size_value) / (inference_total_kb * 1000)
+    layer1_pct = weights[0] / total_macs * 100
+    batch_in_values = batch_size_value * in_dim_value
+    batch_h1_values = batch_size_value * h1_value
+    batch_h2_values = batch_size_value * h2_value
+    batch_out_values = batch_size_value * out_dim_value
+    batch_act_total_values = batch_in_values + batch_h1_values + batch_h2_values + batch_out_values
 
     double_flops_l1_mm_value = 2 * batch_size_value * in_dim_value * double_h1_value
     double_flops_l1_bias_value = 2 * (batch_size_value * double_h1_value)
@@ -3832,6 +4132,11 @@ class MnistFlopsCalc:
     double_total_mops_value = (double_total_flops_value * flop).m_as(MFLOPs)
     double_ratio_value = double_total_mops_value/total_mops_value
 
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(total_mops_value, 1) == 7.0, f"Expected ~7.0 MOps, got {total_mops_value:.1f}")
+    check(round(per_image_kops) == 219, f"Expected ~219 KOps per image, got {per_image_kops:.1f}")
+    check(inf_act_elements == 986, f"Expected 986 inference activation values, got {inf_act_elements}")
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     l1_mm_str = f"{flops_l1_mm_value:,}"
     l1_bias_str = f"{flops_l1_bias_value:,}"
@@ -3840,6 +4145,16 @@ class MnistFlopsCalc:
     l3_mm_str = f"{flops_l3_mm_value:,}"
     l3_bias_str = f"{flops_l3_bias_value:,}"
     total_mops_str = fmt(total_mops_value, precision=1, commas=False)
+    per_image_kops_str = fmt(per_image_kops, precision=0, commas=False)
+    layer1_pct_str = fmt(layer1_pct, precision=0, commas=False)
+    inference_kb_display = fmt(inference_total_kb, precision=0, commas=False)
+    arith_intensity_str = fmt(arith_intensity, precision=1, commas=False)
+    batch_in_str = fmt(batch_in_values, precision=0, commas=True)
+    batch_h1_str = fmt(batch_h1_values, precision=0, commas=True)
+    batch_h2_str = fmt(batch_h2_values, precision=0, commas=True)
+    batch_out_str = fmt(batch_out_values, precision=0, commas=True)
+    batch_act_total_str = fmt(batch_act_total_values, precision=0, commas=True)
+    total_params_str = fmt(total_params, precision=0, commas=True)
     double_total_mops_str = fmt(double_total_mops_value, precision=1, commas=False)
     double_ratio_str = fmt(double_ratio_value, precision=1, commas=False)
     double_ratio_exact_str = fmt(double_ratio_value, precision=2, commas=False)
@@ -3863,18 +4178,18 @@ class MnistFlopsCalc:
 | **Layer 2** | Bias + ReLU    |                $32{\times}64$                |           $2{\times}2,048$ = `{python} MnistFlopsCalc.l2_bias_str`          |
 | **Layer 3** | MatMul         |  ($32{\times}64$)$\times$ ($64{\times}10$)   |  2$\times$ 32$\times$ $64{\times}10$ = `{python} MnistFlopsCalc.l3_mm_str`  |
 | **Layer 3** | Bias + Softmax |                $32{\times}10$                |             ~`{python} MnistFlopsCalc.l3_bias_str` (simplified)             |
-| **Total**   |                |                                              |               **~`{python} MNISTMemory.total_mops_str` MOps**               |
+| **Total**   |                |                                              |               **~`{python} MnistFlopsCalc.total_mops_str` MOps**               |
 
 : **MNIST Forward Pass Operation Count by Layer**: FLOP breakdown for a single forward pass through the 784-128-64-10 network at batch size 32. Layer 1's matrix multiply dominates because it multiplies the 784-dimensional input against the widest weight matrix; bias and activation operations contribute under one percent of the total. {#tbl-nn-computation-mnist-flops}
 
 :::
 
-**Per-image cost**: `{python} MNISTMemory.total_mops_str` $\text{MOps} / 32$ = **~`{python} MNISTMemory.per_image_kops_str` KOps per image**
+**Per-image cost**: `{python} MnistFlopsCalc.total_mops_str` $\text{MOps} / 32$ = **~`{python} MnistFlopsCalc.per_image_kops_str` KOps per image**
 
 **Key insights**:
 
-1. **Layer 1 dominates**: The first layer accounts for `{python} MNISTMemory.layer1_pct_str` percent of all operations because it processes the largest input (784 dimensions). This is why dimensionality reduction in early layers is so impactful.
-2. **Compute vs. Memory**: At `{python} MNISTMemory.per_image_kops_str` KOps per image and ~`{python} MNISTMemory.inference_kb_display` KB memory, this network has an arithmetic intensity of ~`{python} MNISTMemory.arith_intensity_str` FLOPs/byte—firmly in the memory-bound regime for most hardware (see the Roofline Model in @sec-machine-foundations-roofline-model-2529 for how arithmetic intensity determines whether a workload is memory bound or compute bound). A modern GPU achieving ten TFLOPS would process each image in ~22 nanoseconds of pure compute, but memory latency typically dominates actual inference time.
+1. **Layer 1 dominates**: The first layer accounts for `{python} MnistFlopsCalc.layer1_pct_str` percent of all operations because it processes the largest input (784 dimensions). This is why dimensionality reduction in early layers is so impactful.
+2. **Compute vs. Memory**: At `{python} MnistFlopsCalc.per_image_kops_str` KOps per image and ~`{python} MnistFlopsCalc.inference_kb_display` KB memory, this network has an arithmetic intensity of ~`{python} MnistFlopsCalc.arith_intensity_str` FLOPs/byte—firmly in the memory-bound regime for most hardware (see the Roofline Model in @sec-machine-foundations-roofline-model-2529 for how arithmetic intensity determines whether a workload is memory bound or compute bound). A modern GPU achieving ten TFLOPS would process each image in ~22 nanoseconds of pure compute, but memory latency typically dominates actual inference time.
 3. **Scaling intuition**: Doubling the hidden layer widths (784→256→128→10) increases $O$ by ~`{python} MnistFlopsCalc.double_ratio_str`$\times$ to ~`{python} MnistFlopsCalc.double_total_mops_str` MOps. This comes from recomputing each layer: L1 and L3 double, L2 quadruples, so the total grows by about `{python} MnistFlopsCalc.double_ratio_exact_str`$\times$ rather than 4$\times$.
 
 :::
@@ -3885,18 +4200,18 @@ Forward propagation implementation involves practical considerations that affect
 
 Memory management plays a central role during forward propagation. Each layer's activations must be stored for the backward pass during training. For our MNIST example (784-128-64-10) with a batch size of 32, the activation storage requirements are:
 
-* Input layer: $32{\times}784$ = `{python} MnistTrainingMemoryCalc.act_in_count_str` values
-* First hidden layer: $32{\times}128$ = `{python} MNISTMemory.batch_h1_str` values
-* Second hidden layer: $32{\times}64$ = `{python} MNISTMemory.batch_h2_str` values
-* Output layer: $32{\times}10$ = `{python} MNISTMemory.batch_out_str` values
+* Input layer: $32{\times}784$ = `{python} MnistFlopsCalc.batch_in_str` values
+* First hidden layer: $32{\times}128$ = `{python} MnistFlopsCalc.batch_h1_str` values
+* Second hidden layer: $32{\times}64$ = `{python} MnistFlopsCalc.batch_h2_str` values
+* Output layer: $32{\times}10$ = `{python} MnistFlopsCalc.batch_out_str` values
 
-This produces a total of `{python} MNISTMemory.batch_act_total_str` values that must be maintained in memory for each batch during training, consistent with the worked example in @sec-neural-computation-model-size-computational-complexity-1f0f. The memory requirements scale linearly with batch size and become substantial for larger networks.
+This produces a total of `{python} MnistFlopsCalc.batch_act_total_str` values that must be maintained in memory for each batch during training, consistent with the worked example in @sec-neural-computation-model-size-computational-complexity-1f0f. The memory requirements scale linearly with batch size and become substantial for larger networks.
 
 Batch processing introduces important trade-offs. Larger batches enable more efficient matrix operations and better hardware utilization but require more memory. For example, doubling the batch size to 64 would double the memory requirements for activations. This relationship between batch size, memory usage, and computational efficiency guides the choice of batch size in practice.
 
 The organization of computations also affects performance. Matrix operations can be optimized through careful memory layout and specialized libraries. The choice of activation functions affects both the network's learning capabilities and computational efficiency, as some functions (like ReLU) require less computation than others (like tanh or sigmoid).
 
-The computational characteristics of neural networks favor parallel processing architectures\index{GPU!parallel computation}\index{Parallel Processing!neural networks}. While traditional CPUs can execute these operations, GPUs designed for parallel computation achieve substantial speedups, often 10--100$\times$ faster for matrix operations. Specialized AI accelerators achieve even better efficiency through reduced precision arithmetic, specialized memory architectures, and dataflow optimizations tailored for neural network computation patterns.
+The computational characteristics of neural networks favor parallel processing architectures\index{GPU!parallel computation}\index{Parallel Processing!neural networks}. While traditional CPUs can execute these operations, GPUs designed for parallel computation can be substantially faster for large dense matrix operations. Specialized AI accelerators achieve even better efficiency through reduced precision arithmetic, specialized memory architectures, and dataflow optimizations tailored for neural network computation patterns.
 
 Energy consumption also varies by orders of magnitude across hardware platforms\index{Energy Consumption!hardware platforms}\index{Throughput!accelerator parallelism}. CPUs offer flexibility but consume more energy per operation. GPUs provide high throughput at higher power consumption. Specialized edge accelerators optimize for energy efficiency, achieving the same computations with orders of magnitude less power, which is important for mobile and embedded deployments. This energy disparity stems from the memory hierarchy constraints where data movement dominates computation costs.
 
@@ -3983,7 +4298,7 @@ The loss function's gradients with respect to the network's outputs provide the 
 
 The choice of loss function also influences other training decisions. Larger loss gradients may require smaller learning rates to prevent overshooting, while loss averaging across batches affects gradient stability and thus optimal batch size. The loss landscape's curvature shapes which optimization algorithms work best, and the loss value's trajectory determines when training has converged.
 
-Loss functions quantify prediction error, but the error signal alone does not tell the system how to correct it. With `{python} MNISTMemory.total_params_str` parameters in the MNIST network, determining which weights should change, by *how much*, and in *what* direction is intractable without an efficient credit-assignment algorithm. This is the credit assignment problem\index{Credit Assignment Problem!weight responsibility}: determining which of thousands of connections contributed to the error. The next section introduces backpropagation, which solves this problem through the chain rule of calculus, systematically computing each weight's responsibility for the final prediction error.
+Loss functions quantify prediction error, but the error signal alone does not tell the system how to correct it. With `{python} MnistFlopsCalc.total_params_str` parameters in the MNIST network, determining which weights should change, by *how much*, and in *what* direction is intractable without an efficient credit-assignment algorithm. This is the credit assignment problem\index{Credit Assignment Problem!weight responsibility}: determining which of thousands of connections contributed to the error. The next section introduces backpropagation, which solves this problem through the chain rule of calculus, systematically computing each weight's responsibility for the final prediction error.
 
 ### Gradient computation and backpropagation {#sec-neural-computation-gradient-computation-backpropagation-dacf}
 
@@ -4120,16 +4435,127 @@ This automation transforms gradient computation from a manual, error-prone proce
 
 We established earlier that training requires storing activations for backpropagation (see the worked example in @sec-neural-computation-model-size-computational-complexity-1f0f). Here we examine how those requirements *scale* with model size and what additional costs the backward pass introduces.
 
+```{python}
+#| label: backprop-memory-calc
+#| echo: false
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ BACKPROP MEMORY CALC—WIDER MNIST VARIANT
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-neural-computation-computational-implementation-details-1ecc,
+# │          immediately before the prose that compares activation and gradient
+# │          storage for a 784→512→256→10 network.
+# │
+# │ Goal: Localize the wider-network memory arithmetic used by the backprop
+# │       implementation discussion.
+# │ Show: Activation storage per layer and total trainable parameters for the
+# │       784→512→256→10 variant at batch=32.
+# │ How: Multiply batch size by layer widths for activations, then count weights
+# │      and biases between adjacent layers.
+# │
+# │ Imports: mlsysim.book (fmt, check), mlsysim.constants (byte, KB)
+# │ Exports: BackpropMemory.bp_input_kb_str, BackpropMemory.bp_h1_kb_str,
+# │          BackpropMemory.bp_h2_kb_str, BackpropMemory.bp_out_kb_str,
+# │          BackpropMemory.bp_total_params_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+from mlsysim.fmt import fmt, check
+from mlsysim.core.constants import byte, KB
+
+# ┌── LEGO ───────────────────────────────────────────────
+class BackpropMemory:
+    """Namespace for the wider MNIST backpropagation memory example."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    layers_dims = [784, 512, 256, 10]
+    batch_size = 32
+    bytes_per_param = 4
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    act_counts = []
+    for dim in layers_dims:
+        act_counts.append(batch_size * dim)
+
+    act_kb = []
+    for count in act_counts:
+        act_kb.append((count * bytes_per_param * byte).m_as(KB))
+
+    weights = []
+    for i in range(len(layers_dims) - 1):
+        weights.append(layers_dims[i] * layers_dims[i + 1])
+    biases = layers_dims[1:]
+    total_params = sum(weights) + sum(biases)
+    grad_kb = (total_params * bytes_per_param * byte).m_as(KB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(total_params == 535_818, f"Unexpected wider MNIST parameter count: {total_params}")
+    check(len(act_counts) == len(layers_dims), "Activation counts should align with layers.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    bp_input_str = f"{act_counts[0]:,}"
+    bp_input_kb_str = fmt(act_kb[0], precision=0, commas=False)
+    bp_h1_str = f"{act_counts[1]:,}"
+    bp_h1_kb_str = fmt(act_kb[1], precision=0, commas=False)
+    bp_h2_str = f"{act_counts[2]:,}"
+    bp_h2_kb_str = fmt(act_kb[2], precision=0, commas=False)
+    bp_out_str = f"{act_counts[3]:,}"
+    bp_out_kb_str = fmt(act_kb[3], precision=1, commas=False)
+    bp_total_params_str = f"{total_params:,}"
+    grad_kb_str = fmt(grad_kb, precision=0, commas=False)
+```
+
 Consider a larger variant of our MNIST network (784→512→256→10) with a batch size of 32. Each layer's activations must be maintained:
 
-* Input layer: $32{\times}784$ values (~`{python} MnistTrainingMemoryCalc.bp_input_kb_str` KB using 32-bit numbers)
-* Hidden layer 1: $32{\times}512$ values (~`{python} MnistTrainingMemoryCalc.bp_h1_kb_str` KB)
-* Hidden layer 2: $32{\times}256$ values (~`{python} MnistTrainingMemoryCalc.bp_h2_kb_str` KB)
-* Output layer: $32{\times}10$ values (~`{python} MnistTrainingMemoryCalc.bp_out_kb_str` KB)
+* Input layer: $32{\times}784$ values (~`{python} BackpropMemory.bp_input_kb_str` KB using 32-bit numbers)
+* Hidden layer 1: $32{\times}512$ values (~`{python} BackpropMemory.bp_h1_kb_str` KB)
+* Hidden layer 2: $32{\times}256$ values (~`{python} BackpropMemory.bp_h2_kb_str` KB)
+* Output layer: $32{\times}10$ values (~`{python} BackpropMemory.bp_out_kb_str` KB)
 
 Beyond activations, we must store gradients for each parameter. For this larger network with approximately `{python} BackpropMemory.bp_total_params_str` parameters, gradient storage requires several megabytes. Advanced optimizers like Adam\index{Adam Optimizer!momentum and velocity}\index{Optimizer!Adam}[^fn-adam-memory-overhead] roughly double this by maintaining momentum and velocity terms for every parameter.
 
-[^fn-adam-memory-overhead]: **Adam (Adaptive Moment Estimation)**: Maintains per-parameter first and second moment estimates (momentum and velocity), requiring 2$\times$ additional memory beyond the parameters themselves [@kingma2014adam]. For a 100K-parameter MNIST model this overhead is negligible, but for a 7B-parameter model it adds ~56 GB in FP32, often the difference between fitting on one GPU or needing two. Adam became the default optimizer despite this cost because it converges with minimal hyperparameter tuning. \index{Adam!memory overhead}
+```{python}
+#| label: adam-memory-overhead-calc
+#| echo: false
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ ADAM MEMORY OVERHEAD EXAMPLE
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Footnote [^fn-adam-memory-overhead] in
+# │          @sec-neural-computation-computational-implementation-details-1ecc.
+# │
+# │ Goal: Verify the 7B-parameter Adam optimizer-state memory example.
+# │ Show: Two FP32 moment tensors for a 7B-parameter model require 56 GB.
+# │ How: Multiply params × bytes × Adam state tensors; convert bytes to GB.
+# │
+# │ Imports: mlsysim.core.constants (BILLION, byte, GB), mlsysim.book (fmt, check)
+# │ Exports: AdamMemoryOverhead.params_b_str,
+# │          AdamMemoryOverhead.state_gb_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+from mlsysim.core.constants import BILLION, byte, GB
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class AdamMemoryOverhead:
+    """Namespace for Adam optimizer-state memory example."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    params_b = 7
+    bytes_per_param = 4
+    adam_state_tensors = 2
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    state_gb = (params_b * BILLION * bytes_per_param * adam_state_tensors * byte).m_as(GB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(state_gb == 56, f"Expected 56 GB Adam state, got {state_gb}")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    state_gb_str = fmt(state_gb, precision=0, commas=False)
+```
+
+[^fn-adam-memory-overhead]: **Adam (Adaptive Moment Estimation)**: Maintains per-parameter first and second moment estimates (momentum and velocity), requiring 2$\times$ additional memory beyond the parameters themselves [@kingma2014adam]. For a 100K-parameter MNIST model this overhead is negligible, but for a `{python} AdamMemoryOverhead.params_b_str`B-parameter model it adds ~`{python} AdamMemoryOverhead.state_gb_str` GB in FP32, often the difference between fitting on one GPU or needing two. Adam became the default optimizer despite this cost because it converges with minimal hyperparameter tuning. \index{Adam!memory overhead}
 
 Memory bandwidth compounds these capacity requirements. Each training step requires loading all parameters, storing gradients, and accessing activations—creating substantial memory traffic that scales with both model size and batch size. For modest networks like our MNIST example, this traffic remains manageable, but as models grow, memory bandwidth becomes the primary bottleneck, requiring specialized high-bandwidth memory systems.
 
@@ -4215,10 +4641,52 @@ The choice of batch size has direct implications for *batch size and hardware ut
 
 #### Iterative learning process {#sec-neural-computation-iterative-learning-process-10b9}
 
+```{python}
+#| label: mnist-epoch-local
+#| echo: false
+from mlsysim.fmt import fmt, check
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MNIST EPOCH LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Mini-batch SGD epoch explanation in
+# │          @sec-neural-computation-iterative-learning-process-10b9.
+# │
+# │ Goal: Keep dataset size, batch size, and batches-per-epoch close to the prose.
+# │ Show: 60,000 MNIST training images at batch size 32 form 1,875 batches.
+# │ How: Divide training examples by batch size and guard exact divisibility.
+# │
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: MnistEpochLocal.training_examples_str,
+# │          MnistEpochLocal.batch_size_str,
+# │          MnistEpochLocal.epoch_batches_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+# ┌── LEGO ───────────────────────────────────────────────
+class MnistEpochLocal:
+    """Namespace for local MNIST epoch arithmetic."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    training_examples = 60_000
+    batch_size = 32
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    epoch_batches = training_examples // batch_size
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(training_examples % batch_size == 0, "MNIST epoch example should divide evenly.")
+    check(epoch_batches == 1_875, f"Expected 1,875 batches per epoch, got {epoch_batches}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    training_examples_str = fmt(training_examples, precision=0, commas=True)
+    batch_size_str = fmt(batch_size, precision=0, commas=False)
+    epoch_batches_str = fmt(epoch_batches, precision=0, commas=True)
+```
+
 The complete training process combines forward propagation, backward propagation, and weight updates into a systematic training loop\index{Training Loop!iterative learning}. This loop repeats until the network achieves satisfactory performance or reaches a predetermined number of iterations.
 
 \index{Stochastic Gradient Descent!mini-batch procedure}
-A single pass through the entire training dataset is called an epoch\index{Epoch!dataset iteration}[^fn-epoch-training-nn]. For MNIST, with 60,000 training images and a batch size of 32, each epoch consists of 1,875 batch iterations. @lst-minibatch-sgd summarizes the complete mini-batch SGD procedure.
+A single pass through the entire training dataset is called an epoch\index{Epoch!dataset iteration}[^fn-epoch-training-nn]. For MNIST, with `{python} MnistEpochLocal.training_examples_str` training images and a batch size of `{python} MnistEpochLocal.batch_size_str`, each epoch consists of `{python} MnistEpochLocal.epoch_batches_str` batch iterations. @lst-minibatch-sgd summarizes the complete mini-batch SGD procedure.
 
 [^fn-epoch-training-nn]: **Epoch**: One complete pass through all training data. The number of epochs is a direct multiplier on total compute cost: a 100-epoch MNIST run executes 100$\times$ more forward and backward passes than a single epoch. At frontier scale, this multiplier becomes the binding constraint: GPT-3 trained for only ~1 epoch over 300 billion tokens because the per-epoch cost already consumed thousands of GPU-weeks. \index{Epoch!training cycles}
 
@@ -4329,21 +4797,35 @@ The transition from training to inference introduces a constraint on model adapt
 # │          @sec-neural-computation-operational-phase-differences-3f95,
 # │          supporting the prose on training-cluster GPU requirements.
 # │
-# │ Goal: Ground the "training requires high-memory GPUs" claim with exact A100
-# │       and H100 specs from mlsysim.core.constants (single source of truth).
-# │ Show: A100 provides 80 GB HBM2e at 400 W; H100 consumes up to 700 W—
-# │       numbers that explain why datacenter cooling is a first-order constraint.
-# │ How: Read A100_MEM_CAPACITY, A100_TDP, and H100_TDP; extract scalar values
-# │      with m_as(); format as integer strings for the footnote.
+# │ Goal: Ground training-GPU power, mobile-power, edge-accelerator, and roofline
+# │       threshold claims in executable arithmetic.
+# │ Show: A100 provides 80 GB HBM2e at 400 W; H100 consumes up to 700 W; A100/H100
+# │       ridge points sit in the hundreds of FLOPs/byte.
+# │ How: Read mlsysim hardware constants where available; keep edge-tier examples
+# │      as explicit local specs; compute ratios and formatted strings.
 # │
-# │ Imports: mlsysim.core.constants (A100_MEM_CAPACITY, A100_TDP, H100_TDP, GiB, watt),
+# │ Imports: mlsysim.core.constants (A100_MEM_CAPACITY, A100_TDP, H100_TDP,
+# │          A100_FLOPS_FP16_TENSOR, A100_MEM_BW, H100_FLOPS_FP16_TENSOR,
+# │          H100_MEM_BW, GiB, watt, flop, byte),
 # │          mlsysim.book (fmt, check)
 # │ Exports: GpuSpecsFootnote.a100_mem_gb_str,
 # │          GpuSpecsFootnote.a100_tdp_w_str,
-# │          GpuSpecsFootnote.h100_tdp_w_str
+# │          GpuSpecsFootnote.h100_tdp_w_str,
+# │          GpuSpecsFootnote.training_mobile_ratio_str,
+# │          GpuSpecsFootnote.edge_tpu_tops_str,
+# │          GpuSpecsFootnote.edge_tpu_tdp_w_str,
+# │          GpuSpecsFootnote.jetson_orin_tops_str,
+# │          GpuSpecsFootnote.edge_throughput_ratio_str,
+# │          GpuSpecsFootnote.a100_ridge_str,
+# │          GpuSpecsFootnote.h100_ridge_str
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.core.constants import A100_MEM_CAPACITY, A100_TDP, H100_TDP, GiB, watt
+from mlsysim.core.constants import (
+    A100_MEM_CAPACITY, A100_TDP, H100_TDP,
+    A100_FLOPS_FP16_TENSOR, A100_MEM_BW,
+    H100_FLOPS_FP16_TENSOR, H100_MEM_BW,
+    GiB, watt, flop, byte
+)
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -4354,11 +4836,37 @@ class GpuSpecsFootnote:
     a100_mem_gb_value = A100_MEM_CAPACITY.m_as(GiB)              # e.g. 80
     a100_tdp_w_value = A100_TDP.m_as(watt)                       # e.g. 400
     h100_tdp_w_value = H100_TDP.m_as(watt)                       # e.g. 700
+    mobile_inference_tdp_high_w_value = 4
+    edge_tpu_tops_value = 4
+    edge_tpu_tdp_w_value = 2
+    jetson_orin_tops_value = 275
+    jetson_orin_tdp_low_w_value = 15
+    jetson_orin_tdp_high_w_value = 60
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    training_mobile_ratio = a100_tdp_w_value / mobile_inference_tdp_high_w_value
+    edge_throughput_ratio = jetson_orin_tops_value / edge_tpu_tops_value
+    a100_ridge = (A100_FLOPS_FP16_TENSOR / A100_MEM_BW).m_as(flop / byte)
+    h100_ridge = (H100_FLOPS_FP16_TENSOR / H100_MEM_BW).m_as(flop / byte)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(training_mobile_ratio >= 100, f"Training GPU should be >=100x mobile power, got {training_mobile_ratio:.1f}x")
+    check(edge_throughput_ratio > 60, f"Jetson Orin should be >60x Edge TPU throughput, got {edge_throughput_ratio:.1f}x")
+    check(a100_ridge > 100 and h100_ridge > a100_ridge, "GPU ridge points should be in the hundreds of FLOPs/byte.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     a100_mem_gb_str = fmt(a100_mem_gb_value, precision=0, commas=False)  # e.g. "80"
     a100_tdp_w_str = fmt(a100_tdp_w_value, precision=0, commas=False)    # e.g. "400"
     h100_tdp_w_str = fmt(h100_tdp_w_value, precision=0, commas=False)    # e.g. "700"
+    training_mobile_ratio_str = fmt(training_mobile_ratio, precision=0, commas=False)
+    edge_tpu_tops_str = fmt(edge_tpu_tops_value, precision=0, commas=False)
+    edge_tpu_tdp_w_str = fmt(edge_tpu_tdp_w_value, precision=0, commas=False)
+    jetson_orin_tops_str = fmt(jetson_orin_tops_value, precision=0, commas=False)
+    jetson_orin_tdp_low_w_str = fmt(jetson_orin_tdp_low_w_value, precision=0, commas=False)
+    jetson_orin_tdp_high_w_str = fmt(jetson_orin_tdp_high_w_value, precision=0, commas=False)
+    edge_throughput_ratio_str = fmt(edge_throughput_ratio, precision=0, commas=False)
+    a100_ridge_str = fmt(a100_ridge, precision=0, commas=False)
+    h100_ridge_str = fmt(h100_ridge, precision=0, commas=False)
 ```
 
 Neural network operation divides into two distinct phases\index{Training vs. Inference!operational differences}\index{Inference!forward pass only} with markedly different computational requirements. @fig-training-vs-inference contrasts these phases visually. Inference performs only the forward pass, processing inputs through the learned weights with batch sizes that vary according to demand. Training adds the backward pass for gradient computation and parameter updates, requires larger fixed batches to stabilize gradient estimates, and must store activations, gradients, and optimizer state simultaneously, consuming significantly more memory. The network architecture is identical in both phases; the difference lies entirely in computational and memory orchestration.
@@ -4366,9 +4874,9 @@ Neural network operation divides into two distinct phases\index{Training vs. Inf
 \index{Constrained Hardware!inference deployment}
 These computational differences manifest directly in hardware requirements and deployment strategies. Training clusters typically employ high-memory GPUs[^fn-training-gpu-power] with substantial cooling infrastructure. Inference deployments prioritize latency and energy efficiency across diverse platforms: mobile devices use low-power neural processors (typically 2–4 W), edge servers deploy specialized inference accelerators[^fn-edge-tpu-efficiency], and cloud services employ inference-optimized instances with reduced numerical precision for increased throughput[^fn-inference-quantization]. Production inference systems serving millions of requests daily require sophisticated infrastructure including load balancing, auto-scaling, and failover mechanisms typically unnecessary in training environments.
 
-[^fn-training-gpu-power]: **Training GPU Power Budget**: The "high-memory" requirement is driven by the need to hold parameters, gradients, optimizer state, and activations simultaneously. The corresponding power draw dictates the "substantial cooling infrastructure," as a single high-end training GPU consumes 400–700 W. This is over $100\times$ the power budget of a typical 2–4 W mobile inference chip. \index{GPU!training, power budget}
+[^fn-training-gpu-power]: **Training GPU Power Budget**: The "high-memory" requirement is driven by the need to hold parameters, gradients, optimizer state, and activations simultaneously. The corresponding power draw dictates the "substantial cooling infrastructure," as a single high-end training GPU consumes `{python} GpuSpecsFootnote.a100_tdp_w_str`–`{python} GpuSpecsFootnote.h100_tdp_w_str` W. Even compared with a 4 W mobile inference chip, that is over `{python} GpuSpecsFootnote.training_mobile_ratio_str`$\times$ the power budget. \index{GPU!training, power budget}
 
-[^fn-edge-tpu-efficiency]: **Edge Inference Accelerators**: The Edge TPU (Google Coral) operates in the mobile/embedded tier at ~2 W TDP, delivering 4 TOPS by hardwiring the multiply-accumulate datapath for INT8 inference. Edge *servers* occupy a different tier entirely: the NVIDIA Jetson AGX Orin delivers 275 TOPS at 15--60 W, over 60$\times$ more throughput but requiring fixed power infrastructure rather than battery operation. This 10$\times$ TDP gap between tiers (sub-5 W vs. 15--60 W) determines whether inference can run on battery-powered devices or requires wired deployment. \index{Edge TPU!inference efficiency}\index{Edge Inference!power tiers}
+[^fn-edge-tpu-efficiency]: **Edge Inference Accelerators**: The Edge TPU (Google Coral) operates in the mobile/embedded tier at ~`{python} GpuSpecsFootnote.edge_tpu_tdp_w_str` W TDP, delivering `{python} GpuSpecsFootnote.edge_tpu_tops_str` TOPS by hardwiring the multiply-accumulate datapath for INT8 inference. Edge *servers* occupy a different tier entirely: the NVIDIA Jetson AGX Orin delivers `{python} GpuSpecsFootnote.jetson_orin_tops_str` TOPS at `{python} GpuSpecsFootnote.jetson_orin_tdp_low_w_str`--`{python} GpuSpecsFootnote.jetson_orin_tdp_high_w_str` W, about `{python} GpuSpecsFootnote.edge_throughput_ratio_str`$\times$ more throughput but requiring fixed power infrastructure rather than battery operation. This power-tier gap (single-digit watts vs. tens of watts) determines whether inference can run on battery-powered devices or requires wired deployment. \index{Edge TPU!inference efficiency}\index{Edge Inference!power tiers}
 
 [^fn-inference-quantization]: **Quantization**: From Latin *quantus* ("how much"), reducing numerical precision from 32-bit to eight-bit integers yields 4$\times$ less memory per parameter and up to 4$\times$ higher throughput on hardware with INT8 datapaths. Trained models tolerate this precision loss because inference does not accumulate rounding errors across gradient updates the way training does. The trade-off is not free: aggressive quantization (below four-bit) can degrade accuracy on tail-distribution inputs, requiring calibration datasets to find the precision floor for each deployment. See @sec-model-compression for quantization techniques. \index{Quantization!inference precision}
 
@@ -4564,6 +5072,103 @@ minimum height=13mm,minimum width=22mm,\ifboxdashed dashed\fi](\picname){};
 
 :::
 
+```{python}
+#| label: mnist-inference-resource-local
+#| echo: false
+from mlsysim.fmt import fmt, check
+from mlsysim.core.constants import byte, KB
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MNIST INFERENCE RESOURCE LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Training-vs-inference table, inference memory breakdown, and
+# │          deployment self-test in @sec-neural-computation-inference-pipeline-5372.
+# │
+# │ Goal: Keep inference-side parameter, activation, MAC, and training-ratio
+# │       values adjacent to the deployment prose that uses them.
+# │ Show: 784→128→64→10 has 109,386 parameters, 986 single-image activation
+# │       values, 109,184 inference MACs, and about 4× training/inference memory.
+# │ How: Recompute weights, biases, activations, and memory from local dimensions.
+# │
+# │ Imports: mlsysim.book (fmt, check), mlsysim.constants (byte, KB)
+# │ Exports: MnistInferenceResourceLocal.mnist_arch_str,
+# │          MnistInferenceResourceLocal.training_ratio_str,
+# │          MnistInferenceResourceLocal.w1_str,
+# │          MnistInferenceResourceLocal.w2_str,
+# │          MnistInferenceResourceLocal.w3_str,
+# │          MnistInferenceResourceLocal.b1_str,
+# │          MnistInferenceResourceLocal.b2_str,
+# │          MnistInferenceResourceLocal.b3_str,
+# │          MnistInferenceResourceLocal.total_params_str,
+# │          MnistInferenceResourceLocal.param_mem_str,
+# │          MnistInferenceResourceLocal.total_inf_act_str,
+# │          MnistInferenceResourceLocal.total_infer_act_kib_str,
+# │          MnistInferenceResourceLocal.inf_madd_l1_str,
+# │          MnistInferenceResourceLocal.inf_madd_l2_str,
+# │          MnistInferenceResourceLocal.inf_madd_l3_str,
+# │          MnistInferenceResourceLocal.inf_madd_total_str,
+# │          MnistInferenceResourceLocal.inf_output_act_str,
+# │          MnistInferenceResourceLocal.batch_output_act_str,
+# │          MnistInferenceResourceLocal.batch_size_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+# ┌── LEGO ───────────────────────────────────────────────
+class MnistInferenceResourceLocal:
+    """Namespace for local MNIST inference resource prose."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    in_dim = 784
+    h1_dim = 128
+    h2_dim = 64
+    out_dim = 10
+    batch_size = 32
+    bytes_per_value = 4
+    layers_dims = [in_dim, h1_dim, h2_dim, out_dim]
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    weights = [in_dim * h1_dim, h1_dim * h2_dim, h2_dim * out_dim]
+    biases = [h1_dim, h2_dim, out_dim]
+    params_per_layer = [w + b for w, b in zip(weights, biases)]
+    total_params = sum(params_per_layer)
+    total_macs = sum(weights)
+    param_mem_kb = (total_params * bytes_per_value * byte).m_as(KB)
+    inf_act_elements = sum(layers_dims)
+    inf_output_act_elements = sum(layers_dims[1:])
+    inf_act_kb = (inf_act_elements * bytes_per_value * byte).m_as(KB)
+    batch_act_elements = batch_size * inf_act_elements
+    batch_act_kb = (batch_act_elements * bytes_per_value * byte).m_as(KB)
+    inference_total_kb = param_mem_kb + inf_act_kb
+    training_total_kb = param_mem_kb + batch_act_kb + param_mem_kb + (2 * param_mem_kb)
+    training_ratio = training_total_kb / inference_total_kb
+    batch_output_act_elements = batch_size * inf_output_act_elements
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(total_params == 109_386, f"Expected 109,386 parameters, got {total_params}")
+    check(total_macs == 109_184, f"Expected 109,184 MACs, got {total_macs}")
+    check(4 < training_ratio < 5, f"Expected training/inference ratio near 4x, got {training_ratio:.1f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    mnist_arch_str = f"{in_dim}→{h1_dim}→{h2_dim}→{out_dim}"
+    training_ratio_str = fmt(training_ratio, precision=1, commas=False)
+    w1_str = fmt(weights[0], precision=0, commas=True)
+    w2_str = fmt(weights[1], precision=0, commas=True)
+    w3_str = fmt(weights[2], precision=0, commas=True)
+    b1_str = fmt(biases[0], precision=0, commas=False)
+    b2_str = fmt(biases[1], precision=0, commas=False)
+    b3_str = fmt(biases[2], precision=0, commas=False)
+    total_params_str = fmt(total_params, precision=0, commas=True)
+    param_mem_str = fmt(param_mem_kb, precision=1, commas=False)
+    total_inf_act_str = fmt(inf_act_elements, precision=0, commas=False)
+    total_infer_act_kib_str = fmt(inf_act_kb, precision=1, commas=False)
+    inf_madd_l1_str = fmt(weights[0], precision=0, commas=True)
+    inf_madd_l2_str = fmt(weights[1], precision=0, commas=True)
+    inf_madd_l3_str = fmt(weights[2], precision=0, commas=True)
+    inf_madd_total_str = fmt(total_macs, precision=0, commas=True)
+    inf_output_act_str = fmt(inf_output_act_elements, precision=0, commas=True)
+    batch_output_act_str = fmt(batch_output_act_elements, precision=0, commas=True)
+    batch_size_str = fmt(batch_size, precision=0, commas=False)
+```
+
 These architectural differences translate directly into distinct resource profiles, as @tbl-forward-pass-comparison details.
 
 | **Characteristic**     | **Training Forward Pass**                             | **Inference Forward Pass**                         |
@@ -4573,7 +5178,7 @@ These architectural differences translate directly into distinct resource profil
 | **Computational Flow** | Structured for gradient computation preparation       | Optimized for direct output generation             |
 | **Resource Profile**   | Higher memory requirements for training operations    | Minimized memory footprint for efficient execution |
 
-: **Training vs. Inference Forward Pass**: Although both phases execute identical mathematical operations layer-by-layer, they differ fundamentally in memory management. Training must preserve all intermediate activations for gradient computation during the backward pass; inference can discard each layer's outputs immediately after computing the next layer, enabling aggressive memory optimization. This distinction explains why training typically requires several times more memory than inference for the same model; the MNIST worked example below is about `{python} MNISTMemory.training_ratio_str`$\times$. {#tbl-forward-pass-comparison}
+: **Training vs. Inference Forward Pass**: Although both phases execute identical mathematical operations layer-by-layer, they differ fundamentally in memory management. Training must preserve all intermediate activations for gradient computation during the backward pass; inference can discard each layer's outputs immediately after computing the next layer, enabling aggressive memory optimization. This distinction explains why training typically requires several times more memory than inference for the same model; the MNIST worked example below is about `{python} MnistInferenceResourceLocal.training_ratio_str`$\times$. {#tbl-forward-pass-comparison}
 
 #### Memory and computational resources {#sec-neural-computation-memory-computational-resources-d02b}
 
@@ -4584,10 +5189,10 @@ Neural networks consume computational resources differently during inference tha
 Memory requirements\index{Memory Footprint!parameter storage}\index{Memory Footprint!activation storage} during inference can be precisely quantified:
 
 1. Static Memory (Model Parameters):
-   * Layer 1: $784{\times}128$ = `{python} MNISTMemory.w1_str` weights + `{python} MNISTMemory.b1_str` biases
-   * Layer 2: $128{\times}64$ = `{python} MNISTMemory.w2_str` weights + `{python} MNISTMemory.b2_str` biases
-   * Layer 3: $64{\times}10$ = `{python} MNISTMemory.w3_str` weights + `{python} MNISTMemory.b3_str` biases
-   * Total: `{python} MNISTMemory.total_params_str` parameters (≈ `{python} MNISTMemory.param_mem_str` KB at 32-bit floating point precision[^fn-fp32-precision])
+   * Layer 1: $784{\times}128$ = `{python} MnistInferenceResourceLocal.w1_str` weights + `{python} MnistInferenceResourceLocal.b1_str` biases
+   * Layer 2: $128{\times}64$ = `{python} MnistInferenceResourceLocal.w2_str` weights + `{python} MnistInferenceResourceLocal.b2_str` biases
+   * Layer 3: $64{\times}10$ = `{python} MnistInferenceResourceLocal.w3_str` weights + `{python} MnistInferenceResourceLocal.b3_str` biases
+   * Total: `{python} MnistInferenceResourceLocal.total_params_str` parameters (≈ `{python} MnistInferenceResourceLocal.param_mem_str` KB at 32-bit floating point precision[^fn-fp32-precision])
 
 [^fn-fp32-precision]: **FP32 (Single Precision)**: The IEEE 754 standard (1985) format using 32 bits (1 sign, 8 exponent, 23 mantissa) that became the default for neural network training because its dynamic range accommodates gradient magnitudes spanning many orders of magnitude. Halving to FP16 or BF16 ("brain floating point," developed at Google Brain) saves 2$\times$ memory and doubles throughput on hardware with 16-bit datapaths; further reduction to INT8 yields 4$\times$ savings but requires posttraining calibration. See @sec-machine-foundations-numerical-representations-c889 for a detailed comparison of numerical formats and their precision-throughput trade-offs. \index{FP32!numerical precision}
 
@@ -4596,22 +5201,22 @@ Memory requirements\index{Memory Footprint!parameter storage}\index{Memory Footp
    * Layer 1 output: 128 values
    * Layer 2 output: 64 values
    * Layer 3 output: 10 values
-   * Total: `{python} MNISTMemory.total_inf_act_str` values (≈ `{python} MnistTrainingMemoryCalc.total_infer_act_kib_str` KB at 32-bit floating point precision)
+   * Total: `{python} MnistInferenceResourceLocal.total_inf_act_str` values (≈ `{python} MnistInferenceResourceLocal.total_infer_act_kib_str` KB at 32-bit floating point precision)
 
 Computational requirements follow a fixed pattern for each input:
 
-* First layer: `{python} MNISTMemory.inf_madd_l1_str` multiply-adds
-* Second layer: `{python} MNISTMemory.inf_madd_l2_str` multiply-adds
-* Output layer: `{python} MNISTMemory.inf_madd_l3_str` multiply-adds
-* Total: `{python} MNISTMemory.inf_madd_total_str` multiply-add operations per inference
+* First layer: `{python} MnistInferenceResourceLocal.inf_madd_l1_str` multiply-adds
+* Second layer: `{python} MnistInferenceResourceLocal.inf_madd_l2_str` multiply-adds
+* Output layer: `{python} MnistInferenceResourceLocal.inf_madd_l3_str` multiply-adds
+* Total: `{python} MnistInferenceResourceLocal.inf_madd_total_str` multiply-add operations per inference
 
-The resource profile differs markedly from training requirements, where gradient storage and backpropagation overhead multiply resource demands by `{python} MNISTMemory.training_ratio_str`$\times$ or more (see the worked example in @sec-neural-computation-model-size-computational-complexity-1f0f). The predictable, streamlined nature of inference enables optimization opportunities that training cannot exploit.
+The resource profile differs markedly from training requirements, where gradient storage and backpropagation overhead multiply resource demands by `{python} MnistInferenceResourceLocal.training_ratio_str`$\times$ or more (see the worked example in @sec-neural-computation-model-size-computational-complexity-1f0f). The predictable, streamlined nature of inference enables optimization opportunities that training cannot exploit.
 
 #### Performance enhancement techniques {#sec-neural-computation-performance-enhancement-techniques-692f}
 
 The fixed nature of inference computation presents optimization opportunities\index{Inference!optimization techniques}\index{Optimization!performance, inference} unavailable during training. Once parameters are frozen, the predictable computation pattern allows systematic improvements in both memory usage and computational efficiency.
 
-Batch size selection\index{Batch Size!inference trade-off}\index{Inference!batch size selection} represents a key inference trade-off. During training, large batches stabilized gradient computation, but inference offers more flexibility. Processing single inputs minimizes latency, making it ideal for real-time applications requiring immediate responses. Batch processing, however, improves throughput by 10--32$\times$ by using parallel computing capabilities more effectively, particularly on GPUs. For our MNIST network, processing a single image requires storing 202 layer-output activation values (986 values including the input buffer), while a batch of thirty-two images requires 6,464 layer-output activation values but can process images up to thirty-two times faster on parallel hardware.
+Batch size selection\index{Batch Size!inference trade-off}\index{Inference!batch size selection} represents a key inference trade-off. During training, large batches stabilized gradient computation, but inference offers more flexibility. Processing single inputs minimizes latency, making it ideal for real-time applications requiring immediate responses. Batch processing, however, improves throughput by 10--32$\times$ by using parallel computing capabilities more effectively, particularly on GPUs. For our MNIST network, processing a single image requires storing `{python} MnistInferenceResourceLocal.inf_output_act_str` layer-output activation values (`{python} MnistInferenceResourceLocal.total_inf_act_str` values including the input buffer), while a batch of `{python} MnistInferenceResourceLocal.batch_size_str` images requires `{python} MnistInferenceResourceLocal.batch_output_act_str` layer-output activation values but can process images up to `{python} MnistInferenceResourceLocal.batch_size_str` times faster on parallel hardware.
 
 Memory management\index{Memory Management!inference efficiency}\index{Memory!reuse, activation buffers} during inference is far more efficient than during training. Since intermediate values serve only forward computation, memory buffers can be reused aggressively. Activation values from each layer need only exist until the next layer's computation completes, enabling in-place operations that reduce the total memory footprint. The fixed nature of inference allows precise memory alignment and access patterns optimized for the underlying hardware architecture.
 
@@ -4674,7 +5279,7 @@ Before examining how these concepts integrate in a real-world deployment, verify
 
 :::
 
-**Self-Test**: For an MNIST digit classifier (`{python} MnistArchitectureConstants.mnist_arch_str`) deployed in production: (1) Using the memory analysis from this chapter, explain why training requires ~`{python} MNISTMemory.training_ratio_str`$\times$ more memory than inference, and identify which components (gradients, optimizer state, activations) contribute to this difference. (2) Trace a single digit image from camera capture through preprocessing, inference, and postprocessing to final prediction. (3) Identify where bottlenecks might occur in a real-time system processing 100 images/second. (4) Describe how you would monitor for model degradation in production.
+**Self-Test**: For an MNIST digit classifier (`{python} MnistInferenceResourceLocal.mnist_arch_str`) deployed in production: (1) Using the memory analysis from this chapter, explain why training requires ~`{python} MnistInferenceResourceLocal.training_ratio_str`$\times$ more memory than inference, and identify which components (gradients, optimizer state, activations) contribute to this difference. (2) Trace a single digit image from camera capture through preprocessing, inference, and postprocessing to final prediction. (3) Identify where bottlenecks might occur in a real-time system processing 100 images/second. (4) Describe how you would monitor for model degradation in production.
 
 *The following case study demonstrates how these concepts integrate in a production system deployed at massive scale. Pay attention to how architectural choices, training strategies, and deployment constraints combine to create a working ML system.*
 
@@ -4689,7 +5294,7 @@ In the early 1990s, the United States Postal Service needed to read over 100 mil
 
 ### The mail sorting challenge {#sec-neural-computation-mail-sorting-challenge-ef8c}
 
-The United States Postal Service (USPS) processes over 100 million pieces of mail daily, each requiring accurate routing based on handwritten ZIP codes. In the early 1990s, human operators primarily performed this task, making it one of the largest manual data entry operations worldwide. Automating this process through neural networks represented an early, successful large-scale deployment of artificial intelligence.
+The United States Postal Service (USPS) operated at national mail scale, with daily volumes on the order of 100 million pieces, each requiring accurate routing based on handwritten ZIP codes. In the early 1990s, human operators primarily performed this task, making it one of the largest manual data entry operations worldwide. Automating this process through neural networks represented an early, successful large-scale deployment of artificial intelligence.
 
 The complexity of this task becomes evident: a ZIP code recognition system must process images of handwritten digits captured under varying conditions. Scan the samples in @fig-usps-digit-examples to appreciate the wide variation in writing styles, pen types, stroke thickness, and character formation that the system must handle. The system must make accurate predictions within milliseconds to maintain mail processing speeds, yet errors in recognition can lead to significant delays and costs from misrouted mail. This real-world constraint meant the system needed both high accuracy and reliable measures of prediction confidence to identify when human intervention was necessary.
 
@@ -5052,47 +5657,74 @@ Once captured, the raw images are far from ready for neural network processing. 
 ```{python}
 #| label: usps-lenet-specs
 #| echo: false
-
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ USPS LENET SPECIFICATIONS
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: @sec-neural-computation-engineering-process-design-decisions-2e8e
-# │          and the "Then vs. Now" comparison callout in
-# │          @sec-neural-computation-key-engineering-lessons-design-principles-f84e
-# │
-# │ Goal: Compute memory footprint for the 1989 LeNet-1 (~10,000 parameters) to
-# │       quantify how compact early neural networks were relative to modern models.
-# │ Show: LeNet-1 required only ~39 KB of FP32 storage—10× smaller than even
-# │       the toy MNIST MLP in the running example, anchoring the "Then vs. Now"
-# │       hardware progress table.
-# │ How: Set lenet_1_params = 10,000 (approximate historical value); compute
-# │      memory in KB using model_memory() with BYTES_FP32 precision.
-# │
-# │ Imports: mlsysim.core.constants (BYTES_FP32, KB), mlsysim.formulas (model_memory)
-# │ Exports: UspsLenetSpecs.lenet_1_params_str,
-# │          UspsLenetSpecs.lenet_1_mem_kb_str
-# └─────────────────────────────────────────────────────────────────────────────
-
 from mlsysim.core.constants import BYTES_FP32, KB
 from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
 
-# ┌── LEGO ───────────────────────────────────────────────
 class UspsLenetSpecs:
-    """Namespace for Usps Lenet Specs."""
-
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     lenet_1_params = 10000                                   # approx params in 1989 LeNet
+    running_mnist_params = 109_386                            # 784→128→64→10 with biases
+    old_hardware_cost_usd = 50_000
+    modern_hardware_cost_usd = 50
+    old_latency_ms = 100
+    modern_latency_ms = 0.1
+    old_power_low_w = 50
+    old_power_high_w = 100
+    modern_power_w = 5
+    old_training_days = 3
+    modern_training_seconds = 30
+    old_energy_per_inference_j = 10
+    modern_energy_per_inference_mj = 0.5
+    old_cost_per_inference_usd = 0.001
+    modern_cost_per_inference_usd = 0.000001
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     lenet_1_mem_kb = model_memory(lenet_1_params, BYTES_FP32, KB)
+    cost_ratio = old_hardware_cost_usd / modern_hardware_cost_usd
+    latency_ratio = old_latency_ms / modern_latency_ms
+    power_ratio_low = old_power_low_w / modern_power_w
+    power_ratio_high = old_power_high_w / modern_power_w
+    old_training_seconds = old_training_days * 24 * 60 * 60
+    training_time_ratio = old_training_seconds / modern_training_seconds
+    modern_energy_per_inference_j = modern_energy_per_inference_mj / 1000
+    energy_ratio = old_energy_per_inference_j / modern_energy_per_inference_j
+    cost_per_inference_ratio = old_cost_per_inference_usd / modern_cost_per_inference_usd
 
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(lenet_1_mem_kb) == 40, f"Expected LeNet-1 memory ~40 KB, got {lenet_1_mem_kb:.1f}")
+    check(running_mnist_params > 10 * lenet_1_params, "Running MNIST MLP should be >10x larger than LeNet-1.")
+    check(cost_ratio == 1000 and latency_ratio == 1000, "USPS cost/latency ratios should be 1,000x.")
+    check(round(energy_ratio) == 20_000, f"Expected 20,000x energy ratio, got {energy_ratio:.0f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     lenet_1_params_str = f"{lenet_1_params:,}"               # e.g. "10,000"
     lenet_1_mem_kb_str = f"{lenet_1_mem_kb:.0f}"             # e.g. "40"
+    running_mnist_params_k_str = fmt(running_mnist_params / 1000, precision=0, commas=False)
+    old_hardware_cost_str = fmt(old_hardware_cost_usd, precision=0, commas=True)
+    modern_hardware_cost_str = fmt(modern_hardware_cost_usd, precision=0, commas=False)
+    old_latency_ms_str = fmt(old_latency_ms, precision=0, commas=False)
+    modern_latency_ms_str = fmt(modern_latency_ms, precision=1, commas=False)
+    old_power_low_w_str = fmt(old_power_low_w, precision=0, commas=False)
+    old_power_high_w_str = fmt(old_power_high_w, precision=0, commas=False)
+    modern_power_w_str = fmt(modern_power_w, precision=0, commas=False)
+    old_training_days_str = fmt(old_training_days, precision=0, commas=False)
+    modern_training_seconds_str = fmt(modern_training_seconds, precision=0, commas=False)
+    old_energy_per_inference_j_str = fmt(old_energy_per_inference_j, precision=0, commas=False)
+    modern_energy_per_inference_mj_str = fmt(modern_energy_per_inference_mj, precision=1, commas=False)
+    old_cost_per_inference_str = f"${old_cost_per_inference_usd:.3f}"
+    modern_cost_per_inference_str = f"${modern_cost_per_inference_usd:.6f}"
+    cost_ratio_str = fmt(cost_ratio, precision=0, commas=True)
+    latency_ratio_str = fmt(latency_ratio, precision=0, commas=True)
+    power_ratio_low_str = fmt(power_ratio_low, precision=0, commas=False)
+    power_ratio_high_str = fmt(power_ratio_high, precision=0, commas=False)
+    training_time_ratio_str = fmt(training_time_ratio, precision=0, commas=True)
+    energy_ratio_str = fmt(energy_ratio, precision=0, commas=True)
+    cost_per_inference_ratio_str = fmt(cost_per_inference_ratio, precision=0, commas=True)
 ```
 
 \index{LeNet!architecture comparison}
-The neural network then processes each normalized digit image. The original 1989 system used an early LeNet variant [@lecun1989] with approximately `{python} UspsLenetSpecs.lenet_1_params_str` parameters—remarkably compact compared to our running example's `{python} MemoryExplosionCalc.mnist_params_k_str`K. The network processes each digit through multiple layers, ultimately producing ten output values representing digit probabilities. This inference process, while computationally intensive by 1990s standards, benefits from the optimization principles we discussed in the previous section.
+The neural network then processes each normalized digit image. The original 1989 system used an early LeNet variant [@lecun1989] with approximately `{python} UspsLenetSpecs.lenet_1_params_str` parameters—remarkably compact compared to our running example's `{python} UspsLenetSpecs.running_mnist_params_k_str`K. The network processes each digit through multiple layers, ultimately producing ten output values representing digit probabilities. This inference process, while computationally intensive by 1990s standards, benefits from the optimization principles we discussed in the previous section.
 
 Postprocessing\index{Postprocessing!confidence thresholds}\index{Confidence Threshold!decision making} converts these neural network outputs into sorting decisions. The system applies confidence thresholds to each digit prediction. A complete ZIP code requires high confidence in all five digits; a single uncertain digit flags the entire piece for human review. When confidence meets thresholds, the system transmits sorting instructions to mechanical systems that physically direct the mail to its appropriate bin.
 
@@ -5135,27 +5767,27 @@ The system's development shows why understanding both theoretical foundations an
 
 The success of this early large-scale neural network deployment helped establish many practices we now consider standard: the importance of thorough training data, the need for confidence metrics, the role of pre- and postprocessing, and the critical nature of system-level optimization. These operational considerations are formalized in @sec-ml-operations, which covers production ML system maintenance and monitoring. To appreciate how far the field has come, consider what has changed *then vs. now* when running the USPS system on modern hardware.
 
-::: {.callout-example title="Then vs. now: USPS on modern HW"}
+::: {.callout-example title="Then vs. now: USPS on modern hardware"}
 
 The same neural network computation that required industrial-scale infrastructure in 1990 runs on pocket-sized devices today. @tbl-then-vs-now quantifies four decades of progress:
 
-| **Aspect**            |              **1990s USPS System**               |                     **2025 Equivalent**                      |    **Improvement**     |
-|:----------------------|:------------------------------------------------:|:------------------------------------------------------------:|:----------------------:|
-| **Hardware cost**     |          ~\$50,000 (Sun-4 workstation)           |                    ~\$50 (Raspberry Pi 5)                    |     1,000$\times$      |
-| **Inference latency** |                  ~100 ms/digit                   |                        ~0.1 ms/digit                         |     1,000$\times$      |
-| **Power consumption** |                     50–100 W                     |                             5 W                              |     10--20$\times$     |
-| **Training time**     |                      3 days                      |                         ~30 seconds                          |     8,640$\times$      |
-| **Model storage**     | ~`{python} UspsLenetSpecs.lenet_1_mem_kb_str` KB | ~`{python} UspsLenetSpecs.lenet_1_mem_kb_str` KB (unchanged) | 1$\times$ (same model) |
-| **Energy/inference**  |                      ~10 J                       |                           ~0.5 mJ                            |     20,000$\times$     |
-| **\$/inference**      |                     ~\$0.001                     |                         ~\$0.000001                          |     1,000$\times$      |
+| **Aspect**            |                    **1990s USPS System**                    |                       **Modern Equivalent**                       |                 **Improvement**                  |
+|:----------------------|:-----------------------------------------------------------:|:-----------------------------------------------------------------:|:------------------------------------------------:|
+| **Hardware cost**     | about `{python} UspsLenetSpecs.old_hardware_cost_str` USD   | about `{python} UspsLenetSpecs.modern_hardware_cost_str` USD      |     `{python} UspsLenetSpecs.cost_ratio_str`$\times$      |
+| **Inference latency** |     ~`{python} UspsLenetSpecs.old_latency_ms_str` ms/digit  |     ~`{python} UspsLenetSpecs.modern_latency_ms_str` ms/digit     |   `{python} UspsLenetSpecs.latency_ratio_str`$\times$     |
+| **Power consumption** | `{python} UspsLenetSpecs.old_power_low_w_str`–`{python} UspsLenetSpecs.old_power_high_w_str` W | `{python} UspsLenetSpecs.modern_power_w_str` W | `{python} UspsLenetSpecs.power_ratio_low_str`--`{python} UspsLenetSpecs.power_ratio_high_str`$\times$ |
+| **Training time**     |          `{python} UspsLenetSpecs.old_training_days_str` days          |       ~`{python} UspsLenetSpecs.modern_training_seconds_str` seconds       | `{python} UspsLenetSpecs.training_time_ratio_str`$\times$ |
+| **Model storage**     |     ~`{python} UspsLenetSpecs.lenet_1_mem_kb_str` KB        |     ~`{python} UspsLenetSpecs.lenet_1_mem_kb_str` KB (unchanged)  |              1$\times$ (same model)              |
+| **Energy/inference**  |       ~`{python} UspsLenetSpecs.old_energy_per_inference_j_str` J      |       ~`{python} UspsLenetSpecs.modern_energy_per_inference_mj_str` mJ      |   `{python} UspsLenetSpecs.energy_ratio_str`$\times$      |
+| **Cost/inference**    |       ~`{python} UspsLenetSpecs.old_cost_per_inference_str`            |       ~`{python} UspsLenetSpecs.modern_cost_per_inference_str`             | `{python} UspsLenetSpecs.cost_per_inference_ratio_str`$\times$ |
 
-: **Hardware Progress for Neural Network Computation**: The same LeNet computation that required a \$50,000 workstation in 1990 runs on a \$50 Raspberry Pi today—1,000$\times$ cheaper, 1,000$\times$ faster, and 20,000$\times$ more energy-efficient. Crucially, the algorithm is unchanged; all improvement came from hardware. This validates the systems principle that algorithm-hardware co-design multiplies gains across both dimensions. {#tbl-then-vs-now tbl-colwidths="[25,30,25,20]"}
+: **Hardware Progress for Neural Network Computation**: The same LeNet computation that required a workstation-class system in 1990 can now run on inexpensive embedded hardware—about `{python} UspsLenetSpecs.cost_ratio_str`$\times$ cheaper, `{python} UspsLenetSpecs.latency_ratio_str`$\times$ faster, and `{python} UspsLenetSpecs.energy_ratio_str`$\times$ more energy-efficient under the illustrative assumptions in the table. Crucially, the algorithm is unchanged; the main improvement came from hardware and systems implementation. This validates the systems principle that algorithm-hardware co-design multiplies gains across both dimensions. {#tbl-then-vs-now tbl-colwidths="[25,30,25,20]"}
 
-**What changed**: Hardware improved dramatically across the table, ranging from 10--20$\times$ lower power to 20,000$\times$ lower energy per inference, while LeNet's architecture and model storage remain essentially unchanged. This validates a key systems principle: **algorithm-hardware co-design** means improvements in either dimension multiply together.
+**What changed**: Hardware improved dramatically across the table, ranging from `{python} UspsLenetSpecs.power_ratio_low_str`--`{python} UspsLenetSpecs.power_ratio_high_str`$\times$ lower power to `{python} UspsLenetSpecs.energy_ratio_str`$\times$ lower energy per inference, while LeNet's architecture and model storage remain essentially unchanged. This validates a key systems principle: **algorithm-hardware co-design** means improvements in either dimension multiply together.
 
 **What stayed the same**: The core engineering challenges persist. Modern smartphone OCR still requires preprocessing for lighting variation, confidence thresholds for uncertain predictions, and fallback to human review for edge cases. The USPS system's architecture (capture, preprocess, inference, postprocess, action) remains the template for every production ML pipeline.
 
-**Modern parallel**: In 2025, a teenager's smartphone runs real-time neural networks for face recognition, language translation, and voice assistants, tasks that would have required a data center in 1995. The computation that enabled one postal facility now enables billions of devices.
+**Modern parallel**: Today's smartphones run real-time neural networks for face recognition, language translation, and voice assistants, tasks that would have required far larger infrastructure in the 1990s. The computation that enabled one postal facility now enables billions of devices.
 
 :::
 
@@ -5181,6 +5813,100 @@ These foundations equip engineers to reason about neural networks from first pri
 
 ## Fallacies and Pitfalls {#sec-neural-computation-fallacies-pitfalls-3422}
 
+```{python}
+#| label: fallacy-quant-examples
+#| echo: false
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ FALLACY QUANTITATIVE EXAMPLES
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Numerical examples in @sec-neural-computation-fallacies-pitfalls-3422.
+# │
+# │ Goal: Keep small latency, imbalance, arithmetic-intensity, and
+# │       training-memory examples executable.
+# │ Show: A 20 ms model can miss a 50 ms SLO once 25 ms preprocessing and
+# │       10 ms postprocessing are included; a 99:1 majority class yields 99%
+# │       accuracy from a trivial always-majority predictor; MNIST remains far
+# │       below dense-GPU roofline ridge points.
+# │ How: Sum pipeline latencies, compute the majority-class baseline, and
+# │      locally recompute MNIST arithmetic intensity and memory ratio.
+# │
+# │ Imports: mlsysim.book (fmt, check), mlsysim.constants (GPU specs, byte, KB)
+# │ Exports: FallacyQuantExamples.pipeline_total_ms_str,
+# │          FallacyQuantExamples.pipeline_budget_ms_str,
+# │          FallacyQuantExamples.pipeline_over_ms_str,
+# │          FallacyQuantExamples.imbalance_majority_acc_str,
+# │          FallacyQuantExamples.mnist_arith_intensity_str,
+# │          FallacyQuantExamples.a100_ridge_str,
+# │          FallacyQuantExamples.h100_ridge_str,
+# │          FallacyQuantExamples.training_ratio_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+from mlsysim.fmt import fmt, check
+from mlsysim.core.constants import (
+    A100_FLOPS_FP16_TENSOR, A100_MEM_BW,
+    H100_FLOPS_FP16_TENSOR, H100_MEM_BW,
+    flop, byte, KB
+)
+
+# ┌── LEGO ───────────────────────────────────────────────
+class FallacyQuantExamples:
+    """Namespace for fallacy-section numerical examples."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    model_latency_ms = 20
+    preprocessing_latency_ms = 25
+    postprocessing_latency_ms = 10
+    latency_budget_ms = 50
+    majority_class = 99
+    minority_class = 1
+    mnist_dims = [784, 128, 64, 10]
+    mnist_batch_size = 32
+    bytes_per_value = 4
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    pipeline_total_ms = model_latency_ms + preprocessing_latency_ms + postprocessing_latency_ms
+    pipeline_over_ms = pipeline_total_ms - latency_budget_ms
+    imbalance_majority_acc = majority_class / (majority_class + minority_class) * 100
+    mnist_weights = [
+        mnist_dims[0] * mnist_dims[1],
+        mnist_dims[1] * mnist_dims[2],
+        mnist_dims[2] * mnist_dims[3],
+    ]
+    mnist_biases = mnist_dims[1:]
+    mnist_total_params = sum(w + b for w, b in zip(mnist_weights, mnist_biases))
+    mnist_total_flops = (2 * sum(mnist_weights) * mnist_batch_size) + (sum(mnist_biases) * mnist_batch_size)
+    mnist_param_kb = (mnist_total_params * bytes_per_value * byte).m_as(KB)
+    mnist_inf_act_kb = (sum(mnist_dims) * bytes_per_value * byte).m_as(KB)
+    mnist_inference_total_kb = mnist_param_kb + mnist_inf_act_kb
+    mnist_batch_act_kb = (mnist_batch_size * sum(mnist_dims) * bytes_per_value * byte).m_as(KB)
+    mnist_training_total_kb = mnist_param_kb + mnist_batch_act_kb + mnist_param_kb + (2 * mnist_param_kb)
+    mnist_arith_intensity = (mnist_total_flops / mnist_batch_size) / (mnist_inference_total_kb * 1000)
+    training_ratio = mnist_training_total_kb / mnist_inference_total_kb
+    a100_ridge = (A100_FLOPS_FP16_TENSOR / A100_MEM_BW).m_as(flop / byte)
+    h100_ridge = (H100_FLOPS_FP16_TENSOR / H100_MEM_BW).m_as(flop / byte)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(pipeline_total_ms > latency_budget_ms, "Pipeline example should miss the latency SLO.")
+    check(imbalance_majority_acc == 99, f"Expected 99% majority baseline, got {imbalance_majority_acc}")
+    check(mnist_arith_intensity < 1, f"MNIST should be memory-bound, got {mnist_arith_intensity:.1f} FLOPs/byte")
+    check(a100_ridge > 100 and h100_ridge > a100_ridge, "GPU ridge points should be in the hundreds of FLOPs/byte.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    model_latency_ms_str = fmt(model_latency_ms, precision=0, commas=False)
+    preprocessing_latency_ms_str = fmt(preprocessing_latency_ms, precision=0, commas=False)
+    postprocessing_latency_ms_str = fmt(postprocessing_latency_ms, precision=0, commas=False)
+    pipeline_budget_ms_str = fmt(latency_budget_ms, precision=0, commas=False)
+    pipeline_total_ms_str = fmt(pipeline_total_ms, precision=0, commas=False)
+    pipeline_over_ms_str = fmt(pipeline_over_ms, precision=0, commas=False)
+    imbalance_ratio_str = f"{majority_class}:{minority_class}"
+    imbalance_majority_acc_str = fmt(imbalance_majority_acc, precision=0, commas=False)
+    mnist_arith_intensity_str = fmt(mnist_arith_intensity, precision=1, commas=False)
+    a100_ridge_str = fmt(a100_ridge, precision=0, commas=False)
+    h100_ridge_str = fmt(h100_ridge, precision=0, commas=False)
+    training_ratio_str = fmt(training_ratio, precision=1, commas=False)
+```
+
 Neural networks replace explicit programming with learned patterns, creating misconceptions about their behavior. Intuitions from traditional software (that bugs are deterministic, that more resources always help, that code inspection reveals problems) fail when applied to statistical learning systems. The following fallacies and pitfalls cause teams to misallocate effort, deploy inappropriate solutions, or encounter production failures that could have been avoided.
 
 \index{Interpretability!activation visualization}
@@ -5203,16 +5929,16 @@ Teams assume deep learning always performs better. Logistic regression training 
 \index{Class Imbalance!training failure}
 **Pitfall**: *Training neural networks without analyzing data distribution characteristics.*
 
-Teams treat training as mechanically feeding data through architectures. Networks on imbalanced datasets exhibit catastrophic minority-class performance: a fraud detector with 99:1 imbalance achieves 99 percent accuracy by always predicting "not fraud" while catching zero fraud cases. The loss functions in @sec-neural-computation-loss-functions-6fc2 optimize for average-case performance, causing networks to ignore rare but critical classes. Teams that skip exploratory data analysis deploy models achieving strong metrics on balanced holdout sets but failing on production data with 10:1 or 100:1 imbalances, requiring expensive retraining.
+Teams treat training as mechanically feeding data through architectures. Networks on imbalanced datasets exhibit catastrophic minority-class performance: a fraud detector with `{python} FallacyQuantExamples.imbalance_ratio_str` imbalance achieves `{python} FallacyQuantExamples.imbalance_majority_acc_str` percent accuracy by always predicting "not fraud" while catching zero fraud cases. The loss functions in @sec-neural-computation-loss-functions-6fc2 optimize for average-case performance, causing networks to ignore rare but critical classes. Teams that skip exploratory data analysis deploy models achieving strong metrics on balanced holdout sets but failing on production data with 10:1 or 100:1 imbalances, requiring expensive retraining.
 
 **Pitfall**: *Deploying research models to production without addressing system constraints.*
 
-Data scientists develop models with unlimited time budgets, assuming deployment is straightforward. Production imposes constraints absent from research: latency budgets (50–100 ms end-to-end), memory limits (2–4 GB for edge devices), and concurrent loads (100–1,000 RPS). As shown in @sec-neural-computation-inference-pipeline-5372, the complete pipeline includes preprocessing, inference, and postprocessing. A model achieving 20 ms inference fails its 50 ms budget when preprocessing adds 25 ms and postprocessing adds 10 ms (55 ms total). Teams separating model development from system design waste months optimizing accuracy while ignoring constraints that determine deployment feasibility.
+Data scientists develop models with unlimited time budgets, assuming deployment is straightforward. Production imposes constraints absent from research: latency budgets (50–100 ms end-to-end), memory limits (2–4 GB for edge devices), and concurrent loads (100–1,000 RPS). As shown in @sec-neural-computation-inference-pipeline-5372, the complete pipeline includes preprocessing, inference, and postprocessing. A model achieving `{python} FallacyQuantExamples.model_latency_ms_str` ms inference fails its `{python} FallacyQuantExamples.pipeline_budget_ms_str` ms budget when preprocessing adds `{python} FallacyQuantExamples.preprocessing_latency_ms_str` ms and postprocessing adds `{python} FallacyQuantExamples.postprocessing_latency_ms_str` ms (`{python} FallacyQuantExamples.pipeline_total_ms_str` ms total). Teams separating model development from system design waste months optimizing accuracy while ignoring constraints that determine deployment feasibility.
 
 \index{Arithmetic Intensity!GPU utilization}
 **Pitfall**: *Assuming more compute automatically means faster training.*
 
-Teams purchase expensive GPUs expecting proportional speedups, then discover workloads are memory bound. Arithmetic intensity determines which resource constrains performance. As shown in @tbl-historical-performance, small networks like MNIST (784 to 128 to 64 to 10) have arithmetic intensity of approximately 0.5 FLOPs/byte, well below the approximately 100 FLOPs/byte threshold where GPUs achieve peak utilization. For memory-bound workloads, a \$200 CPU matches a \$10,000 GPU; for compute-bound GPT-scale models, the GPU provides 100$\times$ speedup. This mismatch explains why teams report GPU utilization rates from 5 percent to 80 percent depending on model architecture.
+Teams purchase expensive GPUs expecting proportional speedups, then discover workloads are memory bound. Arithmetic intensity determines which resource constrains performance. As shown in @tbl-historical-performance, small networks like MNIST (784 to 128 to 64 to 10) have arithmetic intensity of approximately `{python} FallacyQuantExamples.mnist_arith_intensity_str` FLOPs/byte, far below the A100 and H100 dense-FP16 ridge points of about `{python} FallacyQuantExamples.a100_ridge_str` and `{python} FallacyQuantExamples.h100_ridge_str` FLOPs/byte. For memory-bound workloads, a commodity CPU can match an expensive accelerator; for compute-bound GPT-scale models, accelerators provide the large speedups they were built for. This mismatch explains why teams report widely varying utilization depending on model architecture.
 
 **Pitfall**: *Extrapolating accuracy improvements without considering diminishing returns.*
 
@@ -5226,7 +5952,7 @@ Deep learning systems engineers need mathematical understanding precisely becaus
 
 Neural networks transform computational approaches by replacing rule-based programming with adaptive systems that learn patterns from data. The biological-to-artificial neuron mapping (weighted sums, nonlinear activations, and gradient-based learning) provides the atomic operations from which all modern architectures are composed.
 
-Neural network architecture demonstrates hierarchical processing, where each layer extracts progressively more abstract patterns from raw data. Training adjusts connection weights through iterative optimization to minimize prediction errors, while inference applies learned knowledge to make predictions on new data. This separation between learning and application phases creates distinct system requirements for computational resources, memory usage, and processing latency that shape system design and deployment strategies. Training requires ~`{python} MNISTMemory.training_ratio_str`$\times$ more memory than inference because gradients, optimizer state, and activations must be stored and updated. The USPS digit recognition case study demonstrated that these mathematical principles combine into production systems where the complete pipeline (preprocessing, neural inference, and postprocessing) must operate within real-world latency and reliability constraints.
+Neural network architecture demonstrates hierarchical processing, where each layer extracts progressively more abstract patterns from raw data. Training adjusts connection weights through iterative optimization to minimize prediction errors, while inference applies learned knowledge to make predictions on new data. This separation between learning and application phases creates distinct system requirements for computational resources, memory usage, and processing latency that shape system design and deployment strategies. Training requires ~`{python} FallacyQuantExamples.training_ratio_str`$\times$ more memory than inference because gradients, optimizer state, and activations must be stored and updated. The USPS digit recognition case study demonstrated that these mathematical principles combine into production systems where the complete pipeline (preprocessing, neural inference, and postprocessing) must operate within real-world latency and reliability constraints.
 
 ```{python}
 #| label: mnist-weights-calc
@@ -5270,13 +5996,65 @@ class MnistWeightsCalc:
     fc1_neurons_str = f"{fc1_neurons_value}"
 ```
 
-The running MNIST example made this escalation tangible: the same $28{\times}28$ digit that required ~`{python} ParadigmSystemsCost.rb_ops_str` rule-based comparisons demanded `{python} ParadigmSystemsCost.dl_total_macs_str` MACs in even a modest three-layer network—a `{python} ParadigmSystemsCost.dl_ops_ratio_str`$\times$ increase that generalizes across the systems dimensions captured in @tbl-evolution. These fundamentals primarily develop the Algorithm axis of the D·A·M taxonomy while revealing how algorithmic choices propagate into Machine constraints.
+```{python}
+#| label: summary-paradigm-cost-recap
+#| echo: false
+from mlsysim.fmt import fmt, check
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ SUMMARY PARADIGM COST RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Chapter summary and takeaways in @sec-neural-computation-summary-f263.
+# │
+# │ Goal: Keep the paradigm-escalation numbers local to the summary that repeats
+# │       them.
+# │ Show: Rule-based digit recognition uses about 100 comparisons, HOG about
+# │       8,000 operations, and the 784→128→64→10 MLP 109,184 MACs.
+# │ How: Recompute the MLP MACs from layer dimensions and compare to the
+# │      rule-based baseline.
+# │
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: SummaryParadigmCostRecap.rb_ops_str,
+# │          SummaryParadigmCostRecap.hog_ops_approx_str,
+# │          SummaryParadigmCostRecap.dl_total_macs_str,
+# │          SummaryParadigmCostRecap.dl_ops_ratio_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+# ┌── LEGO ───────────────────────────────────────────────
+class SummaryParadigmCostRecap:
+    """Namespace for local chapter-summary paradigm costs."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    rb_ops = 100
+    hog_ops_approx = 8_000
+    mnist_dims = [784, 128, 64, 10]
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    dl_total_macs = (
+        mnist_dims[0] * mnist_dims[1]
+        + mnist_dims[1] * mnist_dims[2]
+        + mnist_dims[2] * mnist_dims[3]
+    )
+    dl_ops_ratio = dl_total_macs / rb_ops
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(dl_total_macs == 109_184, f"Expected 109,184 MNIST MACs, got {dl_total_macs}")
+    check(round(dl_ops_ratio) == 1_092, f"Expected 1,092x ratio, got {dl_ops_ratio:.1f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    rb_ops_str = fmt(rb_ops, precision=0, commas=False)
+    hog_ops_approx_str = fmt(hog_ops_approx, precision=0, commas=True)
+    dl_total_macs_str = fmt(dl_total_macs, precision=0, commas=True)
+    dl_ops_ratio_str = fmt(dl_ops_ratio, precision=0, commas=True)
+```
+
+The running MNIST example made this escalation tangible: the same $28{\times}28$ digit that required ~`{python} SummaryParadigmCostRecap.rb_ops_str` rule-based comparisons demanded `{python} SummaryParadigmCostRecap.dl_total_macs_str` MACs in even a modest three-layer network—a `{python} SummaryParadigmCostRecap.dl_ops_ratio_str`$\times$ increase that generalizes across the systems dimensions captured in @tbl-evolution. These fundamentals primarily develop the Algorithm axis of the D·A·M taxonomy while revealing how algorithmic choices propagate into Machine constraints.
 
 The mathematical and systems implications emerge through fully connected architectures. The multilayer perceptrons explored here demonstrate universal function approximation: with enough neurons and appropriate weights, such networks can theoretically learn any continuous function. This mathematical generality comes with computational costs. Consider our MNIST example: a $28{\times}28$ pixel image contains `{python} MnistWeightsCalc.mnist_pixels_str` input values, and a fully connected network treats each pixel independently, learning over `{python} MnistWeightsCalc.fc1_weights_str` weights in the first layer alone (`{python} MnistWeightsCalc.mnist_pixels_str` inputs$\times$ `{python} MnistWeightsCalc.fc1_neurons_str` neurons). Neighboring pixels are highly correlated while distant pixels rarely interact. Fully connected architectures expend computational resources learning irrelevant long-range relationships.
 
 ::: {.callout-takeaways title="The math behind the model"}
 
-* **Each paradigm shift buys representation power at exponential systems cost**: Classifying the same $28{\times}28$ digit escalates from ~`{python} ParadigmSystemsCost.rb_ops_str` comparisons (rule-based) through ~`{python} ParadigmSystemsCost.hog_ops_approx_str` structured operations (classical ML) to `{python} ParadigmSystemsCost.dl_total_macs_str` matrix MACs (deep learning)—a `{python} ParadigmSystemsCost.dl_ops_ratio_str`$\times$ increase that reshapes hardware requirements at every level.
+* **Each paradigm shift buys representation power at exponential systems cost**: Classifying the same $28{\times}28$ digit escalates from ~`{python} SummaryParadigmCostRecap.rb_ops_str` comparisons (rule-based) through ~`{python} SummaryParadigmCostRecap.hog_ops_approx_str` structured operations (classical ML) to `{python} SummaryParadigmCostRecap.dl_total_macs_str` matrix MACs (deep learning)—a `{python} SummaryParadigmCostRecap.dl_ops_ratio_str`$\times$ increase that reshapes hardware requirements at every level.
 * **Neural networks learn patterns, not rules**: These networks replace hand-coded features with hierarchical representations discovered from data. The system adapts to the problem rather than requiring manual engineering.
 * **Training and inference have opposite priorities**: Training optimizes throughput (large batches, hours of compute); inference optimizes latency (single samples, milliseconds). Effective systems account for both phases in their design.
 * **Activation function choice is both a mathematical and a hardware decision**: ReLU dominates because $\max(0,x)$ is orders of magnitude cheaper than $\exp(x)$, and its constant gradient for positive inputs prevents the vanishing gradient problem that plagues sigmoid and tanh in deep networks.

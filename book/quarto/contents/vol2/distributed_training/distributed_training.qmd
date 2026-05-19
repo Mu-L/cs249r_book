@@ -2104,7 +2104,75 @@ The defining infrastructure challenge of RLHF is not the total memory footprint 
 
 The asymmetry creates a placement dilemma. Co-locating training and inference models on the same GPUs wastes compute during the generation phase (when the training models sit idle) and wastes memory during the gradient phase (when the inference models' parameter storage could be reclaimed for activations). Separating them onto dedicated GPU pools eliminates waste but introduces network latency for reward queries—each generated token batch must traverse the interconnect to reach the reward model and return a scalar signal before the policy gradient can be computed.
 
-The generation phase itself introduces a sequential bottleneck absent from standard pretraining. RLHF requires the policy model to *generate* complete sequences (typically 256--2,048 tokens) autoregressively before computing rewards and policy gradients. Autoregressive generation is memory-bandwidth-bound, not compute-bound: each token requires a full forward pass through the model to produce a single output token, with the KV cache growing by approximately $2 \times n_{\text{layers}} \times d_{\text{model}} \times 2$ bytes per token (in FP16). For a 70B model generating 1,024-token sequences with a batch of 256 prompts, the KV cache alone consumes $2 \times 80 \times 8192 \times 1024 \times 256 \times 2 \approx 172$ GB—more than two H100 GPUs' worth of HBM, dedicated entirely to storing intermediate attention state that is discarded after reward computation.
+```{python}
+#| label: rlhf-kv-cache-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ RLHF KV CACHE BUDGET (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-distributed-training-rlhf-asymmetry
+# │
+# │ Goal: Quantify generation-phase KV cache for a 70B GQA policy.
+# │ Show: Llama-2-70B-style GQA cache, and dense-MHA counterfactual.
+# │ How: KV bytes = 2 × layers × kv_heads × head_dim × sequence × batch × bytes.
+# │
+# │ Imports: mlsysim.core.constants (Llama-2-70B architecture, BYTES_FP16)
+# │ Imports: mlsysim.fmt (check)
+# │ Exports: RLHFKVCache.layers_str, RLHFKVCache.hidden_dim_str,
+# │          RLHFKVCache.kv_heads_str, RLHFKVCache.head_dim_str,
+# │          RLHFKVCache.seq_len_str, RLHFKVCache.batch_size_str,
+# │          RLHFKVCache.bytes_per_element_str, RLHFKVCache.kv_total_gb_str,
+# │          RLHFKVCache.dense_total_gb_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import (
+    LLAMA2_70B_LAYERS,
+    LLAMA2_70B_HIDDEN_DIM,
+    LLAMA2_70B_HEADS,
+    LLAMA2_70B_KV_HEADS,
+    BYTES_FP16,
+    byte,
+    GB,
+)
+from mlsysim.fmt import check
+
+class RLHFKVCache:
+    """Generation-phase FP16 KV-cache footprint for a 70B GQA policy."""
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    layers = LLAMA2_70B_LAYERS
+    hidden_dim = LLAMA2_70B_HIDDEN_DIM
+    attention_heads = LLAMA2_70B_HEADS
+    kv_heads = LLAMA2_70B_KV_HEADS
+    seq_len = 1024
+    batch_size = 256
+    bytes_per_element = BYTES_FP16.m_as(byte)
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    head_dim = hidden_dim // attention_heads
+    kv_width = kv_heads * head_dim
+    kv_cache_bytes = 2 * layers * kv_width * seq_len * batch_size * bytes_per_element
+    kv_total_gb = (kv_cache_bytes * byte).m_as(GB)
+    dense_cache_bytes = 2 * layers * hidden_dim * seq_len * batch_size * bytes_per_element
+    dense_total_gb = (dense_cache_bytes * byte).m_as(GB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(hidden_dim % attention_heads == 0, "Hidden dimension must divide evenly by attention heads")
+    check(kv_heads < attention_heads, "GQA should use fewer KV heads than attention heads")
+    check(85 <= kv_total_gb <= 87, f"GQA KV cache ({kv_total_gb:.1f} GB)")
+    check(685 <= dense_total_gb <= 689, f"Dense-attention KV cache ({dense_total_gb:.1f} GB)")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    layers_str = f"{layers}"
+    hidden_dim_str = f"{hidden_dim:,}"
+    kv_heads_str = f"{kv_heads}"
+    head_dim_str = f"{head_dim}"
+    seq_len_str = f"{seq_len:,}"
+    batch_size_str = f"{batch_size}"
+    bytes_per_element_str = f"{bytes_per_element:.0f}"
+    kv_total_gb_str = f"{kv_total_gb:.0f}"
+    dense_total_gb_str = f"{dense_total_gb:.0f}"
+```
+
+The generation phase itself introduces a sequential bottleneck absent from standard pretraining. RLHF requires the policy model to *generate* complete sequences (typically 256--2,048 tokens) autoregressively before computing rewards and policy gradients. Autoregressive generation is memory-bandwidth-bound, not compute-bound: each token requires a full forward pass through the model to produce a single output token. For a Llama-2-70B-style grouped-query attention policy, the KV cache grows by approximately $2 \times n_{\text{layers}} \times n_{\text{kv heads}} \times d_{\text{head}} \times 2$ bytes per generated token per sequence. With `{python} RLHFKVCache.layers_str` layers, `{python} RLHFKVCache.kv_heads_str` KV heads, `{python} RLHFKVCache.head_dim_str`-dimensional heads, `{python} RLHFKVCache.seq_len_str` generated tokens, and a batch of `{python} RLHFKVCache.batch_size_str` prompts, the cache consumes `{python} RLHFKVCache.kv_total_gb_str` GB: $2 \times 80 \times 8 \times 128 \times 1024 \times 256 \times 2$ bytes. A dense multi-head attention model using the full `{python} RLHFKVCache.hidden_dim_str`-wide hidden state for K and V would yield `{python} RLHFKVCache.dense_total_gb_str` GB. Even with GQA, the cache uses about one H100 GPU's worth of HBM for intermediate attention state that is discarded after reward computation.
 
 Production RLHF systems address this asymmetry through temporal multiplexing. During the generation phase, the cluster operates as an inference system: the policy model generates sequences while the reference model computes log-probabilities, both using inference-optimized kernels (continuous batching, speculative decoding, PagedAttention for KV cache management). During the training phase, the cluster switches to training mode: gradients are computed through the policy and value models using the standard 3D parallelism configuration. This two-phase approach recovers most of the efficiency lost to model asymmetry but requires the orchestration layer to manage the transition between inference and training configurations—a scheduling challenge that standard training frameworks do not address.
 
@@ -2134,11 +2202,12 @@ To make the infrastructure trade-off concrete, consider aligning a 70B policy mo
 # │
 # │ Imports: mlsysim.book (check)
 # │ Exports: RLHFBudget.policy_mem_str, RLHFBudget.ref_mem_str,
-# │          RLHFBudget.rlhf_n_gpus_str, RLHFBudget.policy_per_gpu_str,
+# │          RLHFBudget.n_gpus_str, RLHFBudget.policy_per_gpu_str,
 # │          RLHFBudget.ref_per_gpu_str, RLHFBudget.ref_per_gpu_sep_str,
 # │          RLHFBudget.reward_mem_str, RLHFBudget.value_mem_str,
-# │          RLHFBudget.static_per_gpu_str, RLHFBudget.rlhf_remaining_str,
-# │          RLHFBudget.kv_per_gpu_str, RLHFBudget.rlhf_remaining_kv_str
+# │          RLHFBudget.static_per_gpu_str, RLHFBudget.remaining_str,
+# │          RLHFBudget.kv_total_gb_str, RLHFBudget.kv_per_gpu_str,
+# │          RLHFBudget.remaining_kv_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import check, fmt_percent
 from mlsysim.core.constants import LLAMA2_70B_PARAMS, param, Bparam
@@ -2155,7 +2224,7 @@ class RLHFBudget:
     tp = 8
     pp = 4
     h100_mem = 80
-    kv_total_gb = 172
+    kv_total_gb = RLHFKVCache.kv_total_gb
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     policy_mem = policy_b * bytes_train
@@ -2181,6 +2250,7 @@ class RLHFBudget:
     check(value_mem == 208, f"value mem ({value_mem})")
     check(abs(ppo_total_mem - 1494) < 20, f"PPO total memory ({ppo_total_mem})")
     check(abs(static_per_gpu - 39.4) < 0.4, f"static/GPU ({static_per_gpu:.1f})")
+    check(85 <= kv_total_gb <= 87, f"KV cache ({kv_total_gb:.1f} GB)")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     policy_mem_str = f"{policy_mem:,}"
@@ -2196,8 +2266,9 @@ class RLHFBudget:
     dpo_reduction_pct_str = fmt_percent(dpo_reduction_pct, precision=0)
     static_per_gpu_str = f"{static_per_gpu:.1f}"
     remaining_str = f"{int(remaining)}"
+    kv_total_gb_str = RLHFKVCache.kv_total_gb_str
     kv_per_gpu_str = f"{kv_per_gpu:.1f}"
-    remaining_kv_str = f"{int(remaining_after_kv)}"
+    remaining_kv_str = f"{remaining_after_kv:.0f}"
 ```
 
 ::: {.callout-notebook title="RLHF infrastructure budget: PPO vs. DPO"}
@@ -2208,7 +2279,7 @@ class RLHFBudget:
 
 The policy model under 3D parallelism with TP=8 and PP=4 distributes its `{python} RLHFBudget.policy_mem_str` GB training state across `{python} RLHFBudget.n_gpus_str` GPUs, yielding `{python} RLHFBudget.policy_per_gpu_str` GB per GPU. The reference model, requiring only `{python} RLHFBudget.ref_mem_str` GB for inference, can be sharded across a separate pool of 8 GPUs at `{python} RLHFBudget.ref_per_gpu_sep_str` GB each, or co-located with the policy GPUs at an additional `{python} RLHFBudget.ref_per_gpu_str` GB per GPU (`{python} RLHFBudget.ref_mem_str` / `{python} RLHFBudget.n_gpus_str`). The 13B reward model adds `{python} RLHFBudget.reward_mem_str` GB shared across its pool. The 13B value model in training mode adds approximately `{python} RLHFBudget.value_mem_str` GB (13B $\times$ 16 bytes/param) across its pool.
 
-Total static memory (co-located policy + reference on `{python} RLHFBudget.n_gpus_str` GPUs): `{python} RLHFBudget.policy_per_gpu_str` + `{python} RLHFBudget.ref_per_gpu_str` $\approx$ `{python} RLHFBudget.static_per_gpu_str` GB per GPU, leaving $\sim$ `{python} RLHFBudget.remaining_str` GB for activations and KV cache. With generation-phase KV caches for 256 sequences of 1,024 tokens, each policy GPU must reserve an additional $172/$ `{python} RLHFBudget.n_gpus_str` $\approx$ `{python} RLHFBudget.kv_per_gpu_str` GB for its KV cache shard. The remaining $\sim$ `{python} RLHFBudget.remaining_kv_str` GB constrains the micro-batch size during the training phase.
+Total static memory (co-located policy + reference on `{python} RLHFBudget.n_gpus_str` GPUs): `{python} RLHFBudget.policy_per_gpu_str` + `{python} RLHFBudget.ref_per_gpu_str` $\approx$ `{python} RLHFBudget.static_per_gpu_str` GB per GPU, leaving $\sim$ `{python} RLHFBudget.remaining_str` GB for activations and KV cache. With generation-phase KV caches for a 256-sequence, 1,024-token rollout batch inside one TP$\times$PP policy replica, each policy GPU must reserve an additional `{python} RLHFBudget.kv_total_gb_str`/`{python} RLHFBudget.n_gpus_str` $\approx$ `{python} RLHFBudget.kv_per_gpu_str` GB for its KV cache shard. The remaining $\sim$ `{python} RLHFBudget.remaining_kv_str` GB constrains the micro-batch size during the training phase.
 
 **DPO Memory Budget (same parallelism configuration)**
 

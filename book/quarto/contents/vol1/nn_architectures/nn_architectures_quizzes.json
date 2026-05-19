@@ -31,7 +31,7 @@
         "questions": [
           {
             "question_type": "MCQ",
-            "question": "A team must choose between an MLP and a CNN for classifying 224-by-224 pixel medical images. The MLP would need roughly 150 million parameters for its first layer alone; the CNN uses filters with fewer than 10,000 weights shared across positions. Using the chapter's framing of inductive bias, which statement best explains why the CNN is the better starting point?",
+            "question": "A team must choose between an MLP and a CNN for classifying 224-by-224 pixel medical images. A dense first layer would need 150,528 input weights per output unit, so a 1,000-unit layer would already carry roughly 150 million weights; the CNN uses filters with fewer than 10,000 weights shared across positions. Using the chapter's framing of inductive bias, which statement best explains why the CNN is the better starting point?",
             "choices": [
               "The CNN's locality-and-weight-sharing assumption matches the spatial structure of images, which simultaneously reduces sample complexity and cuts per-layer memory traffic by orders of magnitude.",
               "The CNN is more expressive than the MLP, so it can fit any function the MLP can fit with fewer parameters.",
@@ -96,9 +96,9 @@
             "applying MLP inductive bias to diagnose architecture-data mismatches (not restating its definition)",
             "the universal-approximation vs learnability distinction with concrete numbers",
             "why dense GEMV at low batch sits at 0.5 FLOPs/byte and stays bandwidth-bound",
-            "Tensor Core dimension alignment and its latency consequences"
+            "Tensor Core tile alignment and small-matrix latency consequences"
           ],
-          "question_strategy": "Open with a memory-scaling numeric question that forces the reader to apply the 'no structural assumption' bias rather than recite it. Then probe the Universal Approximation Theorem vs practical learnability. Use a scenario MCQ on batch-1 bandwidth-bound behavior grounded in the 0.5 FLOPs/byte figure. Close with a Tensor Core alignment scenario and a misconception TF.",
+          "question_strategy": "Open with a memory-scaling numeric question that forces the reader to apply the 'no structural assumption' bias rather than recite it. Then probe the Universal Approximation Theorem vs practical learnability. Use a scenario MCQ on batch-1 bandwidth-bound behavior grounded in the 0.5 FLOPs/byte figure. Close with a Tensor Core tiling scenario and a misconception TF.",
           "difficulty_progression": "Starts with applying MLP bias to a memory-explosion scenario, moves through UAT vs practical training, into bandwidth-bound profile diagnosis, hardware mismatch, and a universal-approximator misconception check.",
           "integration": "Builds on arithmetic intensity from the prior section (prior vocabulary) and applies roofline reasoning introduced in earlier chapters.",
           "ranking_explanation": "Full-tier quiz: the section introduces MLPs as a baseline archetype and carries the first full worked demonstration of the 0.5 FLOPs/byte bandwidth wall."
@@ -119,7 +119,7 @@
           {
             "question_type": "SHORT",
             "question": "A team cites the Universal Approximation Theorem to argue that a sufficiently wide MLP could solve any image classification task. They plan to train a 3-layer MLP on 224-by-224 ImageNet images. Explain why UAT does not justify this plan and what the practical learnability gap looks like in both statistical and systems terms.",
-            "answer": "UAT guarantees that some MLP of sufficient width represents the target function; it says nothing about whether gradient descent can find that MLP with finite data or whether the resulting footprint is physically realizable. On 224-by-224 RGB inputs a single first-layer neuron already connects to 150,528 pixels, so even modest width produces tens of billions of weights — parameters the model must both store and learn. Statistically, the absence of a locality prior forces sample complexity to grow with that unstructured parameter count, so the data and compute required to converge become impractical. Systemically, the dense matrix is used once per sample and drags the workload into the 0.5 FLOPs-per-byte regime, far below the ridge point of any modern accelerator. The engineering consequence is that CNNs do not win because MLPs cannot represent the function; they win because gradient descent on a locality-sharing architecture actually converges within the budget an accelerator provides.",
+            "answer": "UAT guarantees that some MLP of sufficient width represents the target function; it says nothing about whether gradient descent can find that MLP with finite data or whether the resulting footprint is physically realizable. On 224-by-224 RGB inputs a single first-layer neuron already connects to 150,528 input values, so a modest hidden width quickly reaches hundreds of millions or billions of weights that the model must both store and learn. Statistically, the absence of a locality prior forces sample complexity to grow with that unstructured parameter count, so the data and compute required to converge become impractical. Systemically, the dense matrix is used once per sample and drags the workload into the 0.5 FLOPs-per-byte regime, far below the ridge point of any modern accelerator. The engineering consequence is that CNNs do not win because MLPs cannot represent the function; they win because gradient descent on a locality-sharing architecture actually converges within the budget an accelerator provides.",
             "learning_objective": "Analyze the gap between UAT's representational guarantee and practical trainability, and connect both the statistical (sample complexity) and systems (memory-bandwidth) failure modes of a naive dense-MLP image classifier."
           },
           {
@@ -142,20 +142,20 @@
           },
           {
             "question_type": "MCQ",
-            "question": "A team ports an MNIST-style 784-by-100 dense layer to an A100 and measures throughput far below the advertised FP16 Tensor Core peak. The layer's dimensions are both non-multiples of 8. Which explanation is most consistent with the section's discussion of Tensor Core alignment?",
+            "question": "A team ports an MNIST-style 784-by-100 dense layer to an A100 and measures throughput far below the advertised FP16 Tensor Core peak. The layer is small and has awkward dimensions for Tensor Core tiling. Which explanation is most consistent with the section's discussion of Tensor Core alignment?",
             "choices": [
-              "Tensor Cores require matrix dimensions to be multiples of 8; non-conforming shapes silently fall back to the standard CUDA path, producing a 9x-plus performance gap between the two code paths on the same hardware.",
+              "Tensor Core peak assumes hardware-friendly tile shapes and enough work to amortize overhead; awkward small matrices may need padding or less efficient kernels, so their realized throughput can be far below peak.",
               "Small dense layers are never executed on GPUs and are silently dispatched to the CPU by the runtime.",
               "The activation function on a 100-dimensional output vector is the dominant cost and hides the GEMM's throughput.",
               "The 784-by-100 layer has excessive arithmetic intensity that saturates memory and leaves compute units idle."
             ],
-            "answer": "The correct answer is A. The A100's Tensor Cores are a dimension-aware path: they achieve peak throughput only when matrix dimensions are multiples of 8, and non-conforming shapes fall back to the standard CUDA path, producing the order-of-magnitude gap the section highlights between the two execution modes. The 'always on CPU' claim is false — GPUs execute small dense layers routinely, just inefficiently. The activation-dominance claim inverts the cost ratio — matmul dominates, activations are trivial. The excessive-intensity explanation is backwards: the problem is *insufficient* hardware-friendly geometry, not saturating memory.",
-            "learning_objective": "Analyze how matrix-dimension alignment determines whether a dense layer reaches Tensor Core peak or falls back to the slower CUDA path, and diagnose a non-multiple-of-8 shape as the cause of underperformance."
+            "answer": "The correct answer is A. The A100's Tensor Core path is shape-aware: peak throughput assumes matrix dimensions and batch sizes that map cleanly onto hardware tiles and keep the pipeline full. Modern libraries can often still use Tensor Cores for non-ideal shapes, but padding, edge tiles, launch overhead, and low reuse can make a 784-by-100 batch-1 layer run far below advertised peak. The 'always on CPU' claim is false — GPUs execute small dense layers routinely, just inefficiently. The activation-dominance claim inverts the cost ratio — matmul dominates, activations are trivial. The excessive-intensity explanation is backwards: the problem is insufficient hardware-friendly geometry and reuse, not saturating memory.",
+            "learning_objective": "Analyze how matrix shape, tile alignment, and problem size determine whether a dense layer reaches Tensor Core peak, and diagnose an awkward small matrix as a likely cause of underperformance."
           },
           {
             "question_type": "TF",
             "question": "True or False: Because MLPs are universal approximators, they are the most practical architecture for any high-dimensional structured input such as a 224-by-224 image.",
-            "answer": "False. Universal approximation guarantees that some MLP represents the target function; it does not guarantee that gradient descent finds it with finite data, nor that the network fits on any realizable accelerator. On a 224-by-224 image, dense connectivity alone balloons the first-layer weight count past 150 million, driving sample complexity and memory traffic past the point of practicality. UAT is a statement about representability, not about learnability or feasibility.",
+            "answer": "False. Universal approximation guarantees that some MLP represents the target function; it does not guarantee that gradient descent finds it with finite data, nor that the network fits on any realizable accelerator. On a 224-by-224 RGB image, dense connectivity alone requires 150,528 input weights per first-layer output unit, so practical hidden widths can push the first layer into hundreds of millions of weights. UAT is a statement about representability, not about learnability or feasibility.",
             "learning_objective": "Distinguish representational power from practical learnability and feasibility when evaluating an MLP for high-dimensional structured inputs."
           }
         ]
@@ -181,7 +181,7 @@
         "questions": [
           {
             "question_type": "MCQ",
-            "question": "An MLP first layer connected to a 224-by-224 RGB image would need more than 150 million parameters per output neuron. A typical CNN first layer with 64 filters of size 3-by-3 applied to the same image uses roughly 1,728 weights total. Which statement best captures why the CNN achieves this compression?",
+            "question": "An MLP first layer connected to a 224-by-224 RGB image would need 150,528 weights per output neuron, so a 1,000-unit dense layer would have more than 150 million weights. A typical CNN first layer with 64 filters of size 3-by-3 applied to the same image uses roughly 1,728 weights total. Which statement best captures why the CNN achieves this compression?",
             "choices": [
               "Each filter applies the same small set of learned weights at every one of the 50,176 spatial positions, so parameter count is governed by filter size and channel count rather than by input resolution.",
               "The CNN replaces learned filters with fixed hand-designed edge detectors, which is why it needs no per-pixel weights.",
@@ -801,12 +801,12 @@
             "question_type": "MCQ",
             "question": "Which scenario best captures the pitfall of optimizing architecture only for training hardware without analyzing the deployment environment?",
             "choices": [
-              "A team develops on an 8-GPU A100 node (640 GB total memory), then discovers at launch that the model cannot fit the 4 GB edge device it must actually run on — a 160x memory reduction that cannot be closed by quantization alone and forces architectural redesign that delays release by a quarter.",
+              "A team develops on an 8-GPU A100 node (640 GiB total memory), then discovers at launch that the model cannot fit the 4 GiB edge device it must actually run on — a 160x memory reduction that cannot be closed by quantization alone and forces architectural redesign that delays release by a quarter.",
               "A team applies data augmentation during training and sees improved generalization on the validation set.",
               "A team benchmarks three candidate models on held-out test data before picking one.",
               "A team selects a CNN for a vision task because the data's spatial locality matches the architecture's inductive bias."
             ],
-            "answer": "The correct answer is A. The pitfall is the mismatch between development and deployment environments — the section explicitly cites the 160x memory gap between an 8-GPU training node and a 4 GB edge device as the canonical example, with quantization insufficient to close it. The other options describe healthy practices (augmentation, benchmarking, structural alignment), not pitfalls.",
+            "answer": "The correct answer is A. The pitfall is the mismatch between development and deployment environments — the section explicitly cites the 160x memory gap between an 8-GPU training node and a 4 GiB edge device as the canonical example, with quantization insufficient to close it. The other options describe healthy practices (augmentation, benchmarking, structural alignment), not pitfalls.",
             "learning_objective": "Identify the training-to-deployment hardware mismatch pitfall from a scenario where architectural assumptions exceed target-device memory."
           },
           {

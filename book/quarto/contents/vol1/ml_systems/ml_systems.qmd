@@ -554,7 +554,8 @@ This principle dictates that if a system is memory bound\index{Memory-Bound Work
 # │
 # │ Goal: Compare energy costs of cloud offload vs. local compute.
 # │ Show: The 1000× higher energy cost of network transmission for small data segments.
-# │ How: Calculate Joules for data transfer vs. NPU-based local inference.
+# │ How: Calculate Joules for data transfer vs. NPU-based local inference
+# │      using centralized energy constants.
 # │
 # │ Imports: mlsysim.book (fmt)
 # │ Exports: EnergyTransmission.data_mb_str, EnergyTransmission.tx_energy_str,
@@ -562,6 +563,7 @@ This principle dictates that if a system is memory bound\index{Memory-Bound Work
 # │          EnergyTransmission.cloud_total_str,
 # │          EnergyTransmission.local_total_str, EnergyTransmission.ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import NETWORK_5G_ENERGY_PER_MB_MJ, ENERGY_MOBILENET_INF_MJ, MB, ureg
 from mlsysim.fmt import fmt_percent, fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -572,26 +574,27 @@ class EnergyTransmission:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    data_size_mb = 1.0       # 1 sec audio
-    tx_energy_per_mb = 100.0 # mJ/MB (Wi-Fi/LTE)
-    local_energy_op = 0.1    # mJ/inference (MobileNet on NPU)
+    data_size = 1.0 * MB       # 1 sec audio
+    tx_energy_per_mb = NETWORK_5G_ENERGY_PER_MB_MJ
+    local_energy_op = ENERGY_MOBILENET_INF_MJ
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    cloud_energy_total = data_size_mb * tx_energy_per_mb
+    cloud_energy_total = (data_size * tx_energy_per_mb).to(ureg.millijoule)
     local_energy_total = local_energy_op
 
     ratio = cloud_energy_total/local_energy_total
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(ratio >= 500, f"Transmission ({cloud_energy_total}mJ) is not expensive enough vs Compute ({local_energy_total}mJ). Ratio: {ratio:.1f}x")
+    check(ratio.m_as("") >= 500,
+          f"Transmission ({cloud_energy_total}) is not expensive enough vs Compute ({local_energy_total}). Ratio: {ratio.m_as(''):.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    data_mb_str = fmt(data_size_mb, precision=0, commas=False)
-    tx_energy_str = fmt(tx_energy_per_mb, precision=0, commas=False)
-    compute_energy_str = fmt(local_energy_op, precision=1, commas=False)
-    cloud_total_str = fmt(cloud_energy_total, precision=0, commas=False)
-    local_total_str = fmt(local_energy_op, precision=1, commas=False)
-    ratio_str = fmt(ratio, precision=0, commas=True)
+    data_mb_str = fmt(data_size.m_as(MB), precision=0, commas=False)
+    tx_energy_str = fmt(tx_energy_per_mb.m_as(ureg.millijoule/MB), precision=0, commas=False)
+    compute_energy_str = fmt(local_energy_op.m_as(ureg.millijoule), precision=1, commas=False)
+    cloud_total_str = fmt(cloud_energy_total.m_as(ureg.millijoule), precision=0, commas=False)
+    local_total_str = fmt(local_energy_total.m_as(ureg.millijoule), precision=1, commas=False)
+    ratio_str = fmt(ratio.m_as(""), precision=0, commas=True)
 ```
 
 ::: {.callout-notebook title="The energy of transmission"}
@@ -695,11 +698,13 @@ These archetypes map naturally to deployment paradigms: compute beasts and spars
 # │ Exports: LighthouseModels.resnet_gflops_str, .resnet_params_m_str,
 # │          .resnet_fp32_mb_str, .gpt2_params_b_str, .llama_range_str,
 # │          .dlrm_embedding_str, .mobilenet_flops_reduction_str,
-# │          .mobile_tdp_range_str, .kws_params_str, .kws_size_kb_str
+# │          .mobile_tdp_range_str, .kws_params_str, .kws_flops_m_str,
+# │          .kws_size_kb_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Models
 from mlsysim.core.constants import (
-    RESNET50_FLOPs, GFLOPs, Mparam, Bparam, Kparam, byte, MB, GB, KB
+    RESNET50_FLOPs, GFLOPs, MFLOPs, Mparam, Bparam, Kparam, byte, MB, GB, KB,
+    MOBILE_TDP_RANGE_W,
 )
 from mlsysim.fmt import fmt_percent, fmt, check
 
@@ -729,16 +734,18 @@ class LighthouseModels:
     dlrm_embedding_gb = m_dlrm.size_in_bytes().m_as(GB)
 
     # MobileNet
-    # Step 2: ResNet-50 ~4.1 GFLOPs, MobileNetV2 ~300 MFLOPs
-    mobilenet_flops_reduction = 4100 / 300
+    # Step 2: ResNet-50 vs MobileNetV2 FLOP reduction.
+    mobilenet_flops_reduction = (RESNET50_FLOPs / m_mobilenet.inference_flops).m_as("")
 
     # Step 3: KWS
     kws_params = m_kws.parameters.m_as(Kparam)
+    kws_flops_m = m_kws.inference_flops.m_as(MFLOPs)
     kws_size_kb = m_kws.size_in_bytes(4 * byte).m_as(KB)
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(resnet_fp32_mb >= 90, f"ResNet50 size should be ~98MB, got {resnet_fp32_mb:.0f}MB")
     check(mobilenet_flops_reduction > 10, "MobileNet reduction should be >10x vs ResNet.")
+    check(750 <= kws_size_kb <= 850, f"KWS size should be about 800KB, got {kws_size_kb:.0f}KB")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     resnet_gflops_str = fmt(resnet_flops_g, precision=1)
@@ -751,9 +758,10 @@ class LighthouseModels:
     dlrm_embedding_str = fmt(dlrm_embedding_gb, precision=0)
 
     mobilenet_flops_reduction_str = fmt(mobilenet_flops_reduction, precision=0)
-    mobile_tdp_range_str = "2 to 5" # Standard mobile envelope
+    mobile_tdp_range_str = MOBILE_TDP_RANGE_W.replace("-", " to ")
 
     kws_params_str = f"{int(kws_params)}K"
+    kws_flops_m_str = fmt(kws_flops_m, precision=0)
     kws_size_kb_str = fmt(kws_size_kb, precision=0)
 ```
 
@@ -865,7 +873,7 @@ The mobile lighthouse, **MobileNet**\index{MobileNet!depthwise separable convolu
 
 The TinyML lighthouse, **Keyword Spotting (KWS)**\index{Keyword Spotting!TinyML archetype}, represents the always-on sensing archetype. Used in applications like Smart Doorbells, it detects wake words ("Ding Dong", "Hello") using a depthwise separable convolutional neural network (CNN) with approximately `{python} LighthouseModels.kws_params_str` parameters (small variants; the DS-CNN benchmark in MLPerf Tiny uses ~200K) fitting in under `{python} LighthouseModels.kws_size_kb_str` KB, running continuously at under one milliwatt [@zhang2017hello].
 
-The range in compute requirements and memory footprints explains why no single deployment paradigm fits all workloads. A keyword spotter can operate with roughly 20 MFLOPs and 800 KB, while ResNet-50 requires about four GFLOPs and roughly 100 MB per image. The reference DLRM example already reaches `{python} LighthouseModels.dlrm_embedding_str` GB of embeddings, and production DLRM-style recommendation systems can exceed 100 TB. Language models add a bandwidth-dominated regime: billions of parameters streamed repeatedly from memory during autoregressive inference. These five Lighthouse Models serve as concrete anchors throughout the book, each isolating a distinct system bottleneck revisited in every chapter.
+The range in compute requirements and memory footprints explains why no single deployment paradigm fits all workloads. A keyword spotter can operate with roughly `{python} LighthouseModels.kws_flops_m_str` MFLOPs and `{python} LighthouseModels.kws_size_kb_str` KB, while ResNet-50 requires about `{python} LighthouseModels.resnet_gflops_str` GFLOPs and roughly `{python} LighthouseModels.resnet_fp32_mb_str` MB per image. The reference DLRM example already reaches `{python} LighthouseModels.dlrm_embedding_str` GB of embeddings, and production DLRM-style recommendation systems can exceed 100 TB. Language models add a bandwidth-dominated regime: billions of parameters streamed repeatedly from memory during autoregressive inference. These five Lighthouse Models serve as concrete anchors throughout the book, each isolating a distinct system bottleneck revisited in every chapter.
 
 Analytical tools alone remain abstract until grounded in real silicon. The next step translates the iron law, bottleneck principle, and workload archetypes into quantitative engineering decisions by examining how system balance (the interplay of compute, memory, and I/O) varies across real hardware platforms.
 
@@ -1237,8 +1245,8 @@ As systems transition from Cloud to Edge to TinyML, available resources decrease
 # │
 # │ Goal: Provide mobile-specific hardware range strings for tables and prose.
 # │ Show: RAM, storage, NPU TOPS, and memory bandwidth ranges for smartphones.
-# │ How: Read ranges from centralized constants; derive bandwidth range from
-# │      phone hardware twin.
+# │ How: Read RAM/storage ranges from centralized constants; derive NPU and
+# │      bandwidth ranges from representative phone hardware twins.
 # │
 # │ Imports: mlsysim.core.constants (MOBILE_RAM_RANGE_GB, MOBILE_STORAGE_RANGE),
 # │          mlsysim.Hardware (Generic_Phone for bandwidth)
@@ -1248,27 +1256,45 @@ As systems transition from Cloud to Edge to TinyML, available resources decrease
 # │          MobileHardwareSpecs.mobile_bw_range_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware
-from mlsysim.core.constants import MOBILE_RAM_RANGE_GB, MOBILE_STORAGE_RANGE
+from mlsysim.core.constants import MOBILE_RAM_RANGE_GB, MOBILE_STORAGE_RANGE, TFLOPs, GB, second
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class MobileHardwareSpecs:
     """Namespace for mobile hardware specification ranges."""
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    h_phone = Hardware.Mobile.iPhone15Pro
+    representative_phones = [
+        Hardware.Mobile.Pixel8,
+        Hardware.Mobile.iPhone15Pro,
+        Hardware.Mobile.Snapdragon8Gen3,
+    ]
     mobile_ram_range = MOBILE_RAM_RANGE_GB
     mobile_storage_range = MOBILE_STORAGE_RANGE
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    mobile_bw_range = f"{int(h_phone.memory.bandwidth.m_as('GB/s')/2)}-{int(h_phone.memory.bandwidth.m_as('GB/s'))}"
+    mobile_npu_tops_values = [
+        phone.compute.peak_flops.m_as(TFLOPs/second)
+        for phone in representative_phones
+    ]
+    mobile_bw_gbs_values = [
+        phone.memory.bandwidth.m_as(GB/second)
+        for phone in representative_phones
+    ]
+    mobile_npu_min = min(mobile_npu_tops_values)
+    mobile_npu_max = max(mobile_npu_tops_values)
+    mobile_bw_min = min(mobile_bw_gbs_values)
+    mobile_bw_max = max(mobile_bw_gbs_values)
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(mobile_npu_max > mobile_npu_min, "Mobile NPU range collapsed to a single value.")
+    check(mobile_bw_max > mobile_bw_min, "Mobile bandwidth range collapsed to a single value.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     mobile_ram_range_str = mobile_ram_range
     mobile_storage_range_str = mobile_storage_range
-    mobile_bw_range_str = mobile_bw_range
-    mobile_npu_range_str = "1-10"
+    mobile_bw_range_str = f"{fmt(mobile_bw_min, precision=0, commas=False)}-{fmt(mobile_bw_max, precision=0, commas=False)}"
+    mobile_npu_range_str = f"{fmt(mobile_npu_min, precision=0, commas=False)}-{fmt(mobile_npu_max, precision=0, commas=False)}"
 ```
 
 ```{python}
@@ -1283,7 +1309,7 @@ class MobileHardwareSpecs:
 # │
 # │ Goal: Ground abstract deployment paradigms in concrete hardware specs for
 # │       TPU v4 Pod (Cloud), DGX Spark (Edge), and ESP32-CAM (TinyML).
-# │ Show: The roughly 8-order-of-magnitude power gap (4 MW cloud to 0.1 W TinyML)
+# │ Show: The roughly 8-order-of-magnitude power gap (MW cloud to sub-watt TinyML)
 # │       and 8-order-of-magnitude cost gap ($millions to $10) across tiers.
 # │ How: Read memory, power, and cost from mlsysim.core.constants for each platform;
 # │      assign threshold strings for the decision boundary table.
@@ -1324,12 +1350,12 @@ class HardwareSpectrumSetup:
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     tpu_chips_str = f"{TPU_POD_CHIPS:,}"                     # e.g. "4,096" chips
     cloud_mem_tb_str = fmt(TPU_POD_MEM.m_as(TB), precision=0, commas=False)         # e.g. "131" TB
-    cloud_pwr_mw_str = fmt(TPU_POD_POWER.m_as("megawatt"), precision=0, commas=False)  # e.g. "4" MW
+    cloud_pwr_mw_str = fmt(TPU_POD_POWER.m_as("megawatt"), precision=0, commas=False)  # e.g. "3" MW
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     edge_mem_gb_str = fmt(DGX_RAM.m_as(GB), precision=0, commas=False)              # e.g. "128" GB
     edge_stor_tb_str = fmt(DGX_STORAGE.m_as(TB), precision=0, commas=False)         # e.g. "4" TB
-    edge_pwr_w_str = fmt(DGX_POWER.m_as(watt), precision=0, commas=False)           # e.g. "500" W
+    edge_pwr_w_str = fmt(DGX_POWER.m_as(watt), precision=0, commas=False)           # e.g. "200" W
     edge_price_min_str = f"{DGX_PRICE_MIN.m_as(USD):,.0f}"                          # e.g. "3,000"
     edge_price_max_str = f"{DGX_PRICE_MAX.m_as(USD):,.0f}"                          # e.g. "5,000"
 
@@ -1373,12 +1399,81 @@ These deployment paradigms emerged from decades of hardware evolution, from floa
 
 Each paradigm occupies a distinct region of the deployment spectrum, governed by the physical constraints (light barrier, power wall, memory wall) and quantified by the analytical tools (iron law, bottleneck principle) introduced earlier. The quantitative thresholds in @tbl-deployment-thresholds help practitioners determine which paradigm suits their workload. The following four sections progress from cloud to TinyML, tracing the gradient from maximum computational resources to maximum efficiency constraints.
 
+```{python}
+#| label: deployment-thresholds-local
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DEPLOYMENT THRESHOLDS: LOCAL TABLE RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-deployment-thresholds immediately below.
+# │
+# │ Goal: Keep threshold table inline references local to their use site.
+# │ Show: Compute, memory, power, and latency ranges for each deployment tier.
+# │ How: Recap already-computed deployment and hardware spectrum values.
+# │
+# │ Imports: mlsysim.book (check)
+# │ Exports: DeploymentThresholdsLocal.*_str values used by the table below
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class DeploymentThresholdsLocal:
+    """Local recap for the deployment decision thresholds table."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    cloud_compute = HardwareSpectrumSetup.cloud_thresh_tflops_str
+    cloud_bw = HardwareSpectrumSetup.cloud_thresh_bw_str
+    cloud_latency = MLSystemsSetup.cloud_latency_range_str
+
+    edge_compute = HardwareSpectrumSetup.edge_thresh_pflops_str
+    edge_bw = HardwareSpectrumSetup.edge_thresh_bw_str
+    edge_latency = MLSystemsSetup.edge_latency_range_str
+
+    mobile_compute = MobileHardwareSpecs.mobile_npu_range_str
+    mobile_bw = MobileHardwareSpecs.mobile_bw_range_str
+    mobile_power = LighthouseModels.mobile_tdp_range_str
+    mobile_latency = MLSystemsSetup.mobile_latency_range_str
+
+    tiny_compute = HardwareSpectrumSetup.tiny_thresh_tops_str
+    tiny_power = HardwareSpectrumSetup.tiny_thresh_mw_str
+    tiny_latency = MLSystemsSetup.tiny_latency_range_str
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    table_values = [
+        cloud_compute, cloud_bw, cloud_latency,
+        edge_compute, edge_bw, edge_latency,
+        mobile_compute, mobile_bw, mobile_power, mobile_latency,
+        tiny_compute, tiny_power, tiny_latency,
+    ]
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(all(table_values), "Deployment threshold recap values should be populated.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    cloud_thresh_tflops_str = cloud_compute
+    cloud_thresh_bw_str = cloud_bw
+    cloud_latency_range_str = cloud_latency
+
+    edge_thresh_pflops_str = edge_compute
+    edge_thresh_bw_str = edge_bw
+    edge_latency_range_str = edge_latency
+
+    mobile_npu_range_str = mobile_compute
+    mobile_bw_range_str = mobile_bw
+    mobile_tdp_range_str = mobile_power
+    mobile_latency_range_str = mobile_latency
+
+    tiny_thresh_tops_str = tiny_compute
+    tiny_thresh_mw_str = tiny_power
+    tiny_latency_range_str = tiny_latency
+```
+
 | **Paradigm**  |                            **Compute**                             |                       **Memory BW**                        |                                    **Power**                                     |                      **Latency**                      |
 |:--------------|:------------------------------------------------------------------:|:----------------------------------------------------------:|:--------------------------------------------------------------------------------:|:-----------------------------------------------------:|
-| **Cloud ML**  |  >`{python} HardwareSpectrumSetup.cloud_thresh_tflops_str` TFLOPS  | >`{python} HardwareSpectrumSetup.cloud_thresh_bw_str` GB/s |                              MW class (PUE 1.1–1.3)                              |                       100–500 ms                      |
-| **Edge ML**   | ~`{python} HardwareSpectrumSetup.edge_thresh_pflops_str` PFLOPS AI | >`{python} HardwareSpectrumSetup.edge_thresh_bw_str` GB/s  |                                   100 W class                                    |  `{python} MLSystemsSetup.edge_latency_range_str` ms  |
-| **Mobile ML** |      `{python} MobileHardwareSpecs.mobile_npu_range_str` TOPS      |  `{python} MobileHardwareSpecs.mobile_bw_range_str` GB/s   |                `{python} LighthouseModels.mobile_tdp_range_str` W                | `{python} MLSystemsSetup.mobile_latency_range_str` ms |
-| **TinyML**    |    <`{python} HardwareSpectrumSetup.tiny_thresh_tops_str` TOPS     |                             —                              | <`{python} HardwareSpectrumSetup.tiny_thresh_mw_str` mW always-on average target |  `{python} MLSystemsSetup.tiny_latency_range_str` ms  |
+| **Cloud ML**  |  >`{python} DeploymentThresholdsLocal.cloud_thresh_tflops_str` TFLOPS  | >`{python} DeploymentThresholdsLocal.cloud_thresh_bw_str` GB/s |                              MW class (PUE 1.1–1.3)                              | `{python} DeploymentThresholdsLocal.cloud_latency_range_str` ms  |
+| **Edge ML**   | ~`{python} DeploymentThresholdsLocal.edge_thresh_pflops_str` PFLOPS AI | >`{python} DeploymentThresholdsLocal.edge_thresh_bw_str` GB/s  |                                   100 W class                                    |  `{python} DeploymentThresholdsLocal.edge_latency_range_str` ms  |
+| **Mobile ML** |      `{python} DeploymentThresholdsLocal.mobile_npu_range_str` TOPS      |  `{python} DeploymentThresholdsLocal.mobile_bw_range_str` GB/s   |                `{python} DeploymentThresholdsLocal.mobile_tdp_range_str` W                | `{python} DeploymentThresholdsLocal.mobile_latency_range_str` ms |
+| **TinyML**    |    <`{python} DeploymentThresholdsLocal.tiny_thresh_tops_str` TOPS     |                             —                              | <`{python} DeploymentThresholdsLocal.tiny_thresh_mw_str` mW always-on average target |  `{python} DeploymentThresholdsLocal.tiny_latency_range_str` ms  |
 
 : **Deployment Decision Thresholds**: Quantitative thresholds that practitioners use to determine deployment feasibility for each paradigm in @tbl-representative-systems. These numbers answer the practical question "can my workload run here?" by specifying the compute, memory bandwidth, and power envelope that each paradigm provides. {#tbl-deployment-thresholds tbl-colwidths="[12,18,18,32,18]"}
 
@@ -1650,7 +1745,8 @@ Cost management introduces operational complexity requiring TCO[^fn-tco-deployme
 # │          CloudEdgeTCO.e_power_str, CloudEdgeTCO.e_cool_str,
 # │          CloudEdgeTCO.e_net_str, CloudEdgeTCO.e_labor_str,
 # │          CloudEdgeTCO.e_total_str, CloudEdgeTCO.edge_savings_str,
-# │          CloudEdgeTCO.labor_pct_str
+# │          CloudEdgeTCO.labor_pct_str, CloudEdgeTCO.breakeven_requests_str,
+# │          CloudEdgeTCO.breakeven_utilization_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware
 from mlsysim.core.constants import (
@@ -1711,9 +1807,12 @@ class CloudEdgeTCO:
 
     edge_savings_pct = ((c_total - e_total) / c_total) * 100
     labor_pct = (e_labor/e_total) * 100
+    breakeven_fraction = e_total / c_total
+    breakeven_requests_per_day = requests_per_day * breakeven_fraction
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(c_total >= e_total, f"Edge should be cheaper at 1M volume. Cloud=${c_total:.0f}, Edge=${e_total:.0f}")
+    check(0 < breakeven_fraction < 1, f"Break-even fraction should lie between 0 and 1, got {breakeven_fraction:.2f}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     requests_str = f"{requests_per_day/MILLION:.0f}M"
@@ -1722,6 +1821,9 @@ class CloudEdgeTCO:
     gpu_instances_str = f"{gpu_instances}"
     gpu_price_str = f"${gpu_price_per_hr:.2f}"
     egress_gb_str = fmt(egress_gb_per_day, precision=0, commas=False)
+    egress_price_str = f"USD {egress_per_gb:.2f}/GB"
+    hours_per_year_str = f"{HOURS_PER_YEAR:,}"
+    days_per_year_str = f"{DAYS_PER_YEAR}"
 
     c_gpu_str = f"~${c_gpu:,.0f}"
     c_egress_str = f"~${c_egress:,.0f}"
@@ -1738,6 +1840,8 @@ class CloudEdgeTCO:
 
     edge_savings_str = f"{edge_savings_pct:.0f}%"
     labor_pct_str = f"{labor_pct:.0f}%"
+    breakeven_requests_str = f"{breakeven_requests_per_day/1_000:.0f}K"
+    breakeven_utilization_str = f"{breakeven_fraction * 100:.0f}%"
 
     # Additional Outputs for Prose
     server_cost_str = f"${server_cost:,}"
@@ -1763,8 +1867,8 @@ class CloudEdgeTCO:
 
 | **Cost Component**       | **Calculation**                                                                                                          |                         **Annual Cost** |
 |:-------------------------|:-------------------------------------------------------------------------------------------------------------------------|----------------------------------------:|
-| **GPU inference (A10G)** | `{python} CloudEdgeTCO.gpu_instances_str` instances $\times$ 8,760 hrs $\times$ `{python} CloudEdgeTCO.gpu_price_str`/hr |       `{python} CloudEdgeTCO.c_gpu_str` |
-| **Network egress**       | `{python} CloudEdgeTCO.egress_gb_str` GB/day $\times$ 365 $\times$ USD 0.09/GB                                           |    `{python} CloudEdgeTCO.c_egress_str` |
+| **GPU inference (A10G)** | `{python} CloudEdgeTCO.gpu_instances_str` instances $\times$ `{python} CloudEdgeTCO.hours_per_year_str` hrs $\times$ `{python} CloudEdgeTCO.gpu_price_str`/hr |       `{python} CloudEdgeTCO.c_gpu_str` |
+| **Network egress**       | `{python} CloudEdgeTCO.egress_gb_str` GB/day $\times$ `{python} CloudEdgeTCO.days_per_year_str` $\times$ `{python} CloudEdgeTCO.egress_price_str`                                           |    `{python} CloudEdgeTCO.c_egress_str` |
 | **Load balancer**        | USD 0.025/hr + LCU charges                                                                                               |        `{python} CloudEdgeTCO.c_lb_str` |
 | **CloudWatch/logging**   | Monitoring, alerts                                                                                                       |      `{python} CloudEdgeTCO.c_logs_str` |
 | **Total Cloud**          |                                                                                                                          | **`{python} CloudEdgeTCO.c_total_str`** |
@@ -1780,7 +1884,7 @@ class CloudEdgeTCO:
 | **Cost Component**   | **Calculation**                                                                                           |                         **Annual Cost** |
 |:---------------------|:----------------------------------------------------------------------------------------------------------|----------------------------------------:|
 | **Hardware CAPEX**   | `{python} CloudEdgeTCO.server_cost_str` server ÷ `{python} CloudEdgeTCO.server_life_str`-year life        |     `{python} CloudEdgeTCO.e_capex_str` |
-| **Power (24/7)**     | `{python} CloudEdgeTCO.power_str` $\times$ 8,760 hrs $\times$ `{python} CloudEdgeTCO.electricity_str`/kWh |     `{python} CloudEdgeTCO.e_power_str` |
+| **Power (24/7)**     | `{python} CloudEdgeTCO.power_str` $\times$ `{python} CloudEdgeTCO.hours_per_year_str` hrs $\times$ `{python} CloudEdgeTCO.electricity_str`/kWh |     `{python} CloudEdgeTCO.e_power_str` |
 | **Cooling overhead** | ~30 percent of power                                                                                      |      `{python} CloudEdgeTCO.e_cool_str` |
 | **Network (fiber)**  | Fixed line for remote management                                                                          |       `{python} CloudEdgeTCO.e_net_str` |
 | **DevOps labor**     | `{python} CloudEdgeTCO.devops_fte_str` FTE $\times$ `{python} CloudEdgeTCO.devops_salary_str` salary      |     `{python} CloudEdgeTCO.e_labor_str` |
@@ -1797,7 +1901,7 @@ class CloudEdgeTCO:
 **Break-even Analysis**\index{Break-Even Analysis!edge vs. cloud utilization}: @eq-edge-breakeven determines when edge deployment becomes cost-effective. **Edge Fixed Costs** include hardware amortization and maintenance, **Cloud Variable Cost per Unit** is the per-inference cloud pricing, and **Capacity** is the maximum inference rate of the edge system:
 $$\text{Break-even utilization} = \frac{\text{Edge Fixed Costs}}{\text{Cloud Variable Cost per Unit} \times \text{Capacity}}$$ {#eq-edge-breakeven}
 
-At low volume (<500K inferences/day), cloud wins due to no fixed costs. At high, steady volume (>1M/day), edge wins by ~`{python} CloudEdgeTCO.edge_savings_str`. The crossover occurs around **60 percent sustained utilization**.
+Under this steady-capacity scenario, edge reaches cost parity at roughly `{python} CloudEdgeTCO.breakeven_requests_str` inferences/day, or about `{python} CloudEdgeTCO.breakeven_utilization_str` of the 1M/day operating point. At high, steady volume, edge wins by ~`{python} CloudEdgeTCO.edge_savings_str`; below the crossover, cloud elasticity usually wins.
 
 **Key insight**: Edge TCO is dominated by **labor** (`{python} CloudEdgeTCO.labor_pct_str`), not hardware. Organizations without existing DevOps capacity should factor in the full cost of maintaining on-premise infrastructure.
 
@@ -2067,7 +2171,7 @@ The benefits of lower bandwidth usage and reduced latency become stark when we e
 # │
 # │ Imports: mlsysim.core.constants (VIDEO_1080P_WIDTH, VIDEO_1080P_HEIGHT,
 # │          VIDEO_BYTES_PER_PIXEL_RGB, VIDEO_FPS_STANDARD, CLOUD_EGRESS_PER_GB,
-# │          MB, GB, second, MILLION), mlsysim.formulas (calc_monthly_egress_cost)
+# │          MB, GB, KB, second, MILLION, USD), mlsysim.formulas (calc_monthly_egress_cost)
 # │ Exports: BandwidthBottleneck.cam_rate_mbs_str,
 # │          BandwidthBottleneck.total_rate_gbs_str,
 # │          BandwidthBottleneck.monthly_cost_m_str,
@@ -2078,14 +2182,17 @@ The benefits of lower bandwidth usage and reduced latency become stark when we e
 # │          BandwidthBottleneck.egress_cost_str,
 # │          BandwidthBottleneck.video_width_str,
 # │          BandwidthBottleneck.video_height_str,
-# │          BandwidthBottleneck.bytes_per_pixel_str
+# │          BandwidthBottleneck.bytes_per_pixel_str,
+# │          BandwidthBottleneck.metadata_events_per_sec_str,
+# │          BandwidthBottleneck.metadata_kb_per_event_str,
+# │          BandwidthBottleneck.metadata_reduction_x_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim import Hardware, Systems
+from mlsysim import Systems
 from mlsysim.core.formulas import calc_monthly_egress_cost
-from mlsysim.fmt import fmt_percent, fmt, check
+from mlsysim.fmt import fmt, check
 from mlsysim.core.constants import (
     VIDEO_1080P_WIDTH, VIDEO_1080P_HEIGHT, VIDEO_BYTES_PER_PIXEL_RGB,
-    VIDEO_FPS_STANDARD, CLOUD_EGRESS_PER_GB, MB, GB, KB, byte, second, MILLION, USD,
+    VIDEO_FPS_STANDARD, CLOUD_EGRESS_PER_GB, MB, GB, KB, second, MILLION, USD,
 )
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -2140,37 +2247,6 @@ class BandwidthBottleneck:
     video_width_str = fmt(width, precision=0, commas=False)
     video_height_str = fmt(height, precision=0, commas=False)
     bytes_per_pixel_str = fmt(bpp, precision=0, commas=False)
-
-class DataLocalityInvariant:
-    """
-    Namespace for Data Locality Invariant.
-    Scenario: 4K video stream vs. Cloud offload.
-    """
-    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    width = 3840
-    height = 2160
-    bpp = 3
-    fps = 60
-    net_bw_mbps = 100 # Home broadband
-    cloud_lat_ms = 100
-    edge_inf_ms = 10
-
-    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    frame_mb = (width * height * bpp * byte).m_as(MB)
-    tx_time_ms = (frame_mb * 8 / net_bw_mbps) * 1000
-    remote_total_ms = cloud_lat_ms + edge_inf_ms
-
-    # Step 1: Decision
-    must_be_local = tx_time_ms > remote_total_ms
-
-    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(must_be_local, "4K video should require locality at 100Mbps!")
-
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frame_mb_str = fmt(frame_mb, precision=0)
-    tx_time_ms_str = fmt(tx_time_ms, precision=0)
-    remote_ms_str = fmt(remote_total_ms, precision=0)
-    net_bw_str = f"{net_bw_mbps}"
 ```
 
 ::: {.callout-notebook title="The bandwidth bottleneck"}
@@ -2188,7 +2264,47 @@ class DataLocalityInvariant:
 
 :::
 
-The preceding bandwidth calculation reveals why edge processing is mandatory for high-volume sensor deployments. For battery-powered edge devices (wireless cameras, drones, wearables), the constraint is even more severe: as "The Energy of Transmission" (@sec-ml-systems-bottleneck-principle-3514) established, radio transmission costs `{python} EnergyTransmission.ratio_str`$\times$ more energy than local inference, making cloud offloading physically impossible for battery-powered devices regardless of available bandwidth. @fig-energy-per-inference quantifies this asymmetry across deployment tiers.
+```{python}
+#| label: edge-energy-transmission-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ EDGE BENEFITS: ENERGY OF TRANSMISSION LOCAL RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Paragraph immediately below, bridging bandwidth to energy limits.
+# │
+# │ Goal: Keep the transmission-vs-compute energy ratio local to this edge section.
+# │ Show: Radio transmission remains orders of magnitude more expensive than local inference.
+# │ How: Recompute the same ratio from centralized energy constants.
+# │
+# │ Imports: mlsysim.core.constants, mlsysim.book (fmt, check)
+# │ Exports: EdgeEnergyTransmissionRecap.ratio_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import NETWORK_5G_ENERGY_PER_MB_MJ, ENERGY_MOBILENET_INF_MJ, MB, ureg
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class EdgeEnergyTransmissionRecap:
+    """Local recap for the radio-transmission energy penalty."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    data_size = 1.0 * MB
+    tx_energy_per_mb = NETWORK_5G_ENERGY_PER_MB_MJ
+    local_energy_op = ENERGY_MOBILENET_INF_MJ
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    cloud_energy_total = (data_size * tx_energy_per_mb).to(ureg.millijoule)
+    local_energy_total = local_energy_op
+    ratio = cloud_energy_total/local_energy_total
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(ratio.m_as("") >= 500,
+          f"Transmission should dominate local compute; got {ratio.m_as(''):.1f}x.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    ratio_str = fmt(ratio.m_as(""), precision=0, commas=True)
+```
+
+The preceding bandwidth calculation reveals why edge processing is mandatory for high-volume sensor deployments. For battery-powered edge devices (wireless cameras, drones, wearables), the constraint is even more severe: as "The Energy of Transmission" (@sec-ml-systems-bottleneck-principle-3514) established, radio transmission costs `{python} EdgeEnergyTransmissionRecap.ratio_str`$\times$ more energy than local inference, making cloud offloading physically impossible for battery-powered devices regardless of available bandwidth. @fig-energy-per-inference quantifies this asymmetry across deployment tiers.
 
 ::: {#fig-energy-per-inference fig-env="figure" fig-pos="htb" fig-cap="**Energy Per Inference Across Deployment Paradigms**: Full-system energy consumption per inference spans eight orders of magnitude, from ~10 µJ for TinyML keyword spotting to ~1 kJ for a cloud LLM query. This gap is not an engineering shortcoming—it reflects the physics of data movement, cooling, and network overhead that separates deployment tiers. The 100,000,000$\times$ difference explains why always-on sensing is only feasible at the TinyML tier." fig-alt="Horizontal log-scale bar chart showing energy per inference for five workloads across four deployment paradigms. TinyML keyword spotting at 10 microjoules, Mobile MobileNet at 50 millijoules, Edge ResNet-50 at 500 millijoules, Cloud ResNet-50 at 10 joules, and Cloud GPT-4 query at 1 kilojoule."}
 
@@ -2283,7 +2399,7 @@ plt.close()
 
 \index{Edge ML!distributed processing} \index{Edge ML!deployment challenges}
 \index{Edge ML!privacy benefits}
-Edge ML spans wearables, industrial sensors, and smart home appliances that process data locally[^fn-iot-data-wall] without depending on central servers. @fig-energy-per-inference quantifies the physical imperative: full-system energy per inference spans eight orders of magnitude across deployment paradigms, from ~10 µJ for a TinyML keyword spotter to ~1 kJ for a cloud LLM query. This 100,000,000$\times$ gap is not an engineering shortcoming to be optimized away; it reflects the irreducible costs of data movement, cooling, and network overhead that separate deployment tiers. Because edge devices operate within tight power envelopes, their memory bandwidth of 25--100 GB/s constrains deployable models to 100 MB--1 GB of parameters. This constraint, in turn, motivates the optimization techniques covered in @sec-model-compression, which achieve 2--4$\times$ speedup by compressing models to fit within these hardware budgets. The payoff extends beyond compute: processing 1000 raw camera feeds locally avoids terabit-scale uplink requirements because raw data never leaves the device, reducing cloud expenses by \$10,000--100,000 annually.
+Edge ML spans wearables, industrial sensors, and smart home appliances that process data locally[^fn-iot-data-wall] without depending on central servers. @fig-energy-per-inference quantifies the physical imperative: full-system energy per inference spans eight orders of magnitude across deployment paradigms, from ~10 µJ for a TinyML keyword spotter to ~1 kJ for a cloud LLM query. This 100,000,000$\times$ gap is not an engineering shortcoming to be optimized away; it reflects the irreducible costs of data movement, cooling, and network overhead that separate deployment tiers. Because edge devices operate within tight power envelopes, their memory bandwidth of 25--100 GB/s constrains deployable models to 100 MB--1 GB of parameters. This constraint, in turn, motivates the optimization techniques covered in @sec-model-compression, which achieve 2--4$\times$ speedup by compressing models to fit within these hardware budgets. The payoff extends beyond compute: processing raw camera feeds locally can avoid terabit-scale uplink requirements because raw data never leaves the device, reducing recurring cloud-transfer, storage, and processing costs.
 
 [^fn-iot-data-wall]: **IoT Data Wall**: Connected devices are projected to exceed 25 billion by 2030 [@mckinsey2021iot], each generating continuous sensor streams. The aggregate $D_{\text{vol}}$ from these devices already exceeds global network $\text{BW}$ capacity for centralized ingestion, making local edge processing not an optimization but a physical necessity: the data simply cannot all reach the cloud. \index{IoT!Data Wall}
 
@@ -2301,6 +2417,57 @@ $$\text{Data Locality} \iff \frac{D_{\text{vol}}}{\text{BW}_{\text{net}}} > L_{\
 3.  **Common pitfall**: A frequent misconception is that 5G/6G "solves" locality. While these improve $\text{BW}_{\text{net}}$, they do not reduce $L_{\text{net}}$ below the light barrier, meaning latency-critical tasks remain inherently local.
 
 :::
+
+```{python}
+#| echo: false
+#| label: data-locality-invariant-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DATA LOCALITY INVARIANT: DRONE OFFLOAD CALCULATION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "Napkin math: The locality crossover" callout immediately below.
+# │
+# │ Goal: Quantify when a high-rate vision workload must stay local.
+# │ Show: A 4K frame takes longer to transmit than the remote response budget.
+# │ How: Compare frame transmission time over 100 Mbps with cloud RTT + compute.
+# │
+# │ Imports: mlsysim.core.constants (MB, byte), mlsysim.book (fmt, check)
+# │ Exports: DataLocalityInvariant.frame_mb_str,
+# │          DataLocalityInvariant.tx_time_ms_str,
+# │          DataLocalityInvariant.remote_ms_str,
+# │          DataLocalityInvariant.net_bw_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import MB, byte
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class DataLocalityInvariant:
+    """
+    Namespace for the data locality invariant worked example.
+    Scenario: 4K video stream vs. cloud offload.
+    """
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    width = 3840
+    height = 2160
+    bpp = 3
+    net_bw_mbps = 100  # home broadband uplink
+    cloud_lat_ms = 100
+    remote_compute_ms = 10
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    frame_mb = (width * height * bpp * byte).m_as(MB)
+    tx_time_ms = (frame_mb * 8 / net_bw_mbps) * 1000
+    remote_total_ms = cloud_lat_ms + remote_compute_ms
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(tx_time_ms > remote_total_ms, "4K video should require locality at 100 Mbps.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    frame_mb_str = fmt(frame_mb, precision=0)
+    tx_time_ms_str = fmt(tx_time_ms, precision=0)
+    remote_ms_str = fmt(remote_total_ms, precision=0)
+    net_bw_str = f"{net_bw_mbps}"
+```
 
 ::: {.callout-notebook title="Napkin math: The locality crossover"}
 
@@ -2522,7 +2689,7 @@ The Industrial IoT[^fn-industry40-feedback] uses edge ML for applications where 
 
 Smart buildings use edge ML to optimize energy consumption while maintaining operational continuity during network outages. Commercial buildings equipped with edge-based building management systems process data from thousands of sensors monitoring temperature, occupancy, air quality, and energy usage. This reduces cloud transmission requirements by an order of magnitude or more while enabling sub-second response times. Healthcare applications similarly use edge ML for patient monitoring and surgical assistance, maintaining HIPAA compliance through local processing while supporting low-latency workflows for real-time guidance.
 
-These applications share a common assumption: the edge device is stationary and plugged into wall power. Recall the iron law (@eq-iron-law-extended): edge deployment eliminated the $D_{\text{vol}}/\text{BW}_{\text{IO}}$ network term that dominated cloud inference, but it still assumes unlimited energy. A factory edge server consuming 500 W around the clock is unremarkable when connected to mains power. Billions of users, however, carry their computing devices with them, and those devices run on fixed battery budgets. When we shift from stationary edge infrastructure to the smartphone in a user's pocket, a new term enters the optimization: $\text{Energy} = \text{Power} \times T$. The dominant constraint changes from latency to *energy per inference*, and with it, the entire engineering calculus.
+These applications share a common assumption: the edge device is stationary and plugged into wall power. Recall the iron law (@eq-iron-law-extended): edge deployment eliminated the $D_{\text{vol}}/\text{BW}_{\text{IO}}$ network term that dominated cloud inference, but it still assumes unlimited energy. A factory edge server consuming hundreds of watts around the clock is unremarkable when connected to mains power. Billions of users, however, carry their computing devices with them, and those devices run on fixed battery budgets. When we shift from stationary edge infrastructure to the smartphone in a user's pocket, a new term enters the optimization: $\text{Energy} = \text{Power} \times T$. The dominant constraint changes from latency to *energy per inference*, and with it, the entire engineering calculus.
 
 [^fn-amazon-go-edge]: **Amazon Go**: The system's use of local edge servers is a direct response to the immense data volume from hundreds of in-store cameras. This architecture avoids having to upload the raw video—which would saturate a multi-gigabit uplink—while also keeping sensitive customer footage on-premises. The edge-first design is necessitated by the sheer scale of data processed, which can exceed 1 TB per hour in a single store. \index{Amazon Go!bandwidth constraint}
 
@@ -2536,12 +2703,51 @@ These applications share a common assumption: the edge device is stationary and 
 
 Mobile ML addresses this challenge by integrating machine learning directly into portable devices like smartphones and tablets, providing users with real-time, personalized capabilities. This paradigm excels when user privacy, offline operation, and immediate responsiveness matter more than computational sophistication, supporting applications such as voice recognition, computational photography[^fn-computational-photo-ml], and health monitoring while maintaining data privacy through on-device computation. These battery-powered devices must balance performance with power efficiency and thermal management, making them suited to frequent, short-duration AI tasks.
 
+```{python}
+#| label: mobile-efficiency-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MOBILE EFFICIENCY: LOCAL MODEL AND TDP RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Mobile ML opening constraint paragraph and footnotes below.
+# │
+# │ Goal: Keep MobileNet efficiency and mobile TDP references local to the prose.
+# │ Show: MobileNet FLOP reduction and passive mobile thermal envelope.
+# │ How: Recompute MobileNet-vs-ResNet reduction and read the mobile TDP range.
+# │
+# │ Imports: mlsysim.Models, mlsysim.core.constants, mlsysim.book (fmt, check)
+# │ Exports: MobileEfficiencyRecap.mobilenet_flops_reduction_str,
+# │          MobileEfficiencyRecap.mobile_tdp_range_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import RESNET50_FLOPs, MOBILE_TDP_RANGE_W
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class MobileEfficiencyRecap:
+    """Local recap for MobileNet efficiency and mobile thermal limits."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    m_mobilenet = Models.MobileNetV2
+    mobile_tdp_range = MOBILE_TDP_RANGE_W
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    mobilenet_flops_reduction = (RESNET50_FLOPs / m_mobilenet.inference_flops).m_as("")
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(mobilenet_flops_reduction > 10, "MobileNet reduction should be >10x vs ResNet.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    mobilenet_flops_reduction_str = fmt(mobilenet_flops_reduction, precision=0, commas=False)
+    mobile_tdp_range_str = mobile_tdp_range.replace("-", " to ")
+```
+
 \index{Depthwise Separable Convolution!power reduction}
-The mobile environment introduces a critical constraint absent from stationary deployments: *energy per inference* becomes a first-order design parameter. In the iron law (@eq-iron-law-extended), cloud and edge systems optimize for minimizing $T$, total latency. Mobile systems face an additional constraint: $\text{Energy} = \text{Power} \times T$, and the power wall (@eq-power-scaling) caps sustained power at `{python} LighthouseModels.mobile_tdp_range_str` W. In archetype terms, a compute beast workload like image classification must be transformed through architectural efficiency (for example, depthwise separable convolutions[^fn-depthwise-mobile-efficiency] in MobileNet) to become a compute beast (efficient), reducing FLOPs by `{python} LighthouseModels.mobilenet_flops_reduction_str`$\times$ while preserving accuracy. This is not merely optimization; it represents a qualitative shift in the arithmetic intensity trade-off, accepting lower peak throughput in exchange for sustainable operation within a `{python} LighthouseModels.mobile_tdp_range_str` W thermal envelope.
+The mobile environment introduces a critical constraint absent from stationary deployments: *energy per inference* becomes a first-order design parameter. In the iron law (@eq-iron-law-extended), cloud and edge systems optimize for minimizing $T$, total latency. Mobile systems face an additional constraint: $\text{Energy} = \text{Power} \times T$, and the power wall (@eq-power-scaling) caps sustained power at `{python} MobileEfficiencyRecap.mobile_tdp_range_str` W. In archetype terms, a compute beast workload like image classification must be transformed through architectural efficiency (for example, depthwise separable convolutions[^fn-depthwise-mobile-efficiency] in MobileNet) to become a compute beast (efficient), reducing FLOPs by `{python} MobileEfficiencyRecap.mobilenet_flops_reduction_str`$\times$ while preserving accuracy. This is not merely optimization; it represents a qualitative shift in the arithmetic intensity trade-off, accepting lower peak throughput in exchange for sustainable operation within a `{python} MobileEfficiencyRecap.mobile_tdp_range_str` W thermal envelope.
 
-[^fn-computational-photo-ml]: **Computational Photography**: Uses ML algorithms (for example, multi-frame fusion, neural denoising) to overcome the physical limits of small mobile camera sensors. This exemplifies the mobile computing trade-off, as a pipeline of 10–15 models must execute within the user's perceived shutter delay (~200 ms) while adhering to a strict, shared `{python} LighthouseModels.mobile_tdp_range_str` W thermal budget. \index{Computational Photography!pipeline constraint}
+[^fn-computational-photo-ml]: **Computational Photography**: Uses ML algorithms (for example, multi-frame fusion, neural denoising) to overcome the physical limits of small mobile camera sensors. This exemplifies the mobile computing trade-off, as a pipeline of 10–15 models must execute within the user's perceived shutter delay (~200 ms) while adhering to a strict, shared `{python} MobileEfficiencyRecap.mobile_tdp_range_str` W thermal budget. \index{Computational Photography!pipeline constraint}
 
-[^fn-depthwise-mobile-efficiency]: **Depthwise Separable Convolutions**: An architectural factorization that splits a standard convolution into a depthwise spatial filter and a pointwise channel mixer, reducing FLOPs by 8--9$\times$ for typical layer configurations. This reduction is not merely an efficiency improvement but a prerequisite for real-time vision on mobile devices, where the power wall caps sustained computation at `{python} LighthouseModels.mobile_tdp_range_str` W. \index{Depthwise Separable Convolution!mobile power constraint}
+[^fn-depthwise-mobile-efficiency]: **Depthwise Separable Convolutions**: An architectural factorization that splits a standard convolution into a depthwise spatial filter and a pointwise channel mixer, reducing FLOPs by 8--9$\times$ for typical layer configurations. This reduction is not merely an efficiency improvement but a prerequisite for real-time vision on mobile devices, where the power wall caps sustained computation at `{python} MobileEfficiencyRecap.mobile_tdp_range_str` W. \index{Depthwise Separable Convolution!mobile power constraint}
 
 We define this paradigm formally as *Mobile ML*.
 
@@ -2549,7 +2755,7 @@ We define this paradigm formally as *Mobile ML*.
 
 ***Mobile Machine Learning***\index{Mobile Machine Learning!definition}\index{Mobile ML!definition} is the deployment paradigm bounded by **Thermal Design Power (TDP)**\index{TDP!mobile constraint} and battery energy.
 
-1.  **Significance (quantitative)**: It is constrained by the heat dissipation capacity of passive cooling (typically 2–3 W), requiring architectures that prioritize sustained energy efficiency over peak throughput $(R_{\text{peak}})$.
+1.  **Significance (quantitative)**: It is constrained by the few-watt heat dissipation capacity of passive cooling, requiring architectures that prioritize sustained energy efficiency over peak throughput $(R_{\text{peak}})$.
 2.  **Distinction (durable)**: Unlike **Edge ML**, which may have active cooling, mobile ML must operate within a **Personal Energy Budget**. Unlike **TinyML**, it still provides a rich OS and multi-watt compute capacity.
 3.  **Common pitfall**: A frequent misconception is that mobile ML performance is a fixed value. In reality, it is a **Time-Varying Constraint**: performance often drops as the device hits its **thermal wall**, triggering throttling that reduces the duty cycle $(\eta_{\text{hw}})$.
 
@@ -2647,8 +2853,8 @@ The battery life and resource constraints listed earlier translate directly into
 # │          BatteryTax.runtime_frac
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware
-from mlsysim.core.constants import OBJECT_DETECTOR_POWER_W, ureg
-from mlsysim.fmt import md_frac, fmt_percent, fmt
+from mlsysim.core.constants import OBJECT_DETECTOR_POWER_W, HOURS_PER_DAY, ureg
+from mlsysim.fmt import md_frac, fmt_percent, fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class BatteryTax:
@@ -2664,11 +2870,13 @@ class BatteryTax:
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     battery_wh = phone.battery_capacity.to(ureg.Wh)
     runtime_hours = (battery_wh/power_draw).to(ureg.hour)
-    daily_budget_pct = (power_draw * runtime_hours) / battery_wh * 100
+    full_day_energy = power_draw * HOURS_PER_DAY * ureg.hour
+    daily_budget_pct = (full_day_energy / battery_wh) * 100
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(runtime_hours.m_as(ureg.hour) < 24, "Narrative Violation: Battery now lasts more than a day with continuous ML!")
     check(runtime_hours.m_as(ureg.hour) < 8, f"Narrative Violation: Battery lasts too long ({runtime_hours:.1f}h) for the 'few hours' narrative.")
+    check(daily_budget_pct.m_as("") > 100, "Always-on detector should exceed a full-day phone battery budget.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     runtime_str = fmt(runtime_hours.m_as(ureg.hour), precision=1, commas=False)
@@ -2686,7 +2894,7 @@ class BatteryTax:
 **Physics**:
 
 1.  **Ideal runtime**: `{python} BatteryTax.runtime_frac`
-2.  **The reality**: A user expects their phone to last 24 hours. The single feature has just consumed **`{python} BatteryTax.budget_pct_str` percent** of the entire daily energy budget in a few hours.
+2.  **The reality**: A user expects their phone to last 24 hours. Running this single feature continuously for a day would require **`{python} BatteryTax.budget_pct_str` percent** of the phone's daily energy budget.
 
 **Engineering conclusion**: The model cannot simply be "deployed." The techniques in @sec-model-compression (quantization, duty-cycling) must reduce power to **<100 mW** for the feature to stay on all day.
 
@@ -2713,20 +2921,39 @@ The battery constraint limits total energy consumption over time. However, even 
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim.fmt import fmt_percent, fmt, check
+from mlsysim.core.constants import MOBILE_TDP_W, watt
 
 # ┌── LEGO ───────────────────────────────────────────────
 class ThermalQuantCalc:
     """Namespace for Thermal Quant Calc."""
 
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     baseline_power_w_value = 12                                                      # W, unoptimized LLM power
     quant_reduction_value = 4                                                        # FP32→INT8 power reduction
+    mobile_tdp_w_value = MOBILE_TDP_W.m_as(watt)
+    temp_rise_c_per_s_value = 1
+    trip_time_s_value = 60
+    trip_temp_c_value = 80
+    fps_before_value = 100
+    fps_after_value = 30
 
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     quant_power_w_value = baseline_power_w_value/quant_reduction_value             # 12W / 4 = 3W
 
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(abs(quant_power_w_value - mobile_tdp_w_value) < 0.1,
+          f"Quantized power ({quant_power_w_value}W) should land near the mobile TDP ({mobile_tdp_w_value}W).")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     baseline_str = fmt(baseline_power_w_value, precision=0, commas=False)            # e.g. "12" W
+    mobile_tdp_str = fmt(mobile_tdp_w_value, precision=0, commas=False)              # e.g. "3" W
     quant_power_str = fmt(quant_power_w_value, precision=0, commas=False)            # e.g. "3" W
     quant_red_str = fmt(quant_reduction_value, precision=0, commas=False)            # e.g. "4" ×
+    temp_rise_str = fmt(temp_rise_c_per_s_value, precision=0, commas=False)
+    trip_time_str = fmt(trip_time_s_value, precision=0, commas=False)
+    trip_temp_str = fmt(trip_temp_c_value, precision=0, commas=False)
+    fps_before_str = fmt(fps_before_value, precision=0, commas=False)
+    fps_after_str = fmt(fps_after_value, precision=0, commas=False)
 ```
 
 ::: {.callout-notebook title="The thermal wall"}
@@ -2735,10 +2962,10 @@ class ThermalQuantCalc:
 
 **Physics**:
 
-1. **Thermal design power (TDP)**: A mobile system on chip (SoC) allows $\approx \mathbf{3 \text{ W}}$ for passive cooling.
-2. **Temperature rise**: At `{python} ThermalQuantCalc.baseline_str` W, the device temperature rises at $\approx 1^\circ\text{C}$ per second.
-3. **Thermal trip**: Within 60 seconds, the hardware reaches the **Thermal Trip Point**\index{Thermal Trip Point!hardware safety} ($80^\circ\text{C}$), triggering OS throttling.
-4. **Result**: The 100 FPS model suddenly drops to **30 FPS** to avoid melting the hardware.
+1. **Thermal design power (TDP)**: A mobile system on chip (SoC) allows approximately **`{python} ThermalQuantCalc.mobile_tdp_str` W** for passive cooling.
+2. **Temperature rise**: At `{python} ThermalQuantCalc.baseline_str` W, the device temperature rises at approximately `{python} ThermalQuantCalc.temp_rise_str`$^\circ$C per second.
+3. **Thermal trip**: Within `{python} ThermalQuantCalc.trip_time_str` seconds, the hardware reaches the **Thermal Trip Point**\index{Thermal Trip Point!hardware safety} (`{python} ThermalQuantCalc.trip_temp_str`$^\circ\text{C}$), triggering OS throttling.
+4. **Result**: The `{python} ThermalQuantCalc.fps_before_str` FPS model suddenly drops to **`{python} ThermalQuantCalc.fps_after_str` FPS** to stay within the thermal envelope.
 
 **Engineering conclusion**: Quantization from FP32 to INT8 reduces power by approximately `{python} ThermalQuantCalc.quant_red_str`$\times$, but with a baseline of `{python} ThermalQuantCalc.baseline_str` W the result is still `{python} ThermalQuantCalc.quant_power_str` W---the absolute limit of the hardware. Physics sets a hard ceiling that no optimization can exceed.
 
@@ -2782,10 +3009,74 @@ class MobileBatteryCapacity:
     phone_battery_str = fmt(phone_battery_wh, precision=0)
 ```
 
+```{python}
+#| label: mobile-resource-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MOBILE RESOURCE CONSTRAINTS: LOCAL HARDWARE RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Mobile ML resource-constraints paragraph immediately below.
+# │
+# │ Goal: Keep mobile RAM, storage, NPU, bandwidth, TDP, and latency refs local.
+# │ Show: Representative smartphone resource ranges and UI latency budget.
+# │ How: Recompute phone NPU/bandwidth ranges from representative hardware twins.
+# │
+# │ Imports: mlsysim.Hardware, mlsysim.core.constants, mlsysim.book (fmt, check)
+# │ Exports: MobileResourceRecap.mobile_*_str values used below
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Hardware
+from mlsysim.core.constants import (
+    MOBILE_RAM_RANGE_GB, MOBILE_STORAGE_RANGE, MOBILE_LATENCY_RANGE_MS,
+    MOBILE_TDP_RANGE_W, TFLOPs, GB, second,
+)
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class MobileResourceRecap:
+    """Local recap for smartphone hardware constraints."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    representative_phones = [
+        Hardware.Mobile.Pixel8,
+        Hardware.Mobile.iPhone15Pro,
+        Hardware.Mobile.Snapdragon8Gen3,
+    ]
+    mobile_ram_range = MOBILE_RAM_RANGE_GB
+    mobile_storage_range = MOBILE_STORAGE_RANGE
+    mobile_latency_range = MOBILE_LATENCY_RANGE_MS
+    mobile_tdp_range = MOBILE_TDP_RANGE_W
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    mobile_npu_tops_values = [
+        phone.compute.peak_flops.m_as(TFLOPs/second)
+        for phone in representative_phones
+    ]
+    mobile_bw_gbs_values = [
+        phone.memory.bandwidth.m_as(GB/second)
+        for phone in representative_phones
+    ]
+    mobile_npu_min = min(mobile_npu_tops_values)
+    mobile_npu_max = max(mobile_npu_tops_values)
+    mobile_bw_min = min(mobile_bw_gbs_values)
+    mobile_bw_max = max(mobile_bw_gbs_values)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(mobile_npu_max > mobile_npu_min, "Mobile NPU range collapsed to a single value.")
+    check(mobile_bw_max > mobile_bw_min, "Mobile bandwidth range collapsed to a single value.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    mobile_ram_range_str = mobile_ram_range
+    mobile_storage_range_str = mobile_storage_range
+    mobile_npu_range_str = f"{fmt(mobile_npu_min, precision=0, commas=False)}-{fmt(mobile_npu_max, precision=0, commas=False)}"
+    mobile_bw_range_str = f"{fmt(mobile_bw_min, precision=0, commas=False)}-{fmt(mobile_bw_max, precision=0, commas=False)}"
+    mobile_tdp_range_str = mobile_tdp_range.replace("-", " to ")
+    mobile_latency_range_str = mobile_latency_range
+```
+
 \index{Mobile ML!NPU inference} \index{Mobile ML!memory bandwidth limits} \index{Neural Processing Unit!mobile devices}
 \index{On-Device ML Frameworks!mobile deployment}
 \index{System-on-Chip!mobile architecture}
-Mobile devices exemplify intermediate constraints: `{python} MobileHardwareSpecs.mobile_ram_range_str` GB RAM (varying from mid-range to flagship), `{python} MobileHardwareSpecs.mobile_storage_range_str` storage, `{python} MobileHardwareSpecs.mobile_npu_range_str` TOPS AI compute through Neural Processing Units[^fn-npu-energy-efficiency] consuming `{python} LighthouseModels.mobile_tdp_range_str` W power. System-on-Chip architectures[^fn-soc-integration] integrate computation and memory to minimize energy costs. Memory bandwidth of `{python} MobileHardwareSpecs.mobile_bw_range_str` GB/s limits models to 10–100 MB parameters, requiring the aggressive optimization techniques that @sec-model-compression details. Battery constraints (`{python} MobileBatteryCapacity.phone_battery_str`–22 Wh capacity) make energy optimization critical: adding 1 W of continuous ML processing to a phone that otherwise lasts 24 hours would reduce runtime to roughly 9–14 hours, depending on battery capacity. Specialized frameworks provide hardware-optimized inference enabling <`{python} MLSystemsSetup.mobile_latency_range_str` ms UI response times.
+Mobile devices exemplify intermediate constraints: `{python} MobileResourceRecap.mobile_ram_range_str` GB RAM (varying from mid-range to flagship), `{python} MobileResourceRecap.mobile_storage_range_str` storage, `{python} MobileResourceRecap.mobile_npu_range_str` TOPS AI compute through Neural Processing Units[^fn-npu-energy-efficiency] consuming `{python} MobileResourceRecap.mobile_tdp_range_str` W power. System-on-Chip architectures[^fn-soc-integration] integrate computation and memory to minimize energy costs. Memory bandwidth of `{python} MobileResourceRecap.mobile_bw_range_str` GB/s limits models to 10–100 MB parameters, requiring the aggressive optimization techniques that @sec-model-compression details. Battery constraints (`{python} MobileBatteryCapacity.phone_battery_str`–22 Wh capacity) make energy optimization critical: adding 1 W of continuous ML processing to a phone that otherwise lasts 24 hours would reduce runtime to roughly 9–14 hours, depending on battery capacity. Specialized frameworks provide hardware-optimized inference enabling <`{python} MobileResourceRecap.mobile_latency_range_str` ms UI response times.
 
 [^fn-soc-integration]: **System-on-Chip (SoC)**: By integrating CPU, GPU, and NPU cores with shared memory on a single die, the physical energy cost of data movement is minimized. This tight integration imposes the memory bandwidth constraint that limits mobile models to a 10--100 MB scale. The design is mandatory for battery life because accessing off-chip memory consumes over 100$\times$ more energy than on-chip access. \index{SoC!energy integration}
 
@@ -2799,17 +3090,58 @@ These benefits require accepting tight resource constraints. Compared to cloud d
 
 ### Personal assistant and media processing {#sec-ml-systems-personal-assistant-media-processing-98d7}
 
-\index{Mobile ML!computational photography} \index{Mobile ML!voice recognition} \index{Mobile ML!health monitoring}Mobile ML has achieved success across diverse applications for billions of users worldwide, and the engineering constraints behind these applications illustrate the battery and thermal trade-offs that define this paradigm. Computational photography exemplifies the challenge of running multiple ML pipelines within a thermal envelope. Modern flagships process every photo through 10–15 distinct ML models in real-time: portrait mode[^fn-portrait-mode-pipeline] uses depth estimation and segmentation, night mode captures and aligns 9-15 frames with ML-based denoising, and HDR merging, super-resolution, and scene optimization run in sequence. The engineering challenge is not any individual model but the *pipeline*: these models must share a `{python} LighthouseModels.mobile_tdp_range_str` W power budget and complete within the user's perceived shutter delay, requiring careful scheduling across CPU, GPU, and NPU to avoid thermal throttling.
+\index{Mobile ML!computational photography} \index{Mobile ML!voice recognition} \index{Mobile ML!health monitoring}Mobile ML has achieved success across diverse applications for billions of users worldwide, and the engineering constraints behind these applications illustrate the battery and thermal trade-offs that define this paradigm. Computational photography exemplifies the challenge of running multiple ML pipelines within a thermal envelope. Modern flagships process every photo through 10–15 distinct ML models in real-time: portrait mode[^fn-portrait-mode-pipeline] uses depth estimation and segmentation, night mode captures and aligns 9-15 frames with ML-based denoising, and HDR merging, super-resolution, and scene optimization run in sequence. The engineering challenge is not any individual model but the *pipeline*: these models must share a `{python} MobileResourceRecap.mobile_tdp_range_str` W power budget and complete within the user's perceived shutter delay, requiring careful scheduling across CPU, GPU, and NPU to avoid thermal throttling.
 
 Voice-driven interactions demonstrate mobile ML's layered architecture. Wake-word detection runs continuously at under 1 mW on a dedicated low-power core, speech recognition operates on the NPU at under 10 ms latency, and keyboard prediction uses context-aware neural models to reduce typing effort by 30–40 percent. Each layer operates at a different power tier, illustrating how mobile ML partitions workloads across heterogeneous processing units within a single SoC.
 
 Health monitoring and augmented reality push mobile ML to its sustained-performance limits. Wearables like Apple Watch process ECG and accelerometer data entirely on-device to maintain HIPAA compliance, while AR frameworks demand consistent sub-16 ms frame times at 60 FPS for simultaneous localization, hand tracking, and scene understanding. These applications represent the ceiling of what battery-powered, passively-cooled devices can sustain, and they define the boundary beyond which mobile optimization alone is insufficient.
 
-[^fn-portrait-mode-pipeline]: **Portrait Mode Pipeline**: This is not a single model but a sequence of real-time models for depth estimation, segmentation, and rendering. The core engineering problem is managing the *pipeline's* aggregate latency and power, not any single model's performance. The entire 10–15 model stack must execute within the user's perceived shutter delay and share the phone's `{python} LighthouseModels.mobile_tdp_range_str` W thermal budget, forcing scheduling trade-offs across the CPU, GPU, and NPU to avoid throttling. \index{Portrait Mode!pipeline latency}
+[^fn-portrait-mode-pipeline]: **Portrait Mode Pipeline**: This is not a single model but a sequence of real-time models for depth estimation, segmentation, and rendering. The core engineering problem is managing the *pipeline's* aggregate latency and power, not any single model's performance. The entire 10–15 model stack must execute within the user's perceived shutter delay and share the phone's `{python} MobileResourceRecap.mobile_tdp_range_str` W thermal budget, forcing scheduling trade-offs across the CPU, GPU, and NPU to avoid throttling. \index{Portrait Mode!pipeline latency}
 
-These successes can create a misleading sense of ease. A common pitfall involves attempting to deploy desktop-trained models directly to mobile or edge devices without architecture modifications. Models developed on powerful workstations often fail when deployed to resource-constrained devices. A desktop ResNet-50 pipeline may require gigabytes once activations, batches, preprocessing buffers, and runtime overhead are included, even though the FP32 weights alone are about `{python} ResnetSetup.resnet_fp32_mb_str` MB. Such a pipeline, with `{python} ResnetSetup.resnet_gflops_str` billion FLOPs per inference, cannot run unchanged on a device with 512 MB of RAM and a 1 GFLOP/s processor. Beyond simple resource violations, desktop-optimized models may use operations unsupported by mobile hardware (specialized mathematical operations), assume floating-point precision unavailable on embedded systems, or require batch processing incompatible with single-sample inference. Successful deployment demands architecture-aware design from the beginning, including specialized architectural techniques for mobile devices such as MobileNet's depthwise separable convolutions [@howard2017mobilenets] (detailed in @sec-network-architectures), integer-only operations for microcontrollers, and optimization strategies that maintain accuracy while reducing computation.
+```{python}
+#| label: mobile-resnet-pitfall-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MOBILE PITFALL: LOCAL RESNET-50 FOOTPRINT RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Desktop-trained model pitfall paragraph immediately below.
+# │
+# │ Goal: Keep ResNet-50 size and FLOP refs local to the mobile pitfall.
+# │ Show: FP32 weight footprint and per-inference compute cost.
+# │ How: Recompute from centralized ResNet constants.
+# │
+# │ Imports: mlsysim.core.constants, mlsysim.book (fmt, check)
+# │ Exports: MobileResnetPitfallRecap.resnet_fp32_mb_str,
+# │          MobileResnetPitfallRecap.resnet_gflops_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import RESNET50_FLOPs, RESNET50_PARAMS, GFLOPs, byte, MB
+from mlsysim.fmt import fmt, check
 
-Mobile ML demonstrates that useful intelligence can operate within a `{python} LighthouseModels.mobile_tdp_range_str` W thermal envelope on battery power. However, smartphones still cost hundreds of dollars, require gigabytes of memory, and demand user attention to recharge daily. These requirements make them unsuitable for a vast class of applications: monitoring soil moisture across a thousand-acre farm, detecting structural stress in bridge cables, or listening for endangered species in a remote forest. These scenarios demand not just lower power but a qualitatively different engineering regime, one where the device costs dollars instead of hundreds, memory is measured in kilobytes instead of gigabytes, and the system runs unattended for months or years. Mobile optimization techniques such as quantization and depthwise separable convolutions help, but they cannot bridge a 10,000-fold gap in available memory. What is needed is not a scaled-down smartphone but an entirely different class of hardware and algorithms.
+# ┌── LEGO ───────────────────────────────────────────────
+class MobileResnetPitfallRecap:
+    """Local recap for ResNet-50 mobile deployment pitfalls."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    resnet_params = RESNET50_PARAMS
+    resnet_flops = RESNET50_FLOPs
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    resnet_fp32_bytes_value = resnet_params.m_as('param') * 4 * byte
+    resnet_gflops_value = resnet_flops.m_as(GFLOPs)
+    resnet_fp32_mb_value = resnet_fp32_bytes_value.m_as(MB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(resnet_fp32_mb_value >= 90, f"ResNet-50 FP32 size should be near 100 MB; got {resnet_fp32_mb_value:.0f} MB.")
+    check(resnet_gflops_value >= 4, f"ResNet-50 compute should be about 4 GFLOPs; got {resnet_gflops_value:.1f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    resnet_fp32_mb_str = fmt(resnet_fp32_mb_value, precision=0, commas=False)
+    resnet_gflops_str = fmt(resnet_gflops_value, precision=1, commas=False)
+```
+
+These successes can create a misleading sense of ease. A common pitfall involves attempting to deploy desktop-trained models directly to mobile or edge devices without architecture modifications. Models developed on powerful workstations often fail when deployed to resource-constrained devices. A desktop ResNet-50 pipeline may require gigabytes once activations, batches, preprocessing buffers, and runtime overhead are included, even though the FP32 weights alone are about `{python} MobileResnetPitfallRecap.resnet_fp32_mb_str` MB. Such a pipeline, with `{python} MobileResnetPitfallRecap.resnet_gflops_str` billion FLOPs per inference, cannot run unchanged on a device with 512 MB of RAM and a 1 GFLOP/s processor. Beyond simple resource violations, desktop-optimized models may use operations unsupported by mobile hardware (specialized mathematical operations), assume floating-point precision unavailable on embedded systems, or require batch processing incompatible with single-sample inference. Successful deployment demands architecture-aware design from the beginning, including specialized architectural techniques for mobile devices such as MobileNet's depthwise separable convolutions [@howard2017mobilenets] (detailed in @sec-network-architectures), integer-only operations for microcontrollers, and optimization strategies that maintain accuracy while reducing computation.
+
+Mobile ML demonstrates that useful intelligence can operate within a `{python} MobileResourceRecap.mobile_tdp_range_str` W thermal envelope on battery power. However, smartphones still cost hundreds of dollars, require gigabytes of memory, and demand user attention to recharge daily. These requirements make them unsuitable for a vast class of applications: monitoring soil moisture across a thousand-acre farm, detecting structural stress in bridge cables, or listening for endangered species in a remote forest. These scenarios demand not just lower power but a qualitatively different engineering regime, one where the device costs dollars instead of hundreds, memory is measured in kilobytes instead of gigabytes, and the system runs unattended for months or years. Mobile optimization techniques such as quantization and depthwise separable convolutions help, but they cannot bridge a 10,000-fold gap in available memory. What is needed is not a scaled-down smartphone but an entirely different class of hardware and algorithms.
 
 ## TinyML: Ubiquitous Sensing {#sec-ml-systems-tinyml-ubiquitous-sensing-scale-a67b}
 
@@ -3041,8 +3373,48 @@ Wake-word detection is the most familiar consumer application of TinyML. These s
 
 Precision agriculture exploits TinyML's economic advantages where traditional solutions prove cost-prohibitive [@vasisht2017farmbeats]. Deployments can instrument thousands of monitoring points with multi-year battery operation, transmitting summaries instead of raw sensor streams to reduce connectivity costs.
 
+```{python}
+#| label: wildlife-bandwidth-reduction-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ WILDLIFE MONITORING: RAW AUDIO VS DETECTION SUMMARY BANDWIDTH
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Wildlife conservation example immediately below.
+# │
+# │ Goal: Quantify how local TinyML audio analysis reduces satellite transfer.
+# │ Show: Raw audio summaries shrink from GB/day to KB/day, a >10,000x reduction.
+# │ How: Convert the raw daily audio and summary payloads to bytes and divide.
+# │
+# │ Imports: mlsysim.core.constants (GB, KB), mlsysim.book (fmt, check)
+# │ Exports: WildlifeMonitoring.raw_audio_gb_str,
+# │          WildlifeMonitoring.summary_kb_str,
+# │          WildlifeMonitoring.reduction_x_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GB, KB
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class WildlifeMonitoring:
+    """Namespace for wildlife-monitoring bandwidth reduction."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    raw_audio_per_day = 4.3 * GB
+    summary_per_day = 400 * KB
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    reduction = (raw_audio_per_day / summary_per_day).m_as("")
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(reduction > 10_000, f"Expected >10,000x bandwidth reduction, got {reduction:.0f}x.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    raw_audio_gb_str = fmt(raw_audio_per_day.m_as(GB), precision=1, commas=False)
+    summary_kb_str = fmt(summary_per_day.m_as(KB), precision=0, commas=False)
+    reduction_x_str = fmt(reduction, precision=0, commas=True)
+```
+
 \index{Wildlife Conservation!TinyML monitoring}
-Wildlife conservation uses TinyML for remote environmental monitoring. Researchers deploy solar-powered audio sensors consuming 100–500 mW that process continuous audio streams for species identification. By performing local analysis, these systems reduce satellite transmission requirements from 4.3 GB per day to 400 KB of detection summaries, a 10,000$\times$ reduction that makes large-scale deployments of 100–1,000 sensors economically feasible.
+Wildlife conservation uses TinyML for remote environmental monitoring. Researchers deploy solar-powered audio sensors consuming 100–500 mW that process continuous audio streams for species identification. By performing local analysis, these systems reduce satellite transmission requirements from `{python} WildlifeMonitoring.raw_audio_gb_str` GB per day to `{python} WildlifeMonitoring.summary_kb_str` KB of detection summaries, a `{python} WildlifeMonitoring.reduction_x_str`$\times$ reduction that makes large-scale deployments of 100–1,000 sensors economically feasible.
 
 Medical wearables push TinyML into healthcare, where the combination of always-on monitoring and on-device privacy proves uniquely valuable. FDA-cleared cardiac monitors achieve 95–98 percent sensitivity while processing 250–500 ECG samples per second at under 5 mW power consumption. This efficiency enables week-long continuous monitoring vs. hours for smartphone-based alternatives, while reducing diagnostic costs from \$2,000–5,000 for traditional in-lab studies to under \$100 for at-home testing.
 
@@ -4097,46 +4469,70 @@ A related misconception holds that moving computation closer to the user always 
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: Fallacy "Model optimization overcomes mobile device power limits"
 # │
-# │ Goal: Demonstrate the physical limits of battery-powered inference.
-# │ Show: That a 5W workload depletes a standard phone battery in 3 hours.
-# │ How: Calculate runtime from power draw and standard Wh capacity.
+# │ Goal: Demonstrate the physical limits of battery-powered inference and cooling.
+# │ Show: That a 5W workload depletes a phone battery quickly and exceeds TDP.
+# │ How: Calculate runtime from local phone Wh capacity and recap thermal constants.
 # │
-# │ Imports: mlsysim.book (fmt, md_frac)
-# │ Exports: MobilePowerFallacyCalc.low_power_hours_str,
+# │ Imports: mlsysim.Hardware, mlsysim.core.constants, mlsysim.book (fmt, md_frac)
+# │ Exports: MobilePowerFallacyCalc.low_power_w_str,
+# │          MobilePowerFallacyCalc.high_power_w_str,
+# │          MobilePowerFallacyCalc.phone_battery_str,
+# │          MobilePowerFallacyCalc.mobile_tdp_str,
+# │          MobilePowerFallacyCalc.quant_red_str,
+# │          MobilePowerFallacyCalc.low_power_hours_str,
 # │          MobilePowerFallacyCalc.high_power_hours_str,
 # │          MobilePowerFallacyCalc.low_power_frac,
 # │          MobilePowerFallacyCalc.high_power_frac
 # └─────────────────────────────────────────────────────────────────────────────
 
+from mlsysim import Hardware
+from mlsysim.core.constants import MOBILE_TDP_W, watt
 from mlsysim.fmt import fmt_percent, fmt, check, md_frac
 
 # ┌── LEGO ───────────────────────────────────────────────
 class MobilePowerFallacyCalc:
     """Namespace for Mobile Power Fallacy Calc."""
 
-    battery_wh_value = 15                                                           # Wh, typical smartphone
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    h_phone = Hardware.Mobile.iPhone15Pro
+    battery_wh_value = h_phone.battery_capacity.m_as('Wh') if h_phone.battery_capacity else 15
     low_power_w_value = 1                                                           # W, light inference
     high_power_w_value = 5                                                          # W, heavy on-device model
+    mobile_tdp_w_value = MOBILE_TDP_W.m_as(watt)
+    quant_reduction_value = 4                                                       # FP32 to INT8 power reduction
 
-    low_power_hours_value = battery_wh_value/low_power_w_value                    # 15 / 1 = 15 hours
-    high_power_hours_value = battery_wh_value/high_power_w_value                  # 15 / 5 = 3 hours
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    low_power_hours_value = battery_wh_value/low_power_w_value
+    high_power_hours_value = battery_wh_value/high_power_w_value
 
-    low_power_hours_str = fmt(low_power_hours_value, precision=0, commas=False)     # "15"
-    high_power_hours_str = fmt(high_power_hours_value, precision=0, commas=False)   # "3"
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(10 <= battery_wh_value <= 25,
+          f"Representative phone battery should be in a realistic Wh range, got {battery_wh_value:.1f}.")
+    check(high_power_hours_value < low_power_hours_value,
+          "Higher-power mobile workload should drain the battery faster.")
 
-    #—Inline fractions showing the physics ---
-    low_power_frac = md_frac(f"{battery_wh_value} Wh", f"{low_power_w_value} W", f"**{low_power_hours_str} hours**")
-    high_power_frac = md_frac(f"{battery_wh_value} Wh", f"{high_power_w_value} W", f"**{high_power_hours_str} hours**")
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    phone_battery_str = fmt(battery_wh_value, precision=0, commas=False)
+    low_power_w_str = fmt(low_power_w_value, precision=0, commas=False)             # "1"
+    high_power_w_str = fmt(high_power_w_value, precision=0, commas=False)           # "5"
+    low_power_hours_str = fmt(low_power_hours_value, precision=0, commas=False)
+    high_power_hours_str = fmt(high_power_hours_value, precision=0, commas=False)
+    mobile_tdp_str = fmt(mobile_tdp_w_value, precision=0, commas=False)
+    quant_red_str = fmt(quant_reduction_value, precision=0, commas=False)
+
+    # Inline fractions showing the physics.
+    low_power_frac = md_frac(f"{phone_battery_str} Wh", f"{low_power_w_value} W", f"**{low_power_hours_str} hours**")
+    high_power_frac = md_frac(f"{phone_battery_str} Wh", f"{high_power_w_value} W", f"**{high_power_hours_str} hours**")
 ```
 
 **Fallacy**: *Model optimization overcomes mobile device power and thermal limits.*
 
-Compression techniques do not scale indefinitely against physics. Consider a smartphone with a `{python} MobileBatteryCapacity.phone_battery_str` Wh battery:
+Compression techniques do not scale indefinitely against physics. Consider a smartphone with a `{python} MobilePowerFallacyCalc.phone_battery_str` Wh battery:
 
-- **Light workload** (1 W inference): `{python} MobilePowerFallacyCalc.low_power_frac`
-- **Heavy workload** (5 W, common for large on-device models): `{python} MobilePowerFallacyCalc.high_power_frac`
+- **Light workload** (`{python} MobilePowerFallacyCalc.low_power_w_str` W inference): `{python} MobilePowerFallacyCalc.low_power_frac`
+- **Heavy workload** (`{python} MobilePowerFallacyCalc.high_power_w_str` W, common for large on-device models): `{python} MobilePowerFallacyCalc.high_power_frac`
 
-The 5 W workload also triggers thermal throttling\index{Thermal Throttling!performance limits} that reduces performance by 40–60 percent. As @sec-ml-systems-mobile-ml-benefits-resource-constraints-c568 establishes, sustained mobile inference cannot exceed 2–3 W without active cooling. Reducing numerical precision (using fewer bits to represent each weight; see @sec-model-compression) cuts power by approximately 4$\times$, but aggressive precision reduction often causes 5–10 percent accuracy loss. Applications requiring continuous inference beyond mobile thermal envelopes remain physically impossible regardless of algorithmic improvements.
+The `{python} MobilePowerFallacyCalc.high_power_w_str` W workload also triggers thermal throttling\index{Thermal Throttling!performance limits} that substantially reduces performance. As @sec-ml-systems-mobile-ml-benefits-resource-constraints-c568 establishes, sustained mobile inference cannot exceed approximately `{python} MobilePowerFallacyCalc.mobile_tdp_str` W without active cooling. Reducing numerical precision (using fewer bits to represent each weight; see @sec-model-compression) cuts power by approximately `{python} MobilePowerFallacyCalc.quant_red_str`$\times$, but aggressive precision reduction often causes accuracy loss. Applications requiring continuous inference beyond mobile thermal envelopes remain physically impossible regardless of algorithmic improvements.
 
 **Fallacy**: *TinyML represents scaled-down mobile ML.*
 
