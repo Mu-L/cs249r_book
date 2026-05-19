@@ -880,6 +880,20 @@ local function resolveref(data)
         end
       end
     end,
+    -- HTML path: Pandoc parses bare `\ref{...}` as InlineMath, so the
+    -- RawInline branch above never fires. Catch the math form here when
+    -- the entire math span is exactly `\ref{id}` (anchored ^...$ so we
+    -- don't disturb legitimate math expressions that happen to use \ref).
+    Math = function(el)
+      local refid = el.text:match("^%s*\\ref{(.-)}%s*$")
+      if refid and data[refid] then
+        local href = '#' .. refid
+        if fbx.ishtmlbook then
+          href = data[refid].file .. '.html' .. href
+        end
+        return pandoc.Link(data[refid].refnum, href)
+      end
+    end,
     -- Support for @id syntax (Quarto/Pandoc Cite elements)
     Cite = function(el)
       for _, citation in ipairs(el.citations) do
