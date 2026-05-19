@@ -90,7 +90,7 @@ Intuitive commands that work on both individual chapters and the entire book.
 | Command | Description | Example |
 |---------|-------------|---------|
 | `validate <subcommand>` | Run Binder-native validation checks | `./binder validate inline-refs` |
-| `maintain <topic> ...` | Run Binder-native maintenance utilities | `./binder maintain glossary build` |
+| `maintain <topic> ...` | Run Binder-native maintenance utilities | `./binder maintain glossary paths` |
 | `setup` | Configure environment | `./binder setup` |
 | `clean` | Clean configs & artifacts | `./binder clean` |
 | `switch <format>` | Switch active config | `./binder switch pdf` |
@@ -146,7 +146,7 @@ Exit semantics:
 
 ### 🧰 Maintenance Namespace
 
-- `./binder maintain glossary build [--vol1|--vol2]`
+- `./binder maintain glossary paths [--vol1|--vol2]`
 - `./binder maintain images compress [-f <file> ... | --all] [--smart-compression] [--apply]`
 - `./binder maintain repo-health [--json] [--min-size-mb N]`
 

@@ -1,7 +1,6 @@
 ---
 quiz: training_quizzes.json
 concepts: training_concepts.yml
-glossary: training_glossary.json
 engine: jupyter
 ---
 
@@ -50,34 +49,18 @@ Inference computes a single forward pass: data flows through the network, a pred
 ```{python}
 #| label: training-fundamentals-calc
 #| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ TRAINING SYSTEMS FUNDAMENTALS
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: §Training Systems Fundamentals, §Iron Law, §3AM Gradient Explosion
-# │
-# │ Goal: Provide cost, scale, FLOP, and model-spec constants for the opening
-# │       sections of the chapter (Fundamentals through Iron Law).
-# │ Show: Training cost asymmetry, GPT-2/3 specs, failure scenario numbers.
-# │ How:  Retrieve model specs from Digital Twins; format costs and FLOPs.
-# │
-# │ Imports: mlsysim (Hardware, Models), mlsysim.core.constants (*),
-# │          mlsysim.fmt (fmt_percent, fmt, sci, md_math, check),
-# │          mlsysim.core.formulas (model_memory)
-# │ Exports: TrainingModels.*, TrainingScenarios.{cost,flops,loss,fp16}
-# └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware, Models
 from mlsysim.core.constants import *
 from mlsysim.fmt import fmt_percent, fmt, sci, md_math, check
 from mlsysim.core.formulas import model_memory
 
-# ── TrainingModels: GPT-2, GPT-3, ResNet ────────────────────────────────────
 class TrainingModels:
-    # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     gpt2   = Models.GPT2
     gpt3   = Models.GPT3
     resnet = Models.ResNet50
 
-    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────────
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     gpt2_params_b      = gpt2.parameters.m_as(Bparam)
     gpt2_layers        = gpt2.layers
     gpt2_params_gb_fp32 = gpt2.size_in_bytes(BYTES_FP32).m_as(GB)
@@ -86,16 +69,15 @@ class TrainingModels:
     resnet_params_m    = resnet.parameters.m_as(Mparam)
     resnet_params_gb   = resnet.size_in_bytes(BYTES_FP32).m_as(GB)
 
-    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     gpt2_params_b_str      = fmt(gpt2_params_b, precision=1, commas=False)
     gpt2_layers_str        = f"{gpt2_layers}"
     gpt2_params_gb_fp32_str = fmt(gpt2_params_gb_fp32, precision=0, commas=False)
     gpt2_adam_gb_str       = fmt(gpt2_adam_gb, precision=0, commas=False)
     gpt3_params_b_str      = fmt(gpt3_params_b, precision=0, commas=False)
 
-# ── TrainingScenarios: Cost, Scale, FLOPs, Failure Physics ──────────────────
 class TrainingScenarios:
-    # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     gpt2_cost_2019   = 50_000
     gpt4_cost_est    = 100 * MILLION
     gpt3_gpu_years   = 355
@@ -106,8 +88,26 @@ class TrainingScenarios:
     lost_days        = 4
     lost_cost        = 5000
     fp16_max_val     = 65504
+    adam_example_params_b = 7
+    adam_example_params = adam_example_params_b * BILLION
+    ckpt_layers = 48
 
-    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    adam_inference_gb = model_memory(adam_example_params, BYTES_FP16, GB)
+    adam_grad_gb = model_memory(adam_example_params, BYTES_FP16, GB)
+    adam_moments_gb = model_memory(adam_example_params, BYTES_ADAM_STATE, GB)
+    adam_training_state_gb = adam_inference_gb + adam_grad_gb + adam_moments_gb
+    adam_training_memory_multiplier = adam_training_state_gb / adam_inference_gb
+
+    ckpt_count = round(ckpt_layers ** 0.5)
+    ckpt_memory_units = ckpt_count + (ckpt_layers / ckpt_count)
+    ckpt_memory_savings_pct = (1 - ckpt_memory_units / ckpt_layers) * 100
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(adam_training_memory_multiplier == 6, "Adam training state should be 6x FP16 inference weights")
+    check(ckpt_count == 7, f"sqrt(48) checkpoint count should round to 7, got {ckpt_count}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     gpt2_training_cost_2019_str = fmt(gpt2_cost_2019, precision=0, commas=True)
     gpt4_training_cost_est_str  = fmt(gpt4_cost_est/MILLION, precision=0, commas=False)
     gpt2_fwd_flops_str          = sci(gpt2_fwd_flops)
@@ -118,6 +118,16 @@ class TrainingScenarios:
     fp16_max_val_str            = fmt(fp16_max_val, precision=0, commas=True)
     gpt3_gpu_years_str          = fmt(gpt3_gpu_years, precision=0, commas=True)
     gpt3_compute_cost_str       = fmt(gpt3_cost/MILLION, precision=1, commas=False)
+    adam_example_params_b_str   = fmt(adam_example_params_b, precision=0, commas=False)
+    adam_inference_gb_str       = fmt(adam_inference_gb, precision=0, commas=False)
+    adam_grad_gb_str            = fmt(adam_grad_gb, precision=0, commas=False)
+    adam_moments_gb_str         = fmt(adam_moments_gb, precision=0, commas=False)
+    adam_training_state_gb_str  = fmt(adam_training_state_gb, precision=0, commas=False)
+    adam_training_memory_multiplier_str = fmt(adam_training_memory_multiplier, precision=0, commas=False)
+    ckpt_layers_str             = fmt(ckpt_layers, precision=0, commas=False)
+    ckpt_count_str              = fmt(ckpt_count, precision=0, commas=False)
+    ckpt_memory_units_str       = fmt(ckpt_memory_units, precision=0, commas=False)
+    ckpt_memory_savings_pct_str = fmt(ckpt_memory_savings_pct, precision=0, commas=False)
 
     # Hardware specs used in the staged-pipeline narrative and MFU callout
     nvlink_h100_gbs_str         = fmt(NVLINK_H100_BW.m_as(GB/second), precision=0, commas=False)
@@ -139,7 +149,7 @@ A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios
 
 ***Machine Learning Training Systems***\index{Training!systems, definition} are software-hardware systems that execute the iterative optimization loop (forward pass, loss computation, backward pass, and parameter update) to minimize a loss function over a training dataset.
 
-1.  **Significance (quantitative)**: Training memory cost is 6$\times$ the inference memory cost per parameter when using the Adaptive Moment Estimation (Adam) optimizer: a 7B-parameter model requires 14 GB (FP16 weights) + 14 GB (FP16 gradients) + 56 GB (Adam first and second moments in FP32) = 84 GB minimum, before accounting for activation storage. This multiplier is the primary reason a model that runs inference on one GPU requires multiple GPUs for training.
+1.  **Significance (quantitative)**: Training memory cost is `{python} TrainingScenarios.adam_training_memory_multiplier_str`$\times$ the inference memory cost per parameter when using the Adaptive Moment Estimation (Adam) optimizer: a `{python} TrainingScenarios.adam_example_params_b_str`B-parameter model requires `{python} TrainingScenarios.adam_inference_gb_str` GB (FP16 weights) + `{python} TrainingScenarios.adam_grad_gb_str` GB (FP16 gradients) + `{python} TrainingScenarios.adam_moments_gb_str` GB (Adam first and second moments in FP32) = `{python} TrainingScenarios.adam_training_state_gb_str` GB minimum, before accounting for activation storage. This multiplier is the primary reason a model that runs inference on one GPU requires multiple GPUs for training.
 2.  **Distinction (durable)**: Unlike inference systems, which execute a single forward pass and discard intermediate activations, training systems must retain all intermediate activations from the forward pass for use during the backward pass, creating a memory footprint that grows linearly with model depth and batch size.
 3.  **Common pitfall**: A frequent misconception is that training failures are compute problems. The most common training failure is out-of-memory (OOM) error, which is a memory management problem: the activation tensors from all $L$ layers accumulate during the forward pass and must coexist in GPU memory simultaneously, causing OOM before the first gradient is computed.
 
@@ -161,7 +171,7 @@ A training system is not a single loop; it is a **staged system pipeline**\index
 
 Any mismatch in the throughput of these stages creates **accelerator bubbles**\index{Accelerator!bubbles, pipeline idleness}—intervals of idle silicon where the "Machine" axis of the AI Triad sits at 0 percent utilization while waiting for the "Data" axis to catch up. A systems engineer's primary task during training is to eliminate these bubbles through asynchronous prefetching and pipeline overlapping, ensuring that the next batch is ready on the PCIe bus before the current backward pass completes. We develop the quantitative tools for measuring and fixing these bubbles in @sec-model-training-identifying-bottlenecks-f57f.
 
-[^fn-checkpointing-training]: **Gradient Checkpointing (Activation Checkpointing)**: The memory pressure described here arises because backpropagation requires every layer's activations from the forward pass. Checkpointing breaks this requirement by saving activations at only $\sqrt{L}$ strategic layers and recomputing the rest during the backward pass, trading roughly 33 percent additional compute for up to 10$\times$ activation memory reduction. For GPT-2's forty-eight layers, this means storing seven checkpoints instead of forty-eight full activation tensors. \index{Activation Checkpointing!compute-memory trade-off}
+[^fn-checkpointing-training]: **Gradient Checkpointing (Activation Checkpointing)**: The memory pressure described here arises because backpropagation requires every layer's activations from the forward pass. Checkpointing breaks this requirement by saving activations at only $\sqrt{L}$ strategic layers and recomputing the rest during the backward pass, trading roughly 33 percent additional compute for about `{python} TrainingScenarios.ckpt_memory_savings_pct_str` percent activation-memory savings in the simplified $\sqrt{L}$ model. For GPT-2's `{python} TrainingScenarios.ckpt_layers_str` layers, this means about `{python} TrainingScenarios.ckpt_count_str` checkpoints and a peak of roughly `{python} TrainingScenarios.ckpt_memory_units_str` activation units per unit $A$, rather than `{python} TrainingScenarios.ckpt_layers_str` full-layer units. \index{Activation Checkpointing!compute-memory trade-off}
 
 [^fn-mixed-precision-training]: **Mixed-Precision Training**: Uses half-precision (FP16 or BF16) for computation while maintaining FP32 "master weights" for accumulation, where rounding errors would otherwise compound. A loss scaling trick prevents gradient underflow in FP16's limited dynamic range, yielding nearly 2$\times$ memory savings and 2--8$\times$ throughput gains on Tensor Cores. BF16 ("Brain Floating Point," from Google Brain [@google_bfloat16]) later eliminated loss scaling by matching FP32's 8-bit exponent range, simplifying the dominant failure mode of half-precision training. \index{Mixed-Precision Training!trade-off}
 
@@ -763,25 +773,38 @@ Forward pass operations and their computational characteristics establish the wo
 # │
 # │ Goal: Provide SGD iteration ranges and Adam 7B memory figures.
 # │ Show: SGD iteration count range; Adam optimizer state memory for 7B model.
-# │ How:  Hard-coded training scenario values.
+# │ How:  Derive Adam state from parameter count and precision byte widths.
 # │
-# │ Imports: mlsysim.book (fmt)
+# │ Imports: mlsysim.core.constants, mlsysim.book (fmt/check),
+# │          mlsysim.formulas (model_memory)
 # │ Exports: OptimizerScenarios.{sgd_iterations,adam_7b}_*_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import BILLION, BYTES_FP16, BYTES_ADAM_STATE, GB
+from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
+
 class OptimizerScenarios:
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
     sgd_iters_min      = 50_000
     sgd_iters_max      = 500_000
     adam_7b_params     = 7
-    adam_7b_state_gb   = 84
-    adam_7b_compression = "3×"
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────────
+    adam_7b_param_count = adam_7b_params * BILLION
+    adam_7b_weights_gb = model_memory(adam_7b_param_count, BYTES_FP16, GB)
+    adam_7b_gradients_gb = adam_7b_weights_gb
+    adam_7b_moments_gb = model_memory(adam_7b_param_count, BYTES_ADAM_STATE, GB)
+    adam_7b_state_gb = adam_7b_weights_gb + adam_7b_gradients_gb + adam_7b_moments_gb
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────────
+    check(adam_7b_state_gb == 84, f"7B Adam state should be 84 GB, got {adam_7b_state_gb}")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
     sgd_iterations_min_str = fmt(sgd_iters_min, precision=0, commas=True)
     sgd_iterations_max_str = fmt(sgd_iters_max, precision=0, commas=True)
-    adam_7b_params_str      = "7"
-    adam_7b_state_gb_str    = "84"
-    adam_7b_compression_str = "3×"
+    adam_7b_params_str      = fmt(adam_7b_params, precision=0, commas=False)
+    adam_7b_state_gb_str    = fmt(adam_7b_state_gb, precision=0, commas=False)
+    adam_7b_moments_gb_str  = fmt(adam_7b_moments_gb, precision=0, commas=False)
 ```
 
 ### Optimization algorithms {#sec-model-training-optimization-algorithms-c6a9}
@@ -852,12 +875,16 @@ $$ {#eq-batch-memory-decomposition}
 # │ Show: The linear growth of activations vs. fixed parameter memory.
 # │ How: Calculate memory for activations, gradients, and parameters.
 # │
-# │ Imports: mlsysim.book (fmt)
+# │ Imports: mlsysim.Models, mlsysim.constants, mlsysim.book (fmt/check),
+# │          mlsysim.formulas (model_memory)
 # │ Exports: resnet50_act_mem_b32_gb_str, resnet50_grad_mem_b32_gb_str,
 # │          resnet50_param_mem_b32_mb_str, resnet50_act_mem_b64_gb_str,
 # │          resnet50_grad_mem_b64_gb_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_percent, fmt, check
+from mlsysim import Models
+from mlsysim.core.constants import BYTES_FP32, MB
+from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class ResNetBatchMemory:
@@ -867,15 +894,21 @@ class ResNetBatchMemory:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    # Values derived from empirical measurements (hardcoded for narrative consistency)
+    # Activations and gradients are representative measured values; parameter
+    # memory comes from the model registry.
     act_mem_b32_gb = 8
     grad_mem_b32_gb = 4
-    param_mem_b32_mb = 200
+    model = Models.ResNet50
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Doubling batch size doubles activation and gradient memory
     act_mem_b64_gb = act_mem_b32_gb * 2
     grad_mem_b64_gb = grad_mem_b32_gb * 2
+    param_mem_b32_mb = model_memory(model.parameters, BYTES_FP32, MB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(act_mem_b64_gb == 2 * act_mem_b32_gb, "Batch doubling should double activation memory")
+    check(100 <= param_mem_b32_mb <= 105, f"ResNet-50 FP32 parameters should be about 102 MB, got {param_mem_b32_mb:.1f}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     resnet50_act_mem_b32_gb_str = fmt(act_mem_b32_gb, precision=0, commas=False)
@@ -1005,14 +1038,14 @@ The choice of optimization algorithm creates specific patterns of computation an
 # │ Show: That mixed-precision Adam requires more memory than pure FP32 SGD.
 # │ How: Compare weight, gradient, and state bytes for GPT-2.
 # │
-# │ Imports: mlsysim.core.constants (GPT2_PARAMS, Mparam, V100_MEM_CAPACITY, GiB,
+# │ Imports: mlsysim (Hardware, Models), mlsysim.core.constants (Bparam, GiB,
 # │          BYTES_FP32, BYTES_FP16, GB), mlsysim.book (fmt),
 # │          mlsysim.formulas (model_memory)
 # │ Exports: param_fp32_str, grad_fp32_str, adam_state_str,
 # │          total_static_fp32_str, total_static_amp_str, v100_mem_gib_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware, Models
-from mlsysim.core.constants import BYTES_FP32, BYTES_FP16, GB, GiB
+from mlsysim.core.constants import Bparam, BYTES_FP32, BYTES_FP16, GB, GiB
 from mlsysim.fmt import fmt_percent, fmt, check
 from mlsysim.core.formulas import model_memory
 
@@ -1028,6 +1061,8 @@ class GPT2Optimizer:
     v100_mem_gib = Hardware.Cloud.V100.memory_capacity.m_as(GiB)
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    model_params_b = model.parameters.m_as(Bparam)
+
     # FP32 Baseline
     param_fp32_gb = model_memory(model.parameters, BYTES_FP32, GB)
     grad_fp32_gb = model_memory(model.parameters, BYTES_FP32, GB)
@@ -1043,6 +1078,7 @@ class GPT2Optimizer:
     total_static_amp = param_fp16_gb + grad_fp16_gb + master_fp32_gb + adam_m_fp32_gb + adam_v_fp32_gb
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    model_params_b_str = fmt(model_params_b, precision=1, commas=False)
     param_fp32_str = fmt(param_fp32_gb, precision=1, commas=False)
     grad_fp32_str = fmt(grad_fp32_gb, precision=1, commas=False)
     adam_state_str = fmt(adam_m_fp32_gb + adam_v_fp32_gb, precision=1, commas=False)
@@ -1065,11 +1101,11 @@ A representative GPT-2 XL training configuration uses the Adam optimizer with th
 
 **Memory Overhead Calculation**\index{Adam!memory overhead}
 
-For GPT-2's 1.5B parameters in FP32 (4 bytes each):
+For GPT-2's `{python} GPT2Optimizer.model_params_b_str`B parameters in FP32 (4 bytes each):
 
-- Parameters: 1.5B $\times$ 4 bytes = `{python} GPT2Optimizer.param_fp32_str` GB
-- Gradients: 1.5B $\times$ 4 bytes = `{python} GPT2Optimizer.grad_fp32_str` GB
-- Adam State (m, v): 1.5B $\times$ 8 bytes = `{python} GPT2Optimizer.adam_state_str` GB
+- Parameters: `{python} GPT2Optimizer.model_params_b_str`B $\times$ 4 bytes = `{python} GPT2Optimizer.param_fp32_str` GB
+- Gradients: `{python} GPT2Optimizer.model_params_b_str`B $\times$ 4 bytes = `{python} GPT2Optimizer.grad_fp32_str` GB
+- Adam State (m, v): `{python} GPT2Optimizer.model_params_b_str`B $\times$ 8 bytes = `{python} GPT2Optimizer.adam_state_str` GB
 - Total static memory: `{python} GPT2Optimizer.total_static_fp32_str` GB
 
 This explains why GPT-2 training requires V100 GPUs with at least `{python} GPT2Optimizer.v100_mem_gib_str` GB of memory even before considering activation memory.
@@ -1429,7 +1465,7 @@ For GPT-2 with batch_size = `{python} GPT2ActivationMemory.batch_size_str`, seq_
 - Optimizer state (Adam, FP32): `{python} GPT2ActivationMemory.opt_gb_str` GB
 - Peak memory during training: **~`{python} GPT2ActivationMemory.peak_gb_str` GB**
 
-This exceeds a single V100's `{python} TrainingHardware.v100_mem_str` GB capacity.
+This exceeds a single V100's `{python} GPT2ActivationMemory.v100_mem_str` GB capacity.
 
 **System Solutions Applied.**
 
@@ -1438,7 +1474,7 @@ This exceeds a single V100's `{python} TrainingHardware.v100_mem_str` GB capacit
 3. Mixed precision: FP16 activations (already applied) vs. FP32 (would be `{python} GPT2ActivationMemory.act_fp32_gb_str` GB)
 4. Reduced batch size: Use batch_size=16 per accelerator + gradient accumulation over two steps = effective batch_size = 32
 
-Most GPT-2 implementations use a training configuration of gradient checkpointing and batch_size=16 per accelerator, fitting comfortably in `{python} TrainingHardware.v100_mem_str` GB V100s while maintaining training efficiency.
+Most GPT-2 implementations use a training configuration of gradient checkpointing and batch_size=16 per accelerator, fitting comfortably in `{python} GPT2ActivationMemory.v100_mem_str` GB V100s while maintaining training efficiency.
 
 :::
 
@@ -1688,12 +1724,20 @@ class AcceleratorSpecs:
     # ┌── 2. EXECUTE (H100) ────────────────────────────────────────────────────
     h100_mem          = _h100.memory_capacity.m_as(GiB)
     h100_tflops_fp16  = _h100.peak_flops.m_as(TFLOPs/second)
+    h100_tflops_fp32_cuda = H100_FLOPS_FP32_CUDA.m_as(TFLOPs/second)
     h100_tflops_tf32  = _h100.tf32_flops.m_as(TFLOPs/second)
     h100_tflops_fp8   = _h100.fp8_flops.m_as(TFLOPs/second)
     h100_pflops_fp8   = _h100.fp8_flops.m_as(PFLOPs/second)
     h100_pflops_fp16  = _h100.peak_flops.m_as(PFLOPs/second)
     h100_bw_tbs       = _h100.memory_bw.m_as(TB/second)
     h100_ridge        = _h100.ridge_point().m_as(flop/byte)
+    a100_fp16_speedup = a100_tflops_fp16 / a100_tflops_fp32
+    h100_fp8_speedup_vs_fp16 = h100_tflops_fp8 / h100_tflops_fp16
+    h100_fp8_speedup_vs_fp32 = h100_tflops_fp8 / h100_tflops_fp32_cuda
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────────
+    check(15 <= a100_fp16_speedup <= 17, f"A100 FP16:FP32 peak ratio should be about 16x, got {a100_fp16_speedup:.1f}")
+    check(1.9 <= h100_fp8_speedup_vs_fp16 <= 2.1, f"H100 FP8:FP16 peak ratio should be about 2x, got {h100_fp8_speedup_vs_fp16:.1f}")
 
     # ┌── 4. OUTPUT (A100) ─────────────────────────────────────────────────────
     a100_tflops_fp16_str = fmt(a100_tflops_fp16, precision=0, commas=False)
@@ -1701,7 +1745,6 @@ class AcceleratorSpecs:
     a100_bw_gbs_str      = fmt(a100_bw_gbs, precision=0, commas=True)
     a100_bw_tbs_str      = fmt(a100_bw_tbs, precision=2, commas=False)
     a100_ridge_str        = fmt(a100_ridge, precision=0, commas=False)
-    a100_tdp_str          = fmt(a100_tdp, precision=0, commas=False)
 
     # ┌── 4. OUTPUT (H100) ─────────────────────────────────────────────────────
     h100_tflops_fp16_str  = fmt(h100_tflops_fp16, precision=0, commas=False)
@@ -1710,6 +1753,8 @@ class AcceleratorSpecs:
     h100_pflops_fp16_str  = fmt(h100_pflops_fp16, precision=2, commas=False)
     h100_bw_tbs_str       = fmt(h100_bw_tbs, precision=2, commas=False)
     h100_ridge_str        = fmt(h100_ridge, precision=0, commas=False)
+    a100_fp16_speedup_str = fmt(a100_fp16_speedup, precision=0, commas=False)
+    h100_fp8_speedup_vs_fp16_str = fmt(h100_fp8_speedup_vs_fp16, precision=1, commas=False)
 ```
 
 \index{Arithmetic Intensity!attention layer}
@@ -2023,24 +2068,21 @@ These three components form a tightly coupled system where throughput depends on
 #| label: data-pipeline-hardware-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
-# │ DATA PIPELINE HARDWARE + PREPROCESSING SCENARIOS
+# │ DATA PIPELINE HARDWARE
 # ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: §Data Pipeline, §Core Components, §Preprocessing,
-# │          §Network Wall notebook, §Practical Architectures,
-# │          §Prefetching Mechanics, §Practical Considerations.
+# │ Context: §Data Pipeline, §Core Components, §Network Wall notebook,
+# │          §Practical Architectures.
 # │
-# │ Goal: Provide NVMe/storage bandwidth, preprocessing timing, and
-# │       prefetch buffer memory for data pipeline sections.
-# │ Show: Storage bandwidth hierarchy; preprocessing latency breakdown;
-# │       prefetch buffer memory requirements.
-# │ How:  Hardware constants from Digital Twins; hard-coded benchmark times.
+# │ Goal: Provide NVMe/storage/interconnect bandwidth for data pipeline sections.
+# │ Show: Storage bandwidth hierarchy.
+# │ How:  Hardware constants from Digital Twins.
 # │
 # │ Imports: mlsysim.core.constants (NVME_SEQUENTIAL_BW, SYSTEM_MEMORY_BW,
-# │          NVLINK_H100_BW, GB, second, byte)
-# │ Exports: StorageBandwidth.{nvme,system_mem,nvlink}_*_str;
-# │          PreprocessingScenarios.{crop,jitter,norm,total_preprocess,
-# │          num_workers,prefetch,buffer}_*_str
+# │          NVLINK_H100_BW, GB, second), mlsysim.book (fmt)
+# │ Exports: StorageBandwidth.{nvme,system_mem,nvlink}_*_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GB, NVLINK_H100_BW, NVME_SEQUENTIAL_BW, SYSTEM_MEMORY_BW, second
+from mlsysim.fmt import fmt
 
 # ── Storage + Interconnect Bandwidth ────────────────────────────────────────
 class StorageBandwidth:
@@ -2057,37 +2099,6 @@ class StorageBandwidth:
     nvme_bw_sustained_str = fmt(nvme_bw_sustained, precision=2, commas=False)
     system_mem_bw_str     = fmt(system_mem_bw, precision=0, commas=False)
     nvlink_h100_str       = fmt(nvlink_h100, precision=0, commas=False)
-
-# ── Preprocessing Times + Buffer Memory ─────────────────────────────────────
-class PreprocessingScenarios:
-    # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
-    crop_time_ms    = 10
-    jitter_time_ms  = 15
-    norm_time_ms    = 5
-    num_workers     = 4
-    prefetch_factor = 2
-    buffer_batch_size = 256
-    buffer_image_res  = 1024
-
-    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────────
-    total_preprocess_ms = crop_time_ms + jitter_time_ms + norm_time_ms
-    buffer_mem_gb = ((buffer_batch_size * buffer_image_res**2 * 3 * 4) * byte).m_as(GB)
-
-    # ┌── 3. GUARD ─────────────────────────────────────────────────────────────
-    check(total_preprocess_ms == 30, f"Preprocessing time mismatch: {total_preprocess_ms} != 30ms")
-    check(buffer_mem_gb > 2.5, f"Buffer memory ({buffer_mem_gb:.1f} GB) unexpectedly low.")
-
-    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
-    num_workers_str             = "4"
-    prefetch_factor_str         = "2"
-    prefetch_buffer_batches_str = "eight"
-    crop_time_ms_str            = f"{crop_time_ms}"
-    jitter_time_ms_str          = f"{jitter_time_ms}"
-    norm_time_ms_str            = f"{norm_time_ms}"
-    total_preprocess_ms_str     = f"{total_preprocess_ms}"
-    buffer_batch_size_str       = f"{buffer_batch_size}"
-    buffer_image_res_str        = f"{buffer_image_res}"
-    buffer_mem_gb_str           = fmt(buffer_mem_gb, precision=0)
 ```
 
 ### Data pipeline {#sec-model-training-data-pipeline-8e71}
@@ -2376,8 +2387,42 @@ where $N_{\text{workers}}$ parallel processing threads each perform transformati
 Preprocessed data must then transfer to the accelerator before computation can begin. The overall training throughput is therefore constrained by the slowest of three stages, as @eq-training-bottleneck makes explicit:
 $$R_{\text{training}} =\min(R_{\text{preprocessing}}, \text{BW}_{\text{GPU\_transfer}}, \text{BW}_{\text{GPU\_compute}})$$ {#eq-training-bottleneck}
 
+```{python}
+#| label: pipeline-throughput-hardware-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ PIPELINE THROUGHPUT HARDWARE RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Core Components min-of-three throughput discussion.
+# │
+# │ Goal: Keep the accelerator compute-capacity figure local to pipeline prose.
+# │ Show: A100 FP16 Tensor Core peak throughput.
+# │ How: Read the A100 hardware twin and format peak FLOP rate.
+# │
+# │ Imports: mlsysim (Hardware), mlsysim.core.constants (TFLOPs, second),
+# │          mlsysim.book (fmt/check)
+# │ Exports: PipelineThroughputHardware.a100_tflops_fp16_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Hardware
+from mlsysim.core.constants import TFLOPs, second
+from mlsysim.fmt import fmt, check
+
+class PipelineThroughputHardware:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    a100 = Hardware.Cloud.A100
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    a100_tflops_fp16 = a100.peak_flops.m_as(TFLOPs/second)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(a100_tflops_fp16 > 0, "A100 FP16 peak throughput must be positive")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    a100_tflops_fp16_str = fmt(a100_tflops_fp16, precision=0, commas=False)
+```
+
 \index{Training Bottleneck!min-of-three relationship}
-This min-of-three relationship is the governing principle of training pipeline design: the system's throughput equals its bottleneck's throughput. An accelerator with `{python} TrainingScenarios.a100_tflops_fp16_str` TFLOPS of compute capacity delivers zero useful work while waiting for data. Conversely, a perfectly optimized data pipeline provides no benefit if the accelerator is already compute-saturated. Balanced pipeline design aligns preprocessing capacity, transfer bandwidth, and compute throughput so that no single stage dominates iteration time.
+This min-of-three relationship is the governing principle of training pipeline design: the system's throughput equals its bottleneck's throughput. An accelerator with `{python} PipelineThroughputHardware.a100_tflops_fp16_str` TFLOPS of compute capacity delivers zero useful work while waiting for data. Conversely, a perfectly optimized data pipeline provides no benefit if the accelerator is already compute-saturated. Balanced pipeline design aligns preprocessing capacity, transfer bandwidth, and compute throughput so that no single stage dominates iteration time.
 
 Applying this throughput analysis to our GPT-2 Lighthouse Model reveals where the *data pipeline bottleneck* lies for language model training.
 
@@ -2574,7 +2619,41 @@ A ResNet-50 model on modern accelerator hardware can process 1,000 images per se
 Training data traverses three memory tiers on its way from disk to accelerator, and the bandwidth gap between these tiers, spanning three orders of magnitude, is the central challenge of data pipeline design. The effective transfer rate through the hierarchy is bounded by its slowest link (@eq-memory-hierarchy-bandwidth):
 $$R_{\text{memory}} =\min(\text{BW}_{\text{storage}}, \text{BW}_{\text{system}}, \text{BW}_{\text{accelerator}})$$ {#eq-memory-hierarchy-bandwidth}
 
-Storage devices provide 1--2 GB/s, system memory delivers 50--100 GB/s, and accelerator HBM achieves `{python} TrainingHardware.v100_bw_str` GB/s or higher. Each jump represents roughly a 50--100$\times$ bandwidth increase, which means data that flows freely within accelerator memory creates a severe bottleneck when it must be fetched from disk. This cascading bandwidth hierarchy explains why the iteration time of a well-pipelined system is governed by the *maximum* of its component latencies rather than their sum (@eq-iteration-time):
+```{python}
+#| label: memory-hierarchy-bandwidth-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MEMORY HIERARCHY BANDWIDTH RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Data Flows memory-tier hierarchy.
+# │
+# │ Goal: Keep the accelerator HBM bandwidth figure local to the hierarchy prose.
+# │ Show: V100 HBM bandwidth in GB/s.
+# │ How: Read the V100 hardware twin and format memory bandwidth.
+# │
+# │ Imports: mlsysim (Hardware), mlsysim.core.constants (GB, second),
+# │          mlsysim.book (fmt/check)
+# │ Exports: MemoryHierarchyBandwidth.v100_bw_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Hardware
+from mlsysim.core.constants import GB, second
+from mlsysim.fmt import fmt, check
+
+class MemoryHierarchyBandwidth:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    v100 = Hardware.Cloud.V100
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    v100_bw = v100.memory_bw.m_as(GB/second)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(v100_bw > 0, "V100 memory bandwidth must be positive")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    v100_bw_str = fmt(v100_bw, precision=0, commas=False)
+```
+
+Storage devices provide 1--2 GB/s, system memory delivers 50--100 GB/s, and accelerator HBM achieves `{python} MemoryHierarchyBandwidth.v100_bw_str` GB/s or higher. Each jump represents roughly a 50--100$\times$ bandwidth increase, which means data that flows freely within accelerator memory creates a severe bottleneck when it must be fetched from disk. This cascading bandwidth hierarchy explains why the iteration time of a well-pipelined system is governed by the *maximum* of its component latencies rather than their sum (@eq-iteration-time):
 $$t_{\text{iteration}} =\max(t_{\text{fetch}}, t_{\text{process}}, t_{\text{transfer}})$$ {#eq-iteration-time}
 
 When pipeline stages overlap correctly (fetching the next batch from storage while preprocessing the current one and transferring the previous one to the accelerator), the iteration time equals the duration of the slowest stage rather than the sum of all stages. This overlap is exactly what prefetching achieves, turning a serial bottleneck into a parallel pipeline where each tier operates concurrently on different batches.
@@ -2596,27 +2675,14 @@ For image classification pipelines where resizing, augmentation, and normalizati
 ```{python}
 #| label: forward-pass-dimensions-calc
 #| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ FORWARD PASS DIMENSIONS + WAVE QUANTIZATION
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: §Forward Pass (Compute Operations), §Wave Quantization
-# │          (tbl-wave-quantization), §Backward Pass (bwd dims).
-# │
-# │ Goal: Provide layer dimensions, convolution parameters, wave quantization
-# │       scenarios, and backward-pass dimension strings.
-# │ Show: Matrix operation sizes; wave quantization efficiency table;
-# │       backward-pass tensor shapes.
-# │ How:  Hard-coded architectural dimensions; derived md_math strings.
-# │
-# │ Imports: mlsysim.book (fmt, md_math)
-# │ Exports: TrainingDimensions.*
-# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import MILLION
+from mlsysim.fmt import fmt, md_math, check
+
 class TrainingDimensions:
-    # Layer dimensions
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     layer_dim_h  = 512
     layer_dim_w  = 1024
     layer_batch  = 64
-    layer_ops_m  = 33
 
     # Convolution parameters
     conv_batch       = 64
@@ -2624,8 +2690,6 @@ class TrainingDimensions:
     conv_w           = 224
     conv_c           = 3
     conv_k           = 7
-    conv_spatial     = 218
-    conv_ops_per_pos = 147
     conv_filters     = 64
 
     # Backward-pass dimension strings
@@ -2634,20 +2698,35 @@ class TrainingDimensions:
     bwd_kernel_dims_str = "7 × 7 × 3 × 64"
 
     # Wave Quantization Scenarios
+    wave_warp = 32
     wave_batch_32 = 32
     wave_batch_33 = 33
     wave_batch_64 = 64
     wave_batch_65 = 65
-    wave_util_33  = 52
-    wave_util_65  = 68
-    wave_time_33  = 2.0
-    wave_time_65  = 1.5
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    layer_ops_m = layer_dim_h * layer_dim_w * layer_batch / MILLION
+    conv_spatial = conv_h - conv_k + 1
+    conv_ops_per_pos = conv_k * conv_k * conv_c
+
+    wave_warps_32 = (wave_batch_32 + wave_warp - 1) // wave_warp
+    wave_warps_33 = (wave_batch_33 + wave_warp - 1) // wave_warp
+    wave_warps_64 = (wave_batch_64 + wave_warp - 1) // wave_warp
+    wave_warps_65 = (wave_batch_65 + wave_warp - 1) // wave_warp
+    wave_util_33  = wave_batch_33 / (wave_warps_33 * wave_warp) * 100
+    wave_util_65  = wave_batch_65 / (wave_warps_65 * wave_warp) * 100
+    wave_time_33  = wave_warps_33 / wave_warps_32
+    wave_time_65  = wave_warps_65 / wave_warps_64
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(conv_ops_per_pos == 147, f"7x7x3 conv MACs should be 147, got {conv_ops_per_pos}")
+    check(wave_warps_33 == 2 and wave_warps_65 == 3, "Warp boundary examples should launch partially filled extra warps")
 
     # Formatted Outputs—layer + conv
     layer_dim_h_str     = f"{layer_dim_h}"
     layer_dim_w_str     = f"{layer_dim_w}"
     layer_batch_str     = f"{layer_batch}"
-    layer_ops_m_str     = f"{layer_ops_m}"
+    layer_ops_m_str     = fmt(layer_ops_m, precision=1, commas=False)
     conv_batch_str      = f"{conv_batch}"
     conv_h_str          = f"{conv_h}"
     conv_w_str          = f"{conv_w}"
@@ -2662,8 +2741,12 @@ class TrainingDimensions:
     wave_batch_33_str = f"{wave_batch_33}"
     wave_batch_64_str = f"{wave_batch_64}"
     wave_batch_65_str = f"{wave_batch_65}"
-    wave_util_33_str  = f"{wave_util_33}"
-    wave_util_65_str  = f"{wave_util_65}"
+    wave_warps_32_str = f"{wave_warps_32}"
+    wave_warps_33_str = f"{wave_warps_33}"
+    wave_warps_64_str = f"{wave_warps_64}"
+    wave_warps_65_str = f"{wave_warps_65}"
+    wave_util_33_str  = fmt(wave_util_33, precision=0, commas=False)
+    wave_util_65_str  = fmt(wave_util_65, precision=0, commas=False)
     wave_time_33_str  = fmt(wave_time_33, precision=1, commas=False)
     wave_time_65_str  = fmt(wave_time_65, precision=1, commas=False)
 
@@ -2675,7 +2758,6 @@ class TrainingDimensions:
     bwd_input_bytes_md  = md_math(f"{bwd_input_dims_str} \\times 4".replace('×', '\\times'))
     bwd_grad_bytes_md   = md_math(f"{bwd_grad_dims_str} \\times 4".replace('×', '\\times'))
     bwd_kernel_dims_md  = md_math(bwd_kernel_dims_str.replace('×', '\\times'))
-    buffer_dims_md      = md_math(f"1024\\times 1024")
 ```
 
 ### Forward pass {#sec-model-training-forward-pass-9695}
@@ -2715,10 +2797,10 @@ A common mistake in ML systems is treating batch size as a continuous variable. 
 
 |                  **Batch Size**                 | **Warps Needed** |                    **Utilization**                     |                    **Relative Time**                    |
 |:-----------------------------------------------:|:----------------:|:------------------------------------------------------:|:-------------------------------------------------------:|
-| `{python} TrainingDimensions.wave_batch_32_str` |        1         |                      100 percent                       |                       1.0$\times$                       |
-| `{python} TrainingDimensions.wave_batch_33_str` |        2         | `{python} TrainingDimensions.wave_util_33_str` percent | ~`{python} TrainingDimensions.wave_time_33_str`$\times$ |
-| `{python} TrainingDimensions.wave_batch_64_str` |        2         |                      100 percent                       |                       1.0$\times$                       |
-| `{python} TrainingDimensions.wave_batch_65_str` |        3         | `{python} TrainingDimensions.wave_util_65_str` percent | ~`{python} TrainingDimensions.wave_time_65_str`$\times$ |
+| `{python} TrainingDimensions.wave_batch_32_str` | `{python} TrainingDimensions.wave_warps_32_str` |                      100 percent                       |                       1.0$\times$                       |
+| `{python} TrainingDimensions.wave_batch_33_str` | `{python} TrainingDimensions.wave_warps_33_str` | `{python} TrainingDimensions.wave_util_33_str` percent | ~`{python} TrainingDimensions.wave_time_33_str`$\times$ |
+| `{python} TrainingDimensions.wave_batch_64_str` | `{python} TrainingDimensions.wave_warps_64_str` |                      100 percent                       |                       1.0$\times$                       |
+| `{python} TrainingDimensions.wave_batch_65_str` | `{python} TrainingDimensions.wave_warps_65_str` | `{python} TrainingDimensions.wave_util_65_str` percent | ~`{python} TrainingDimensions.wave_time_65_str`$\times$ |
 
 : **Wave quantization tax on NVIDIA GPUs**: Batch sizes that straddle the 32-thread warp boundary launch additional partially-filled warps, dropping utilization sharply while leaving step time nearly unchanged. A batch of 33 launches the same two warps as a batch of 64 but uses only half the hardware; the next quantum boundary repeats at 65. This is why batch sizes should be multiples of 32 or 64, not values that look "close enough." {#tbl-training-wave-quantization}
 
@@ -2846,15 +2928,14 @@ The total memory scales linearly with batch size (as established in @eq-activati
 # │ Show: That doubling batch size can push memory usage into the "Danger Zone".
 # │ How: Calculate memory footprint for ResNet-50 and GPT-3.
 # │
-# │ Imports: mlsysim.core.constants (RESNET50_PARAMS, Mparam, BYTES_FP32, BYTES_FP16,
-# │          byte, GB, MB, MiB, param), mlsysim.book (fmt),
+# │ Imports: mlsysim.core.constants (BILLION, BYTES_FP32, BYTES_FP16, GB,
+# │          MILLION, RESNET50_PARAMS), mlsysim.book (fmt/check),
 # │          mlsysim.formulas (model_memory)
 # │ Exports: first_conv_mb_str, total_gb_b32_str, pct_a100_str,
 # │          act_gb_b64_str, grad_gb_b64_str, total_gb_b64_str,
 # │          gpt3_fp32_str, gpt3_fp16_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim import Hardware, Models
-from mlsysim.core.constants import BYTES_FP32, BYTES_FP16, GB, MB, Mparam, Bparam
+from mlsysim.core.constants import BILLION, BYTES_FP32, BYTES_FP16, GB, MILLION, RESNET50_PARAMS
 from mlsysim.fmt import fmt_percent, fmt, check
 from mlsysim.core.formulas import model_memory
 
@@ -2872,8 +2953,6 @@ class ResNetMemoryScaling:
     # Empirical values
     act_gb_b32 = 8
     grad_gb_b32 = 4
-    param_gb = 0.2 # 200 MB
-
     a100_gb = 40 # A100 40GB
 
     # GPT-3
@@ -2882,6 +2961,7 @@ class ResNetMemoryScaling:
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Conv1 size
     first_conv_mb = (first_conv_h * first_conv_w * first_conv_c * 4) / MILLION # FP32=4 bytes
+    param_gb = model_memory(RESNET50_PARAMS, BYTES_FP32, GB)
 
     # Batch 32
     total_gb_b32 = act_gb_b32 + grad_gb_b32 + param_gb
@@ -2895,6 +2975,10 @@ class ResNetMemoryScaling:
     # GPT-3 Params
     gpt3_fp32_gb = model_memory(gpt3_params, BYTES_FP32, GB)
     gpt3_fp16_gb = model_memory(gpt3_params, BYTES_FP16, GB)
+    gpt3_params_b = gpt3_params / BILLION
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(0.10 <= param_gb <= 0.11, f"ResNet-50 FP32 parameters should be about 0.10 GB, got {param_gb:.3f}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
 
@@ -2907,6 +2991,7 @@ class ResNetMemoryScaling:
 
     gpt3_fp32_str = fmt(gpt3_fp32_gb, precision=0, commas=False)
     gpt3_fp16_str = fmt(gpt3_fp16_gb, precision=0, commas=False)
+    gpt3_params_b_str = fmt(gpt3_params_b, precision=0, commas=False)
 
     # Context Exports
     resnet_input_dim_str = "224"
@@ -2935,7 +3020,7 @@ class ResNetMemoryScaling:
 
 Consider a representative large model like ResNet-50 (a widely-used image classification architecture) processing images at `{python} ResNetMemoryScaling.resnet_input_dim_str` $\times$ `{python} ResNetMemoryScaling.resnet_input_dim_str` resolution with a batch size of `{python} ResNetMemoryScaling.resnet_batch_32_str`. The initial convolutional layer produces activation maps of dimension `{python} ResNetMemoryScaling.resnet_conv1_h_str` $\times$ `{python} ResNetMemoryScaling.resnet_conv1_w_str` $\times$ `{python} ResNetMemoryScaling.resnet_conv1_c_str`; per image at single-precision (`{python} ResNetMemoryScaling.bytes_fp32_str` bytes), this requires approximately `{python} ResNetMemoryScaling.resnet_conv1_mb_str` MB. As the network progresses through its `{python} ResNetMemoryScaling.resnet_layers_str` layers, the cumulative memory demands grow substantially: the complete forward pass activations total approximately `{python} ResNetMemoryScaling.act_gb_b32_str` GB, gradients require an additional `{python} ResNetMemoryScaling.grad_gb_b32_str` GB, and model parameters consume `{python} ResNetMemoryScaling.param_mb_str` MB. This `{python} ResNetMemoryScaling.total_gb_b32_str` GB total represents over `{python} ResNetMemoryScaling.pct_a100_str` percent of a high-end A100 GPU's `{python} ResNetMemoryScaling.a100_mem_gb_str` GB memory capacity for a single batch.
 
-The memory scaling patterns reveal critical hardware utilization trade-offs. Doubling the batch size to `{python} ResNetMemoryScaling.resnet_batch_64_str` increases activation memory to `{python} ResNetMemoryScaling.act_gb_b64_str` GB and gradient memory to `{python} ResNetMemoryScaling.grad_gb_b64_str` GB, totaling `{python} ResNetMemoryScaling.total_gb_b64_str` GB and approaching memory limits. Training larger models at the scale of GPT-3 (`{python} TrainingModels.gpt3_params_b_str` B parameters, representing current large language models) requires approximately `{python} ResNetMemoryScaling.gpt3_fp32_str` GB just for parameters in FP32 (`{python} ResNetMemoryScaling.gpt3_fp16_str` GB in FP16), necessitating distributed memory strategies across multiple high-memory nodes.
+The memory scaling patterns reveal critical hardware utilization trade-offs. Doubling the batch size to `{python} ResNetMemoryScaling.resnet_batch_64_str` increases activation memory to `{python} ResNetMemoryScaling.act_gb_b64_str` GB and gradient memory to `{python} ResNetMemoryScaling.grad_gb_b64_str` GB, totaling `{python} ResNetMemoryScaling.total_gb_b64_str` GB and approaching memory limits. Training larger models at the scale of GPT-3 (`{python} ResNetMemoryScaling.gpt3_params_b_str` B parameters, representing current large language models) requires approximately `{python} ResNetMemoryScaling.gpt3_fp32_str` GB just for parameters in FP32 (`{python} ResNetMemoryScaling.gpt3_fp16_str` GB in FP16), necessitating distributed memory strategies across multiple high-memory nodes.
 
 GPUs typically provide `{python} ResNetMemoryScaling.gpu_mem_range_min_str`--`{python} ResNetMemoryScaling.gpu_mem_range_max_str` GB of memory in high-end training configurations, which must accommodate activations, model parameters, gradients, and optimization states. Two techniques address this constraint directly: **activation checkpointing**\index{Activation Checkpointing!recomputation trade-off} trades recomputation for reduced activation storage, and mixed-precision training halves memory per value by using FP16 instead of FP32. Both are examined in detail in @sec-model-training-pipeline-optimizations-cd9d; here, the key insight is that memory capacity, not compute throughput, often determines the maximum feasible batch size and model depth. Practitioners frequently start with large batch sizes during initial development on smaller networks, then adjust downward when scaling to deeper architectures or memory-constrained hardware.
 
@@ -2962,7 +3047,44 @@ These operations initiate a sequence of memory accesses and computations. The sy
 
 The optimizer memory hierarchy established in @tbl-optimizer-properties manifests concretely during each training iteration. Each parameter update involves reading current values, accessing gradients, computing the update rule, and writing modified parameters back to memory. For Adam, this includes updating and accessing the momentum and variance buffers, creating substantial memory traffic for large models.
 
-At billion-parameter scale, optimizer state dominates the memory budget. As quantified in the GPT-2 worked example (@sec-model-training-optimization-algorithm-system-implications-f9f2), a `{python} TrainingModels.gpt2_params_b_str`B parameter model requires `{python} TrainingModels.gpt2_adam_gb_str` GB for Adam optimizer state alone in FP32, in addition to parameters and gradients, before accounting for activations. This challenge has motivated memory-efficient optimizer variants. Compare the memory bars in @fig-galore-llm-memory-breakdown to see how GaLoRE attacks this constraint: by computing updates in a compressed space [@zhao2024galorememoryefficientllmtraining], the technique reduces the memory footprint dominated by optimizer states to a fraction of its original size, enabling training of larger models on fixed hardware.
+```{python}
+#| label: optimizer-state-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ OPTIMIZER STATE RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Optimizer memory in the training loop.
+# │
+# │ Goal: Keep the GPT-2 Adam-state memory figure local to optimizer-loop prose.
+# │ Show: GPT-2 parameter count and FP32 Adam moment memory.
+# │ How: Read the GPT-2 model twin and compute two FP32 moment tensors.
+# │
+# │ Imports: mlsysim (Models), mlsysim.core.constants (Bparam, BYTES_FP32, GB),
+# │          mlsysim.formulas (model_memory), mlsysim.book (fmt/check)
+# │ Exports: OptimizerStateRecap.{model_params_b,adam_state}_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import Bparam, BYTES_FP32, GB
+from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
+
+class OptimizerStateRecap:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    model = Models.GPT2
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    model_params_b = model.parameters.m_as(Bparam)
+    adam_state_gb = 2 * model_memory(model.parameters, BYTES_FP32, GB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(10 <= adam_state_gb <= 13, f"GPT-2 Adam state should be about 12 GB, got {adam_state_gb:.1f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    model_params_b_str = fmt(model_params_b, precision=1, commas=False)
+    adam_state_str = fmt(adam_state_gb, precision=1, commas=False)
+```
+
+At billion-parameter scale, optimizer state dominates the memory budget. As quantified in the GPT-2 worked example (@sec-model-training-optimization-algorithm-system-implications-f9f2), a `{python} OptimizerStateRecap.model_params_b_str`B parameter model requires `{python} OptimizerStateRecap.adam_state_str` GB for Adam optimizer state alone in FP32, in addition to parameters and gradients, before accounting for activations. This challenge has motivated memory-efficient optimizer variants. Compare the memory bars in @fig-galore-llm-memory-breakdown to see how GaLoRE attacks this constraint: by computing updates in a compressed space [@zhao2024galorememoryefficientllmtraining], the technique reduces the memory footprint dominated by optimizer states to a fraction of its original size, enabling training of larger models on fixed hardware.
 
 ::: {#fig-galore-llm-memory-breakdown fig-env="figure" fig-pos="htb" fig-cap="**Memory Footprint Breakdown**: Memory usage of LLaMA-7B across four memory-efficient optimizer configurations (BF16 Adam, Adafactor, 8-bit Adam, and 8-bit GaLoRE), decomposed into weights, activations, optimizer state, weight gradients, and other components. The dashed red line marks the RTX 4090 24 GB memory limit. Standard FP32 Adam (omitted from the bars; it requires well above 70 GB for this model) does not fit on a single 24 GB GPU; the bars compare the techniques that bring training back within budget, with 8-bit GaLoRE shrinking optimizer state most aggressively." fig-alt="Stacked horizontal bar chart comparing memory usage across four memory-efficient optimizer configurations for LLaMA-7B. Components: others, weight gradient, optimizer state, activation, and weight. Dashed red line marks RTX 4090 memory limit at 24 GB."}
 
@@ -3239,13 +3361,50 @@ The diagnostic methodology that transforms blueprint knowledge into actionable o
 \index{Model FLOPS Utilization!origin}
 Production systems typically achieve 30–50 percent MFU[^fn-mfu]; values below this range indicate optimization opportunities in one of three bottleneck categories.
 
+```{python}
+#| label: mfu-example-calc
+#| echo: false
+from mlsysim.core.constants import A100_FLOPS_FP16_TENSOR, BILLION, TFLOPs, TRILLION, second
+from mlsysim.fmt import fmt, check
+
+class MFUExampleCalc:
+    """MFU example for a 7B transformer processing 1024 tokens per step."""
+
+    # LOAD
+    params_b = 7
+    params = params_b * BILLION
+    flops_per_param_token = 6
+    tokens_per_step = 1024
+    step_seconds = 1.2
+    a100_tflops = A100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second)
+
+    # EXECUTE
+    useful_flops = params * flops_per_param_token * tokens_per_step
+    available_flops = a100_tflops * TRILLION * step_seconds
+    mfu = useful_flops / available_flops
+    lost_fraction = 1 - mfu
+
+    # GUARD
+    check(0.10 <= mfu <= 0.12, f"MFU example should be about 11 percent, got {mfu:.3f}")
+
+    # OUTPUT
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    tokens_per_step_str = fmt(tokens_per_step, precision=0, commas=True)
+    flops_per_param_token_str = fmt(flops_per_param_token, precision=0, commas=False)
+    step_seconds_str = fmt(step_seconds, precision=1, commas=False)
+    a100_tflops_str = fmt(a100_tflops, precision=0, commas=False)
+    mfu_str = fmt(mfu, precision=2, commas=False)
+    mfu_pct_str = fmt(mfu * 100, precision=0, commas=False)
+    lost_pct_str = fmt(lost_fraction * 100, precision=0, commas=False)
+```
+
 [^fn-mfu]: **Model FLOPs Utilization (MFU)**\index{MFU!definition}: Introduced in the PaLM paper [@chowdhery2022palm] as a hardware-agnostic efficiency metric. Unlike raw accelerator utilization, which counts all cycles including overhead, MFU measures only the FLOPs that contribute to model convergence. PaLM 540B reported 46.2 percent MFU on 6,144 TPU v4 chips---meaning over half the theoretical compute was lost to memory stalls, communication, and pipeline bubbles. \index{MFU!PaLM benchmark}
 
 ::: {.callout-definition title="Model FLOPs utilization (MFU)"}
 
 ***Model FLOPs Utilization (MFU)***\index{Model FLOPS Utilization!definition} is the efficiency metric $\text{MFU} = C_{\text{model}} / (R_{\text{peak}} \cdot T_{\text{step}})$, where $C_{\text{model}}$ is the useful per-step model FLOP count (forward plus backward, excluding rematerialization) and $T_{\text{step}}$ is the measured wall-clock time per training step, expressing what fraction of peak hardware throughput is doing useful model computation.
 
-1.  **Significance (quantitative)**: MFU is the $\eta_{\text{hw}}$ term in the iron law made concrete. For a 7B-parameter transformer processing 1,024 tokens per step on an A100 (`{python} TrainingScenarios.a100_tflops_fp16_str` TFLOPS BF16), a 1.2-second step yields $\text{MFU} = 7\text{B} \times 6 \text{ FLOPs/param/token} \times 1024 / (312\text{e}12 \times 1.2) \approx 0.11$ (11 percent), meaning 89 percent of peak compute is lost to memory stalls, communication, and scheduling overhead. Production systems typically reach 30–50 percent MFU; values below 30 percent indicate a specific addressable bottleneck.
+1.  **Significance (quantitative)**: MFU is the $\eta_{\text{hw}}$ term in the iron law made concrete. For a `{python} MFUExampleCalc.params_b_str`B-parameter transformer processing `{python} MFUExampleCalc.tokens_per_step_str` tokens per step on an A100 (`{python} MFUExampleCalc.a100_tflops_str` TFLOPS FP16/BF16 Tensor Core peak), a `{python} MFUExampleCalc.step_seconds_str`-second step gives useful model FLOPs divided by available peak FLOPs of approximately `{python} MFUExampleCalc.mfu_str` (`{python} MFUExampleCalc.mfu_pct_str` percent), meaning `{python} MFUExampleCalc.lost_pct_str` percent of peak compute is lost to memory stalls, communication, and scheduling overhead. Production systems typically reach 30–50 percent MFU; values below 30 percent indicate a specific addressable bottleneck.
 2.  **Distinction (durable)**: Unlike hardware utilization reported by profilers (which counts all cycles where the compute units are active, including gradient checkpointing recomputation and padding FLOPs), MFU counts only the FLOPs that directly advance the model toward convergence—providing a hardware-agnostic efficiency score that is comparable across different accelerator generations.
 3.  **Common pitfall**: A frequent misconception is that 100 percent MFU is achievable. Memory bandwidth is always a finite resource: even a perfectly compute-bound kernel must load weights from DRAM, and the resulting stalls impose a ceiling well below 100 percent. The practical upper bound for most transformer training runs is 55–65 percent MFU, achievable only with FlashAttention and carefully tuned batch sizes.
 
@@ -3711,6 +3870,66 @@ These optimization techniques demonstrate particular value in scenarios involvin
 
 #### Prefetching mechanics {#sec-model-training-prefetching-mechanics-2ba2}
 
+```{python}
+#| label: prefetching-scenarios-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ PREFETCHING SCENARIOS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: §Prefetching Mechanics, §Practical Considerations.
+# │
+# │ Goal: Provide preprocessing timing and prefetch-buffer memory values.
+# │ Show: DataLoader worker/prefetch settings and host-memory trade-off.
+# │ How:  Derive buffer size from batch/image shape and precision byte width.
+# │
+# │ Imports: mlsysim.core.constants (BYTES_FP32, GB, byte),
+# │          mlsysim.book (fmt, md_math, check)
+# │ Exports: PreprocessingScenarios.{crop,jitter,norm,total_preprocess,
+# │          num_workers,prefetch,buffer}_*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import BYTES_FP32, GB, byte
+from mlsysim.fmt import fmt, md_math, check
+
+class PreprocessingScenarios:
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
+    crop_time_ms    = 10
+    jitter_time_ms  = 15
+    norm_time_ms    = 5
+    num_workers     = 4
+    prefetch_factor = 2
+    buffer_batch_size = 256
+    buffer_image_res  = 1024
+    buffer_channels = 3
+    buffer_bytes_per_value = BYTES_FP32.m_as(byte)
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────────
+    total_preprocess_ms = crop_time_ms + jitter_time_ms + norm_time_ms
+    prefetch_buffer_batches = num_workers * prefetch_factor
+    buffer_batch_mem_gb = (
+        (buffer_batch_size * buffer_image_res**2 * buffer_channels * buffer_bytes_per_value) * byte
+    ).m_as(GB)
+    buffer_total_mem_gb = buffer_batch_mem_gb * prefetch_buffer_batches
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────────
+    check(total_preprocess_ms == 30, f"Preprocessing time mismatch: {total_preprocess_ms} != 30ms")
+    check(prefetch_buffer_batches == 8, f"Expected 8 in-flight batches, got {prefetch_buffer_batches}")
+    check(buffer_total_mem_gb > 20, f"Total prefetch memory ({buffer_total_mem_gb:.1f} GB) unexpectedly low.")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
+    num_workers_str             = "4"
+    prefetch_factor_str         = "2"
+    prefetch_buffer_batches_str = fmt(prefetch_buffer_batches, precision=0, commas=False)
+    crop_time_ms_str            = f"{crop_time_ms}"
+    jitter_time_ms_str          = f"{jitter_time_ms}"
+    norm_time_ms_str            = f"{norm_time_ms}"
+    total_preprocess_ms_str     = f"{total_preprocess_ms}"
+    buffer_batch_size_str       = f"{buffer_batch_size}"
+    buffer_image_res_str        = f"{buffer_image_res}"
+    buffer_dims_md              = md_math(f"{buffer_image_res}\\times {buffer_image_res}")
+    buffer_batch_mem_gb_str     = fmt(buffer_batch_mem_gb, precision=1, commas=False)
+    buffer_total_mem_gb_str     = fmt(buffer_total_mem_gb, precision=0)
+```
+
 Training data undergoes three main stages: retrieval from storage, transformation into a suitable format, and use in model training. An unoptimized pipeline executes these stages sequentially, leaving the GPU idle during data fetching and preprocessing. Prefetching eliminates this waiting time by loading data asynchronously during model computation. Data loaders operate as separate threads or processes, preparing the next batch while the current batch trains. This ensures immediate data availability for the GPU when the current batch completes.
 
 Overlapping extends this efficiency by coordinating all three pipeline stages simultaneously. As the GPU processes one batch, preprocessing begins on the next batch, while data fetching starts for the subsequent batch. This coordination maintains constant activity across all pipeline stages.
@@ -3757,7 +3976,7 @@ Prefetching buffers and overlapping parameters can be tuned to match specific ha
 
 Prefetching and overlapping deliver the greatest gains when preprocessing is computationally expensive relative to model computation. A typical image classification pipeline involving random cropping (`{python} PreprocessingScenarios.crop_time_ms_str` ms), color jittering (`{python} PreprocessingScenarios.jitter_time_ms_str` ms), and normalization (`{python} PreprocessingScenarios.norm_time_ms_str` ms) adds `{python} PreprocessingScenarios.total_preprocess_ms_str` ms of delay per batch without prefetching; overlapping these operations with the previous batch's accelerator computation eliminates this stall entirely. NLP workloads similarly benefit when tokenization and subword processing would otherwise block the training loop.
 
-The primary trade-off is memory: prefetch buffers consume GPU or host memory proportional to the buffer depth and batch size. With a prefetch factor of `{python} PreprocessingScenarios.prefetch_factor_str` and batch size of `{python} PreprocessingScenarios.buffer_batch_size_str` high-resolution images (`{python} TrainingDimensions.buffer_dims_md` pixels), the buffer alone requires approximately `{python} PreprocessingScenarios.buffer_mem_gb_str` GB. Tuning `num_workers` and `prefetch_factor` requires empirical testing, as excessive worker threads contend for CPU resources while insufficient buffering reintroduces data stalls. A practical starting point is setting `num_workers` equal to the number of available CPU cores, then profiling to verify that data loading no longer appears as idle GPU time. When storage bandwidth already exceeds compute demand, prefetching adds complexity without measurable throughput improvement.
+The primary trade-off is memory: prefetch buffers consume GPU or host memory proportional to the buffer depth and batch size. With batch size `{python} PreprocessingScenarios.buffer_batch_size_str` high-resolution images (`{python} PreprocessingScenarios.buffer_dims_md` pixels), one buffered batch requires approximately `{python} PreprocessingScenarios.buffer_batch_mem_gb_str` GB. With `{python} PreprocessingScenarios.num_workers_str` workers and `prefetch_factor=` `{python} PreprocessingScenarios.prefetch_factor_str`, the `{python} PreprocessingScenarios.prefetch_buffer_batches_str`-batch prefetch window can hold about `{python} PreprocessingScenarios.buffer_total_mem_gb_str` GB. Tuning `num_workers` and `prefetch_factor` requires empirical testing, as excessive worker threads contend for CPU resources while insufficient buffering reintroduces data stalls. A practical starting point is setting `num_workers` equal to the number of available CPU cores, then profiling to verify that data loading no longer appears as idle GPU time. When storage bandwidth already exceeds compute demand, prefetching adds complexity without measurable throughput improvement.
 
 ```{python}
 #| label: mixed-precision-scenarios-calc
@@ -3772,33 +3991,102 @@ The primary trade-off is memory: prefetch buffers consume GPU or host memory pro
 # │       the mixed-precision narrative.
 # │ Show: FP16/FP32 byte sizes, 1B-parameter model memory, loss scaling
 # │       exponents, gradient ranges, and learning rate values.
-# │ How:  Hard-coded from IEEE 754 spec and standard training recipes.
+# │ How:  Derive model memory from precision byte widths; use standard
+# │       training recipe ranges for loss scaling.
 # │
-# │ Imports: mlsysim.core.constants (BYTES_FP16, byte)
-# │ Exports: MixedPrecisionScenarios.{bytes_fp16,model_1b_fp32_gb,
+# │ Imports: mlsysim.core.constants (BILLION, BYTES_FP16, BYTES_FP32, GB, byte),
+# │          mlsysim.formulas (model_memory), mlsysim.book (fmt/check)
+# │ Exports: MixedPrecisionScenarios.{bytes_fp16,bytes_fp32,model_1b_fp32_gb,
 # │          model_1b_fp16_gb,mp_mem_savings_pct,loss_scale_exp,
 # │          grad_range_min_exp,grad_range_max_exp,small_lr}_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import BILLION, BYTES_FP16, BYTES_FP32, GB, byte
+from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
+
 class MixedPrecisionScenarios:
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
+    model_params = 1 * BILLION
     bytes_fp16          = int(BYTES_FP16.m_as(byte))
-    model_1b_fp32_gb   = 4    # 1B * 4 bytes
-    model_1b_fp16_gb   = 2    # 1B * 2 bytes
-    mp_mem_savings_pct = 50    # Weights only
+    bytes_fp32          = int(BYTES_FP32.m_as(byte))
     loss_scale_exp     = 15
     grad_range_min_exp = -6
     grad_range_max_exp = 3
     small_lr           = 2.5e-4
 
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────────
+    model_1b_fp32_gb = model_memory(model_params, BYTES_FP32, GB)
+    model_1b_fp16_gb = model_memory(model_params, BYTES_FP16, GB)
+    mp_mem_savings_pct = (1 - model_1b_fp16_gb / model_1b_fp32_gb) * 100
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────────
+    check(model_1b_fp32_gb == 4, f"1B FP32 parameters should be 4 GB, got {model_1b_fp32_gb}")
+    check(model_1b_fp16_gb == 2, f"1B FP16 parameters should be 2 GB, got {model_1b_fp16_gb}")
+
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
     bytes_fp16_str          = f"{bytes_fp16}"
-    model_1b_fp32_gb_str    = "4"
-    model_1b_fp16_gb_str    = "2"
-    mp_mem_savings_pct_str  = "50"
+    bytes_fp32_str          = f"{bytes_fp32}"
+    model_1b_fp32_gb_str    = fmt(model_1b_fp32_gb, precision=0, commas=False)
+    model_1b_fp16_gb_str    = fmt(model_1b_fp16_gb, precision=0, commas=False)
+    mp_mem_savings_pct_str  = fmt(mp_mem_savings_pct, precision=0, commas=False)
     loss_scale_exp_str      = "15"
     grad_range_min_exp_str  = "-6"
     grad_range_max_exp_str  = "3"
     small_lr_str            = "2.5e-4"
+```
+
+```{python}
+#| label: mixed-precision-hardware-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MIXED-PRECISION HARDWARE RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Mixed-precision comparison table and hardware-support sections.
+# │
+# │ Goal: Keep A100/H100 reduced-precision throughput and bandwidth local.
+# │ Show: A100 FP32/FP16 ratio, H100 FP8 ratio, A100 HBM bandwidth.
+# │ How: Read A100 and H100 hardware twins; compute peak throughput ratios.
+# │
+# │ Imports: mlsysim (Hardware), mlsysim.core.constants (TFLOPs, PFLOPs, GB,
+# │          second), mlsysim.book (fmt/check)
+# │ Exports: MixedPrecisionHardware.a100_*_str, h100_*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Hardware
+from mlsysim.core.constants import TFLOPs, PFLOPs, GB, second
+from mlsysim.fmt import fmt, check
+
+class MixedPrecisionHardware:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    a100 = Hardware.Cloud.A100
+    h100 = Hardware.Cloud.H100
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    a100_tflops_fp32 = a100.peak_flops_fp32.m_as(TFLOPs/second)
+    a100_tflops_fp16 = a100.peak_flops.m_as(TFLOPs/second)
+    a100_bw_gbs = a100.memory_bw.m_as(GB/second)
+
+    h100_tflops_fp16 = h100.peak_flops.m_as(TFLOPs/second)
+    h100_tflops_fp8 = h100.fp8_flops.m_as(TFLOPs/second)
+    h100_pflops_fp16 = h100.peak_flops.m_as(PFLOPs/second)
+    h100_pflops_fp8 = h100.fp8_flops.m_as(PFLOPs/second)
+
+    a100_fp16_speedup = a100_tflops_fp16 / a100_tflops_fp32
+    h100_fp8_speedup_vs_fp16 = h100_tflops_fp8 / h100_tflops_fp16
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(15 <= a100_fp16_speedup <= 17, f"A100 FP16:FP32 peak ratio should be about 16x, got {a100_fp16_speedup:.1f}")
+    check(1.9 <= h100_fp8_speedup_vs_fp16 <= 2.1, f"H100 FP8:FP16 peak ratio should be about 2x, got {h100_fp8_speedup_vs_fp16:.1f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    a100_tflops_fp32_str = fmt(a100_tflops_fp32, precision=1, commas=False)
+    a100_tflops_fp16_str = fmt(a100_tflops_fp16, precision=0, commas=False)
+    a100_bw_gbs_str = fmt(a100_bw_gbs, precision=0, commas=True)
+    a100_fp16_speedup_str = fmt(a100_fp16_speedup, precision=0, commas=False)
+
+    h100_tflops_fp8_str = fmt(h100_tflops_fp8, precision=0, commas=True)
+    h100_pflops_fp16_str = fmt(h100_pflops_fp16, precision=2, commas=False)
+    h100_pflops_fp8_str = fmt(h100_pflops_fp8, precision=2, commas=False)
+    h100_fp8_speedup_vs_fp16_str = fmt(h100_fp8_speedup_vs_fp16, precision=1, commas=False)
 ```
 
 ### Mixed-precision training {#sec-model-training-mixedprecision-training-9218}
@@ -3808,17 +4096,17 @@ While prefetching optimizes data movement, mixed-precision training addresses bo
 
 Mixed-precision training combines FP32, 16-bit floating-point (FP16), and brain floating-point (bfloat16) formats to reduce memory and accelerate computation while preserving accuracy [@micikevicius2017mixed; @google_bfloat16] [@kalamkar2019].
 
-A neural network trained in FP32 requires `{python} ResNetMemoryScaling.bytes_fp32_str` bytes per parameter, while both FP16 and bfloat16 use `{python} MixedPrecisionScenarios.bytes_fp16_str` bytes. For a model with $10^9$ parameters, this reduction cuts memory usage from `{python} MixedPrecisionScenarios.model_1b_fp32_gb_str` GB to `{python} MixedPrecisionScenarios.model_1b_fp16_gb_str` GB. This memory reduction enables larger batch sizes and deeper architectures on the same hardware.
+A neural network trained in FP32 requires `{python} MixedPrecisionScenarios.bytes_fp32_str` bytes per parameter, while both FP16 and bfloat16 use `{python} MixedPrecisionScenarios.bytes_fp16_str` bytes. For a model with $10^9$ parameters, this reduction cuts memory usage from `{python} MixedPrecisionScenarios.model_1b_fp32_gb_str` GB to `{python} MixedPrecisionScenarios.model_1b_fp16_gb_str` GB. This memory reduction enables larger batch sizes and deeper architectures on the same hardware.
 
 \index{BF16!exponent range preservation}
 The numerical precision differences between these formats shape their use cases. @tbl-precision-comparison reveals that BF16's 8-bit exponent matches FP32's dynamic range $(\pm1.18 \times 10^{-38} \text{ to } \pm3.4 \times 10^{38})$, while FP16's 5-bit exponent gives a minimum normal value of about $6.1 \times 10^{-5}$. Although FP16 subnormal values extend toward $6 \times 10^{-8}$, many accelerators flush subnormals to zero, explaining why small gradients can underflow without loss scaling. FP32 represents numbers from approximately $\pm1.18 \times 10^{-38}$ to $\pm3.4 \times 10^{38}$ with 7 decimal digits of precision. FP16 ranges from $\pm6.10 \times 10^{-5}$ to $\pm65{,}504$ with 3-4 decimal digits of precision. Bfloat16, developed by Google Brain, maintains the same dynamic range as FP32 $(\pm1.18 \times 10^{-38} \text{ to } \pm3.4 \times 10^{38})$ but with reduced precision (3-4 decimal digits). This range preservation makes bfloat16 particularly suited for deep learning training, as it handles large and small gradients more effectively than FP16.
 
-| **Property**            |  **FP32**  |       **FP16**       |  **BF16**  |
-|:------------------------|:----------:|:--------------------:|:----------:|
-| **Exponent bits**       |     8      |          5           |     8      |
-| **Mantissa bits**       |     23     |          10          |     7      |
-| **Min normal value**    | $10^{-38}$ | $6.1 \times 10^{-5}$ | $10^{-38}$ |
-| **Tensor Core speedup** | 1$\times$  |      16$\times$      | 16$\times$ |
+| **Property**                 |  **FP32**  |                         **FP16**                         |                         **BF16**                         |
+|:-----------------------------|:----------:|:--------------------------------------------------------:|:--------------------------------------------------------:|
+| **Exponent bits**            |     8      |                            5                             |                            8                             |
+| **Mantissa bits**            |     23     |                            10                            |                            7                             |
+| **Min normal value**         | $10^{-38}$ |                   $6.1 \times 10^{-5}$                   |                       $10^{-38}$                         |
+| **A100 peak throughput ratio** | 1$\times$ | `{python} MixedPrecisionHardware.a100_fp16_speedup_str`$\times$ | `{python} MixedPrecisionHardware.a100_fp16_speedup_str`$\times$ |
 
 : **Precision Format Comparison**: The choice between FP16 and BF16 depends on whether dynamic range (BF16's strength) or precision (FP16's advantage) matters more for the specific workload. Minimum normal values shown are the practical thresholds for training, as subnormal values may flush to zero on many GPUs. {#tbl-precision-comparison}
 
@@ -3931,7 +4219,7 @@ These benefits compound: a practitioner might simultaneously double batch size (
 # │          fp16_g_str, master_str, opt_str, fp16_t_str, ckpt_act_str,
 # │          ckpt_total_str, v100_capacity_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import GPT2_PARAMS, Mparam, Bparam, BYTES_FP32, BYTES_FP16, BYTES_ADAM_STATE, GB
+from mlsysim.core.constants import GPT2_PARAMS, Mparam, Bparam, BYTES_FP32, BYTES_FP16, BYTES_ADAM_STATE, GB, byte
 from mlsysim.fmt import fmt_percent, fmt, check
 from mlsysim.core.formulas import model_memory
 
@@ -3945,10 +4233,9 @@ class MixedPrecisionMemory:
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     batch_size = 32
 
-    # Pre-calculated activation sizes (GB)
+    # Baseline activation size is representative for GPT-2 XL at batch=32.
     act_fp32_gb = 65.0
-    act_fp16_gb = 32.6
-    act_ckpt_gb = 8.0
+    checkpoint_factor = 4
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # A. FP32 Baseline
@@ -3965,11 +4252,13 @@ class MixedPrecisionMemory:
     p_fp16 = model_memory(GPT2_PARAMS, BYTES_FP16, GB)
     g_fp16 = p_fp16
     master_fp32 = p_fp32
+    act_fp16_gb = act_fp32_gb * (BYTES_FP16.m_as(byte) / BYTES_FP32.m_as(byte))
 
     # Step 3: Total MP = P_16 + G_16 + Acts_16 + Master_32 + Opt_32
     total_mp = p_fp16 + g_fp16 + act_fp16_gb + master_fp32 + opt_fp32
 
     # Step 4: C. With Checkpointing
+    act_ckpt_gb = act_fp16_gb / checkpoint_factor
     total_ckpt = p_fp16 + g_fp16 + act_ckpt_gb + master_fp32 + opt_fp32
 
     # Step 5: Savings
@@ -4003,9 +4292,9 @@ class MixedPrecisionMemory:
     v100_capacity_str = "32"
 
     # Bonus: Export specific values for text macros
-    model_1b_fp32_gb_str = "4" # 1B * 4 bytes
-    model_1b_fp16_gb_str = "2" # 1B * 2 bytes
-    mp_mem_savings_pct_str = "50" # Weights only
+    model_1b_fp32_gb_str = MixedPrecisionScenarios.model_1b_fp32_gb_str
+    model_1b_fp16_gb_str = MixedPrecisionScenarios.model_1b_fp16_gb_str
+    mp_mem_savings_pct_str = MixedPrecisionScenarios.mp_mem_savings_pct_str
 ```
 
 ```{python}
@@ -4127,12 +4416,13 @@ where $A$ and $B$ are $4{\times}4$ FP16 matrices, $C$ is an FP32 accumulator, an
 
 The computational advantage of Tensor Cores becomes apparent when comparing theoretical peak performance across precisions. An NVIDIA A100 GPU exposes:
 
-- **FP32 throughput**: `{python} AcceleratorSpecs.a100_tflops_fp32_str` TFLOPS (standard CUDA cores)
-- **FP16 Tensor Core throughput**: `{python} AcceleratorSpecs.a100_tflops_fp16_str` TFLOPS (16$\times$ speedup)
-- **BF16 Tensor Core throughput**: `{python} AcceleratorSpecs.a100_tflops_fp16_str` TFLOPS (same as FP16)
-- **FP8 Tensor Core throughput** (H100 SXM): `{python} AcceleratorSpecs.h100_tflops_fp8_str` TFLOPS without sparsity (approximately 100$\times$ speedup over FP32)
+- **FP32 throughput**: `{python} MixedPrecisionHardware.a100_tflops_fp32_str` TFLOPS (standard CUDA cores)
+- **FP16 Tensor Core throughput**: `{python} MixedPrecisionHardware.a100_tflops_fp16_str` TFLOPS (`{python} MixedPrecisionHardware.a100_fp16_speedup_str`$\times$ peak ratio)
+- **BF16 Tensor Core throughput**: `{python} MixedPrecisionHardware.a100_tflops_fp16_str` TFLOPS (same as FP16)
 
-This 16$\times$ FP16 peak advantage is a hardware upper bound, not an end-to-end training promise. Matrix multiplications, the dominant operation in neural network training, map naturally to Tensor Core operations, so mixed precision can materially improve wall-clock speed. The realized speedup is usually smaller because data movement, non-Tensor-Core kernels, communication, loss scaling, and optimizer work remain. A transformer's attention mechanism computing $QK^T$ for a $(B, H, N, D)$ tensor requires $2 \times B \times H \times N^2 \times D$ FLOPs; on Tensor Cores, this part can execute much faster than on CUDA cores.
+H100-class accelerators add FP8 Tensor Cores: `{python} MixedPrecisionHardware.h100_tflops_fp8_str` TFLOPS without sparsity, about `{python} MixedPrecisionHardware.h100_fp8_speedup_vs_fp16_str`$\times$ the H100 FP16/BF16 Tensor Core rate.
+
+This `{python} MixedPrecisionHardware.a100_fp16_speedup_str`$\times$ FP16 peak advantage is a hardware upper bound, not an end-to-end training promise. Matrix multiplications, the dominant operation in neural network training, map naturally to Tensor Core operations, so mixed precision can materially improve wall-clock speed. The realized speedup is usually smaller because data movement, non-Tensor-Core kernels, communication, loss scaling, and optimizer work remain. A transformer's attention mechanism computing $QK^T$ for a $(B, H, N, D)$ tensor requires $2 \times B \times H \times N^2 \times D$ FLOPs; on Tensor Cores, this part can execute much faster than on CUDA cores.
 
 ##### BF16 hardware implementation {#sec-model-training-bf16-hardware-implementation-78f3}
 
@@ -4150,7 +4440,7 @@ For transformer training where attention gradients vary from $10^{-10}$ to $10^3
 \index{FP8!hardware acceleration}\index{FP8!E4M3 and E5M2 formats}
 NVIDIA's Hopper architecture (H100) introduces FP8 support with two formats. E4M3 uses four exponent bits and three mantissa bits (prioritizing precision for forward pass weights and activations), while E5M2 uses five exponent bits and two mantissa bits (prioritizing dynamic range for backward pass gradients).
 
-FP8 training doubles Tensor Core throughput again (`{python} AcceleratorSpecs.h100_pflops_fp8_str` PFLOPS on H100 dense vs. `{python} AcceleratorSpecs.h100_pflops_fp16_str` PFLOPS for FP16 dense, without sparsity). However, FP8's severely limited precision requires per-tensor scaling factors maintained in higher precision, adding algorithmic complexity. @tbl-precision-decision-tree summarizes when each precision is appropriate:
+FP8 training doubles Tensor Core throughput again (`{python} MixedPrecisionHardware.h100_pflops_fp8_str` PFLOPS on H100 dense vs. `{python} MixedPrecisionHardware.h100_pflops_fp16_str` PFLOPS for FP16 dense, without sparsity). However, FP8's severely limited precision requires per-tensor scaling factors maintained in higher precision, adding algorithmic complexity. @tbl-precision-decision-tree summarizes when each precision is appropriate:
 
 | **Precision** | **When to Use**                                  | **Hardware Requirement** |
 |:--------------|:-------------------------------------------------|-------------------------:|
@@ -4163,8 +4453,8 @@ FP8 training doubles Tensor Core throughput again (`{python} AcceleratorSpecs.h1
 
 Reduced precision not only accelerates computation but also alleviates memory bandwidth bottlenecks. Modern GPUs are increasingly compute-bound rather than bandwidth-bound for large matrix operations, but data movement still limits performance for smaller operations. A100's specifications illustrate this:
 
-- HBM2e bandwidth: `{python} AcceleratorSpecs.a100_bw_gbs_str` GB/s
-- FP32 throughput: `{python} AcceleratorSpecs.a100_tflops_fp32_str` TFLOPS → requires `{python} AcceleratorSpecs.a100_tflops_fp32_str`$\times 10^{12}\times 4$ bytes = 78 TB/s if every FLOP needs new data
+- HBM2e bandwidth: `{python} MixedPrecisionHardware.a100_bw_gbs_str` GB/s
+- FP32 throughput: `{python} MixedPrecisionHardware.a100_tflops_fp32_str` TFLOPS → requires `{python} MixedPrecisionHardware.a100_tflops_fp32_str`$\times 10^{12}\times 4$ bytes = 78 TB/s if every FLOP needs new data
 - Actual requirement (with data reuse): Much lower, but bandwidth-limited for operations with low arithmetic intensity
 
 FP16 halves memory traffic for the same computation, effectively doubling available bandwidth. For operations like layer normalization (arithmetic intensity approximately 1 FLOP/byte), this bandwidth doubling directly translates to speedups even without Tensor Core involvement.
@@ -4214,7 +4504,7 @@ Optimal mixed-precision training requires matching the precision format to hardw
 |:------------------|:-------------------------------------|:------------------------------------------------------------------------------------------------------------|
 | **V100 (Volta)**  | FP16 with loss scaling               | No BF16 support; gradient clipping essential                                                                |
 | **A100 (Ampere)** | BF16 for transformers; FP16 for CNNs | TF32 mode provides automatic 2--3$\times$ speedup for legacy FP32 code                                      |
-| **H100 (Hopper)** | FP8 via TransformerEngine            | Requires FP8-aware training recipes; `{python} AcceleratorSpecs.h100_tflops_fp8_str` TFLOPS peak throughput |
+| **H100 (Hopper)** | FP8 via TransformerEngine            | Requires FP8-aware training recipes; `{python} MixedPrecisionHardware.h100_tflops_fp8_str` TFLOPS peak throughput |
 
 : **Precision Strategy by GPU Architecture**: Each generation introduces wider precision support, reducing the engineering burden of loss scaling while increasing throughput. {#tbl-hw-precision-strategy tbl-colwidths="[14,34,52]"}
 
@@ -4232,9 +4522,12 @@ Optimal mixed-precision training requires matching the precision format to hardw
 # │ Show: The 20× speedup delivered by hardware-software co-design.
 # │ How: Compare throughput across three GPU generations and four numerical formats.
 # │
-# │ Imports: mlsysim.book (fmt)
+# │ Imports: mlsysim.Models, mlsysim.core.constants (Bparam),
+# │          mlsysim.book (fmt)
 # │ Exports: v100_fp16_speedup_str, a100_over_v100_str, h100_over_v100_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import Bparam
 from mlsysim.fmt import fmt_percent, fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -4246,6 +4539,7 @@ class CrossGenPrecisionCalc:
     v100_fp16_sps = 45    # samples/sec
     a100_bf16_sps = 165   # samples/sec
     h100_fp8_sps = 380    # samples/sec
+    gpt2_params_b = Models.GPT2.parameters.m_as(Bparam)
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     v100_fp16_speedup = v100_fp16_sps/v100_fp32_sps
@@ -4256,9 +4550,10 @@ class CrossGenPrecisionCalc:
     v100_fp16_speedup_str = fmt(v100_fp16_speedup, precision=1, commas=False)
     a100_over_v100_str = fmt(a100_over_v100, precision=1, commas=False)
     h100_over_v100_str = fmt(h100_over_v100, precision=0, commas=False)
+    gpt2_params_b_str = fmt(gpt2_params_b, precision=1, commas=False)
 ```
 
-The performance impact across generations appears in the throughput numbers: training our lighthouse GPT-2 model (`{python} TrainingModels.gpt2_params_b_str` B parameters) on a single GPU illustrates how hardware and precision co-evolve: V100 achieves `{python} CrossGenPrecisionCalc.v100_fp32_sps` samples/sec in FP32 and `{python} CrossGenPrecisionCalc.v100_fp16_sps` samples/sec in FP16 (`{python} CrossGenPrecisionCalc.v100_fp16_speedup_str`$\times$ speedup), A100 reaches `{python} CrossGenPrecisionCalc.a100_bf16_sps` samples/sec in BF16 (`{python} CrossGenPrecisionCalc.a100_over_v100_str`$\times$ over V100 FP32), and H100 delivers `{python} CrossGenPrecisionCalc.h100_fp8_sps` samples/sec in FP8 (`{python} CrossGenPrecisionCalc.h100_over_v100_str`$\times$ over V100 FP32). These speedups compound with the memory savings discussed earlier, enabling both faster iteration and larger models. The hardware-software co-design principle is evident: algorithmic techniques like mixed precision unlock specialized hardware capabilities, while hardware features like Tensor Cores make certain algorithms practical.
+The performance impact across generations appears in the throughput numbers: training our lighthouse GPT-2 model (`{python} CrossGenPrecisionCalc.gpt2_params_b_str` B parameters) on a single GPU illustrates how hardware and precision co-evolve: V100 achieves `{python} CrossGenPrecisionCalc.v100_fp32_sps` samples/sec in FP32 and `{python} CrossGenPrecisionCalc.v100_fp16_sps` samples/sec in FP16 (`{python} CrossGenPrecisionCalc.v100_fp16_speedup_str`$\times$ speedup), A100 reaches `{python} CrossGenPrecisionCalc.a100_bf16_sps` samples/sec in BF16 (`{python} CrossGenPrecisionCalc.a100_over_v100_str`$\times$ over V100 FP32), and H100 delivers `{python} CrossGenPrecisionCalc.h100_fp8_sps` samples/sec in FP8 (`{python} CrossGenPrecisionCalc.h100_over_v100_str`$\times$ over V100 FP32). These speedups compound with the memory savings discussed earlier, enabling both faster iteration and larger models. The hardware-software co-design principle is evident: algorithmic techniques like mixed precision unlock specialized hardware capabilities, while hardware features like Tensor Cores make certain algorithms practical.
 
 ### Flash attention: IO-aware attention optimization {#sec-model-training-flash-attention-ioaware-attention-optimization-3da0}
 
@@ -4800,7 +5095,7 @@ Returning to our GPT-2 Lighthouse Model, *gradient accumulation* is essential fo
 # │          accum_2wk_str, naive_2wk_str, comm_reduction_pct_str,
 # │          accum_steps_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import THOUSAND
+from mlsysim.core.constants import GiB, THOUSAND, V100_MEM_CAPACITY
 from mlsysim.fmt import fmt_percent, fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -4816,6 +5111,7 @@ class GradientAccumulation:
     accum_steps = 4
     gpu_hourly_rate = 16  # $/hour per accelerator
     training_hours = 14 * 24  # 2 weeks
+    v100_mem_gb = V100_MEM_CAPACITY.m_as(GiB)
 
     # ┌── 2. CALCULATION ───────────────────────────────────────────────────────
     gpus_naive = effective_batch // micro_batch
@@ -4853,6 +5149,7 @@ class GradientAccumulation:
     naive_2wk_str = fmt(naive_2wk, precision=1, commas=False)
     comm_reduction_pct_str = fmt(comm_reduction_pct, precision=0, commas=False)
     accum_steps_str = f"{accum_steps}"
+    v100_mem_str = fmt(v100_mem_gb, precision=0, commas=False)
 
 # Export for prose
 ```
@@ -4863,7 +5160,7 @@ GPT-2's training configuration demonstrates the essential role of gradient accum
 
 **Memory Constraints**
 
-- V100 `{python} TrainingHardware.v100_mem_str` GB GPU with gradient checkpointing: Can fit batch_size = 16 (as shown in activation memory example)
+- V100 `{python} GradientAccumulation.v100_mem_str` GB GPU with gradient checkpointing: Can fit batch_size = 16 (as shown in activation memory example)
 - Desired effective batch_size: 512 (optimal for transformer convergence)
 - Problem: 512 ÷ 16 = `{python} GradientAccumulation.gpus_naive_str` GPUs needed just for batch size
 
@@ -5113,9 +5410,10 @@ The GPT-2 case study demonstrates how targeted techniques compose to transform i
 # │      a single comparison table, showing students the end-to-end effect of
 # │      mixed precision + checkpointing on a real model.
 # │
-# │ Imports: mlsysim.book (fmt)
+# │ Imports: mlsysim.constants, mlsysim.book (fmt/check)
 # │ Exports: b_param_str..b_carbon_str, o_param_str..o_carbon_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GPUS_PER_HOST, HOURS_PER_DAY, THOUSAND, V100_TDP, watt
 from mlsysim.fmt import fmt_percent, fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -5130,8 +5428,6 @@ class GPT2SummaryCalc:
     b_opt = 12.0        # GB
     b_act = 65.0        # GB
     b_time = 14.0       # days
-    b_energy = 275000   # kWh
-    b_carbon = 125.0    # tons CO2
 
     # Optimized (AMP + checkpointing)
     o_param = 3.0       # GB
@@ -5140,15 +5436,30 @@ class GPT2SummaryCalc:
     o_opt = 12.0        # GB
     o_act = 8.0         # GB
     o_time = 8.4        # days
-    o_energy = 115000   # kWh
-    o_carbon = 52.0     # tons CO2
+    gpu_count = 32
+    host_cpu_power_w = 200
+    pue = 1.2
+    electricity_usd_per_kwh = 0.10
+    grid_kg_co2_per_kwh = 0.45
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     b_total_mem = b_param + b_grad + b_master + b_opt + b_act
-    b_cost = b_energy * 0.10
 
     o_total_mem = o_param + o_grad + o_master + o_opt + o_act
-    o_cost = o_energy * 0.10
+    hosts = gpu_count // GPUS_PER_HOST
+    cluster_power_kw = ((gpu_count * V100_TDP.m_as(watt)) + (hosts * host_cpu_power_w)) / THOUSAND
+
+    b_energy = cluster_power_kw * b_time * HOURS_PER_DAY * pue
+    o_energy = cluster_power_kw * o_time * HOURS_PER_DAY * pue
+    b_cost = b_energy * electricity_usd_per_kwh
+    o_cost = o_energy * electricity_usd_per_kwh
+    b_carbon = b_energy * grid_kg_co2_per_kwh / THOUSAND
+    o_carbon = o_energy * grid_kg_co2_per_kwh / THOUSAND
+    energy_reduction_pct = (1 - o_energy / b_energy) * 100
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(round(b_total_mem) == 89, f"Baseline memory should be about 89 GB, got {b_total_mem}")
+    check(round(o_total_mem) == 32, f"Optimized memory should be about 32 GB, got {o_total_mem}")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     # Note: Units embedded in _str vars because these populate a summary table
@@ -5161,7 +5472,7 @@ class GPT2SummaryCalc:
     b_time_str = f"{fmt(b_time, precision=0, commas=False)} days"
     b_energy_str = f"{fmt(b_energy, precision=0, commas=True)} kWh"
     b_cost_str = f"${fmt(b_cost, precision=0, commas=True)}"
-    b_carbon_str = f"~{fmt(b_carbon, precision=0, commas=False)} tons CO~2~"
+    b_carbon_str = f"~{fmt(b_carbon, precision=1, commas=False)} tons CO~2~"
 
     o_param_str = f"{fmt(o_param, precision=1, commas=False)} GB"
     o_grad_str = f"{fmt(o_grad, precision=1, commas=False)} GB"
@@ -5172,7 +5483,8 @@ class GPT2SummaryCalc:
     o_time_str = f"{fmt(o_time, precision=1, commas=False)} days"
     o_energy_str = f"{fmt(o_energy, precision=0, commas=True)} kWh"
     o_cost_str = f"${fmt(o_cost, precision=0, commas=True)}"
-    o_carbon_str = f"~{fmt(o_carbon, precision=0, commas=False)} tons CO~2~"
+    o_carbon_str = f"~{fmt(o_carbon, precision=1, commas=False)} tons CO~2~"
+    energy_reduction_pct_str = fmt(energy_reduction_pct, precision=0, commas=False)
 ```
 
 @tbl-gpt2-summary compiles the cluster-level impact of applying mixed-precision training, gradient checkpointing, and the data-pipeline utilization gains from the walkthrough to GPT-2.
@@ -5190,7 +5502,7 @@ class GPT2SummaryCalc:
 | **Electricity Cost (USD 0.10/kWh)**                          |     `{python} GPT2SummaryCalc.b_cost_str`      |     `{python} GPT2SummaryCalc.o_cost_str`      | —                                   |
 | **Carbon Footprint**\index{Carbon Footprint!training impact} |    `{python} GPT2SummaryCalc.b_carbon_str`     |    `{python} GPT2SummaryCalc.o_carbon_str`     | Regional grid average (0.45 kg/kWh) |
 
-: **GPT-2 Training Optimization Summary**: Applying mixed-precision training and gradient checkpointing reduces memory from 89 GB to 32 GB; the data-pipeline utilization gains in the walkthrough reduce training time by 40 percent, energy consumption by 58 percent, and carbon footprint proportionally. {#tbl-gpt2-summary tbl-colwidths="[30,18,18,34]"}
+: **GPT-2 Training Optimization Summary**: Applying mixed-precision training and gradient checkpointing reduces memory from 89 GB to 32 GB; the data-pipeline utilization gains in the walkthrough reduce training time by 40 percent, energy consumption by `{python} GPT2SummaryCalc.energy_reduction_pct_str` percent, and carbon footprint proportionally. {#tbl-gpt2-summary tbl-colwidths="[30,18,18,34]"}
 
 ```{python}
 #| label: optimization-summary-calc
@@ -5217,8 +5529,8 @@ class OptimizationSummaryCalc:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     naive_mem_gb = 89.0
     optimized_mem_gb = 32.0
-    naive_energy_kwh = 275_000
-    optimized_energy_kwh = 115_000
+    naive_energy_kwh = GPT2SummaryCalc.b_energy
+    optimized_energy_kwh = GPT2SummaryCalc.o_energy
     naive_days = 14
     optimized_days = 8.4
 
@@ -5898,8 +6210,41 @@ node[above,pos=0.45,text=black!50,font=\usefont{T1}{phv}{m}{n}
 
 Model parallelism's challenge is *idle time*. While Device one computes layers 1--6, Devices 2--4 sit idle waiting for activations. During the backward pass, the problem reverses: Device four computes first while others wait. This "pipeline bubble" means naive model parallelism achieves poor accelerator utilization---often 25--50 percent even with careful partitioning. Pipeline parallelism addresses this inefficiency, as the discussion of distributed strategies demonstrates.
 
+```{python}
+#| label: single-node-interconnect-recap
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ SINGLE-NODE INTERCONNECT RECAP
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Data/model parallelism and scaling beyond a single node.
+# │
+# │ Goal: Keep the NVLink bandwidth figure local to distributed-training prose.
+# │ Show: H100-generation NVLink bandwidth.
+# │ How: Read the NVLINK_H100_BW constant and format GB/s.
+# │
+# │ Imports: mlsysim.core.constants (GB, NVLINK_H100_BW, second),
+# │          mlsysim.book (fmt/check)
+# │ Exports: SingleNodeInterconnect.nvlink_h100_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GB, NVLINK_H100_BW, second
+from mlsysim.fmt import fmt, check
+
+class SingleNodeInterconnect:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    nvlink_h100 = NVLINK_H100_BW.m_as(GB/second)
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    nvlink_h100_effective = nvlink_h100
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(nvlink_h100_effective > 0, "NVLink bandwidth must be positive")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    nvlink_h100_str = fmt(nvlink_h100_effective, precision=0, commas=False)
+```
+
 \index{NVLink!GPU interconnect}\index{NVLink!gradient synchronization}
-Within a single node, GPUs communicate via high-bandwidth interconnects like NVLink[^fn-nvlink-training] (up to `{python} StorageBandwidth.nvlink_h100_str` GB/s on modern systems), making gradient synchronization and activation transfers fast. Data parallelism transfers gradients, which are proportional to model size. Model parallelism transfers activations, proportional to batch size times hidden dimension, at every partition boundary. The 10--50$\times$ bandwidth advantage of NVLink over PCIe makes both strategies practical within a node. This intra-node parallelism forms the building block for larger distributed systems. To understand *when* to choose each strategy, the following analysis compares *data vs. model parallelism* quantitatively.
+Within a single node, GPUs communicate via high-bandwidth interconnects like NVLink[^fn-nvlink-training] (up to `{python} SingleNodeInterconnect.nvlink_h100_str` GB/s on modern systems), making gradient synchronization and activation transfers fast. Data parallelism transfers gradients, which are proportional to model size. Model parallelism transfers activations, proportional to batch size times hidden dimension, at every partition boundary. The 10--50$\times$ bandwidth advantage of NVLink over PCIe makes both strategies practical within a node. This intra-node parallelism forms the building block for larger distributed systems. To understand *when* to choose each strategy, the following analysis compares *data vs. model parallelism* quantitatively.
 
 ::: {.callout-notebook title="Data vs. model parallelism"}
 
@@ -5933,7 +6278,7 @@ Within a single node, GPUs communicate via high-bandwidth interconnects like NVL
 ### Scaling beyond a single node {#sec-model-training-scaling-beyond-single-node-a671}
 
 \index{Distributed Training!communication overhead}
-When single-node multi-GPU training remains insufficient, distributed training extends across multiple machines. This introduces network communication bottlenecks (typically 10--100 Gbps between nodes vs. `{python} StorageBandwidth.nvlink_h100_str` GB/s within a node) and fault tolerance requirements absent from single-node setups. Understanding *the physics of synchronization* explains why this bandwidth gap is so consequential.
+When single-node multi-GPU training remains insufficient, distributed training extends across multiple machines. This introduces network communication bottlenecks (typically 10--100 Gbps between nodes vs. `{python} SingleNodeInterconnect.nvlink_h100_str` GB/s within a node) and fault tolerance requirements absent from single-node setups. Understanding *the physics of synchronization* explains why this bandwidth gap is so consequential.
 
 ::: {.callout-perspective title="The physics of synchronization"}
 
@@ -6136,14 +6481,14 @@ Training large models is not just a compute challenge; it is a massive energy si
 
 1.  **Workload**: Training a 7B parameter model for one trillion tokens.
 2.  **Compute**: ≈ `{python} TrainingCarbonFootprint.cf_flops_mantissa_str` \(\times 10^{`{python} TrainingCarbonFootprint.cf_flops_exp_str`}\) FLOPs.
-3.  **Efficiency**: 150 TFLOPS sustained on A100 (`{python} AcceleratorSpecs.a100_tdp_str` W TDP).
+3.  **Efficiency**: 150 TFLOPS sustained on A100 (`{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W TDP).
 4.  **Time**: ≈ `{python} TrainingCarbonFootprint.cf_time_days_str` days on `{python} TrainingCarbonFootprint.cf_num_gpus_str` GPUs.
 5.  **Energy**: (`{python} TrainingCarbonFootprint.cf_num_gpus_str` GPUs $\times$ `{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W + `{python} TrainingCarbonFootprint.cf_hosts_str` hosts $\times$ `{python} TrainingCarbonFootprint.cf_cpu_tdp_per_host_w_str` W) $\times$ `{python} TrainingCarbonFootprint.cf_time_hours_str` hours ≈ **`{python} TrainingCarbonFootprint.cf_energy_kwh_str` kWh**
 
 **Systems conclusion**: This single training run consumes as much electricity as an average US household uses in `{python} TrainingCarbonFootprint.cf_household_months_str` months.
 
 - **The optimization dividend**: Improving **Utilization** from 30 percent to 60 percent halves the compute time; it saves ~`{python} TrainingCarbonFootprint.cf_energy_saved_str` kWh of energy and reduces the carbon footprint by over **`{python} TrainingCarbonFootprint.cf_co2_str` tons of CO~2~** (assuming average grid intensity).
-- **The true cost**: Training systems engineering is the primary lever for sustainable AI. Every 1 percent gain in efficiency at scale is equivalent to taking dozens of cars off the road for a year.
+- **The true cost**: Training systems engineering is a primary lever for sustainable AI because utilization gains reduce wall-clock time, energy use, and carbon emissions on the same hardware fleet.
 
 :::
 
