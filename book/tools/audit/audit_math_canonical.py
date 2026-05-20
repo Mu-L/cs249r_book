@@ -109,13 +109,15 @@ DOUBLE_WRAP_CALL = re.compile(
     r")"
 )
 
-# Pattern: small float literal assignment, e.g. `devops_fte = 0.1` or
-# `edge_inf_cost = 0.001`. Captures (variable, literal value text). The
-# audit function parses the literal as a float and only flags when
-# `f"{val:.0f}" == "0"` (i.e., the precision-loss guard would actually
-# fire at runtime).
-SMALL_FLOAT_ASSIGN = re.compile(
-    r"^\s*([A-Za-z_]\w*)\s*=\s*(0\.\d+(?:e-?\d+)?)\b"
+# Pattern: any non-integer literal float assignment, e.g. `devops_fte = 0.1`,
+# `edge_inf_cost = 0.001`, `weight_int4_shard_gb = 8.75`. Captures
+# (variable, literal value text). The audit function parses the literal
+# and flags when the value has a non-zero fractional part AND is later
+# formatted with precision=0 — both sub-classes (rounds-to-zero → crash
+# at runtime; rounds-to-nonzero-integer → silently wrong arithmetic in
+# prose) are real bugs.
+NONINT_FLOAT_ASSIGN = re.compile(
+    r"^\s*([A-Za-z_]\w*)\s*=\s*(\d+\.\d+(?:e-?\d+)?)\b"
 )
 
 # Pattern: fmt() call with precision=0 (only fmt itself; fmt_percent etc.
@@ -307,17 +309,23 @@ def _audit_double_wrap(qmd_path: Path) -> list[Violation]:
 
 
 def _audit_precision_loss_on_small_floats(qmd_path: Path) -> list[Violation]:
-    """Find fmt(VAR, precision=0, ...) calls where VAR is assigned a literal
-    float that would round to "0" at precision=0.
+    """Find fmt(VAR, precision=0, ...) calls where VAR is assigned a non-
+    integer literal float — i.e., a value with a meaningful fractional
+    part where precision=0 silently discards the author's intent.
 
-    This combination always triggers fmt()'s runtime precision-loss guard
-    because the rounded result is "0" for a non-zero input, which the
-    guard rejects as silently hiding the value.
+    Two sub-classes:
+    (a) value rounds to '0' at precision=0 → trips fmt()'s runtime guard
+        (loud failure — ValueError at render time). Examples: 0.001, 0.4.
+    (b) value rounds to a non-zero integer → guard does NOT fire (silent
+        failure — the rendered prose carries the wrong number, which is
+        worse). Examples:
+          • `util_peak = 0.85` → "1" → prose `1 × 312 = 265` is false
+          • `weight_int4_shard_gb = 8.75` → "9" → prose `80 - 9 = 71.25`
+            visibly contradicts itself.
 
-    Sound check: only flags when the parsed literal would actually round to
-    "0" under Python's `f"{val:.0f}"` formatting (banker's rounding). Values
-    like 0.85 or 1.8 do NOT fire the guard at runtime, so they are skipped
-    here too.
+    Both sub-classes are real bugs. The author wrote a non-integer literal
+    intending to display its fractional value; rounding it to integer
+    discards that intent regardless of which integer it lands on.
     """
     out: list[Violation] = []
     lines = qmd_path.read_text(encoding="utf-8").splitlines()
@@ -335,16 +343,17 @@ def _audit_precision_loss_on_small_floats(qmd_path: Path) -> list[Violation]:
         if not in_cell:
             continue
 
-        # Record literal-float assignments where the value would round to "0"
-        # at precision=0 (the precondition for fmt()'s guard to fire).
-        m_assign = SMALL_FLOAT_ASSIGN.match(line)
+        # Record any non-integer literal-float assignment. Skip values that
+        # parse to an integer (e.g., 100.0) — formatting those at
+        # precision=0 produces the right display and is not a bug.
+        m_assign = NONINT_FLOAT_ASSIGN.match(line)
         if m_assign:
             varname = m_assign.group(1)
             try:
                 value = float(m_assign.group(2))
             except ValueError:
                 continue
-            if value > 0 and f"{value:.0f}" == "0":
+            if value != int(value):
                 cell_assignments[varname] = (i, value)
             continue
 
@@ -356,6 +365,21 @@ def _audit_precision_loss_on_small_floats(qmd_path: Path) -> list[Violation]:
         if var not in cell_assignments:
             continue
         assign_line, value = cell_assignments[var]
+        rounded = f"{value:.0f}"
+        if rounded == "0":
+            kind = (
+                f"Rounding `{value}` to integer produces '0', which trips "
+                f"fmt()'s precision-loss guard at render time (loud "
+                f"failure — ValueError)."
+            )
+        else:
+            kind = (
+                f"Rounding `{value}` to integer produces '{rounded}', "
+                f"which does NOT trip fmt()'s guard but silently displays "
+                f"the wrong value. If the prose uses this in arithmetic "
+                f"(e.g., `{var} × X = Y`), the rendered equation becomes "
+                f"nonsense (`{rounded} × X = Y` is false unless Y matches)."
+            )
         out.append(
             Violation(
                 file=rel,
@@ -363,13 +387,13 @@ def _audit_precision_loss_on_small_floats(qmd_path: Path) -> list[Violation]:
                 code="precision_zero_on_small_float",
                 message=(
                     f"`{var}` was assigned `{value}` at line {assign_line} "
-                    f"and is formatted with `precision=0`. Rounding "
-                    f"`{value}` to integer produces '0', which trips "
-                    f"fmt()'s precision-loss guard at render time. Fix "
-                    f"options: (a) bump precision (e.g. `precision=3` for "
-                    f"`{value}`), (b) set `allow_zero=True` if rounding to "
-                    f"zero is intentional, or (c) use `MarkdownStr(f\"{{x}}\")` "
-                    f"for value ranges that span orders of magnitude."
+                    f"and is formatted with `precision=0`. {kind} Fix "
+                    f"options: (a) bump precision to preserve the value "
+                    f"(e.g., `precision=2` for `{value}`), (b) set "
+                    f"`allow_zero=True` if integer rounding to "
+                    f"`{rounded}` is genuinely intentional, or (c) use "
+                    f"`MarkdownStr(f\"{{x}}\")` for value ranges that "
+                    f"span orders of magnitude."
                 ),
                 context=line.strip()[:160],
             )
