@@ -18,15 +18,14 @@ The convention has two halves:
 
   1. **Python side** — every ``*_str``, ``*_math``, ``*_eq``, ``*_frac``
      assignment inside a Python cell must be built via the canonical
-     helpers from ``mlsysim.fmt``:
+     ``fmt_*`` helpers from ``mlsysim.fmt``:
 
-       * ``_str``  — ``fmt(...)``, ``fmt_percent(...)``, ``fmt_full(...)``,
-                     ``fmt_split(...)``, ``sci(...)``, or
-                     ``MarkdownStr(f"...")`` for custom formatting.
-       * ``_math`` — ``md_math(...)``, ``md(...)``, ``md_sci(...)``, or
-                     ``MarkdownStr(f"$...$")``.
+       * ``_str``  — ``fmt(...)``, ``fmt_val(...)``, ``fmt_unit(...)``,
+                     ``fmt_percent(...)``, ``fmt_sci(...)``, or
+                     ``MarkdownStr(...)`` for non-numeric literals.
+       * ``_math`` — ``fmt_math(...)`` or ``MarkdownStr(f"$...$")``.
        * ``_eq``   — same as ``_math``.
-       * ``_frac`` — ``md_frac(...)`` only.
+       * ``_frac`` — ``fmt_frac(...)`` only.
 
      Bare f-strings (``var_str = f"{x:.1f}"``) are forbidden.  They
      produce plain ``str`` and bypass the protection.
@@ -164,7 +163,7 @@ def _audit_python_cells(qmd_path: Path) -> list[Violation]:
                 code=code,
                 message=(
                     f"`{varname}` (suffix `{suffix}`) is not built via the "
-                    f"canonical helper family (fmt/md_math/md_frac/MarkdownStr). "
+                    f"canonical helper family (fmt/fmt_math/fmt_frac/MarkdownStr). "
                     f"Use the appropriate helper from mlsysim.fmt so the value "
                     f"renders correctly inside math mode."
                 ),

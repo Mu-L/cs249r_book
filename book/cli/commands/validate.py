@@ -5011,7 +5011,7 @@ class ValidateCommand:
     # `{python}` substitutions happen AFTER Pandoc's math parser runs, so any
     # raw LaTeX (`$...$`, `\\command`, `^{...}`) embedded in a `_str` export
     # survives into the rendered output as literal text. The fix is either:
-    #   - Wrap the export in md_math() / md() — and rename it `_math` so the
+    #   - Wrap the export in fmt_math() — and rename it `_math` so the
     #     suffix tells the next reader "this is a Markdown-wrapped LaTeX
     #     object, not a plain string."
     #   - Or compute and emit the value as plain text / Unicode.
@@ -5075,15 +5075,15 @@ class ValidateCommand:
                 if self._STR_DOLLAR_MATH_RE.search(rhs):
                     hits.append(("str_export_dollar_math",
                                  f"`{lhs}` contains `$...$` math — `_str` exports must be plain text. "
-                                 f"Rename to `{lhs[:-4]}_math` and wrap in `md_math(...)` (or `md(...)` for mixed prose+math)."))
+                                 f"Rename to `{lhs[:-4]}_math` and wrap in `fmt_math(...)`."))
                 if self._STR_LATEX_CMD_RE.search(rhs):
                     hits.append(("str_export_latex_cmd",
                                  f"`{lhs}` contains a LaTeX command (`\\\\times`, `\\\\frac`, `\\\\alpha`, …) — "
-                                 f"`_str` exports must be plain text. Rename to `{lhs[:-4]}_math` and wrap in `md_math(...)`."))
+                                 f"`_str` exports must be plain text. Rename to `{lhs[:-4]}_math` and wrap in `fmt_math(...)`."))
                 if self._STR_CARET_BRACE_RE.search(rhs):
                     hits.append(("str_export_caret_brace",
                                  f"`{lhs}` contains `^{{...}}` / `_{{...}}` — `_str` exports must be plain text. "
-                                 f"Rename to `{lhs[:-4]}_math` and wrap in `md_math(...)`, or emit Unicode (³, ₂, …)."))
+                                 f"Rename to `{lhs[:-4]}_math` and wrap in `fmt_math(...)`, or emit Unicode (³, ₂, …)."))
 
                 for code, message in hits:
                     issues.append(ValidationIssue(
@@ -5097,7 +5097,7 @@ class ValidateCommand:
 
         return ValidationRunResult(
             name="str-latex-leak",
-            description="*_str Python exports must not contain raw LaTeX (use md()/md_math())",
+            description="*_str Python exports must not contain raw LaTeX (use fmt_math())",
             files_checked=len(files),
             issues=issues,
             elapsed_ms=int((time.time() - start) * 1000),
