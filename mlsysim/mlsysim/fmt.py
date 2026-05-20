@@ -145,7 +145,7 @@ def fmt_percent(ratio, precision=1, commas=False):
     return fmt(ratio * 100, precision=precision, commas=commas)
 
 
-def sci(val, precision=2):
+def fmt_sci(val, precision=2):
     """
     Formats a number or Pint Quantity into scientific notation using Unicode.
     Example: 4.1e9 -> "4.10 × 10⁹"
@@ -165,49 +165,6 @@ def sci(val, precision=2):
     return MarkdownStr(f"{float(base):.{precision}f} × 10{exp_str}")
 
 
-def display_value(value, unit=None, precision=1, commas=True):
-    """
-    Return a dict with raw value and formatted string.
-    """
-    return {
-        "value": value,
-        "str": fmt(value, unit=unit, precision=precision, commas=commas),
-    }
-
-
-def display_percent(ratio, precision=0):
-    """
-    ratio: 0.0 to 1.0
-    """
-    if isinstance(ratio, ureg.Quantity):
-        ratio = float(ratio.m_as(''))
-    else:
-        ratio = float(ratio)
-
-    pct = ratio * 100
-    return {
-        "value": ratio,
-        "str": f"{pct:.{precision}f}",
-        "math": md_math(f"{pct:.{precision}f}\\%"),
-    }
-
-
-def display_fraction(numerator, denominator, result=None, unit=None, precision=2):
-    """
-    numerator/denominator can be numeric or Pint Quantity.
-    result is optional string; if omitted, it will be computed.
-    """
-    if result is None:
-        result = f"{(numerator / denominator):.{precision}g}"
-    num_latex = sci_latex(numerator, precision=precision)
-    den_latex = sci_latex(denominator, precision=precision)
-    return {
-        "value": numerator / denominator,
-        "str": result,
-        "frac": md_frac(num_latex, den_latex, result=result, unit=unit),
-    }
-
-
 def sci_latex(val, precision=2):
     """
     Formats a number or Pint Quantity into LaTeX scientific notation.
@@ -221,19 +178,10 @@ def sci_latex(val, precision=2):
     return f"{float(base):.{precision}f} \\times 10^{{{exp_int}}}"
 
 
-def md(latex_str):
-    """
-    Wrap a LaTeX string in Markdown() to preserve formatting in inline code.
-    """
-    out = MarkdownStr(latex_str)
-    assert isinstance(out, MarkdownStr), "md() must return MarkdownStr"
-    return out
-
-
-def md_frac(numerator, denominator, result=None, unit=None):
+def fmt_frac(numerator, denominator, result=None, unit=None):
     """
     Create a LaTeX fraction with optional result and unit.
-    Returns: $\frac{num}{denom}$ or $\frac{num}{denom} = result$ unit
+    Returns: $\\frac{num}{denom}$ or $\\frac{num}{denom} = result$ unit
     """
     latex = f'$\\frac{{{numerator}}}{{{denominator}}}$'
     if result is not None:
@@ -241,16 +189,7 @@ def md_frac(numerator, denominator, result=None, unit=None):
     if unit is not None:
         latex += f' {unit}'
     out = MarkdownStr(latex)
-    assert isinstance(out, MarkdownStr), "md_frac() must return MarkdownStr"
-    return out
-
-
-def md_sci(val, precision=2):
-    """
-    Format a number in LaTeX scientific notation, wrapped in Markdown().
-    """
-    out = MarkdownStr(f"${sci_latex(val, precision=precision)}$")
-    assert isinstance(out, MarkdownStr), "md_sci() must return MarkdownStr"
+    assert isinstance(out, MarkdownStr), "fmt_frac() must return MarkdownStr"
     return out
 
 
@@ -263,59 +202,13 @@ def check(condition, message):
         raise ValueError(f"Narrative broken: {message}")
 
 
-def md_math(expression):
+def fmt_math(expression):
     """
-    Wrap a LaTeX math expression in Markdown().
+    Wrap a LaTeX math expression in `$...$` so Quarto renders it as inline math.
+    Returns a MarkdownStr.
     """
-    return md(f"${expression}$")
+    out = MarkdownStr(f"${expression}$")
+    assert isinstance(out, MarkdownStr), "fmt_math() must return MarkdownStr"
+    return out
 
 
-def fmt_full(quantity, precision=1, commas=True):
-    """
-    Format a Pint Quantity as a complete "value unit" string.
-    Returns a single string like "2,039 GB/s" or "312 TFLOPs/s".
-
-    Value and unit are always in sync — unit is taken directly from the Quantity.
-
-    RULE: Use the whole string in prose. Do NOT add a separate unit label.
-        ✓ "`{python} bw_str` of memory bandwidth"
-        ✗ "`{python} bw_str` GB/s"  ← unit already in string; this doubles it
-
-    Use fmt()  when the unit is fixed and hardcoded in prose.
-    Use fmt_split() for tables needing separate value/unit columns.
-    """
-    if not isinstance(quantity, ureg.Quantity):
-        raise TypeError(
-            f"fmt_full() requires a pint Quantity, got {type(quantity).__name__}. "
-            f"Use fmt() for raw numbers."
-        )
-    val = quantity.magnitude
-    unit_str = f"{quantity.units:~P}"   # e.g. "GB/s", "TFLOPs/s"
-    fmt_str = f",.{precision}f" if commas else f".{precision}f"
-    value_str = f"{val:{fmt_str}}"
-
-    # Precision safety check (same guard as fmt())
-    try:
-        numeric_result = float(value_str.replace(",", ""))
-    except ValueError:
-        numeric_result = None
-    if numeric_result == 0.0 and abs(val) > 1e-12:
-        raise ValueError(
-            f"fmt_full() Precision Error: {val} formatted as '{value_str}' "
-            f"with precision={precision}. Increase precision."
-        )
-    return MarkdownStr(f"{value_str} {unit_str}")
-
-
-def fmt_split(quantity, precision=1, commas=True):
-    """
-    Format a Pint Quantity as a (value_str, unit_str) tuple. For table columns only.
-    For prose, use fmt_full() instead.
-
-        bw_val, bw_unit = fmt_split(A100_MEM_BW)  # ("2,039", "GB/s")
-    """
-    full = fmt_full(quantity, precision=precision, commas=commas)
-    parts = full.rsplit(" ", 1)
-    if len(parts) == 2:
-        return (MarkdownStr(parts[0]), MarkdownStr(parts[1]))
-    return (MarkdownStr(full), MarkdownStr(""))
