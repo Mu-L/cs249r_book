@@ -38,7 +38,7 @@ READING_ORDER: list[tuple[str, str]] = [
     ("vol1", "frameworks"),
     ("vol1", "training"),
     ("vol1", "data_selection"),
-    ("vol1", "optimizations"),       # .qmd is model_compression.qmd; glossary uses dir name
+    ("vol1", "model_compression"),
     ("vol1", "hw_acceleration"),
     ("vol1", "benchmarking"),
     ("vol1", "model_serving"),
@@ -71,8 +71,8 @@ BASE = Path(__file__).resolve().parents[3] / "quarto" / "contents"
 def _chapter_qmd_path(vol: str, chap: str) -> Path | None:
     """Return the main QMD path for a chapter, or ``None`` if absent.
 
-    The directory name and QMD stem usually match, but some chapters
-    (``optimizations``) use a more specific QMD stem.
+    The directory name and QMD stem normally match; the fallback handles
+    the case where they diverge.
     """
     chap_dir = BASE / vol / chap
     direct = chap_dir / f"{chap}.qmd"
