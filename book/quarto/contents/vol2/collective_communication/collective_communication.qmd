@@ -90,7 +90,7 @@ At the exascale (tens of thousands of GPUs), the power budget for communication 
 
 Beyond these physical limits, protocol overhead adds a per-message software tax. Traditional TCP/IP stacks incur microseconds of OS kernel overhead per packet: the CPU must process socket calls, traverse the kernel networking stack, copy data between user and kernel buffers, and interact with the NIC through device drivers. High-performance ML networks bypass the kernel entirely using **RDMA (Remote Direct Memory Access)**[^fn-zerocopy-rdma], allowing the network card (NIC) to read directly from GPU memory via the PCIe bus. RDMA eliminates the kernel traversal, reducing per-message overhead from 10--20 $\mu$s (TCP) to 1--3 $\mu$s (RDMA). The most advanced configuration, **GPUDirect RDMA**\index{GPUDirect RDMA}, further eliminates the CPU from the data path: the NIC reads from GPU HBM through a direct PCIe peer-to-peer transfer, without the data ever touching CPU DRAM.
 
-These three constraints interact multiplicatively. Latency sets the floor for every message regardless of size. Bandwidth caps the throughput for large transfers. Protocol overhead adds a per-message tax that penalizes fine-grained communication. The following napkin math exercise quantifies how these constraints combine for a realistic training scenario.
+These three constraints interact multiplicatively. Latency sets the floor for every message regardless of size. Bandwidth caps the throughput for large transfers. Protocol overhead adds a per-message tax that penalizes fine-grained communication. A quick AllReduce estimate makes their combined cost concrete for a realistic training scenario.
 
 ```{python}
 #| label: allreduce-napkin-math
@@ -177,7 +177,7 @@ Total: $T_{\text{AllReduce}} \approx$ `{python} AllReduceCost.ring_bw_time_ms_st
 
 :::
 
-The exercise above reveals why data movement, not computation, becomes the governing constraint at scale. A single AllReduce on a 70B model's gradients consumes seconds of wall-clock time, during which all GPUs would otherwise sit idle. This asymmetry between local computation (which parallelizes perfectly) and global coordination (which requires physical data movement) motivates every algorithm in the remainder of this chapter. Halving that multi-second AllReduce would save thousands of GPU-hours over a typical training campaign, translating directly to reduced cost and faster time to deployment.
+The calculation reveals why data movement, not computation, becomes the governing constraint at scale. A single AllReduce on a 70B model's gradients consumes seconds of wall-clock time, during which all GPUs would otherwise sit idle. This asymmetry between local computation (which parallelizes perfectly) and global coordination (which requires physical data movement) motivates every algorithm in the remainder of this chapter. Halving that multi-second AllReduce would save thousands of GPU-hours over a typical training campaign, translating directly to reduced cost and faster time to deployment.
 
 The cost analysis also explains why the choice of collective algorithm matters far more than most practitioners realize. Using a suboptimal algorithm that achieves only 60 percent of theoretical bandwidth (a common outcome with poor topology mapping) would inflate the five-second AllReduce to over nine seconds, adding several seconds of pure waste to every training step.
 
@@ -435,7 +435,7 @@ class LatencyVsBw:
 
 :::
 
-The two cases give you a quick diagnostic test: identify the dominant term first, then choose whether to spend effort on software latency or link bandwidth.
+The same distinction between latency-bound and bandwidth-bound communication is the diagnostic skill to practice.
 
 ::: {#chk-collective-communication-alpha-beta-diagnostics .callout-checkpoint title="Alpha-beta diagnostics"}
 
@@ -457,7 +457,7 @@ The α-β model assumes the processor is idle during communication. For **pipeli
 *   **$g$ (Gap)**: The minimum time interval between consecutive message injections (inverse of message rate). This models **link contention**.
 *   **$N$ (Processors)**: The number of processors in the system.
 
-LogP distinguishes **network latency** (L, which can be hidden) from **processor overhead** (o, which cannot). A system can overlap communication with computation only if the compute kernel runs longer than the overhead. A worked example demonstrates this distinction:
+LogP distinguishes **network latency** (L, which can be hidden) from **processor overhead** (o, which cannot). A system can overlap communication with computation only if the compute kernel runs longer than the overhead. A small overlap calculation makes this distinction concrete:
 
 ```{python}
 #| label: logp-overlap-calc
@@ -1129,7 +1129,7 @@ $$M_{\text{crossover}} \approx \frac{100 \times 5\cdot 10^{-6} \times 50\cdot 10
 
 In practice, NCCL's algorithm selection is more nuanced than a simple two-way split. The Double Binary Tree algorithm offers logarithmic latency with near-optimal bandwidth, making it competitive with both Ring and Tree across a broad range of message sizes. NCCL also considers the number of channels (parallel communication streams), the network topology, and whether inter-node or intra-node links are being used. The effective selection logic resembles a multi-way decision tree indexed by (message size, GPU count, topology type) rather than a single crossover point.
 
-Nevertheless, the crossover formula remains the essential mental model for understanding *why* libraries make the choices they do. When a library selects an unexpected algorithm, the crossover analysis provides the reasoning framework to evaluate whether the choice is correct or whether manual override is warranted. A worked example applies this framework to a concrete scenario:
+Nevertheless, the crossover formula remains the essential mental model for understanding *why* libraries make the choices they do. When a library selects an unexpected algorithm, the crossover analysis provides the reasoning framework to evaluate whether the choice is correct or whether manual override is warranted. A concrete buffer-size calculation applies this framework to a realistic decision:
 
 ```{python}
 #| label: ring-vs-tree-calc
@@ -1292,7 +1292,7 @@ GPUs at the same position across nodes (for example, all GPU-0s) perform an AllR
 
 Each node performs a local AllGather to distribute the final result to all $G$ GPUs. Again, this uses only NVLink, leaving inter-node bandwidth untouched.
 
-The net effect: inter-node traffic is reduced by a factor of $G$ (GPUs per node), effectively **multiplying the apparent inter-node bandwidth by $G$**. The following example quantifies this bandwidth multiplication effect:
+The net effect: inter-node traffic is reduced by a factor of $G$ (GPUs per node), effectively **multiplying the apparent inter-node bandwidth by $G$**. A simple 8-node budget makes this bandwidth multiplication concrete:
 
 ```{python}
 #| label: hierarchical-allreduce-calc
@@ -1391,7 +1391,7 @@ class HierarchicalAllreduceCalc:
 
 These three phases confine most traffic within each node before crossing the slower inter-node fabric.
 
-The hierarchical approach generalizes beyond two levels. Large clusters with multiple racks connected through spine switches introduce a third bandwidth tier (rack-to-rack at reduced bisection bandwidth). The following exercise extends the two-level analysis to quantify the impact of this additional hierarchy.
+The hierarchical approach generalizes beyond two levels. Large clusters with multiple racks connected through spine switches introduce a third bandwidth tier (rack-to-rack at reduced bisection bandwidth). Extending the same calculation to a rack-scale cluster quantifies the impact of this additional hierarchy.
 
 ```{python}
 #| label: three-level-napkin
@@ -1640,7 +1640,7 @@ $$\frac{1}{T}\sum_{t=1}^{T} v_t \to \frac{1}{T}\sum_{t=1}^{T} g_t$$
 
 The long-run average of transmitted gradients equals the long-run average of true gradients. No gradient information is permanently lost; it is merely delayed. Small gradients that are repeatedly dropped eventually accumulate in $e_t$ until they exceed the compression threshold and get transmitted.
 
-The telescoping property of compression error across time is why error feedback transforms a biased, nonconvergent method into an unbiased, convergent one. Theoretical analysis shows that with error feedback, compressed SGD converges at the same asymptotic rate as uncompressed SGD, with only constant-factor slowdowns [@stich2018sparsified; @karimireddy2019error]. The following step-by-step trace illustrates how error feedback preserves gradient information that naive compression would lose:
+The telescoping property of compression error across time is why error feedback transforms a biased, nonconvergent method into an unbiased, convergent one. Theoretical analysis shows that with error feedback, compressed SGD converges at the same asymptotic rate as uncompressed SGD, with only constant-factor slowdowns [@stich2018sparsified; @karimireddy2019error]. A short trace shows how error feedback preserves gradient information that naive compression would lose:
 
 ```{python}
 #| label: error-feedback-calc
@@ -1897,7 +1897,7 @@ The existence of multiple communication libraries for different hardware platfor
 
 ::: {#psp-collective-communication-debugging-communication-bottlenecks .callout-perspective title="Debugging communication bottlenecks"}
 
-When a distributed training job runs slower than expected, the communication library provides the first diagnostic signals. The following systematic approach isolates whether the bottleneck is in computation, communication, or their interaction:
+When a distributed training job runs slower than expected, the communication library provides the first diagnostic signals. A systematic workflow isolates whether the bottleneck is in computation, communication, or their interaction:
 
 1. **Profile with NCCL debug logging**: Set `NCCL_DEBUG=INFO` to see which algorithm (Ring, Tree) and protocol (Simple, LL, LL128) NCCL selects for each collective. Unexpected algorithm choices often indicate topology mis-detection.
 
@@ -1913,7 +1913,7 @@ When a distributed training job runs slower than expected, the communication lib
 
 ## Communication-Computation Overlap {#sec-communication-overlap}
 
-A 20-millisecond network delay can effectively disappear—not by upgrading the physical network, but by hiding the communication behind arithmetic. The preceding sections addressed communication cost from three physical and algorithmic angles.
+A 20-millisecond network delay can effectively disappear—not by upgrading the physical network, but by hiding the communication behind arithmetic. The preceding sections reduced communication cost through algorithm choice, topology awareness, and payload compression. Overlap attacks the residual by changing when communication happens.
 
 ### Layer-by-layer overlap {#sec-communication-layer-overlap}
 
@@ -1943,7 +1943,7 @@ Additionally, the first and last layers of the backward pass cannot overlap. The
 
 A third limitation arises from memory pressure. Overlapping communication with computation requires maintaining additional GPU memory buffers: the gradient being communicated must remain in memory while the backward pass continues producing new gradients for earlier layers. For FSDP workloads, where memory optimization is the primary motivation, this additional buffer requirement can conflict with the memory savings that FSDP provides. The engineering challenge is to find the sweet spot where overlap is aggressive enough to hide communication but not so aggressive that it pushes the GPU into out-of-memory territory. PyTorch FSDP settings such as `limit_all_gathers`, `backward_prefetch`, `forward_prefetch`, and resharding or prefetch choices provide knobs for this trade-off.
 
-A realistic training configuration quantifies the impact of these overlap limits.
+A realistic training configuration shows how much communication remains exposed after overlap.
 
 ```{python}
 #| label: overlap-budget-calc

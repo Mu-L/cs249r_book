@@ -107,7 +107,7 @@ Algorithmic innovations such as speculative decoding and mixture-of-experts (MoE
 
 Each technique attacks a different term, and this taxonomy guides optimization strategy: diagnose which term dominates (using the roofline model from @sec-performance-engineering-roofline), then apply the technique targeting that term. Applying a technique that targets the nondominant term wastes engineering effort.
 
-@fig-iron-law-flowchart codifies this diagnostic process as a decision flowchart, mapping each bottleneck to its corresponding optimization technique.
+Before using this diagnostic process, check how each term in the iron law maps to a practical optimization lever.
 
 ::: {#chk-performance-engineering-iron-law-performance .callout-checkpoint title="The iron law of performance"}
 
@@ -119,6 +119,8 @@ Verify your understanding of system-level performance diagnosis:
 - [ ] True or False: If a system is Compute-Bound, the memory bandwidth is irrelevant to its performance.
 
 :::
+
+The same diagnostic process can be codified as a decision flowchart, mapping each bottleneck to its corresponding optimization technique.
 
 ::: {#fig-iron-law-flowchart fig-env="figure" fig-pos="htb" fig-cap="**Iron Law Diagnostic Flowchart**: A training-slow-down troubleshooting flow that starts from observed symptoms (slow training, low GPU utilization), branches through I/O, CPU, and communication-overhead checks, and classifies the workload as compute-bound or memory-bound at the leaves. Compute-bound paths point to precision engineering and algorithmic change; memory-bound paths point to operator fusion and tiling. Overhead-bound symptoms (graph dispatch, communication) are surfaced earlier in the flow and addressed before the final compute/memory classification." fig-alt="Troubleshooting flowchart starting from 'Training is slow', branching through GPU-utilization, I/O, CPU, and communication checks, with two terminal labels: Compute Bound and Memory Bound."}
 
@@ -656,6 +658,8 @@ class RooflineDiagnostic:
     tps_str = fmt(tokens_per_sec, precision=0, commas=False)
 ```
 
+A quick decode calculation shows why the memory wall dominates even when the accelerator has abundant unused FLOPS.
+
 ::: {#nbk-performance-engineering-roofline-diagnostic .callout-notebook title="The Roofline diagnostic"}
 
 **Problem**: A 70B parameter LLM is deployed on 8$\times$ H100 GPUs with tensor parallelism. At batch size 1, each GPU holds approximately 8.75B parameters in FP16 (17.5 GB of weights). Each decode step reads its weight shard to produce one token. What is the achieved arithmetic intensity, and what is the theoretical maximum token generation rate?
@@ -908,13 +912,15 @@ FlashAttention-2 [@dao2023flashattention2] further optimizes the algorithm for m
 
 FlashAttention-3 targets the H100's new hardware features: FP8 Tensor Cores and the Tensor Memory Accelerator (TMA). By computing attention in FP8 with selective FP16 accumulation, FlashAttention-3 achieves near-peak FP8 utilization for the attention operation, further closing the gap between achieved and theoretical performance.
 
+The original breakthrough was a change in how engineers understood the bottleneck: attention was not just a matrix multiplication problem, but a memory hierarchy problem.
+
 ::: {#ws-performance-engineering-flashattention-breakthrough .callout-war-story title="The FlashAttention breakthrough"}
 
 In 2022, Tri Dao challenged the prevailing wisdom that the attention mechanism's $O(N^2)$ complexity required better matrix multiplication kernels. His insight was that the bottleneck was not compute, but memory hierarchy. Standard attention materialized the massive $N{\times}N$ attention score matrix in high-latency HBM. FlashAttention restructured the algorithm using tiling to keep running statistics in on-chip SRAM, computing the softmax without ever writing the full matrix to global memory. This reduced memory complexity to linear $O(N)$ and wall-clock time by 2--4$\times$ on relevant attention workloads. It quickly influenced the attention kernels used across major ML frameworks and serving stacks.
 
 :::
 
-@fig-flashattention-memory-savings quantifies the workspace advantage across sequence lengths. Standard attention allocates the full $N{\times}N$ score matrix in HBM, while FlashAttention maintains only $O(N)$ running statistics. Standard-attention workspace grows quadratically with sequence length while FlashAttention's running state grows linearly, so the savings ratio grows linearly: at a typical 8K context, the quadratic score workspace alone is 4,096$\times$ larger than FlashAttention's running statistics; at 64K long-context, the ratio reaches 32,768$\times$.
+Before turning to the scaling plot, pause on the mechanism: FlashAttention trades a small amount of extra arithmetic for the elimination of quadratic HBM-resident state.
 
 ::: {#chk-performance-engineering-flashattention-mechanics .callout-checkpoint title="FlashAttention mechanics"}
 
@@ -926,6 +932,8 @@ Verify your understanding of memory-aware attention:
 - [ ] How does reducing the attention memory from $O(N^2)$ to $O(N)$ enable larger batch sizes for serving?
 
 :::
+
+@fig-flashattention-memory-savings quantifies how that workspace advantage grows with sequence length. Standard-attention workspace grows quadratically while FlashAttention's running state grows linearly, so the savings ratio grows linearly: at a typical 8K context, the quadratic score workspace alone is 4,096$\times$ larger than FlashAttention's running statistics; at 64K long-context, the ratio reaches 32,768$\times$.
 
 ::: {#fig-flashattention-memory-savings fig-env="figure" fig-pos="htb" fig-cap="**FlashAttention Memory Savings**: $O(N^2) \rightarrow O(N)$. Standard attention allocates the full $N{\times}N$ score matrix in HBM, while FlashAttention maintains only $O(N)$ running statistics. The shaded region represents memory freed for KV cache, activations, or larger batch sizes. At long-context lengths (64K+), the savings exceed four orders of magnitude." fig-alt="Log-log plot of attention memory vs. sequence length. Standard O(N²) curve rises steeply; FlashAttention O(N) grows linearly. Shaded region shows savings, with annotations at 8K and 65K."}
 
@@ -1169,6 +1177,8 @@ class KVCacheAnalysis:
     avail_int8_gb_str = fmt(avail_int8_gb, precision=2, commas=False)
 ```
 
+A capacity calculation makes the serving impact of precision choices concrete.
+
 ::: {#nbk-performance-engineering-precision-dividend .callout-notebook title="The precision dividend"}
 
 **Problem**: A 70B parameter model is served on 4$\times$ H100 GPUs. The model weights in FP16 consume 140 GB (35 GB per GPU). KV cache at FP16 consumes `{python} KVCacheAnalysis.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
@@ -1389,6 +1399,8 @@ class CompilationDividend:
     speedup_str = fmt(speedup, precision=2, commas=False)
     gemm_share_str = fmt(round(gemm_share_post), precision=0, commas=False)
 ```
+
+A simple profile breakdown shows how compiler optimizations convert overhead into useful throughput.
 
 ::: {#nbk-performance-engineering-compilation-dividend .callout-notebook title="The compilation dividend"}
 
@@ -1881,6 +1893,8 @@ Memory allocation thrashing shows repeated allocations and deallocations of larg
 
 CPU-bound data loading causes GPU utilization to drop periodically to zero while the CPU prepares the next batch. Data preprocessing or tokenization is not pipelined with GPU computation. Increasing the number of data loading workers, moving tokenization to a dedicated preprocessing service, or pretokenizing the dataset resolves this bottleneck. This pattern is more common in training than in inference but can occur in inference when input preprocessing (image resizing, text tokenization) is expensive.
 
+A full decode trace shows how several of these smaller bottlenecks can combine into the dominant loss.
+
 ::: {#nbk-performance-engineering-profiler-detective .callout-notebook title="The profiler detective"}
 
 **Problem**: A 7B parameter LLM runs on a single H100 and shows 45 tokens/second during autoregressive generation at batch size 1. The pure FP16 weight-read roofline is higher, but after budgeting roughly 35 GB of total per-token traffic for weights, KV-cache reads, sampling, synchronization, and launch overhead, the bandwidth-limited full-decode ceiling is approximately 96 tokens/second. Where is the remaining 53 percent of realizable decode-step performance hiding?
@@ -1932,7 +1946,7 @@ Optimizing a single node is a prerequisite, but the ultimate test of performance
 
 ### The fleet efficiency metric {#sec-performance-engineering-fleet-efficiency-metric-dff4}
 
-While Hardware Utilization reports how often GPUs are busy, it fails to distinguish between useful work and wasted cycles (such as activation recomputation or communication bubbles). The gold standard for fleet measurement is Model FLOPs Utilization (MFU). By focusing on the "useful" FLOPs required by the model architecture, MFU provides an invariant measure of system efficiency that remains comparable across different software stacks and parallelization strategies.
+While Hardware Utilization reports how often GPUs are busy, it fails to distinguish between useful work and wasted cycles (such as activation recomputation or communication bubbles). Fleet measurement therefore needs a useful-work utilization metric. By focusing on the "useful" FLOPs required by the model architecture, this metric provides an invariant measure of system efficiency that remains comparable across different software stacks and parallelization strategies.
 
 ::: {#dfn-performance-engineering-model-flops-utilization-mfu .callout-definition title="Model FLOPs utilization (MFU)"}
 

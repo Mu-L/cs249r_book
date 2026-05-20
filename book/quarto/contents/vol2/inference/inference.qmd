@@ -213,7 +213,7 @@ Minimizing this tax requires co-locating communicating components, using high-ba
 
 ### Serving cost dominates training cost {#sec-inference-scale-serving-cost-dominates-training-cost-576a}
 
-The serving tax quantified above consumes a fraction of the latency budget per request. The true economic impact of inference emerges when we consider cost over a model's entire operational lifetime. Serving cost typically dominates training cost by orders of magnitude because training is a one-time capital expenditure (CapEx) while serving is a continuous operational expenditure (OpEx) that scales with user growth. The following worked example quantifies that compounding operational expense in practice.
+The serving tax quantified above consumes a fraction of the latency budget per request. The true economic impact of inference emerges when we consider cost over a model's entire operational lifetime. Serving cost typically dominates training cost by orders of magnitude because training is a one-time capital expenditure (CapEx) while serving is a continuous operational expenditure (OpEx) that scales with user growth. A quick cost calculation makes the multiplier concrete.
 
 ```{python}
 #| label: serving-cost-multiplier-simple
@@ -1381,7 +1381,7 @@ The autoregressive bottleneck (Principle \ref{pri-autoregressive-bottleneck}) go
 
 :::
 
-The iteration-level description is abstract, but the operational benefit is concrete: freed capacity can be reused immediately instead of waiting for an entire batch to drain.
+The same idea is easier to see as slot reuse over time.
 
 ::: {#psp-inference-analogy-restaurant-kitchen .callout-perspective title="Analogy: The restaurant kitchen"}
 
@@ -1738,7 +1738,7 @@ Kernel design must also adapt. Batched GPU kernels traditionally assume fixed ba
 
 For new LLM serving deployments, continuous batching frameworks like vLLM, TensorRT-LLM, or TGI provide the implementation complexity as a solved problem. The decision becomes whether to adopt these frameworks vs. building custom serving infrastructure. For organizations with existing traditional batching systems, the migration cost must be weighed against the workload's output length variance using @tbl-continuous-batching-benefit.
 
-Even with modern frameworks, diagnosing tail latency anomalies requires systematic investigation across the system stack. The following case study applies the fleet stack methodology to a real-world P99 latency regression.
+Even with modern frameworks, diagnosing tail latency anomalies requires systematic investigation across the system stack. A real-world P99 latency regression shows how the fleet stack methodology applies across infrastructure, execution, and serving layers.
 
 ```{python}
 #| label: a100-hardware-scenario
@@ -1865,7 +1865,7 @@ Context features: [process(ctx_1), process(ctx_2), process(ctx_3)]  → parallel
 Then: Combine features per request for ranking
 ```
 
-Feature-parallel batching is natural when embeddings are sharded across servers: each embedding server handles lookups for its shard across all requests in the batch. The example below shows how this pattern operates at Meta-scale recommendation traffic.
+Feature-parallel batching is natural when embeddings are sharded across servers: each embedding server handles lookups for its shard across all requests in the batch. At Meta-scale request volumes, this turns feature sharding into a serving strategy rather than a storage detail.
 
 ::: {#exmp-inference-recsys-batching-at-meta-scale .callout-example title="RecSys batching at Meta scale"}
 
@@ -2113,6 +2113,15 @@ The cache size grows with context as calculated by @eq-kv-cache-size:
 
 $$\text{KV cache size} = 2 \times n_{\text{layers}} \times d \times S \times B \times s_{\text{elem}}$$ {#eq-kv-cache-size}
 
+where:
+
+- $n_{\text{layers}}$ = number of layers
+- $d$ = hidden dimension
+- $S$ = sequence length
+- $B$ = batch size
+- $s_{\text{elem}}$ = storage size per element in bytes
+- Factor of 2 accounts for both keys and values
+
 ### The KV cache wall: Memory-bound capacity {#sec-inference-scale-kv-cache-wall}
 
 Increasing the batch size to maximize throughput in LLM serving is bounded by the KV cache wall. As @fig-kv-cache-wall shows, model weights represent a fixed "static tax" on GPU memory, while the KV cache grows linearly with both batch size and sequence length.
@@ -2203,16 +2212,7 @@ plt.show()
 
 The visualization reveals why the Distribution Layer must sometimes shard models that would otherwise fit on a single GPU. Sharding provides the **Memory Headroom** needed to maintain high batch sizes for long-context requests. Without sharding, a 128K context request effectively "evicts" all other users from the GPU.
 
-where:
-
-- $n_{\text{layers}}$ = number of layers
-- $d$ = hidden dimension
-- $S$ = sequence length
-- $B$ = batch size
-- $s_{\text{elem}}$ = storage size per element in bytes
-- Factor of 2 accounts for both keys and values
-
-Applying this formula to production hardware determines the maximum serving batch size for a large model.
+The same formula can be turned into an explicit batch-size limit for production hardware.
 
 ```{python}
 #| echo: false
@@ -2795,7 +2795,7 @@ The previous optimization improved capacity by shrinking state; speculative deco
 
 :::
 
-This draft-and-verify structure is easier to reason about as a proposal workflow than as ordinary sequential generation.
+The same draft-verify structure has a familiar division of labor.
 
 ::: {#psp-inference-analogy-executive-assistant .callout-perspective title="Analogy: The executive and the assistant"}
 
@@ -3849,7 +3849,7 @@ where $\alpha$ is the network latency and $M/\text{BW}$ is the transfer time.
 
 $$T_{\text{alltoall}} = (N-1) \times \left(\alpha + \frac{M/N}{\text{BW}}\right)$$ {#eq-alltoall-time}
 
-Both equations make clear that the achievable bandwidth $\text{BW}$ and latency $\alpha$ of the underlying interconnect determine real-world sharding performance. The comparison below quantifies these differences across production hardware.
+Both equations make clear that the achievable bandwidth $\text{BW}$ and latency $\alpha$ of the underlying interconnect determine real-world sharding performance. Production hardware differs enough on both axes that the interconnect choice can determine whether a sharding plan is viable.
 
 ```{python}
 #| echo: false
@@ -4252,7 +4252,7 @@ Key properties:
 - **Minimal disruption**\index{Minimal Disruption}: Adding/removing servers only remaps $K/N$ keys on average
 - **Load balancing**: With virtual nodes, load distributes evenly
 
-In an LLM serving cluster, the same mechanism can preserve KV cache affinity for stateful conversations.
+For LLM serving, the most direct payoff is avoiding unnecessary KV-cache rebuilds across conversation turns.
 
 ::: {#exmp-inference-consistent-hashing-kv-cache-affinity .callout-example title="Consistent hashing for KV cache affinity"}
 
@@ -4469,7 +4469,7 @@ Server queue depth > threshold
     → If all servers degraded, apply admission control
 ```
 
-Without these mechanisms, a single degraded server can trigger a chain reaction that takes down the entire serving fleet. The failure mode is easiest to see in a concrete scenario.
+Without these mechanisms, a single degraded server can trigger a chain reaction that takes down the entire serving fleet. Circuit breakers and backpressure convert that chain reaction into a contained local failure.
 
 ::: {#exmp-inference-cascading-failure-prevention .callout-example title="Cascading failure prevention"}
 
@@ -5773,8 +5773,6 @@ The system operates at the following scale:
 - Latency target: <200 ms end-to-end
 - Model count: Dozens of models per query
 - Result processing: Thousands of documents per query
-
-The serving stack is organized as follows:
 
 To meet this latency budget while evaluating thousands of documents, the system employs a *ranking cascade* (@fig-ranking-cascade) that progressively narrows the candidate set through increasingly expensive models.
 
