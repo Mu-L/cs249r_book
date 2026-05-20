@@ -86,6 +86,57 @@ CANONICAL_FRAC_CALL = re.compile(r"\b(fmt_frac|MarkdownStr)\s*\(")
 CELL_START = re.compile(r"^```\{python\}")
 CELL_END = re.compile(r"^```\s*$")
 
+# Pattern: a numeric formatter whose first positional arg is itself an
+# already-formatted value. The numeric formatters (fmt, fmt_percent, fmt_sci,
+# fmt_val, fmt_unit) expect a Number/Quantity; passing a MarkdownStr or str
+# from another helper fails at render time with ValueError.
+#
+# NOTE: fmt_math() and fmt_frac() are EXCLUDED from the outer set because
+# they legitimately accept LaTeX strings (e.g., the canonical pattern
+# `fmt_math(sci_latex(x))` embeds Unicode scientific notation in inline math).
+#
+# Caught shapes (all numeric outer):
+#   fmt(fmt(x, precision=0), precision=0, prefix="$")           # MarkdownStr
+#   fmt(sci_latex(P, precision=1), precision=0, prefix="$")     # plain str
+#   fmt(MarkdownStr(label), precision=0)                        # MarkdownStr
+#   fmt(gpt3_params_b_str, precision=0, suffix=" billion")      # MarkdownStr
+DOUBLE_WRAP_CALL = re.compile(
+    r"\b(?:fmt|fmt_percent|fmt_sci|fmt_val|fmt_unit)\(\s*(?:"
+    r"fmt[a-z_]*\(|"          # fmt(fmt_*(...))
+    r"sci_latex\(|"           # fmt(sci_latex(...))
+    r"MarkdownStr\(|"         # fmt(MarkdownStr(...))
+    r"[A-Za-z_]\w*_(?:str|math|eq|frac)\b"  # fmt(VAR_str/math/eq/frac, ...)
+    r")"
+)
+
+# Pattern: small float literal assignment, e.g. `devops_fte = 0.1` or
+# `edge_inf_cost = 0.001`. Captures (variable, literal value text). The
+# audit function parses the literal as a float and only flags when
+# `f"{val:.0f}" == "0"` (i.e., the precision-loss guard would actually
+# fire at runtime).
+SMALL_FLOAT_ASSIGN = re.compile(
+    r"^\s*([A-Za-z_]\w*)\s*=\s*(0\.\d+(?:e-?\d+)?)\b"
+)
+
+# Pattern: fmt() call with precision=0 (only fmt itself; fmt_percent etc.
+# have their own semantics). Captures the variable being formatted.
+PRECISION_ZERO_CALL = re.compile(
+    r"\bfmt\(\s*([A-Za-z_][\w.]*)\s*,[^)]*\bprecision\s*=\s*0\b"
+)
+
+# Pattern: fmt-family helper names used as calls in a cell body. Any of these
+# requires a matching `from mlsysim.fmt import ...` line in the file.
+FMT_FAMILY_USE = re.compile(
+    r"\b(fmt|fmt_math|fmt_percent|fmt_val|fmt_unit|fmt_sci|fmt_frac|sci_latex|MarkdownStr|check)\s*\("
+)
+
+# Pattern: `from mlsysim.fmt import ...` block (possibly multi-line in parens
+# — we collapse parens before matching, so this single-line form is enough).
+FMT_IMPORT_LINE = re.compile(
+    r"\bfrom\s+mlsysim\.fmt\s+import\s+([^#\n]+)"
+)
+
+
 
 @dataclass
 class Violation:
@@ -212,6 +263,209 @@ def _audit_inline_refs(qmd_path: Path) -> list[Violation]:
     return out
 
 
+def _audit_double_wrap(qmd_path: Path) -> list[Violation]:
+    """Find fmt-family calls whose first positional arg is itself a fmt-family
+    call or a _str/_math/_eq/_frac variable.
+
+    Both shapes pass a MarkdownStr into fmt(), which fails at render time
+    with ``ValueError: Unknown format code 'f' for object of type 'MarkdownStr'``.
+    Seen in 2026-05 codemod artifacts.
+    """
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            continue
+        if not in_cell:
+            continue
+        m = DOUBLE_WRAP_CALL.search(line)
+        if not m:
+            continue
+        out.append(
+            Violation(
+                file=rel,
+                line=i,
+                code="double_wrap_fmt",
+                message=(
+                    "Double-wrap detected: a fmt-family call receives a "
+                    "MarkdownStr (either another fmt(...) call or a "
+                    "_str/_math/_eq/_frac variable) as its first arg. The "
+                    "outer fmt() will raise ValueError at render time. "
+                    "Pass the underlying numeric value directly, and use "
+                    "prefix=/suffix= to compose the final string."
+                ),
+                context=line.strip()[:160],
+            )
+        )
+    return out
+
+
+def _audit_precision_loss_on_small_floats(qmd_path: Path) -> list[Violation]:
+    """Find fmt(VAR, precision=0, ...) calls where VAR is assigned a literal
+    float that would round to "0" at precision=0.
+
+    This combination always triggers fmt()'s runtime precision-loss guard
+    because the rounded result is "0" for a non-zero input, which the
+    guard rejects as silently hiding the value.
+
+    Sound check: only flags when the parsed literal would actually round to
+    "0" under Python's `f"{val:.0f}"` formatting (banker's rounding). Values
+    like 0.85 or 1.8 do NOT fire the guard at runtime, so they are skipped
+    here too.
+    """
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    cell_assignments: dict[str, tuple[int, float]] = {}
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            cell_assignments = {}
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            continue
+        if not in_cell:
+            continue
+
+        # Record literal-float assignments where the value would round to "0"
+        # at precision=0 (the precondition for fmt()'s guard to fire).
+        m_assign = SMALL_FLOAT_ASSIGN.match(line)
+        if m_assign:
+            varname = m_assign.group(1)
+            try:
+                value = float(m_assign.group(2))
+            except ValueError:
+                continue
+            if value > 0 and f"{value:.0f}" == "0":
+                cell_assignments[varname] = (i, value)
+            continue
+
+        # Check fmt(VAR, precision=0, ...) calls.
+        m_call = PRECISION_ZERO_CALL.search(line)
+        if not m_call:
+            continue
+        var = m_call.group(1).split(".")[-1]
+        if var not in cell_assignments:
+            continue
+        assign_line, value = cell_assignments[var]
+        out.append(
+            Violation(
+                file=rel,
+                line=i,
+                code="precision_zero_on_small_float",
+                message=(
+                    f"`{var}` was assigned `{value}` at line {assign_line} "
+                    f"and is formatted with `precision=0`. Rounding "
+                    f"`{value}` to integer produces '0', which trips "
+                    f"fmt()'s precision-loss guard at render time. Fix "
+                    f"options: (a) bump precision (e.g. `precision=3` for "
+                    f"`{value}`), (b) set `allow_zero=True` if rounding to "
+                    f"zero is intentional, or (c) use `MarkdownStr(f\"{{x}}\")` "
+                    f"for value ranges that span orders of magnitude."
+                ),
+                context=line.strip()[:160],
+            )
+        )
+    return out
+
+
+def _audit_missing_fmt_imports(qmd_path: Path) -> list[Violation]:
+    """Find files where a fmt-family helper is called in a cell before any
+    cell imports it from mlsysim.fmt.
+
+    Quarto cells share a Jupyter kernel namespace, so an import in an
+    earlier cell satisfies later uses — but a use in cell N that imports
+    only in cell N+1 fails at execution time. This check walks cells in
+    document order, accumulating imported names, and flags any helper
+    call whose name is not yet in the cumulative import set.
+    """
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    imported: set[str] = set()  # cumulative across cells in document order
+    flagged: set[tuple[str, int]] = set()  # dedupe per (name, line)
+
+    # Buffer to handle multi-line `from mlsysim.fmt import ( ... )`. When we
+    # see the opening line, accumulate until the closing `)`.
+    pending_import_buffer: list[str] = []
+    in_paren_import = False
+
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            in_paren_import = False
+            pending_import_buffer = []
+            continue
+        if not in_cell:
+            continue
+
+        # Multi-line paren import handling.
+        if in_paren_import:
+            pending_import_buffer.append(line)
+            if ")" in line:
+                blob = " ".join(pending_import_buffer)
+                for name in re.findall(r"[A-Za-z_]\w*", blob):
+                    if name not in ("as", "import", "from", "mlsysim", "fmt"):
+                        imported.add(name)
+                in_paren_import = False
+                pending_import_buffer = []
+            continue
+
+        # Single-line `from mlsysim.fmt import ...` (with or without parens).
+        m_imp = FMT_IMPORT_LINE.search(line)
+        if m_imp:
+            blob = m_imp.group(1)
+            if "(" in blob and ")" not in blob:
+                pending_import_buffer = [blob]
+                in_paren_import = True
+                continue
+            for name in re.findall(r"[A-Za-z_]\w*", blob):
+                if name != "as":
+                    imported.add(name)
+            continue
+
+        # Skip comment lines.
+        if line.strip().startswith("#"):
+            continue
+
+        # Check fmt-family uses.
+        for m in FMT_FAMILY_USE.finditer(line):
+            name = m.group(1)
+            if name in imported:
+                continue
+            if (name, i) in flagged:
+                continue
+            flagged.add((name, i))
+            out.append(
+                Violation(
+                    file=rel,
+                    line=i,
+                    code="missing_fmt_import",
+                    message=(
+                        f"`{name}(...)` is used here but `{name}` has not yet "
+                        f"been imported from `mlsysim.fmt` in any prior cell. "
+                        f"Quarto evaluates cells in document order; add "
+                        f"`{name}` to this cell's import block (or an earlier "
+                        f"cell's) so the call resolves at exec time."
+                    ),
+                    context=line.strip()[:160],
+                )
+            )
+    return out
+
+
 def audit(paths: list[Path]) -> list[Violation]:
     all_violations: list[Violation] = []
     for p in paths:
@@ -222,6 +476,9 @@ def audit(paths: list[Path]) -> list[Violation]:
         for f in files:
             all_violations.extend(_audit_python_cells(f))
             all_violations.extend(_audit_inline_refs(f))
+            all_violations.extend(_audit_double_wrap(f))
+            all_violations.extend(_audit_precision_loss_on_small_floats(f))
+            all_violations.extend(_audit_missing_fmt_imports(f))
     return all_violations
 
 
