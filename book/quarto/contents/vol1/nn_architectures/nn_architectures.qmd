@@ -437,6 +437,8 @@ These bottlenecks are not accidental; they are the "signatures" of the underlyin
 
 This table provides the quantitative justification for architecture selection: one chooses a transformer not because it is "better" in the abstract, but because the project can afford the bandwidth pressure diagnosed by the arithmetic intensity law (Principle \ref{pri-arithmetic-intensity}) in exchange for its relational flexibility. Conversely, MobileNet is the right choice when the "Machine" axis lacks the bandwidth to sustain a denser signature.
 
+The "Bottleneck" column in @tbl-lighthouse-comparison deserves particular attention: it identifies which system resource (compute throughput, memory bandwidth, memory capacity, latency, or power) limits performance for each workload class. In iron law terms (@sec-introduction-iron-law-ml-systems-c32a), the bottleneck identifies whether $O$ (operations) or $D_{\text{vol}}$ (data movement) dominates the runtime. These distinctions determine which optimization strategies prove effective, a theme we return to throughout subsequent chapters.
+
 ```{python}
 #| label: lighthouse-table-specs
 #| echo: false
@@ -554,8 +556,6 @@ class LighthouseSpecs:
 | **KWS (DS-CNN)** | Audio       |    `{python} LighthouseSpecs.kws_params_k_str` K    |          `{python} LighthouseSpecs.kws_mflops_str` MFLOPs         |    `{python} LighthouseSpecs.kws_fp32_kb_str` KB     | Power          | Extreme quantization and always-on ops   |
 
 : **Lighthouse Model Comparison**: Quantitative characteristics and pedagogical roles of the five canonical workloads. Parameters and memory represent model weights at FP32 precision. FLOPs measured per single inference. The bottleneck column indicates the primary system constraint each model reveals: compute-bound models like ResNet stress arithmetic throughput, while bandwidth-bound models like GPT-2 stress memory transfer rates. {#tbl-lighthouse-comparison tbl-colwidths="[17,14,8,15,9,11,26]"}
-
-The "Bottleneck" column in @tbl-lighthouse-comparison deserves particular attention: it identifies which system resource (compute throughput, memory bandwidth, memory capacity, latency, or power) limits performance for each workload class. In iron law terms (@sec-introduction-iron-law-ml-systems-c32a), the bottleneck identifies whether $O$ (operations) or $D_{\text{vol}}$ (data movement) dominates the runtime. These distinctions determine which optimization strategies prove effective, a theme we return to throughout subsequent chapters.
 
 \index{Architecture!compute vs. memory trade-off}
 \index{ResNet-50!arithmetic intensity}
@@ -743,6 +743,7 @@ The classic *MNIST* handwritten digit benchmark illustrates this gap between *re
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim.core.constants import param, Mparam, Kparam
+from mlsysim.fmt import fmt, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class MLPvsCNN:
@@ -778,9 +779,10 @@ class MLPvsCNN:
     check(ratio >= 10, f"MLP ({mlp_p}) is not significantly larger than CNN ({cnn_p}). Ratio: {ratio}x")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    mlp_params_str = f"{(mlp_p * param).m_as(Mparam):.0f}M"
-    cnn_params_str = f"{(cnn_p * param).m_as(Kparam):.0f}K"
-    param_ratio_str = f"{ratio}"
+    # Custom suffix concatenation → MarkdownStr per recipe Rule 1 escape-hatch
+    mlp_params_str = fmt((mlp_p * param).m_as(Mparam), precision=0, commas=False, suffix="M")
+    cnn_params_str = fmt((cnn_p * param).m_as(Kparam), precision=0, commas=False, suffix="K")
+    param_ratio_str = fmt(ratio, precision=0, commas=False)
 
 # Note: Use MLPvsCNN.mlp_params_str directly.
 ```
@@ -1093,6 +1095,12 @@ To understand the system implications of this architecture, we must look "under 
 
 The second implementation in @lst-mlp_layer_compute exposes the actual computational pattern through nested loops, revealing what really happens when we compute a layer's output: we process each sample in the batch, computing each output neuron by accumulating weighted contributions from all inputs.
 
+This translation from mathematical abstraction to concrete computation exposes how dense matrix multiplication decomposes into nested loops of simpler operations. The outer loop processes each sample in the batch, while the middle loop computes values for each output neuron. Within the innermost loop, the system performs repeated multiply-accumulate operations[^fn-mac], combining each input with its corresponding weight.
+
+[^fn-mac]: **Multiply-Accumulate (MAC)**\index{MAC!(multiply-accumulate)}: The atomic operation of neural networks: multiply two values and add to a running sum. Data center accelerators sustain $10^{14}$--$10^{15}$ MAC/s on dense kernels, while mobile chips reach $10^{12}$--$10^{13}$ MAC/s. The critical systems insight: a MAC itself costs ~1 pJ, but fetching its operands from off-chip DRAM costs ~200 pJ, a 200$\times$ energy gap that makes data movement, not arithmetic, the dominant constraint in ML system design. \index{MAC!energy cost}
+
+In our reference MNIST layer, each output neuron requires `{python} MLPLayerStats.mnist_mlp_macs_str` divided by 100, or 784, multiply-accumulate operations and at least `{python} MLPLayerStats.mnist_neuron_mem_acc_str` memory accesses (784 for inputs, 784 for weights). While actual implementations use optimizations through libraries like Basic Linear Algebra Subprograms (BLAS)[^fn-dnn-blas] or cuBLAS, these patterns drive key system design decisions. The hardware architectures that accelerate these matrix operations, including GPU Tensor Cores[^fn-tensor-cores] and specialized AI accelerators, are covered in @sec-hardware-acceleration.
+
 ::: {#lst-mlp_layer_compute lst-cap="**Dense Layer Computation**: Nested loops reveal $O(\text{batch} \times \text{outputs} \times \text{inputs})$ complexity where each output neuron requires num_inputs multiply-accumulate operations, explaining why MNIST classification demands 78,400 MACs per layer."}
 
 ```{.python}
@@ -1116,12 +1124,6 @@ def mlp_layer_compute(X, W, b):
 ```
 
 :::
-
-This translation from mathematical abstraction to concrete computation exposes how dense matrix multiplication decomposes into nested loops of simpler operations. The outer loop processes each sample in the batch, while the middle loop computes values for each output neuron. Within the innermost loop, the system performs repeated multiply-accumulate operations[^fn-mac], combining each input with its corresponding weight.
-
-[^fn-mac]: **Multiply-Accumulate (MAC)**\index{MAC!(multiply-accumulate)}: The atomic operation of neural networks: multiply two values and add to a running sum. Data center accelerators sustain $10^{14}$--$10^{15}$ MAC/s on dense kernels, while mobile chips reach $10^{12}$--$10^{13}$ MAC/s. The critical systems insight: a MAC itself costs ~1 pJ, but fetching its operands from off-chip DRAM costs ~200 pJ, a 200$\times$ energy gap that makes data movement, not arithmetic, the dominant constraint in ML system design. \index{MAC!energy cost}
-
-In our reference MNIST layer, each output neuron requires `{python} MLPLayerStats.mnist_mlp_macs_str` divided by 100, or 784, multiply-accumulate operations and at least `{python} MLPLayerStats.mnist_neuron_mem_acc_str` memory accesses (784 for inputs, 784 for weights). While actual implementations use optimizations through libraries like Basic Linear Algebra Subprograms (BLAS)[^fn-dnn-blas] or cuBLAS, these patterns drive key system design decisions. The hardware architectures that accelerate these matrix operations, including GPU Tensor Cores[^fn-tensor-cores] and specialized AI accelerators, are covered in @sec-hardware-acceleration.
 
 ```{python}
 #| label: a100-tensor-core-specs
@@ -1228,7 +1230,7 @@ class LargeMLP:
     check(params >= MILLION, f"{width}x{width} layer should be large (>1M params).")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    dim_str = f"{width}"
+    dim_str = fmt(width, precision=0, commas=False)
     params_str = fmt(params, precision=0, commas=False)
     mem_str = fmt(mem_mb, precision=0, commas=False)
 
@@ -1552,7 +1554,7 @@ class CNNSharing:
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     mlp_img_params_str = fmt(mlp_img_params, precision=0, commas=True)
-    cnn_filter_params_str = f"{cnn_filter_params}"
+    cnn_filter_params_str = fmt(cnn_filter_params, precision=0, commas=False)
     cnn_param_reduction_str = fmt(reduction, precision=0, commas=True)
 
 # Note: Use CNNSharing.mlp_img_params_str directly.
@@ -1622,7 +1624,6 @@ The convolution of the translated input becomes:
 (f * \mathbf{w})[T_v \mathbf{x}][i, j] = \sum_{m,n} \mathbf{w}[m, n] \cdot \mathbf{x}[(i - v_1) + m, (j - v_2) + n]
 \\
 = \sum_{m,n} \mathbf{w}[m, n] \cdot \mathbf{x}[(i + m) - v_1, (j + n) - v_2]
-\\
 = (f * \mathbf{w})[\mathbf{x}][i - v_1, j - v_2] = T_v((f * \mathbf{w})[\mathbf{x}])[i, j]
 \end{gather*}
 
@@ -1639,7 +1640,7 @@ The equivariant layers preserve where features occur, enabling the network to le
 ::: {#exmp-nn-architectures-equivariance-feature-detection .callout-example title="Equivariance: Feature detection"}
 
 Consider a $7{\times}7$ image with a vertical edge at column 3:
-$$\renewcommand{\arraystretch}{1.1}
+$$
 \mathbf{x} = \begin{bmatrix}
 0 & 0 & 1 & 0 & 0 & 0 & 0 \\
 0 & 0 & 1 & 0 & 0 & 0 & 0 \\
@@ -1652,7 +1653,7 @@ $$\renewcommand{\arraystretch}{1.1}
 $$
 
 Vertical edge detector filter:
-$$\renewcommand{\arraystretch}{1.1}
+$$
 \mathbf{w} = \begin{bmatrix}
 -1 & 0 & 1 \\
 -1 & 0 & 1 \\
@@ -1663,7 +1664,7 @@ $$
 **Convolving original image**:
 
 Output feature map shows positive activation where the filter transitions from dark to bright (left side of edge) and negative activation where it transitions from bright to dark (right side):
-$$\renewcommand{\arraystretch}{1.1}
+$$
 f(\mathbf{x}) = \begin{bmatrix}
 3 & 0 & -3 & 0 & 0 \\
 3 & 0 & -3 & 0 & 0 \\
@@ -1674,7 +1675,7 @@ f(\mathbf{x}) = \begin{bmatrix}
 $$
 
 **Shifted input** (edge moved to column 5):
-$$\renewcommand{\arraystretch}{1.1}
+$$
 T_2 \mathbf{x} = \begin{bmatrix}
 0 & 0 & 0 & 0 & 1 & 0 & 0 \\
 0 & 0 & 0 & 0 & 1 & 0 & 0 \\
@@ -1687,7 +1688,7 @@ T_2 \mathbf{x} = \begin{bmatrix}
 $$
 
 **Convolving shifted image**:
-$$\renewcommand{\arraystretch}{1.1}
+$$
 f(T_2 \mathbf{x}) = \begin{bmatrix}
 0 & 0 & 3 & 0 & -3 \\
 0 & 0 & 3 & 0 & -3 \\
@@ -1810,7 +1811,7 @@ class CNNLighthouseProfile:
 | **Bottleneck**  | FP Throughput                                                               | Benefits maximally from specialized Matrix Units (Tensor Cores).                                                               |
 | **Profile**     | High effective arithmetic intensity under reuse                             | Arithmetic intensity depends on batch size, convolution algorithm, and materialized memory traffic.                            |
 
-: **ResNet-50 Systems Profile**: Quantitative properties of the vision lighthouse and their system consequences. Batched and optimized ResNet-50 tends to stress FP throughput, but the regime depends on batch size and implementation; batch-one inference can sit on the memory side once weight traffic and framework overhead dominate. {#tbl-nn-architectures-resnet50-profile tbl-colwidths="[17,30,53]"}
+: **ResNet-50 Systems Profile**: Quantitative properties of the vision lighthouse and their system consequences. High arithmetic intensity (about 100 FLOPs/byte) places ResNet-50 firmly in the compute-bound regime, where raw FP throughput on Tensor Cores -- not memory bandwidth -- sets the ceiling. {#tbl-nn-architectures-resnet50-profile tbl-colwidths="[15,27,58]"}
 
 :::
 
@@ -1830,7 +1831,7 @@ ResNet-50's compute-bound profile assumes abundant hardware resources, yet the d
 | **Bottleneck**  | Overhead/Serial Ops                                            | Kernel launch overhead often dominates actual compute.                                                                                                     |
 | **Profile**     | Low Arithmetic Intensity                                       | Memory access and control logic matter more than raw FLOPs.                                                                                                |
 
-: **MobileNet Systems Profile**: Quantitative properties of the efficiency lighthouse and their system consequences. Roughly an order of magnitude smaller than ResNet-50 in both parameters and FLOPs, MobileNet's low arithmetic intensity makes single-image latency -- driven by kernel-launch overhead and memory access -- the binding constraint on mobile CPUs. {#tbl-nn-architectures-mobilenet-profile tbl-colwidths="[17,30,53]"}
+: **MobileNet Systems Profile**: Quantitative properties of the efficiency lighthouse and their system consequences. Roughly an order of magnitude smaller than ResNet-50 in both parameters and FLOPs, MobileNet's low arithmetic intensity makes single-image latency -- driven by kernel-launch overhead and memory access -- the binding constraint on mobile CPUs. {#tbl-nn-architectures-mobilenet-profile tbl-colwidths="[16,27,57]"}
 
 :::
 
@@ -2917,7 +2918,7 @@ Attention mechanisms require storage for attention weights, key-query-value proj
 # │          single_layer_gb_str, total_gb_str
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, MarkdownStr
 from mlsysim.core.constants import BYTES_FP16, byte, GB
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -2946,9 +2947,9 @@ class TransformerComplexityAnchor:
     doubled_seq_len_str = fmt(doubled_seq_len, precision=0, commas=True)
     mid_seq_len_str = fmt(mid_seq_len, precision=0, commas=True)
     long_seq_len_str = fmt(long_seq_len, precision=0, commas=True)
-    scaling_ratio_str = f"{scaling_ratio:.0f}"
-    mid_context_ratio_str = f"{mid_context_ratio:.0f}"
-    long_context_ratio_str = f"{long_context_ratio:.0f}"
+    scaling_ratio_str = fmt(scaling_ratio, precision=0, commas=False)
+    mid_context_ratio_str = fmt(mid_context_ratio, precision=0, commas=False)
+    long_context_ratio_str = fmt(long_context_ratio, precision=0, commas=False)
 
 # ┌── LEGO ───────────────────────────────────────────────
 class AttentionMemory:
@@ -2977,10 +2978,11 @@ class AttentionMemory:
     check(total_gb >= 100, f"Attention memory ({total_gb:.1f} GB) is too small for a 'bottleneck'.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    seq_len_str = f"{seq_len:,}"
-    elements_str = f"{elements:.1e}".replace("+", "")
-    bytes_per_element_str = f"{bytes_per_element}"
-    num_layers_str = f"{num_layers}"
+    seq_len_str = fmt(seq_len, precision=0)
+    # Scientific notation with custom "+" stripping → MarkdownStr escape-hatch
+    elements_str = MarkdownStr(f"{elements:.1e}".replace("+", ""))
+    bytes_per_element_str = fmt(bytes_per_element, precision=1, commas=False)
+    num_layers_str = fmt(num_layers, precision=0, commas=False)
     single_layer_gb_str = fmt(single_layer_gb, precision=0, commas=False)
     total_gb_str = fmt(total_gb, precision=0, commas=True)
 
@@ -2988,7 +2990,7 @@ class AttentionMemory:
 
 ::: {#nbk-nn-architectures-quadratic-bottleneck .callout-notebook title="The quadratic bottleneck"}
 
-**Problem**: How much memory does the attention matrix\index{Attention Mechanism!quadratic bottleneck} of a single layer require at sequence length N = `{python} AttentionMemory.seq_len_str` (context window)?
+**Problem**: How much memory does the attention matrix\index{Attention Mechanism!quadratic bottleneck} of a single layer require at sequence length $N =$ `{python} AttentionMemory.seq_len_str` (context window)?
 
 **Math**:
 
@@ -3091,10 +3093,6 @@ This information-theoretic interpretation reveals why attention is effective for
 
 Self-attention learns dynamic activation patterns across the input sequence. Unlike CNNs which apply fixed filters or RNNs which use fixed recurrence patterns, attention learns which elements should activate together based on their content. This creates a form of adaptive connectivity where the effective network topology changes for each input. Recent research has shown that attention heads in trained models often specialize in detecting specific linguistic or semantic patterns [@clark2019], suggesting that the mechanism naturally discovers interpretable structural regularities in data.
 
-\index{Residual Connection!Transformer}
-\index{Layer Normalization!Transformer}
-The transformer architecture applies this self-attention mechanism within a broader structure that typically includes feed-forward layers, layer normalization, and residual connections. Examine the full architecture in @fig-transformer and trace the data flow: input tokens enter at the bottom, pass through repeated blocks of attention and feed-forward layers (each wrapped with residual connections and normalization), and emerge as contextualized representations—all positions processed in parallel rather than sequentially. Transformers have demonstrated significant effectiveness across a wide range of tasks, from natural language processing to computer vision, transforming deep learning architectures across domains.\index{Positional Encoding}
-
 ::: {#fig-transformer fig-env="figure" fig-pos="htb" fig-cap="**Transformer Architecture (Encoder-Decoder)**: Complete architecture. The encoder (left, repeated $N$ times) consists of multi-head attention followed by feed-forward layers, each with residual connections (arrows bypassing blocks) and layer normalization. The decoder (right) adds masked attention to prevent attending to future tokens during autoregressive generation. Positional encodings (sine waves) inject sequence order information absent from the permutation-invariant attention operation. This design enables training parallelism across all positions while the decoder maintains autoregressive causality during inference. Source: [@vaswani2017]." fig-alt="Encoder-decoder architecture. Encoder: multi-head attention, add-norm, feed-forward, add-norm, repeated Nx. Decoder adds masked attention. Positional encoding sine waves at inputs. Skip connections bypass sublayers. Linear and softmax at top."}
 
 ```{.tikz}
@@ -3176,7 +3174,7 @@ The transformer architecture applies this self-attention mechanism within a broa
 %%%%%%%%%%%%%%
 %right
 %%%%%%%%%%%%%%
-\node[Box,right=2.5 of LB1](RB1){Output\\ Embedding};
+\node[Box,right=3.1 of LB1](RB1){Output\\ Embedding};
 \node[above=0.55 of RB1,Circ, plus](RC1){};
 \node[right=of RC1,Circ2,sin wave](RC2){};
 \node[Box2,above=1.4 of RC1](RB2){Masked Multi-Head\\ Attention};
@@ -3229,6 +3227,10 @@ The transformer architecture applies this self-attention mechanism within a broa
 ```
 
 :::
+
+\index{Residual Connection!Transformer}
+\index{Layer Normalization!Transformer}
+The transformer architecture applies this self-attention mechanism within a broader structure that typically includes feed-forward layers, layer normalization, and residual connections. Examine the full architecture in @fig-transformer and trace the data flow: input tokens enter at the bottom, pass through repeated blocks of attention and feed-forward layers (each wrapped with residual connections and normalization), and emerge as contextualized representations—all positions processed in parallel rather than sequentially. Transformers have demonstrated significant effectiveness across a wide range of tasks, from natural language processing to computer vision, transforming deep learning architectures across domains.\index{Positional Encoding}
 
 ### Computational mapping {#sec-network-architectures-computational-mapping-aea3}
 
@@ -3755,7 +3757,7 @@ class CapacityWall:
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     cw_num_items_str = fmt(num_items/MILLION, precision=0, commas=False)
-    cw_embed_dim_str = f"{embed_dim}"
+    cw_embed_dim_str = fmt(embed_dim, precision=0, commas=False)
     cw_table_gb_str = fmt(table_gb, precision=1, commas=False)
     cw_utilization_pct_str = fmt(utilization_pct, precision=0, commas=False)
     a100_mem_gb_str = fmt(a100_capacity_gb, precision=0, commas=False)
@@ -3802,6 +3804,8 @@ The five architecture families examined earlier (MLPs, CNNs, RNNs, transformers,
 
 Every architecture in this chapter relies on the same small toolkit of engineering primitives. @tbl-dl-evolution shows how these primitives accumulated as architectures grew more complex—each era inherited the building blocks of its predecessors while adding new ones.
 
+These building blocks did not emerge in isolation. Each was shaped by the hardware available at the time. LeNet-5\index{LeNet!5} [@lecun1998] trained on CPUs with networks small enough to fit in megabytes of memory. AlexNet\index{AlexNet} [@krizhevsky2012imagenet] required GPU parallelism: its 60 million parameters and billions of floating-point operations per image were infeasible on CPUs of that era, but mapped naturally to GPU architectures designed for graphics workloads with similar parallel structure. ResNet-152 [@he2016] became trainable because residual connections and batch normalization improved optimization at depth, using available GPU training infrastructure rather than a specific memory-capacity threshold. Transformers [@vaswani2017] became practical on contemporary GPUs and later scaled dramatically as GPU/TPU memory bandwidth and distributed training infrastructure improved. This pattern continues: each building block exploits newly available computational resources while pushing against the limits of existing systems.
+
 | **Building Block**          | **Born In**      | **Problem Solved**               | **Now Used In**                                                    |
 |:----------------------------|:-----------------|:---------------------------------|:-------------------------------------------------------------------|
 | **Dense Matrix Ops (GEMM)** | MLPs             | Universal function approximation | All architectures (feedforward layers)                             |
@@ -3811,8 +3815,6 @@ Every architecture in this chapter relies on the same small toolkit of engineeri
 | **Gating**                  | LSTMs (RNNs)     | Selective signal routing         | Transformers (MoE routing), GRUs, highway networks                 |\index{Architecture!building blocks}
 
 : **Cross-Architecture Building Blocks**: Engineering primitives that originated in one architecture family and now recur across many modern designs. Each building block solves a recurring problem (gradient flow, activation stability, signal routing), though not every architecture uses every primitive. {#tbl-dl-evolution tbl-colwidths="[20,20,25,35]"}
-
-These building blocks did not emerge in isolation. Each was shaped by the hardware available at the time. LeNet-5\index{LeNet!5} [@lecun1998] trained on CPUs with networks small enough to fit in megabytes of memory. AlexNet\index{AlexNet} [@krizhevsky2012imagenet] required GPU parallelism: its 60 million parameters and billions of floating-point operations per image were infeasible on CPUs of that era, but mapped naturally to GPU architectures designed for graphics workloads with similar parallel structure. ResNet-152 [@he2016] became trainable because residual connections and batch normalization improved optimization at depth, using available GPU training infrastructure rather than a specific memory-capacity threshold. Transformers [@vaswani2017] became practical on contemporary GPUs and later scaled dramatically as GPU/TPU memory bandwidth and distributed training infrastructure improved. This pattern continues: each building block exploits newly available computational resources while pushing against the limits of existing systems.
 
 ### Dense operations: The universal baseline {#sec-network-architectures-evolution-perceptron-multilayer-networks-d06e}
 
@@ -3869,7 +3871,6 @@ However, ReLU introduces a different problem: dead neurons\index{Dead Neurons}\i
 $$
 y = \mathcal{F}(x) + x
 $$ {#eq-residual}
-
 where $\mathcal{F}(x)$ represents the residual function (typically two convolutional layers with batch normalization and ReLU) and $x$ is the identity skip connection.
 
 During backpropagation, the gradient flows through this addition:
@@ -3913,7 +3914,6 @@ For ResNets, the layer function is $x_{l+1} = x_l + \mathcal{F}(x_l)$, so the Ja
 $$
 J_l = I + \frac{\partial \mathcal{F}}{\partial x_l}
 $$
-
 where $I$ is the identity matrix. The eigenvalues of $J_l$ are $1 + \lambda_i$, where $\lambda_i$ are the eigenvalues of the residual branch $\mathcal{F}'$. Since the residual branch is initialized with small weights, $\lambda_i \approx 0$, meaning the total eigenvalues cluster around 1. This structure creates a "gradient highway" where signals propagate with unit gain, solving the vanishing gradient problem by construction rather than by tuning.
 
 :::
@@ -4334,7 +4334,7 @@ Random access poses the greatest challenge for system efficiency. In a transform
 | **RNN**          | Linear                     | $O(h^2)$                              | $O(B \times S \times h)$                                    | Challenging          |
 | **Transformer**  | Quadratic attention        | $O(d^2 + d d_{\text{ff}})$ per block  | $O(B \times N^2)$ attention, plus $O(BNd)$ activations      | Problematic          |
 
-: **Memory Access Complexity**: Different neural network architectures exhibit varying memory access patterns and storage requirements, impacting system performance and scalability. Parameter storage scales with input dependency and model size, while activation storage represents a significant runtime cost, particularly for sequence-based models where RNNs offer a parameter efficiency advantage when sequence length exceeds hidden state size $(n > h)$. {#tbl-arch-complexity tbl-colwidths="[15,22,21,21,21]"}
+: **Memory Access Complexity**: Different neural network architectures exhibit varying memory access patterns and storage requirements, impacting system performance and scalability. Parameter storage scales with input dependency and model size, while activation storage represents a significant runtime cost, particularly for sequence-based models where RNNs offer a parameter efficiency advantage when sequence length exceeds hidden state size $(n > h)$. {#tbl-arch-complexity tbl-colwidths="[12,24,21,25,18]"}
 
 Where:
 
@@ -4359,7 +4359,7 @@ Where:
 | **RNNs**         | $O(h^2+h \times d)$ total                                                                             | $O(S \times h^2)$ for $S$ time steps                                  | $O(h)$ hidden state (constant)                                | Poor Sequential deps                    | Sequential deps                                                        |
 | **Transformers** | $O(d_{\text{model}}^2)$ QKV/O projections plus $O(d_{\text{model}}d_{\text{ff}})$ feed-forward layers | $O(n^2 \times d + n \times d^2)$ per layer                            | $O(n^2)$ attention $O(n \times d)$ sequences                  | Excellent (positions) Limited by memory | Memory $(n^2)$                                                         |
 
-: **Computational Complexity Comparison**: Scaling behaviors and resource requirements for major neural network architectures. Variables: $d$ = dimension, $h$ = hidden size, $k$ = kernel size, $c$ = channels, $H,W$ = spatial dimensions, $S$ = sequence length (time steps), $n$ = sequence length, $B$ = batch size. The bottleneck column identifies the primary performance-limiting factor in typical deployments. {#tbl-computational-complexity tbl-colwidths="[12,18,18,20,18,14]"}
+: **Computational Complexity Comparison**: Scaling behaviors and resource requirements for major neural network architectures. Variables: $d$ = dimension, $h$ = hidden size, $k$ = kernel size, $c$ = channels, $H,W$ = spatial dimensions, $S$ = sequence length (time steps), $n$ = sequence length, $B$ = batch size. The bottleneck column identifies the primary performance-limiting factor in typical deployments. {#tbl-computational-complexity tbl-colwidths="[12,18,16,20,18,16]"}
 
 Together, these two tables provide a comprehensive view of each architecture's resource profile, informing system-level design decisions such as choosing memory hierarchy configurations and developing memory optimization strategies.
 
@@ -4581,6 +4581,8 @@ Memory systems have also been profoundly influenced by the demands of deep learn
 
 The data movement primitives have particularly influenced the design of interconnects and on-chip networks. The need to support efficient broadcasts, gathers, and reductions has led to the development of more flexible and higher-bandwidth interconnects. Some AI chips now feature specialized networks-on-chip designed to accelerate common data movement patterns in neural networks.
 
+The system implications of these primitives span hardware, software, and performance considerations. @tbl-sys-design-implications maps how each architectural primitive drives specific hardware and software optimization decisions. Despite the specialized hardware that these primitives have motivated, several bottlenecks persist. Memory bandwidth often remains a key limitation, particularly for models with large working sets or those that require frequent random access. The energy cost of data movement, especially between off-chip memory and processing units, continues to be a significant concern. For large-scale models, the communication overhead in distributed training can become a bottleneck, limiting scaling efficiency.
+
 | **Primitive**                                      | **Hardware Impact**       | **Software Optimization** | **Key Challenges**         |
 |:---------------------------------------------------|:--------------------------|:--------------------------|:---------------------------|
 | **Matrix Multiplication**                          | Tensor Cores              | Batching, GEMM libraries  | Parallelization, precision |
@@ -4591,9 +4593,7 @@ The data movement primitives have particularly influenced the design of intercon
 | **Broadcast**                                      | Specialized interconnects | Operation fusion          | Bandwidth                  |
 | **Gather/Scatter**                                 | High-bandwidth memory     | Work distribution         | Load balancing             |
 
-: **Primitive-Hardware Co-Design**: Efficient machine learning systems require tight integration between algorithmic primitives and underlying hardware. Common primitives map to specific hardware accelerations and software optimizations, each presenting distinct implementation challenges. Specialized hardware such as Tensor Cores addresses computational demands of matrix multiplication and sliding windows, while software techniques like batching and dynamic graph execution further enhance performance. {#tbl-sys-design-implications}
-
-The system implications of these primitives span hardware, software, and performance considerations. @tbl-sys-design-implications maps how each architectural primitive drives specific hardware and software optimization decisions. Despite the specialized hardware that these primitives have motivated, several bottlenecks persist. Memory bandwidth often remains a key limitation, particularly for models with large working sets or those that require frequent random access. The energy cost of data movement, especially between off-chip memory and processing units, continues to be a significant concern. For large-scale models, the communication overhead in distributed training can become a bottleneck, limiting scaling efficiency.
+: **Primitive-Hardware Co-Design**: Efficient machine learning systems require tight integration between algorithmic primitives and underlying hardware. Common primitives map to specific hardware accelerations and software optimizations, each presenting distinct implementation challenges. Specialized hardware such as Tensor Cores addresses computational demands of matrix multiplication and sliding windows, while software techniques like batching and dynamic graph execution further enhance performance. {#tbl-sys-design-implications tbl-colwidths="[22,26,26,26]"}
 
 Energy consumption patterns vary dramatically across neural network architectures, with implications for both data center deployment and edge computing scenarios. Each architectural pattern exhibits distinct energy characteristics that inform deployment decisions and optimization strategies.
 
@@ -4729,8 +4729,8 @@ class WinogradCalc:
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     winograd_reduction_str = fmt(winograd_reduction, precision=2, commas=False)  # e.g. "2.25"
-    std_muls_3x3_str = f"{std_muls_3x3}"                         # e.g. "9"
-    winograd_muls_str = f"{winograd_muls}"                       # e.g. "4"
+    std_muls_3x3_str = fmt(std_muls_3x3, precision=0, commas=False)              # e.g. "9"
+    winograd_muls_str = fmt(winograd_muls, precision=0, commas=False)            # e.g. "4"
 ```
 
 [^fn-winograd]: **Winograd Algorithm**: This method achieves its 2.25$\times$ arithmetic reduction for $3{\times}3$ convolutions by trading expensive multiplications for a larger number of cheaper additions. The intermediate mathematical transforms required for this trade, however, amplify rounding errors. This loss of numerical precision makes Winograd unsuitable for FP16 training, creating a direct trade-off between arithmetic throughput and model stability. \index{Winograd Algorithm!convolution}\index{Winograd Algorithm!precision trade-off}
@@ -4752,7 +4752,7 @@ The decision flowchart in @fig-dnn-fm-framework proceeds from top to bottom: ide
 ::: {#fig-dnn-fm-framework fig-env="figure" fig-pos="htb" fig-cap="**Architecture Selection Decision Framework**: A systematic flowchart for choosing dense neural network architectures based on data characteristics and deployment constraints. The process begins with data type identification (text/sequences/images/tabular) to select initial architecture candidates (Transformers/RNNs/CNNs/MLPs), then iteratively evaluates memory budget, computational cost, inference speed, accuracy targets, and hardware compatibility. High-cardinality recommendation workloads are handled separately by the sparse-embedding family (DLRM) discussed earlier in the chapter, then re-enter the same constraint checks." fig-alt="Flowchart from Define Problem, branching by data type to Transformers, RNNs, CNNs, MLPs. Diamonds check memory, compute, speed, accuracy, deployment. Each No loops back via Scale Down or Increase Capacity; each Yes reaches Selected."}
 
 ```{.tikz}
-\scalebox{0.7}{\begin{tikzpicture}[font=\small\usefont{T1}{phv}{m}{n}]
+\scalebox{0.73}{\begin{tikzpicture}[font=\small\usefont{T1}{phv}{m}{n}]
 \tikzset{%
 Line/.style={line width=1.0pt,black!50,text=black},
 LineA/.style={BrownLine!80, line width=1.0pt,{-{Triangle[width=0.7*6pt,length=1.40*6pt]}},text=black},
@@ -4882,14 +4882,14 @@ class ThroughputCeilingCalc:
     check(headroom > 1, "ResNet-50 at 30 FPS must leave compute headroom on a mid-range GPU.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    tc_fps_str = f"{fps}"                                        # e.g. "30"
+    tc_fps_str = fmt(fps, precision=0, commas=False)             # e.g. "30"
     tc_resnet_gflops_str = fmt(resnet_gflops, precision=0, commas=False)       # e.g. "4"
     tc_sustained_gflops_str = fmt(sustained_gflops, precision=0, commas=False) # e.g. "123"
-    tc_gpu_tflops_str = f"{midrange_gpu_tflops}"                 # e.g. "10"
+    tc_gpu_tflops_str = fmt(midrange_gpu_tflops, precision=0, commas=False)    # e.g. "10"
     tc_effective_low_str = fmt(effective_tflops_low, precision=0, commas=False)  # e.g. "5"
     tc_effective_high_str = fmt(effective_tflops_high, precision=0, commas=False) # e.g. "6"
     tc_headroom_str = fmt(headroom, precision=0, commas=False)   # e.g. "41"
-    tc_objdet_gflops_str = f"{objdet_gflops}"                    # e.g. "100"
+    tc_objdet_gflops_str = fmt(objdet_gflops, precision=0, commas=False)       # e.g. "100"
     tc_objdet_sustained_str = fmt(objdet_sustained_tflops, precision=0, commas=False) # e.g. "3"
     tc_objdet_headroom_str = fmt(objdet_headroom, precision=0, commas=False)    # e.g. "2"
 ```
@@ -4921,12 +4921,12 @@ class ThroughputCeilingCalc:
 # │ Show: MobileNetV2 fits the memory and latency budget while KWS is too small.
 # │ How: Compare local candidate specs, runtime memory, compute, and energy.
 # │
-# │ Imports: mlsysim Models/constants, mlsysim.fmt (fmt, md_math)
+# │ Imports: mlsysim Models/constants, mlsysim.fmt (fmt, fmt_math)
 # │ Exports: resnet_*, mnv1_*, mnv2_*, kws_example_*, memory/compute/energy strings
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim import Models
-from mlsysim.fmt import fmt, check, md_math
+from mlsysim.fmt import fmt, check, fmt_math
 from mlsysim.core.constants import (
     BYTES_FP32, IMAGE_DIM_RESNET, KWS_DSCNN_PARAMS, KWS_DSCNN_FLOPs,
     GFLOPs, Kparam, MB, MFLOPs, Mparam
@@ -5000,13 +5000,13 @@ class WildlifeModelSizing:
     inferences_per_day_str = fmt(inferences_per_day, precision=0, commas=False)          # e.g. "100"
     energy_mj_str = fmt(energy_per_inf_mj, precision=0, commas=False)  # e.g. "15"
     energy_j_str = fmt(energy_per_day_j, precision=1, commas=False)    # e.g. "1.5"
-    memory_check_math = md_math(
+    memory_check_math = fmt_math(
         f"\\underbrace{{\\text{{{mnv2_int8_str} MB}}}}_{{\\text{{Model}}}} + "
         f"\\underbrace{{{image_dim} \\times {image_dim} \\times {activation_channels} \\times {activation_bytes} \\approx \\text{{{activation_mb_str} MB}}}}_{{\\text{{Activations}}}} + "
         f"\\underbrace{{\\text{{{os_buffers_mb_str} MB}}}}_{{\\text{{OS/Buffers}}}} = "
         f"\\text{{{total_runtime_mb_str} MB}} \\ll \\text{{{edge_ram_mb_str} MB}}~\\checkmark"
     )
-    compute_check_math = md_math(
+    compute_check_math = fmt_math(
         f"\\frac{{{mnv2_flops_str} \\text{{ MOPs}}}}{{{edge_int8_gops_str} \\text{{ GOPS}}}} = "
         f"{compute_latency_ms_str} \\text{{ ms latency}} \\ll {target_latency_ms_str} \\text{{ ms target}}~\\checkmark"
     )
@@ -5039,6 +5039,32 @@ The input is spatial data (images from camera traps, typically $1920{\times}1080
 
 : **Wildlife Monitoring Constraints**: Five deployment constraints and the architectural choices they force for the camera-trap scenario. Each row eliminates a class of solutions: no connectivity rules out the cloud, the 2 W power envelope rules out GPUs, and the 100 MB memory budget forces aggressive quantization before any model search begins. {#tbl-nn-architectures-wildlife-constraints tbl-colwidths="[20,35,45]"}
 
+:::
+
+::: {.content-visible when-format="pdf"}
+\begingroup
+\renewcommand{\arraystretch}{1.3}
+\begin{center}
+\footnotesize
+\begin{tabular}{lll}
+\toprule
+\textbf{Constraint} & \textbf{Requirement} & \textbf{Implication} \\
+\midrule
+\textbf{Connectivity} & None (offline) & All inference must run on-device \\
+\textbf{Power} & \textasciitilde2 W average & Rules out GPUs \\
+\textbf{Latency} & <500 ms per detection & Allows batch size 1 \\
+\textbf{Memory} & 512 MB RAM, 2 GB storage & Model must fit in ~100 MB after quantization \\
+\textbf{Accuracy} & 90 percent+ on 50 species & Requires sufficient model capacity \\
+\bottomrule
+\end{tabular}
+\end{center}
+\endgroup
+:::
+
+```{=latex}
+\tcbbreak
+```
+
 **Step 3**: Architecture evaluation using lighthouse benchmarks.
 Compare candidates against our Lighthouse models:
 
@@ -5060,10 +5086,6 @@ Compare candidates against our Lighthouse models:
 **Compute check**: Target device: ARM Cortex-A53 @ 1.2 GHz with NEON SIMD (~`{python} WildlifeModelSizing.edge_int8_gops_str` GOPS INT8)
 `{python} WildlifeModelSizing.compute_check_math`
 
-```{=latex}
-\tcbbreak
-```
-
 **Power check**:
 Estimated inference power: ~`{python} WildlifeModelSizing.inference_power_mw_str` mW for `{python} WildlifeModelSizing.compute_latency_ms_str` ms = `{python} WildlifeModelSizing.energy_mj_str` mJ per inference
 At `{python} WildlifeModelSizing.inferences_per_day_str` inferences/day: `{python} WildlifeModelSizing.energy_j_str` J/day → negligible vs. sleep power budget $\checkmark$
@@ -5078,11 +5100,24 @@ At `{python} WildlifeModelSizing.inferences_per_day_str` inferences/day: `{pytho
 
 : **Wildlife Camera Deployment Risks**: Top accuracy, thermal, and species-coverage risks for the MobileNetV2 deployment, paired with the engineering mitigation chosen for each. {#tbl-nn-architectures-wildlife-risks}
 
+::: {.content-visible when-format="pdf"}
+\begin{center}
+\scriptsize
+\begin{tabular}{@{}p{0.29\linewidth}p{0.61\linewidth}@{}}
+\toprule
+\textbf{Risk} & \textbf{Mitigation} \\
+\midrule
+\textbf{90 percent accuracy not achieved} & Train on augmented dataset; consider EfficientNet-Lite if MobileNet insufficient \\
+\textbf{Thermal throttling in enclosure} & Add passive heatsink; reduce inference frequency in high-temperature conditions \\
+\textbf{New species added postdeployment} & Reserve 10 percent model capacity; plan for over-the-air (OTA) update mechanism \\
+\bottomrule
+\end{tabular}
+\end{center}
+:::
+
 **Final decision**: MobileNetV2 (0.75$\times$ width) with INT8 quantization, deployed on Cortex-A53 system on chip (SoC) with 512 MB RAM.
 
 This architecture achieves the accuracy target while operating within the 2 W power envelope, processing images in about `{python} WildlifeModelSizing.compute_latency_ms_str` ms under the stated throughput assumption, and leaving sufficient memory headroom for system operations. The decision was driven by matching the CNN inductive bias to spatial data characteristics, then validating against hardware constraints using quantitative analysis.
-
-:::
 
 This worked example demonstrates the systematic approach that transforms architectural knowledge into practical engineering decisions. Yet even with systematic methodology, practitioners routinely make costly mistakes because architecture selection involves counterintuitive trade-offs. A model with fewer FLOPs can run *slower* on certain hardware. A more expressive architecture can deliver *worse* accuracy on problems that do not match its inductive bias. An architecture that performs beautifully in the lab can likewise fail catastrophically when deployed to production hardware with different memory hierarchies. The most common errors are catalogued next, each grounded in the systems principles developed throughout this chapter.
 
@@ -5105,12 +5140,12 @@ This worked example demonstrates the systematic approach that transforms archite
 # │ Show: Locality bias can reduce parameters while improving accuracy.
 # │ How: Repeat the compact parameter-count arithmetic from the MNIST example.
 # │
-# │ Imports: mlsysim constants, mlsysim.fmt (check)
+# │ Imports: mlsysim constants, mlsysim.fmt (fmt, check)
 # │ Exports: mlp_params_str, cnn_params_str, param_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim.core.constants import Kparam, Mparam, param
-from mlsysim.fmt import check
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class MNISTArchitectureRecap:
@@ -5134,9 +5169,9 @@ class MNISTArchitectureRecap:
           f"Expected CNN parameter count to be much smaller than MLP, got {param_ratio}x.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    mlp_params_str = f"{(mlp_params * param).m_as(Mparam):.0f}M"
-    cnn_params_str = f"{(cnn_params * param).m_as(Kparam):.0f}K"
-    param_ratio_str = f"{param_ratio}"
+    mlp_params_str = fmt((mlp_params * param).m_as(Mparam), precision=0, commas=False, suffix="M")
+    cnn_params_str = fmt((cnn_params * param).m_as(Kparam), precision=0, commas=False, suffix="K")
+    param_ratio_str = fmt(param_ratio, precision=0, commas=False)
 ```
 
 Engineers often assume that transformers outperform simpler architectures on all tasks. In production, architectural sophistication must match problem complexity. As demonstrated in @sec-network-architectures-architectural-principles-engineering-tradeoffs-362e, a CNN achieves 99 percent accuracy on MNIST with `{python} MNISTArchitectureRecap.cnn_params_str` parameters while an MLP requires `{python} MNISTArchitectureRecap.mlp_params_str` parameters for 98 percent accuracy—a `{python} MNISTArchitectureRecap.param_ratio_str`$\times$ parameter reduction with higher accuracy. For problems with spatial locality, CNNs exploit inductive biases that MLPs cannot match. Teams defaulting to transformers for tabular data or small-image classification waste 5--10$\times$ resources. A \$1,000 training job becomes \$10,000 with no accuracy benefit.
@@ -5232,8 +5267,8 @@ class A100ClusterMemory:
     check(memory_reduction == 160, f"Expected 160x memory reduction, got {memory_reduction:.0f}x.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    a100_8x_mem_str = f"{a100_8x_mem}"                           # e.g. "640"
-    edge_mem_str = f"{edge_device_mem_gb}"                        # e.g. "4"
+    a100_8x_mem_str = fmt(a100_8x_mem, precision=0, commas=False)  # e.g. "640"
+    edge_mem_str = fmt(edge_device_mem_gb, precision=0, commas=False)  # e.g. "4"
     memory_reduction_str = fmt(memory_reduction, precision=0, commas=False)
 ```
 
