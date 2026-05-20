@@ -51,6 +51,13 @@ class PageReport:
     size_hint: str = ""           # element size: "10 rows", "380pt tall", etc.
     fix_hint: str = ""            # one-word suggested fix
     is_frontmatter: bool = False  # roman-numbered page (likely intentional gap)
+    # ---- LLM-actionable fields ----
+    source_file: str = ""         # QMD chapter file, relative to repo root
+    source_line: int = 0          # 1-indexed line where the detail text appears
+    section: str = ""             # nearest preceding H2/H3 header text
+    next_page_starts_chapter: bool = False   # next sheet is a chapter opener
+    klass: str = ""               # A | B | C | D classification
+    action: str = ""              # recommended action (try-move-up / accept-…)
 
 
 class LayoutCommand:
@@ -173,6 +180,8 @@ class LayoutCommand:
         )
 
         chapter_starts, labels = self._load_chapter_map(pdf_path)
+        source_map = self._build_source_map(pdf_path)
+        chapter_start_sheets = {start for start, _ in chapter_starts}
 
         flagged: List[PageReport] = []
         scanned = 0
@@ -190,6 +199,32 @@ class LayoutCommand:
                 report = self._scan_page(page, next_page, sheet, label, chapter)
                 scanned += 1
                 if report and report.whitespace_frac >= threshold:
+                    # Enrich with source-locator + class/action fields.
+                    report.next_page_starts_chapter = (
+                        (sheet + 1) in chapter_start_sheets
+                    )
+                    qmd_path = source_map.get(chapter)
+                    if qmd_path is not None:
+                        report.source_file = str(qmd_path)
+                        # Resolve to absolute path for actual file reads.
+                        cur = pdf_path.resolve().parent
+                        repo_root = None
+                        for _ in range(8):
+                            if (cur / "book" / "quarto" / "contents").is_dir():
+                                repo_root = cur
+                                break
+                            cur = cur.parent
+                        if repo_root is not None:
+                            abs_path = repo_root / qmd_path
+                            line_num = self._find_source_line(
+                                abs_path, report.detail
+                            )
+                            report.source_line = line_num
+                            if line_num > 0:
+                                report.section = self._find_section(
+                                    abs_path, line_num
+                                )
+                    report.klass, report.action = self._classify(report)
                     flagged.append(report)
 
         # Apply filters AFTER collection so the unfiltered counts are
@@ -327,6 +362,8 @@ class LayoutCommand:
         writer.writerow([
             "chapter", "sheet", "label", "gap_pct", "pts",
             "culprit", "detail", "size_hint", "fix_hint", "is_frontmatter",
+            "source_file", "source_line", "section",
+            "next_page_starts_chapter", "class", "action",
         ])
         for r in flagged:
             writer.writerow([
@@ -340,6 +377,12 @@ class LayoutCommand:
                 r.size_hint,
                 r.fix_hint,
                 int(r.is_frontmatter),
+                r.source_file,
+                r.source_line,
+                r.section,
+                int(r.next_page_starts_chapter),
+                r.klass,
+                r.action,
             ])
 
     # ------------------------------------------------------------------
@@ -408,6 +451,134 @@ class LayoutCommand:
             else:
                 break
         return current
+
+    # ------------------------------------------------------------------
+    # source map: chapter title → QMD file
+    # ------------------------------------------------------------------
+
+    def _build_source_map(self, pdf_path: Path) -> Dict[str, Path]:
+        """Scan book/quarto/contents/vol*/<slug>/<slug>.qmd files and
+        return {chapter_title → path} by reading each file's first H1.
+        """
+        # Find repo root by walking up from pdf_path until we hit a dir
+        # containing book/quarto/contents.
+        cur = pdf_path.resolve().parent
+        repo_root: Optional[Path] = None
+        for _ in range(8):
+            if (cur / "book" / "quarto" / "contents").is_dir():
+                repo_root = cur
+                break
+            if cur.parent == cur:
+                break
+            cur = cur.parent
+        if repo_root is None:
+            return {}
+
+        contents = repo_root / "book" / "quarto" / "contents"
+        out: Dict[str, Path] = {}
+        for vol_dir in sorted(contents.glob("vol*")):
+            for chapter_dir in sorted(vol_dir.iterdir()):
+                if not chapter_dir.is_dir():
+                    continue
+                qmd = chapter_dir / f"{chapter_dir.name}.qmd"
+                if not qmd.exists():
+                    continue
+                # Read first H1 from the file.
+                try:
+                    with qmd.open() as f:
+                        for line in f:
+                            line = line.rstrip("\n")
+                            if line.startswith("# ") and not line.startswith("##"):
+                                # Strip "{#sec-…}" attribute suffix.
+                                title = line[2:].strip()
+                                hash_idx = title.find("{#")
+                                if hash_idx != -1:
+                                    title = title[:hash_idx].rstrip()
+                                out[title] = qmd.relative_to(repo_root)
+                                break
+                except OSError:
+                    continue
+        return out
+
+    @staticmethod
+    def _find_source_line(qmd_path: Path, detail: str) -> int:
+        """Find a line in the QMD file matching the detail text.
+
+        pdfplumber sometimes strips spaces in extracted text, so we
+        normalize both source and detail by removing all whitespace,
+        then look for the detail as a substring of any source line's
+        normalized form. Returns 1-indexed line number or 0.
+        """
+        if not detail or not qmd_path.exists():
+            return 0
+        needle = "".join(detail.split()).lower()
+        if len(needle) < 12:
+            return 0  # too short to match reliably
+        # Compare leading 40 chars to avoid spurious matches.
+        needle = needle[:40]
+        try:
+            with qmd_path.open() as f:
+                for i, raw in enumerate(f, start=1):
+                    haystack = "".join(raw.split()).lower()
+                    if needle and needle in haystack:
+                        return i
+        except OSError:
+            pass
+        return 0
+
+    @staticmethod
+    def _find_section(qmd_path: Path, line_num: int) -> str:
+        """Walk backwards from line_num to find the nearest H2/H3.
+
+        Returns the header text without the markdown ## / ### prefix,
+        with any trailing `{#sec-…}` attribute stripped.
+        """
+        if not qmd_path.exists() or line_num <= 0:
+            return ""
+        try:
+            with qmd_path.open() as f:
+                lines = f.readlines()
+        except OSError:
+            return ""
+        start = min(line_num, len(lines)) - 1
+        for i in range(start, -1, -1):
+            line = lines[i].rstrip("\n")
+            m = None
+            if line.startswith("### "):
+                m = line[4:]
+            elif line.startswith("## "):
+                m = line[3:]
+            if m is not None:
+                hash_idx = m.find("{#")
+                if hash_idx != -1:
+                    m = m[:hash_idx]
+                return m.strip()
+        return ""
+
+    @staticmethod
+    def _classify(report: "PageReport") -> Tuple[str, str]:
+        """Return (class, action) for a flagged page.
+
+        Class definitions:
+          A — Likely movable (callout/table/figure overshoot)
+          B — Accept or pattern-α split (very long block)
+          C — Chapter-end natural whitespace (next page starts chapter)
+          D — Heading orphan-prevention (structural)
+        """
+        if report.next_page_starts_chapter:
+            return ("C", "accept-chapter-end")
+        if report.cause == "heading":
+            return ("D", "accept-orphan")
+        if report.cause == "end-of-document":
+            return ("C", "filter-end-of-doc")
+        if report.cause in ("table", "figure", "callout/box"):
+            # Big gaps are likely too large to be movable.
+            if report.whitespace_frac >= 0.55:
+                return ("B", "accept-or-split")
+            return ("A", "try-move-up")
+        if report.cause == "paragraph":
+            return ("A", "try-move-up")
+        return ("?", "manual-review")
 
     # ------------------------------------------------------------------
     # per-page analysis
@@ -738,25 +909,37 @@ class LayoutCommand:
             table.add_column("p.", justify="right", style="cyan", width=5)
             table.add_column("sheet", justify="right", style="dim", width=6)
             table.add_column("gap%", justify="right", style="yellow", width=6)
-            table.add_column("pts", justify="right", style="dim", width=5)
+            table.add_column("cls", justify="center", style="magenta", width=3)
             table.add_column("culprit", style="white", width=11)
-            table.add_column("size", style="dim", width=10)
-            table.add_column("detail (next-page caption / heading / first-line)", style="white")
-            table.add_column("hint", style="green", width=14)
+            table.add_column("detail / source / section", style="white")
+            table.add_column("action", style="green", width=20)
 
             for r in rows:
                 label = r.label
                 if r.is_frontmatter:
                     label = f"{label}*"
+                # Build the multi-line detail/source/section block.
+                lines = []
+                if r.detail:
+                    lines.append(r.detail)
+                if r.source_file:
+                    src = r.source_file
+                    if r.source_line:
+                        src = f"{src}:{r.source_line}"
+                    lines.append(f"[dim]→ {src}[/dim]")
+                if r.section:
+                    lines.append(f"[dim]   in: {r.section}[/dim]")
+                if not lines:
+                    lines.append(r.size_hint or "")
+                detail_block = "\n".join(lines)
                 table.add_row(
                     label,
                     str(r.sheet),
                     f"{int(r.whitespace_frac * 100)}%",
-                    f"{r.whitespace_pts:.0f}",
+                    r.klass or "?",
                     r.cause,
-                    r.size_hint,
-                    r.detail,
-                    r.fix_hint,
+                    detail_block,
+                    r.action or r.fix_hint,
                 )
             console.print(table)
 
