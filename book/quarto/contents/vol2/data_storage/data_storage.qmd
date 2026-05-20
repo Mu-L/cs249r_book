@@ -211,6 +211,8 @@ Traditional storage systems evolved to serve transactional databases, workloads 
 
 ML workloads systematically invert these assumptions. Training data access is predominantly sequential, streaming through datasets that span hundreds of terabytes. Individual accesses are large (megabytes rather than kilobytes) because models consume batches of images or text sequences. Consistency requirements are relaxed, since slightly stale features rarely affect model quality. Bandwidth demands, however, are extreme: hundreds of gigabytes per second, sustained for days or weeks. The mismatch between what storage was optimized for and what ML actually needs creates what we call the I/O wall\index{I/O Wall} (Principle \ref{pri-io-wall}): when storage throughput cannot deliver training data as fast as accelerators consume it, GPUs idle regardless of their computational power. A storage system that was adequate for 8 GPUs becomes the bottleneck at 64, making the data pipeline, not the model, the limiting factor.
 
+A simple shard-assignment calculation shows how this bottleneck can emerge even when aggregate storage capacity looks ample.
+
 ```{python}
 #| label: shard-contention-notebook
 #| echo: false
@@ -260,6 +262,8 @@ This is a variant of the "Birthday Problem" in probability.
 **Systems insight**: Even with a large number of shards, there is a **`{python} ShardContention.sc_collision_prob_str` percent chance** that the storage system will experience a "hot spot" in any given epoch. In a distributed fleet, these collisions create **tail latency**\index{Tail Latency}: the entire cluster waits for the two GPUs sharing a disk to finish. To solve this, production data loaders use **global shuffling** and **deterministic shard assignment** to ensure that workers are perfectly distributed across the storage fabric, eliminating the "thundering herd" effect.
 
 :::
+
+That same scaling pressure also appears across hardware generations: compute throughput has outpaced storage bandwidth.
 
 ::: {#psp-data-storage-widening-i-o-wall .callout-perspective title="The widening I/O wall"}
 
@@ -513,6 +517,8 @@ These bandwidth cliffs have a critical implication: the pipeline cannot simply "
 
 The bandwidth arithmetic also explains *why* increasing cluster size creates storage pressure. A single node with 8 GPUs needs roughly 4 to 40 GB/s of storage bandwidth (depending on workload). A cluster of 256 such nodes needs 1,000 to 10,000 GB/s. A cluster of 10,000 nodes needs 40 to 400 TB/s. At the upper end, even a world-class parallel file system with 1,000 OSS nodes delivering 1 TB/s aggregate cannot satisfy the demand, and the architecture must rely on local NVMe caching to reduce the load on shared storage.
 
+The severity of that cluster-level pressure depends sharply on the data modality.
+
 ::: {#nbk-data-storage-text-vs-image-bandwidth .callout-notebook title="Text vs. image bandwidth"}
 
 The bandwidth demand of a 2,048-GPU cluster depends entirely on the data modality.
@@ -693,6 +699,8 @@ For our running example, the 1.5 trillion token dataset is typically stored as a
 
 At the NVMe tier, compression represents a critical trade-off between I/O bandwidth and CPU cycles. An I/O-bound pipeline, where the NVMe drives cannot keep up with accelerator demand, benefits from aggressive compression: zstd at level 9 achieves roughly 4:1 compression but decompresses at only 0.5 GB/s per CPU core. A CPU-bound pipeline, where decode and augmentation already saturate the host processor, prefers lighter compression: zstd at level 1 offers roughly 3:1 compression but decompresses at 1.5 GB/s per core. On a 28 GB/s four-drive NVMe RAID array, zstd-1 delivers an *effective* throughput of 84 GB/s of uncompressed data, while zstd-9 delivers 112 GB/s but requires 3$\times$ more CPU cores dedicated to decompression. The optimal compression level is therefore not a property of the data but a property of the pipeline's bottleneck, and it can change when the cluster configuration changes (adding more GPUs shifts the bottleneck toward I/O, favoring heavier compression).
 
+A standard ImageNet training pipeline makes the cost of the wrong format visible.
+
 ::: {#nbk-data-storage-imagenet-bottleneck-analysis .callout-notebook title="The ImageNet bottleneck analysis"}
 
 **Problem**\index{ImageNet!bottleneck analysis}: A ResNet-50 training job on ImageNet (1.28M images, ~150 KB average) targets 1,000 images/second. The question is whether to use individual JPEG files on an HDD or NVMe.
@@ -748,6 +756,8 @@ class LocalCacheRoi:
     lc_util_local_str = fmt(util_local, precision=1, commas=False)
 
 ```
+
+The same local NVMe tier also pays for itself by recovering utilization lost to remote-read latency.
 
 ::: {#nbk-data-storage-roi-local-nvme-caching .callout-notebook title="ROI of local NVMe caching"}
 
@@ -808,7 +818,7 @@ This separation creates a critical bottleneck: **the small file problem**. If a 
 
 :::
 
-The severity of this problem in practice is illustrated by a well-known production failure.
+At production scale, the metadata bottleneck can collapse an otherwise high-bandwidth file system.
 
 ::: {.callout-warning title="The metadata meltdown"}
 
@@ -1004,7 +1014,7 @@ For our running example, the 1.5 trillion token dataset is stored as roughly `{p
 
 : **Data Format Comparison for ML Training**\index{Data!format comparison for ml training}: Per-sample overhead determines whether the storage hardware's bandwidth is realized or wasted on metadata operations. {#tbl-data-formats}
 
-The @tbl-data-formats comparison guides format selection for ML workloads.
+The comparison in @tbl-data-formats sets the data-volume term in the pipeline equation, turning format selection into a bandwidth-sizing problem.
 
 ```{python}
 #| label: storage-pipeline-equation-calc
@@ -1534,6 +1544,8 @@ The economically rational strategy often invests more in storage (local NVMe cac
 
 :::
 
+A concrete cost comparison shows how quickly hidden transfer charges can overtake the apparent savings from cheap object storage.
+
 ::: {#nbk-data-storage-egress-tax .callout-notebook title="The egress tax"}
 
 **Problem**: A team trains a vision model on a 50 TB image dataset stored in S3. Training runs for 20 epochs. The decision is whether to stream from S3 each epoch or stage to local NVMe.
@@ -1630,6 +1642,8 @@ A `{python} StorageHierarchyAnalysis.gpt3_params_b_str`B parameter model with Ad
 3.  **Common pitfall**: A frequent misconception is that checkpointing every 100 steps is "low overhead." At 70B scale, this assumption is catastrophically wrong: if each training step takes 10 seconds and a checkpoint storm takes 1,400 seconds, checkpointing every 100 steps means spending $1400/(100 \times 10) = 140\%$ of compute time on checkpointing—more time saving state than doing useful training.
 
 :::
+
+A concrete 175B example shows why the local-write phase, rather than the durable copy, governs the exposed training pause.
 
 ::: {#nbk-data-storage-checkpoint-storm .callout-notebook title="The checkpoint storm"}
 
@@ -1731,6 +1745,8 @@ Naive dataset versioning is financially and operationally unsustainable at scale
 **Fallacy**: *Compression always helps because it reduces the amount of data to read.*
 
 This is only true if the pipeline is I/O-bound. Compression reduces I/O volume but increases CPU load due to decompression. For a CPU-bound pipeline where complex data augmentation already saturates the host processor, adding decompression work makes the bottleneck *worse*, not better, leading to a net decrease in throughput to the accelerator. The correct approach is to profile the pipeline first: if the host CPU is the bottleneck, use uncompressed or lightly compressed formats (LZ4); if storage or network I/O is the bottleneck, use aggressive compression (zstd, gzip). The optimal compression level is a property of the pipeline's bottleneck, not a universal constant.
+
+These fallacies all return to the same accounting exercise: where each byte lives, how often it moves, and which tier pays the cost.
 
 ::: {#nbk-data-storage-175b-models-storage-footprint .callout-notebook title="The 175B model's storage footprint"}
 
