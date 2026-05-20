@@ -212,7 +212,7 @@ Minimizing this tax requires co-locating communicating components, using high-ba
 
 ### Serving cost dominates training cost {#sec-inference-scale-serving-cost-dominates-training-cost-576a}
 
-The serving tax quantified above consumes a fraction of the latency budget per request. The true economic impact of inference emerges when we consider cost over a model's entire operational lifetime. Serving cost typically dominates training cost by orders of magnitude because training is a one-time capital expenditure (CapEx) while serving is a continuous operational expenditure (OpEx) that scales with user growth. The following worked example reveals the *serving cost multiplier* in practice.
+The serving tax quantified above consumes a fraction of the latency budget per request. The true economic impact of inference emerges when we consider cost over a model's entire operational lifetime. Serving cost typically dominates training cost by orders of magnitude because training is a one-time capital expenditure (CapEx) while serving is a continuous operational expenditure (OpEx) that scales with user growth. A quick cost calculation makes the multiplier concrete.
 
 ```{python}
 #| label: serving-cost-multiplier-simple
@@ -1372,6 +1372,8 @@ The autoregressive bottleneck (Principle \ref{pri-autoregressive-bottleneck}) go
 
 :::
 
+The same idea is easier to see as slot reuse over time.
+
 ::: {#psp-inference-analogy-restaurant-kitchen .callout-perspective title="Analogy: The restaurant kitchen"}
 
 Imagine a restaurant where a waiter seats a table of four (a batch of 4 requests). In static batching, if three diners finish their meals in 20 minutes, but the fourth takes an hour, the waiter refuses to seat anyone else at those three empty chairs until the entire table is clear. The kitchen (the GPU) sits mostly idle while the last diner eats.
@@ -2096,6 +2098,15 @@ The cache size grows with context as calculated by @eq-kv-cache-size:
 
 $$\text{KV cache size} = 2 \times n_{\text{layers}} \times d \times S \times B \times s_{\text{elem}}$$ {#eq-kv-cache-size}
 
+where:
+
+- $n_{\text{layers}}$ = number of layers
+- $d$ = hidden dimension
+- $S$ = sequence length
+- $B$ = batch size
+- $s_{\text{elem}}$ = storage size per element in bytes
+- Factor of 2 accounts for both keys and values
+
 ### The KV cache wall: Memory-bound capacity {#sec-inference-scale-kv-cache-wall}
 
 Increasing the batch size to maximize throughput in LLM serving is bounded by the KV cache wall. As @fig-kv-cache-wall shows, model weights represent a fixed "static tax" on GPU memory, while the KV cache grows linearly with both batch size and sequence length.
@@ -2186,16 +2197,7 @@ plt.show()
 
 The visualization reveals why the Distribution Layer must sometimes shard models that would otherwise fit on a single GPU. Sharding provides the **Memory Headroom** needed to maintain high batch sizes for long-context requests. Without sharding, a 128K context request effectively "evicts" all other users from the GPU.
 
-where:
-
-- $n_{\text{layers}}$ = number of layers
-- $d$ = hidden dimension
-- $S$ = sequence length
-- $B$ = batch size
-- $s_{\text{elem}}$ = storage size per element in bytes
-- Factor of 2 accounts for both keys and values
-
-The following *KV-cache capacity estimator* applies this formula to determine the maximum serving batch size for a large model on production hardware.
+The same formula can be turned into an explicit batch-size limit for production hardware.
 
 ```{python}
 #| echo: false
@@ -2341,6 +2343,8 @@ Production systems report 60--80 percent memory waste from fragmentation under r
 3.  **Common pitfall**: A frequent misconception is that PagedAttention speeds up individual token math. In reality, it is a **Capacity Optimization**\index{Optimization!capacity}: it improves *system-level* efficiency by allowing larger batch sizes, though it adds a small **Indirection Overhead** $(L_{\text{lat}})$ for the pointer lookups.
 
 :::
+
+A simple room-allocation analogy makes the fragmentation benefit concrete.
 
 ::: {#psp-inference-analogy-inefficient-hotel .callout-perspective title="Analogy: The inefficient hotel"}
 
@@ -2767,6 +2771,8 @@ class PrecisionDividend:
 3.  **Common pitfall**: A frequent misconception is that speculative decoding "always speeds up" inference. In reality, it is a probabilistic bet\index{Probabilistic Bet}: if the draft model is too inaccurate (low acceptance rate), the extra compute and overhead of verification can actually make the system *slower* than sequential decoding.
 
 :::
+
+The same draft-verify structure has a familiar division of labor.
 
 ::: {#psp-inference-analogy-executive-assistant .callout-perspective title="Analogy: The executive and the assistant"}
 
@@ -3816,7 +3822,7 @@ where $\alpha$ is the network latency and $M/\text{BW}$ is the transfer time.
 
 $$T_{\text{alltoall}} = (N-1) \times \left(\alpha + \frac{M/N}{\text{BW}}\right)$$ {#eq-alltoall-time}
 
-Both equations make clear that the achievable bandwidth $\text{BW}$ and latency $\alpha$ of the underlying interconnect determine real-world sharding performance. The following *interconnect technology comparison* quantifies these differences across production hardware.
+Both equations make clear that the achievable bandwidth $\text{BW}$ and latency $\alpha$ of the underlying interconnect determine real-world sharding performance. Production hardware differs enough on both axes that the interconnect choice can determine whether a sharding plan is viable.
 
 ```{python}
 #| echo: false
@@ -4218,7 +4224,7 @@ Key properties:
 - **Minimal disruption**\index{Minimal Disruption}: Adding/removing servers only remaps $K/N$ keys on average
 - **Load balancing**: With virtual nodes, load distributes evenly
 
-The following example illustrates *consistent hashing for KV cache affinity* in an LLM serving cluster.
+For LLM serving, the most direct payoff is avoiding unnecessary KV-cache rebuilds across conversation turns.
 
 ::: {#exmp-inference-consistent-hashing-kv-cache-affinity .callout-example title="Consistent hashing for KV cache affinity"}
 
@@ -4929,7 +4935,7 @@ In practice, neither forecasting nor event schedules alone suffice. Production s
 
 $$\text{Target replicas} = \max(\text{Predicted}, \text{Reactive}) + \text{Buffer}$$
 
-The following example of *predictive scaling for traffic* shows how daily patterns drive proactive capacity management.
+Daily traffic patterns make the value of proactive capacity management visible.
 
 ::: {#exmp-inference-predictive-scaling-traffic .callout-example title="Predictive scaling for traffic"}
 
