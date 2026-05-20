@@ -503,6 +503,8 @@ Naive gang scheduling is wasteful in predictable ways. If the cluster has 900 fr
 
 The accuracy of runtime estimates determines backfill effectiveness, and this creates a game-theoretic challenge. If users consistently overestimate runtimes, backfill slots are artificially narrow and fewer jobs fit, reducing utilization. If users underestimate, backfilled jobs may still be running when the large job's resources become available, forcing preemption that wastes the backfilled job's progress. In practice, users have strong incentives to overestimate (to avoid being killed before completion) and weak incentives to estimate accurately, leading to systematic inflation that degrades backfill performance. Research schedulers like Tiresias [@gu2019tiresias] address this fundamental problem by eliminating the requirement for runtime estimates entirely, instead using observed resource consumption to dynamically adjust priority. This approach, discussed in detail in @sec-fleet-orchestration-tiresias, turns the runtime estimation problem from a user-facing burden into a system-level observation.
 
+A quick cost estimate shows why even modest improvements in this balance justify engineering effort.
+
 ::: {#psp-fleet-orchestration-economics-idle-gpus .callout-perspective title="The economics of idle GPUs"}
 
 The cost of poor scheduling compounds rapidly. Consider a `{python} ClusterEconomicsContext.cluster_size_str`-GPU cluster:
@@ -548,7 +550,7 @@ The tension between gang scheduling's safety guarantees and backfill's utilizati
 
 ## Orchestration Paradigms {#sec-fleet-orchestration-paradigms}
 
-Researchers face a choice between two paradigms: submitting a script specifying exact resource needs (imperative), or declaring desired state and letting a control loop determine provisioning (declarative). Two dominant philosophies have emerged for cluster orchestration, the HPC-oriented Slurm and the cloud-native Kubernetes, each reflecting the culture and requirements of its origin domain.
+Researchers face a choice between two paradigms: submitting a script specifying exact resource needs (imperative), or declaring desired state and letting a control loop determine provisioning (declarative). Two dominant philosophies have emerged for cluster orchestration: the HPC-oriented Slurm and the cloud-native Kubernetes, each reflecting the culture and requirements of its origin domain.
 
 The fundamental distinction is between *imperative* and *declarative* resource management. In an imperative system, the user specifies exactly what resources they need and the system allocates them directly. In a declarative system, the user specifies what they want running and the system figures out how to make it happen. This distinction, familiar from programming language design, has profound consequences for how ML workloads are scheduled, monitored, and recovered from failure.
 
@@ -682,7 +684,7 @@ Kubernetes excels for mixed training-serving clusters where unified management, 
 
 Many production environments recognize that neither paradigm alone satisfies all requirements, and they deploy both systems in complementary roles. A common architecture uses Slurm for dedicated training clusters where raw performance and scheduling sophistication matter, and Kubernetes for inference serving, pipeline orchestration, and lighter training workloads (fine-tuning, small-scale experimentation). The emerging pattern is to use Kubernetes as the outer orchestration layer, submitting Slurm jobs for large training runs through Kubernetes operators. This hybrid architecture achieves unified management and observability without sacrificing Slurm's batch scheduling capabilities for the workloads that need them most.
 
-The following table summarizes the key trade-offs between the two paradigms across the dimensions most relevant to ML workloads:
+The key trade-offs between the two paradigms organize around the dimensions most relevant to ML workloads:
 
 | **Dimension**                    | **Slurm**                                                                                                   | **Kubernetes**                                                                                                                  |
 |:---------------------------------|:------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------|
@@ -718,9 +720,11 @@ The sharp distinction between HPC and cloud-native scheduling is rapidly blurrin
 
 :::
 
+That convergence makes the decision framework more nuanced than a simple Slurm-versus-Kubernetes choice.
+
 ::: {#chk-fleet-orchestration-scheduling-paradigm-trade-offs .callout-checkpoint title="Scheduling paradigm trade-offs"}
 
-The following checkpoint reviews the core trade-offs before the chapter turns to topology-aware scheduling:
+Before the chapter turns to topology-aware scheduling, review the core trade-offs:
 
 - [ ] Can you explain why gang scheduling is essential for distributed training but not for inference workloads? What property of synchronous data parallelism creates the all-or-nothing requirement?
 - [ ] What CAP theorem trade-off does Slurm make differently from Kubernetes? How does this difference manifest during a network partition between the scheduler and a subset of nodes?
@@ -928,9 +932,11 @@ Because the scheduler relied on a static topology map, it continued to schedule 
 
 :::
 
-The topology-awareness via **taints and tolerations**[^fn-taints-tolerations] discussed here improves performance for allocated jobs by matching logical communication patterns to physical network structure. The complementary problem is how jobs adapt when the resources available to them change dynamically. Rather than treating resource allocation as fixed for a job's lifetime, elastic training allows jobs to grow, shrink, and recover without full restarts.
+The topology-aware use of **taints and tolerations**[^fn-taints-tolerations] discussed here improves performance for allocated jobs by matching logical communication patterns to physical network structure. The complementary problem is how jobs adapt when the resources available to them change dynamically. Rather than treating resource allocation as fixed for a job's lifetime, elastic training allows jobs to grow, shrink, and recover without full restarts.
 
 ## Elastic Training {#sec-fleet-orchestration-elastic-training}
+
+In that adaptive view, resource allocation becomes a contract that can change during execution.
 
 ::: {#dfn-fleet-orchestration-elastic-training .callout-definition title="Elastic training"}
 
@@ -1279,6 +1285,8 @@ Spot interruption prediction uses the data that cloud providers expose about rec
 
 Checkpoint frequency optimization for spot instances differs from the standard reliability logic. The Young-Daly formula developed in @sec-fault-tolerance-young-daly optimizes for unpredicted hardware failures. Spot interruptions, however, come with a warning: 2 minutes on AWS, 30 seconds on GCP. The optimal strategy is a **two-tier checkpointing**\index{Two-Tier Checkpointing} approach: a periodic checkpoint at the Young-Daly interval to protect against hard crashes, combined with an immediate checkpoint triggered by the termination notice. This "panic checkpoint" captures the exact state of training seconds before the node vanishes, reducing lost work to near zero and transforming preemption from a rollback event into a pause-and-resume event.
 
+The same need for contingency planning becomes acute when spot interruptions are correlated rather than isolated.
+
 ::: {#ws-fleet-orchestration-spot-market-crash .callout-war-story title="The spot market crash"}
 
 A major AI lab configured their entire research fleet to use spot instances in a single cloud region to save costs. Two days before a top-tier conference deadline, a massive wave of last-minute experiments from thousands of researchers worldwide hit the same region. The spot market "crashed": prices spiked to equal on-demand rates, and the provider reclaimed 90 percent of the lab's spot instances within a 15-minute window. Dozens of paper-critical training runs died simultaneously. The lab had no fallback strategy to shift to on-demand capacity or other regions. The lesson: spot capacity is correlated with global research deadlines. A robust scheduler must have a "break glass" capability to flee to on-demand capacity when the spot market becomes toxic.
@@ -1394,7 +1402,7 @@ Consider our 175B parameter model. Training requires approximately 34 days on 1,
 
 ::: {#chk-fleet-orchestration-cost-aware-scheduling-trade-offs .callout-checkpoint title="Cost-aware scheduling trade-offs"}
 
-The following checkpoint reviews cost-optimization mechanisms before the chapter turns to ML-specific schedulers:
+Before moving to ML-specific schedulers, review how the cost-optimization mechanisms interact:
 
 - [ ] A training job requires 512 GPUs for 14 days. Spot instances offer 65 percent discount but have 1 interruption per day with 30-minute restart overhead. Under what checkpoint frequency does spot training become more expensive than on-demand?
 - [ ] Why does fault tolerance infrastructure have a "double return" for both reliability and cost savings? What is the minimum fault tolerance investment needed to make spot instances viable?
@@ -1475,6 +1483,8 @@ Consider our 175B-parameter model training run. A pure implementation of Pollux 
 
 The build-vs.-buy decision for a custom scheduler is a substantial capital investment. Developing a robust, fault-tolerant scheduler that outperforms the default bin-packing behavior of Kubernetes requires a specialized team of 3 to 5 systems engineers working for 6 to 12 months. The ROI math is what justifies the effort: if the team can improve overall cluster utilization by 10 percent on a fleet of 10,000 H100 GPUs (approximately \$25,000 per hour in capital depreciation and power), the savings amount to roughly \$22 million per year. This stark return on investment drives the development of internal scheduling platforms at every major AI lab, transforming the scheduler from a mere utility into a primary lever for operational efficiency.
 
+The risk is not only implementation cost; a scheduler can also optimize a metric that conflicts with the organization's real objective.
+
 ::: {#ws-fleet-orchestration-scheduler-that-optimized-wrong-metric .callout-war-story title="The scheduler that optimized the wrong metric"}
 
 A platform team at a major autonomous vehicle company deployed a custom scheduler designed to minimize average job completion time (JCT), a standard academic metric. The logic was sound: by prioritizing shorter jobs, the queue clears faster, and developer velocity increases.
@@ -1482,6 +1492,8 @@ A platform team at a major autonomous vehicle company deployed a custom schedule
 The result was a disaster for the model architecture team. The scheduler correctly identified that their massive Transformer pretraining jobs would take weeks to complete. To minimize average JCT, it continuously preempted these long-running jobs to squeeze in thousands of short, minute-long debugging and visualization tasks submitted by other teams. While the *average* wait time dropped by 40 percent, the P99 wait time for critical-path training jobs exploded from 4 hours to 9 days. The core product, the autonomous driving model, effectively stopped learning for two weeks. The team learned that optimizing for an aggregate metric without distinct Quality of Service (QoS) tiers for different workload classes (interactive vs. batch vs. production) is a recipe for organizational paralysis.
 
 :::
+
+That failure mode frames the design questions behind ML-aware schedulers.
 
 ::: {#chk-fleet-orchestration-custom-scheduler-design-space .callout-checkpoint title="Custom scheduler design space"}
 
@@ -1498,7 +1510,7 @@ Custom schedulers maximize throughput for long-running training jobs, but the op
 
 ## Serving Resource Management {#sec-fleet-orchestration-serving}
 
-Training jobs are predictable, batch-oriented beasts that run for weeks; serving workloads are volatile, user-facing services that must respond in milliseconds to unpredictable traffic spikes. When an e-commerce platform launches a major sale, the serving fleet must instantly autoscale to handle thousands of requests per second. Serving resource management forces the orchestrator to balance these aggressive latency constraints against raw hardware utilization.
+Training jobs are predictable, batch-oriented workloads that run for weeks; serving workloads are volatile, user-facing services that must respond in milliseconds to unpredictable traffic spikes. When an e-commerce platform launches a major sale, the serving fleet must instantly autoscale to handle thousands of requests per second. Serving resource management forces the orchestrator to balance these aggressive latency constraints against raw hardware utilization.
 
 The serving infrastructure analyzed in @sec-inference-scale provides the architectural foundations for efficient inference execution on individual accelerators. The fleet orchestrator manages the resource envelope around those serving systems: scaling replica counts up and down with demand, isolating serving workloads from interference, and balancing inference resource needs against training's claims on the same shared infrastructure.
 
@@ -1967,6 +1979,8 @@ class QuotaHoardingCost:
     hoarding_cost_str = f"{cost:,.0f}"
 ```
 
+A concrete quota incident shows how quickly idle reservations become expensive.
+
 ::: {#ws-fleet-orchestration-quota-hoarding-incident .callout-war-story title="The quota hoarding incident"}
 
 A computer vision team at a major logistics company reserved a block of 500 GPUs for a "critical" urgent model refresh. Due to upstream data delays, the training jobs were postponed, but the team retained the reservation to ensure availability "when the data arrives." The GPUs sat idle for three weeks, a capital waste of roughly \$`{python} QuotaHoardingCost.hoarding_cost_str`, while the NLP team's queues overflowed, delaying a chatbot release by a month.
@@ -1974,6 +1988,8 @@ A computer vision team at a major logistics company reserved a block of 500 GPUs
 The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
 
 :::
+
+This governance backdrop sets up the practical design decisions for a shared cluster.
 
 ::: {#chk-fleet-orchestration-multi-tenancy-design-decisions .callout-checkpoint title="Multi-tenancy design decisions"}
 
@@ -1985,7 +2001,7 @@ Consider a 2,000-GPU cluster shared between a research team (60 percent allocati
 
 :::
 
-Even with sophisticated multi-tenancy and quota policies in place, the cluster can still fall victim to complex, systemic bottlenecks that defy simple monitoring. When utilization drops inexplicably despite full queues, operators must roll up their sleeves and dive into debugging cluster utilization.
+Even with sophisticated multi-tenancy and quota policies in place, the cluster can still fall victim to complex, systemic bottlenecks that defy simple monitoring. When utilization drops inexplicably despite full queues, operators must move from dashboards to systematic utilization debugging.
 
 ## Debugging Cluster Utilization {#sec-fleet-orchestration-debugging}
 
@@ -2200,7 +2216,7 @@ A simple back-of-envelope calculation quantifies what that recovered capacity is
 
 ### Common utilization anti-patterns {#sec-fleet-orchestration-anti-patterns}
 
-High-level metrics often mask deep inefficiencies. A cluster dashboard may report 85 percent allocation, but the productive utilization, cycles actually advancing model state, can be significantly lower. Debugging these gaps requires identifying specific signatures in the GPU telemetry that reveal the underlying bottleneck.
+High-level metrics often mask deep inefficiencies. A cluster dashboard may report 85 percent allocation, but productive utilization, the share of cycles actually advancing model state, can be significantly lower. Debugging these gaps requires identifying specific signatures in the GPU telemetry that reveal the underlying bottleneck.
 
 The zombie job represents the most egregious waste: a training process that has crashed or deadlocked but continues to hold GPU resources. In a distributed run training a 175B parameter model, a single rank failure can leave 128 GPUs allocated but idling if the process cleanup fails. The signature is high memory allocation (greater than 300 GB) paired with near-zero SM utilization (less than 5 percent) persisting for longer than a heartbeat timeout (typically 10 minutes). This state often results from CUDA context corruption or a driver-level deadlock that prevents the container runtime from successfully reaping the process, requiring forceful node-level remediation to reclaim the device.
 
