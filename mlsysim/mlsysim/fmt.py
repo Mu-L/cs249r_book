@@ -6,28 +6,46 @@ Keep science in core/formulas.py; keep display here.
 
 from .core.constants import ureg
 
-# Lazy import for IPython.display.Markdown
-_Markdown = None
+
+class MarkdownStr(str):
+    """A string that ALSO renders as raw Markdown when consumed by Quarto/Jupyter.
+
+    Quarto's inline ``{python} x`` substitution escapes commas and decimals in
+    plain ``str`` outputs (``2,039.4`` → ``2\\,039\\.4``). Outside math mode the
+    escapes are harmless (``\\.`` reads as a literal period), but **inside**
+    ``$...$`` math mode they become LaTeX commands — ``\\,`` is ``\\thinspace``
+    and ``\\.`` is a dot accent — and the value is silently corrupted to
+    ``2 0394``.
+
+    Quarto detects ``_repr_markdown_`` and inserts the content **verbatim**
+    without escaping. By subclassing ``str``, every string operation
+    (``f"{x}"``, ``x + y``, ``x.replace(...)``, ``len(x)``, slicing) continues
+    to work, so this drop-in replacement for plain-``str`` formatters is fully
+    backward-compatible with existing call sites.
+    """
+
+    def _repr_markdown_(self):
+        return str.__str__(self)
 
 
 def _get_markdown():
-    """Lazily import IPython.display.Markdown when first needed."""
-    global _Markdown
-    if _Markdown is None:
-        from IPython.display import Markdown as IPythonMarkdown
-        
-        class MarkdownStr(IPythonMarkdown):
-            def __str__(self):
-                return str(self.data)
-                
-        _Markdown = MarkdownStr
-    return _Markdown
+    """Return the MarkdownStr class. Retained for backward compatibility."""
+    return MarkdownStr
 
 
-def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
+def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False,
+        prefix="", suffix=""):
     """
-    Format a Pint Quantity for narrative text.
-    Returns ONLY the number string (no unit suffix).
+    Format a Pint Quantity (or plain number) for narrative text.
+    Returns a MarkdownStr so Quarto inserts the value verbatim (no escape).
+
+    The prefix and suffix arguments collapse the old MarkdownStr(f"...")
+    escape-hatch idiom into a single canonical helper. Common uses:
+
+        fmt(price, precision=0, prefix="$")         # "$1,000"
+        fmt(rate * 100, precision=1, commas=False, suffix="%")  # "12.4%"
+        fmt(bw_mb_s, precision=1, commas=False, suffix=" MB/s")  # "2.4 MB/s"
+        fmt(speedup, precision=0, commas=False, suffix="x")     # "8x"
 
     Safety: Raises ValueError if a non-zero value is formatted as "0"
     due to insufficient precision (unless allow_zero=True).
@@ -60,7 +78,56 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False):
             f"Increase precision or set allow_zero=True if this was intentional."
         )
 
-    return result
+    decorated = f"{prefix}{result}{suffix}"
+    out = MarkdownStr(decorated)
+    assert isinstance(out, MarkdownStr), (
+        "fmt() must return MarkdownStr — this guard exists so a future refactor "
+        "of this module cannot silently break Quarto's _repr_markdown_ detection. "
+        "See .claude/rules/math.md."
+    )
+    return out
+
+
+def fmt_val(quantity, default="-"):
+    """
+    Format the magnitude of a Pint Quantity (or a plain scalar) using Python's
+    ``:g`` general format — compact, no trailing zeros, variable precision.
+
+    Returns a MarkdownStr. Pairs with ``fmt_unit()`` for side-by-side
+    value/unit table columns where ``fmt()``'s fixed-precision output is
+    too rigid (e.g., a column that mixes ``2``, ``2.5``, ``80``, ``9.5e10``).
+
+    >>> fmt_val(2.0)        # "2"
+    >>> fmt_val(2.5)        # "2.5"
+    >>> fmt_val(quantity)   # "80" for 80 GB; "9.5e+10" for 95 GFLOPS as TFLOPS
+    """
+    if isinstance(quantity, ureg.Quantity):
+        val = quantity.magnitude
+    else:
+        val = quantity
+    if val is None:
+        return MarkdownStr(default)
+    out = MarkdownStr(f"{val:g}")
+    assert isinstance(out, MarkdownStr), "fmt_val() must return MarkdownStr"
+    return out
+
+
+def fmt_unit(quantity, default="-"):
+    """
+    Extract the unit string of a Pint Quantity. Returns a MarkdownStr.
+    For non-Pint values, returns ``default`` wrapped in MarkdownStr.
+
+    Pairs with ``fmt_val()`` for value/unit table columns.
+
+    >>> fmt_unit(80 * GB)        # "gigabyte"
+    >>> fmt_unit(80)             # "-"
+    """
+    if isinstance(quantity, ureg.Quantity):
+        out = MarkdownStr(f"{quantity.units}")
+    else:
+        out = MarkdownStr(default)
+    assert isinstance(out, MarkdownStr), "fmt_unit() must return MarkdownStr"
+    return out
 
 
 def fmt_percent(ratio, precision=1, commas=False):
@@ -78,7 +145,7 @@ def fmt_percent(ratio, precision=1, commas=False):
     return fmt(ratio * 100, precision=precision, commas=commas)
 
 
-def sci(val, precision=2):
+def fmt_sci(val, precision=2):
     """
     Formats a number or Pint Quantity into scientific notation using Unicode.
     Example: 4.1e9 -> "4.10 × 10⁹"
@@ -95,50 +162,7 @@ def sci(val, precision=2):
     base, exp = s.split("e")
     exp_int = int(exp)
     exp_str = "".join(superscripts.get(c, c) for c in str(exp_int))
-    return f"{float(base):.{precision}f} × 10{exp_str}"
-
-
-def display_value(value, unit=None, precision=1, commas=True):
-    """
-    Return a dict with raw value and formatted string.
-    """
-    return {
-        "value": value,
-        "str": fmt(value, unit=unit, precision=precision, commas=commas),
-    }
-
-
-def display_percent(ratio, precision=0):
-    """
-    ratio: 0.0 to 1.0
-    """
-    if isinstance(ratio, ureg.Quantity):
-        ratio = float(ratio.m_as(''))
-    else:
-        ratio = float(ratio)
-
-    pct = ratio * 100
-    return {
-        "value": ratio,
-        "str": f"{pct:.{precision}f}",
-        "math": md_math(f"{pct:.{precision}f}\\%"),
-    }
-
-
-def display_fraction(numerator, denominator, result=None, unit=None, precision=2):
-    """
-    numerator/denominator can be numeric or Pint Quantity.
-    result is optional string; if omitted, it will be computed.
-    """
-    if result is None:
-        result = f"{(numerator / denominator):.{precision}g}"
-    num_latex = sci_latex(numerator, precision=precision)
-    den_latex = sci_latex(denominator, precision=precision)
-    return {
-        "value": numerator / denominator,
-        "str": result,
-        "frac": md_frac(num_latex, den_latex, result=result, unit=unit),
-    }
+    return MarkdownStr(f"{float(base):.{precision}f} × 10{exp_str}")
 
 
 def sci_latex(val, precision=2):
@@ -154,34 +178,19 @@ def sci_latex(val, precision=2):
     return f"{float(base):.{precision}f} \\times 10^{{{exp_int}}}"
 
 
-def md(latex_str):
-    """
-    Wrap a LaTeX string in Markdown() to preserve formatting in inline code.
-    """
-    Markdown = _get_markdown()
-    return Markdown(latex_str)
-
-
-def md_frac(numerator, denominator, result=None, unit=None):
+def fmt_frac(numerator, denominator, result=None, unit=None):
     """
     Create a LaTeX fraction with optional result and unit.
-    Returns: $\frac{num}{denom}$ or $\frac{num}{denom} = result$ unit
+    Returns: $\\frac{num}{denom}$ or $\\frac{num}{denom} = result$ unit
     """
-    Markdown = _get_markdown()
     latex = f'$\\frac{{{numerator}}}{{{denominator}}}$'
     if result is not None:
         latex += f' = {result}'
     if unit is not None:
         latex += f' {unit}'
-    return Markdown(latex)
-
-
-def md_sci(val, precision=2):
-    """
-    Format a number in LaTeX scientific notation, wrapped in Markdown().
-    """
-    Markdown = _get_markdown()
-    return Markdown(f"${sci_latex(val, precision=precision)}$")
+    out = MarkdownStr(latex)
+    assert isinstance(out, MarkdownStr), "fmt_frac() must return MarkdownStr"
+    return out
 
 
 def check(condition, message):
@@ -193,57 +202,11 @@ def check(condition, message):
         raise ValueError(f"Narrative broken: {message}")
 
 
-def md_math(expression):
+def fmt_math(expression):
     """
-    Wrap a LaTeX math expression in Markdown().
+    Wrap a LaTeX math expression in `$...$` so Quarto renders it as inline math.
+    Returns a MarkdownStr.
     """
-    return md(f"${expression}$")
-
-
-def fmt_full(quantity, precision=1, commas=True):
-    """
-    Format a Pint Quantity as a complete "value unit" string.
-    Returns a single string like "2,039 GB/s" or "312 TFLOPs/s".
-
-    Value and unit are always in sync — unit is taken directly from the Quantity.
-
-    RULE: Use the whole string in prose. Do NOT add a separate unit label.
-        ✓ "`{python} bw_str` of memory bandwidth"
-        ✗ "`{python} bw_str` GB/s"  ← unit already in string; this doubles it
-
-    Use fmt()  when the unit is fixed and hardcoded in prose.
-    Use fmt_split() for tables needing separate value/unit columns.
-    """
-    if not isinstance(quantity, ureg.Quantity):
-        raise TypeError(
-            f"fmt_full() requires a pint Quantity, got {type(quantity).__name__}. "
-            f"Use fmt() for raw numbers."
-        )
-    val = quantity.magnitude
-    unit_str = f"{quantity.units:~P}"   # e.g. "GB/s", "TFLOPs/s"
-    fmt_str = f",.{precision}f" if commas else f".{precision}f"
-    value_str = f"{val:{fmt_str}}"
-
-    # Precision safety check (same guard as fmt())
-    try:
-        numeric_result = float(value_str.replace(",", ""))
-    except ValueError:
-        numeric_result = None
-    if numeric_result == 0.0 and abs(val) > 1e-12:
-        raise ValueError(
-            f"fmt_full() Precision Error: {val} formatted as '{value_str}' "
-            f"with precision={precision}. Increase precision."
-        )
-    return f"{value_str} {unit_str}"
-
-
-def fmt_split(quantity, precision=1, commas=True):
-    """
-    Format a Pint Quantity as a (value_str, unit_str) tuple. For table columns only.
-    For prose, use fmt_full() instead.
-
-        bw_val, bw_unit = fmt_split(A100_MEM_BW)  # ("2,039", "GB/s")
-    """
-    full = fmt_full(quantity, precision=precision, commas=commas)
-    parts = full.rsplit(" ", 1)
-    return (parts[0], parts[1]) if len(parts) == 2 else (full, "")
+    out = MarkdownStr(f"${expression}$")
+    assert isinstance(out, MarkdownStr), "fmt_math() must return MarkdownStr"
+    return out
