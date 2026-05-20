@@ -128,40 +128,32 @@ CANONICAL_ORDER: dict[str, list[str]] = {
     "inproceedings": [
         "author", "editor", "title", "booktitle", "publisher",
         "year", "pages", "volume", "series", "address", "doi", "url",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "article": [
         "author", "title", "journal", "volume", "number", "pages",
         "year", "month", "doi", "url",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "book": [
         "author", "editor", "title", "publisher", "year", "edition",
         "address", "isbn", "doi", "url",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "incollection": [
         "author", "title", "booktitle", "editor", "publisher",
         "year", "pages", "doi", "url",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "techreport": [
         "author", "title", "institution", "year", "number", "type",
         "url", "doi",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "phdthesis": [
         "author", "title", "school", "year", "type", "url", "doi",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "mastersthesis": [
         "author", "title", "school", "year", "type", "url", "doi",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
     "misc": [
         "author", "title", "year", "howpublished", "publisher",
         "institution", "note", "url", "doi",
-        "x-verified", "x-verified-by", "x-verified-source", "x-no-doi",
     ],
 }
 
@@ -169,6 +161,11 @@ CANONICAL_ORDER: dict[str, list[str]] = {
 FORBIDDEN_FIELDS: set[str] = {
     "address",       # publisher locations removed in round 1
     "organization",  # replaced with publisher per §5
+    "x-no-doi",  # removed with old audit-stamp workflow
+    "x-verified",
+    "x-verified-by",
+    "x-verified-source",
+    "x-verified-status",
 }
 
 # Common abbreviated-journal patterns that must be spelled out (§5 table + extras)
@@ -698,15 +695,6 @@ def validate_entry(entry: Entry) -> list[Violation]:
     # field order automatically. Duplicating that logic here would
     # produce double the noise and risk fighting bibtex-tidy's output.
     # bib_lint owns semantic validation; bibtex-tidy owns format.
-
-    # Rule 9: x-verified must be ISO-8601 YYYY-MM-DD when present
-    xv = entry.get("x-verified")
-    if xv and not re.match(r"^\d{4}-\d{2}-\d{2}$", xv.value.strip()):
-        v.append(Violation(
-            entry.key, entry.start_line, "error",
-            "bad-x-verified-date",
-            f"x-verified `{xv.value}` is not ISO-8601 YYYY-MM-DD",
-        ))
 
     return v
 
