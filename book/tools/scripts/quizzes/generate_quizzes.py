@@ -97,8 +97,8 @@ MAX_TOKENS = 16000
 
 
 def qmd_path_for(vol: str, chapter: str) -> Path:
-    """Return the chapter's main ``.qmd``. Handles the ``optimizations``
-    outlier (``model_compression.qmd``) via glob fallback."""
+    """Return the chapter's main ``.qmd``. Falls back to a glob if the
+    folder name and qmd stem ever diverge."""
     chapter_dir = CONTENTS_DIR / vol / chapter
     direct = chapter_dir / f"{chapter}.qmd"
     if direct.is_file():
@@ -113,12 +113,10 @@ def qmd_path_for(vol: str, chapter: str) -> Path:
 
 def canonical_json_new_path(vol: str, chapter: str) -> Path:
     """Return the canonical ``.new`` staging path. The stem matches the
-    chapter's ``.qmd`` filename (not the directory name), so outlier
-    chapters like ``vol1/optimizations/`` (whose ``.qmd`` is
-    ``model_compression.qmd``) get the correct ``model_compression_quizzes.json``
-    output that the Lua filter expects per the chapter's ``quiz:`` YAML key."""
+    chapter's ``.qmd`` filename so the output filename agrees with the
+    chapter's ``quiz:`` YAML key (which the Lua filter reads)."""
     qmd = qmd_path_for(vol, chapter)
-    stem = qmd.stem  # e.g. "model_compression" for vol1/optimizations
+    stem = qmd.stem
     return CONTENTS_DIR / vol / chapter / f"{stem}_quizzes.json.new"
 
 
