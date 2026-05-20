@@ -41,7 +41,7 @@ CHAPTER_TO_QMD: dict[str, str | None] = {
     "Ch7: ML Frameworks": "book/quarto/contents/vol1/frameworks/frameworks.qmd",
     "Ch8: Model Training": "book/quarto/contents/vol1/training/training.qmd",
     "Ch9: Data Selection": "book/quarto/contents/vol1/data_selection/data_selection.qmd",
-    "Ch10: Model Compression": "book/quarto/contents/vol1/optimizations/model_compression.qmd",
+    "Ch10: Model Compression": "book/quarto/contents/vol1/model_compression/model_compression.qmd",
     "Ch11: Hardware Acceleration": "book/quarto/contents/vol1/hw_acceleration/hw_acceleration.qmd",
     "Ch12: Benchmarking": "book/quarto/contents/vol1/benchmarking/benchmarking.qmd",
     "Ch13: Model Serving": "book/quarto/contents/vol1/model_serving/model_serving.qmd",

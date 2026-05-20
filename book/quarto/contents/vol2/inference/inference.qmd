@@ -223,16 +223,26 @@ from mlsysim.fmt import check, fmt
 
 class ServingCostSimple:
     # ┌── 1. LOAD ──────────────────────────────────────────
+    training_cost = 2_000_000
     dau = 1_000_000
     reqs_per_day = 50
     days_per_year = 365
+    cost_per_request = 0.001
+    efficiency_gain = 0.10
     # ┌── 2. EXECUTE ───────────────────────────────────────
     annual_reqs = dau * reqs_per_day * days_per_year
     annual_reqs_b = round(annual_reqs / BILLION)
+    annual_serving_cost = annual_reqs * cost_per_request
+    serving_training_ratio = annual_serving_cost / training_cost
+    efficiency_savings = annual_serving_cost * efficiency_gain
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(annual_reqs > 10e9, "Should be >10B annual requests")
+    check(round(serving_training_ratio) == 9, "Serving/training ratio should round to 9x")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     annual_reqs_b_str = fmt(annual_reqs_b, precision=0, commas=False)
+    annual_serving_cost_str = fmt(annual_serving_cost, precision=0, prefix="\\$")
+    serving_training_ratio_str = fmt(serving_training_ratio, precision=0, commas=False)
+    efficiency_savings_str = fmt(efficiency_savings/1_000_000, precision=1, commas=False, prefix="\\$", suffix="M")
 ```
 
 ::: {.callout-notebook title="The serving cost multiplier"}
@@ -244,9 +254,9 @@ class ServingCostSimple:
 1.  **Training Cost**\index{Training Cost}: \$2,000,000 (One-time).
 2.  **Inference Volume**\index{Inference!volume}: $10^6 \text{ users} \times 50 \text{ reqs} \times 365 \text{ days} \approx$ `{python} ServingCostSimple.annual_reqs_b_str` Billion requests/year.
 3.  **Cost per Request**\index{Serving Cost!cost per request}: Assume a 70B model on H100 costs $\approx \$0.001$ per request (input + output).
-4.  **Annual Serving Cost**\index{Serving Cost!annual serving cost}: $18 \times 10^9 \times \$0.001 = \mathbf{\$18{,}000{,}000}$.
+4.  **Annual Serving Cost**\index{Serving Cost!annual serving cost}: `{python} ServingCostSimple.annual_reqs_b_str` billion requests $\times \$0.001 =$ **`{python} ServingCostSimple.annual_serving_cost_str`**.
 
-**Systems conclusion**: Serving costs **9$\times$** more than training in just the first year. A 10 percent serving-cost or latency-linked efficiency improvement saves about **\$1.8M** in the first year, nearly paying for the original training run.
+**Systems conclusion**: Serving costs **`{python} ServingCostSimple.serving_training_ratio_str`$\times$** more than training in just the first year. A 10 percent serving-cost or latency-linked efficiency improvement saves about **`{python} ServingCostSimple.efficiency_savings_str`** in the first year, nearly paying for the original training run.
 
 :::
 
@@ -419,7 +429,7 @@ ax.axhline(y=typical_pricing, color='#333333', linestyle='--', linewidth=1.5, al
 
 # ┌── 4. DECORATE ──────────────────────────────────────────────────────────────
 ax.text(
-    2e3, typical_pricing * 1.14,   # malo iznad
+    2e3, typical_pricing * 1.14,
     "Typical pricing (break-even)",
     fontsize=9,
     ha='left',
@@ -580,7 +590,7 @@ plt.show()
 
 :::
 
-### The inference landscape: Beyond llms {#sec-inference-scale-inference-landscape-beyond-llms-9560}
+### The inference landscape: Beyond LLMs {#sec-inference-scale-inference-landscape-beyond-llms-9560}
 
 A common misconception frames inference at scale as synonymous with LLM serving. Large language models present distinctive challenges and attract attention, but they represent a small fraction of production inference volume. Appropriate technique selection requires understanding the full inference landscape. @tbl-inference-landscape breaks down model types, request volumes, and optimization challenges.
 
@@ -692,6 +702,40 @@ Priority-aware scheduling assigns different service classes to requests and guar
 ### Deployment topology: Single-GPU to disaggregated {#sec-inference-scale-tensorrtllm-architecture-2794}
 
 The deployment topology determines how model computation maps to physical hardware, and this mapping is driven by the ratio of model size to single-device memory capacity.
+
+```{python}
+#| label: deployment-topology-hardware
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DEPLOYMENT TOPOLOGY HARDWARE (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-inference-scale-tensorrtllm-architecture-2794
+# │
+# │ Goal: Provide local NVLink bandwidth for the deployment topology discussion.
+# │ Show: "900" GB/s.
+# │ How: pulling NVLINK_H100_BW from mlsysim.core.constants.
+# │
+# │ Imports: mlsysim.core.constants (NVLINK_H100_BW, GB, second)
+# │ Exports: DeploymentTopologyHardware.nvlink_h100_gbs
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import NVLINK_H100_BW, GB, second
+
+class DeploymentTopologyHardware:
+    """Local hardware reference for deployment topology prose."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    nvlink = NVLINK_H100_BW
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    nvlink_gbs_val = nvlink.m_as(GB/second)
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
+    check(nvlink_gbs_val > 100, "NVLink bandwidth should exceed commodity NIC bandwidth")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    nvlink_h100_gbs = f"{nvlink_gbs_val:.0f}"
+```
 
 Single-GPU deployment is the simplest topology: the entire model fits in one device's memory, and all inference computation occurs locally. For models under 15--20 billion parameters (30--40 GB in FP16), this topology provides the lowest latency because it eliminates all inter-device communication.
 
@@ -1069,7 +1113,7 @@ $$B \approx \sqrt{\frac{2 \times 0.05 \times 100}{1 - 0.75}} = \sqrt{\frac{10}{0
 
 While this approximation suggests a small batch size $(B \approx 6)$, the high resulting utilization $(\rho > 80\%)$ leads to excessive queuing delay under the full Pollaczek-Khinchine model. The true optimal point for latency minimization lies higher, approaching the system's memory-constrained limits (typically capping $B_{\text{max}} = 32$ for large LLMs):
 
-Performance at Different Batch Sizes
+**Performance at different batch sizes.**
 
 @tbl-batch-size-comparison quantifies the tradeoffs across batch sizes from 1 to 32:
 
@@ -1157,7 +1201,7 @@ class LittlesLawVerify:
     in_queue_str = fmt(in_queue, precision=2, commas=False)
 ```
 
-Analysis
+**Analysis.**
 
 1. **Batch sizes 1--4 are unstable**\index{Batching!batch, sizes 1-4 are unstable}: Utilization exceeds 100 percent, meaning the system cannot keep up with arrivals. Queues grow unboundedly.
 
@@ -1576,7 +1620,7 @@ class BatchingWorkedExample:
     r4_imp_str = fmt(r4_improvement, precision=2, commas=False)
 ```
 
-System parameters
+**System parameters.**
 
 - Decode time per iteration (batch of 4): 20 ms
 - Maximum output length in batch: 200 tokens (R2)
@@ -1730,25 +1774,33 @@ class A100HardwareScenario:
     bw = A100_MEM_BW
     nvlink = NVLINK_A100_BW
     pcie = PCIE_GEN4_BW
+    activation_transfer_mb = 100
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     a100_mem_gb_val = mem.m_as(GiB)
     a100_mem_bw_tbs_val = bw.m_as(TB/second)
     nvlink_a100_gbs_val = nvlink.m_as(GB/second)
     pcie_gen4_gbs_val = pcie.m_as(GB/second)
+    activation_transfer_gb = activation_transfer_mb / 1000
+    pcie_transfer_ms_val = (activation_transfer_gb / pcie_gen4_gbs_val) * 1000
+    nvlink_transfer_ms_val = (activation_transfer_gb / nvlink_a100_gbs_val) * 1000
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
     check(nvlink_a100_gbs_val > pcie_gen4_gbs_val, "NVLink should be faster than PCIe")
+    check(pcie_transfer_ms_val > nvlink_transfer_ms_val, "PCIe transfer should be slower than NVLink")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     a100_mem_gb_str = fmt(a100_mem_gb_val, precision=0, commas=False)
     a100_mem_bw_tbs_str = fmt(a100_mem_bw_tbs_val, precision=0, commas=False)
     nvlink_a100_gbs_str = fmt(nvlink_a100_gbs_val, precision=0, commas=False)
     pcie_gen4_gbs_str = fmt(pcie_gen4_gbs_val, precision=0, commas=False)
+    activation_transfer_mb_str = fmt(activation_transfer_mb, precision=0, commas=False)
+    pcie_transfer_ms_str = fmt(pcie_transfer_ms_val, precision=1, commas=False)
+    nvlink_transfer_ms_str = fmt(nvlink_transfer_ms_val, precision=2, commas=False)
 ```
 
-The system runs on 4 A100-`{python} A100HardwareScenario.a100_mem_gb_str` GB GPUs connected via PCIe Gen4 (`{python} A100HardwareScenario.pcie_gen4_gbs_str` GB/s per GPU) rather than NVLink. The server has a dual-socket CPU with NUMA topology. Memory bandwidth per GPU is `{python} A100HardwareScenario.a100_mem_bw_tbs_str` TB/s (HBM2e), adequate for decode operations. However, PCIe bandwidth limits tensor parallelism communication to `{python} A100HardwareScenario.pcie_gen4_gbs_str` GB/s vs. NVLink's `{python} A100HardwareScenario.nvlink_a100_gbs_str` GB/s. For a batch requiring 100 MB activation transfers between GPUs, PCIe adds approximately 3.1 ms per synchronization point vs. 0.17 ms for NVLink.
+The system runs on 4 A100-`{python} A100HardwareScenario.a100_mem_gb_str` GB GPUs connected via PCIe Gen4 (`{python} A100HardwareScenario.pcie_gen4_gbs_str` GB/s per GPU) rather than NVLink. The server has a dual-socket CPU with NUMA topology. Memory bandwidth per GPU is `{python} A100HardwareScenario.a100_mem_bw_tbs_str` TB/s (HBM2e), adequate for decode operations. However, PCIe bandwidth limits tensor parallelism communication to `{python} A100HardwareScenario.pcie_gen4_gbs_str` GB/s vs. NVLink's `{python} A100HardwareScenario.nvlink_a100_gbs_str` GB/s. For a batch requiring `{python} A100HardwareScenario.activation_transfer_mb_str` MB activation transfers between GPUs, raw bandwidth math gives approximately `{python} A100HardwareScenario.pcie_transfer_ms_str` ms per synchronization point over PCIe vs. `{python} A100HardwareScenario.nvlink_transfer_ms_str` ms over NVLink.
 
 **Distribution Layer Analysis** (Algorithmic Behavior):
 
@@ -2160,6 +2212,81 @@ where:
 
 The following *KV-cache capacity estimator* applies this formula to determine the maximum serving batch size for a large model on production hardware.
 
+```{python}
+#| echo: false
+#| label: kv-cache-capacity-estimator
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ KV CACHE CAPACITY ESTIMATOR (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "KV-cache capacity estimator" callout in §KV cache fundamentals.
+# │
+# │ Goal: Compute per-token KV bytes, per-request KV GB, and max batch size for
+# │       a Llama-3-70B-style GQA model at 128K context on an 8xH100 node.
+# │ Show: 327,680 bytes/token, ~43 GB/request, max batch 11.
+# │ How: 2 * layers * KV_heads * head_dim * bytes_per_elem * context_tokens.
+# │
+# │ Imports: mlsysim.fmt (check, fmt, MarkdownStr)
+# │ Exports: KVCacheCapacityEstimator.kv_bytes_per_token_str,
+# │          KVCacheCapacityEstimator.kv_mb_per_token_str,
+# │          KVCacheCapacityEstimator.context_tokens_str,
+# │          KVCacheCapacityEstimator.kv_gb_per_request_str,
+# │          KVCacheCapacityEstimator.available_kv_gb_str,
+# │          KVCacheCapacityEstimator.max_batch_str,
+# │          KVCacheCapacityEstimator.step1_kv_per_token_math,
+# │          KVCacheCapacityEstimator.step2_cache_per_request_math,
+# │          KVCacheCapacityEstimator.step3_max_batch_math
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check, fmt, MarkdownStr
+
+class KVCacheCapacityEstimator:
+    """KV-cache capacity estimator for a long-context 70B GQA deployment."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    n_layers = 80
+    n_kv_heads = 8
+    d_head = 128
+    bytes_per_elem = 2
+    context_tokens = 131_072
+    total_hbm_gb = 640
+    weight_gb = 140
+    system_gb = 20
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    kv_bytes_per_token = 2 * n_layers * n_kv_heads * d_head * bytes_per_elem
+    kv_mb_per_token = kv_bytes_per_token / 1e6
+    kv_gb_per_request = context_tokens * kv_bytes_per_token / 1e9
+    available_kv_gb = total_hbm_gb - weight_gb - system_gb
+    max_batch = int(available_kv_gb // kv_gb_per_request)
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(kv_bytes_per_token == 327_680, "KV bytes/token should match GQA formula")
+    check(max_batch == 11, f"Expected max batch 11, got {max_batch}")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    kv_bytes_per_token_str = fmt(kv_bytes_per_token, precision=0)
+    kv_mb_per_token_str = fmt(kv_mb_per_token, precision=2, commas=False)
+    context_tokens_str = fmt(context_tokens, precision=0)
+    kv_gb_per_request_str = fmt(kv_gb_per_request, precision=0, commas=False)
+    available_kv_gb_str = fmt(available_kv_gb, precision=0, commas=False)
+    max_batch_str = fmt(max_batch, precision=0, commas=False)
+
+    # Display-math expressions for the three step equations (pre-compute LaTeX
+    # in Python to avoid `{python}` refs inside $$..$$ — §7 anti-pattern).
+    step1_kv_per_token_math = MarkdownStr(
+        f"$$ M_{{\\text{{KV}}}} = 2 \\times {n_layers} \\times {n_kv_heads} \\times {d_head} \\times {bytes_per_elem} "
+        f"= {kv_bytes_per_token:,} \\text{{ bytes}} \\approx "
+        f"\\mathbf{{{kv_mb_per_token:.2f} \\text{{ MB/token}}}} $$"
+    )
+    step2_cache_per_request_math = MarkdownStr(
+        f"$$ {context_tokens:,} \\text{{ tokens}} \\times {kv_mb_per_token:.2f} \\text{{ MB/token}} \\approx "
+        f"\\mathbf{{{kv_gb_per_request:.0f} \\text{{ GB/request}}}} $$"
+    )
+    step3_max_batch_math = MarkdownStr(
+        f"$$ \\text{{Max Batch}} = \\left\\lfloor \\frac{{{available_kv_gb:.0f}}}{{{kv_gb_per_request:.0f}}} \\right\\rfloor "
+        f"= \\mathbf{{{max_batch}}} $$"
+    )
+```
+
 ::: {.callout-example title="KV-cache capacity estimator"}
 
 **Problem**: A deployment serves Llama-3-70B (FP16 weights $\approx 140$ GB) on an 8$\times$ H100 node (640 GB total HBM). The goal is to determine the maximum batch size for a context length of 128K tokens.
@@ -2175,14 +2302,14 @@ $$ \text{Total Memory} = M_{\text{weights}} + (\text{Batch} \times \text{Context
 *   Context $= 131,072$ tokens.
 
 **Step 1**: Calculate memory per token.
-$$ M_{\text{KV}} = 2 \times 80 \times 8 \times 128 \times 2 = 327,680 \text{ bytes} \approx \mathbf{0.33 \text{ MB/token}} $$
+`{python} KVCacheCapacityEstimator.step1_kv_per_token_math`
 
 **Step 2**: Calculate cache per request.
-$$ 131,072 \text{ tokens} \times 0.33 \text{ MB/token} \approx \mathbf{43 \text{ GB/request}} $$
+`{python} KVCacheCapacityEstimator.step2_cache_per_request_math`
 
 **Step 3**: Determine max batch size.
-Available Memory for KV = $640 \text{ GB (Total)} - 140 \text{ GB (Weights)} - 20 \text{ GB (System)} = 480 \text{ GB}$.
-$$ \text{Max Batch} = \lfloor \frac{480}{43} \rfloor = \mathbf{11} $$
+Available Memory for KV = $640 \text{ GB (Total)} - 140 \text{ GB (Weights)} - 20 \text{ GB (System)} =$ `{python} KVCacheCapacityEstimator.available_kv_gb_str` GB.
+`{python} KVCacheCapacityEstimator.step3_max_batch_math`
 
 **Conclusion**: Even with GQA, 128K-context requests consume tens of gigabytes of KV cache, so the system serves only a small number of concurrent long-context requests before memory becomes the binding constraint. Addressing this requires **PagedAttention** (to reduce fragmentation) and KV-cache quantization or sharding.
 
@@ -2381,7 +2508,7 @@ Prefix caching shares KV cache entries across requests with common prefixes. @fi
 
 :::
 
-Implementation with PagedAttention
+**Implementation with PagedAttention.**
 
 Prefix caching integrates naturally with PagedAttention through copy-on-write semantics:
 
@@ -2519,7 +2646,8 @@ During autoregressive generation, the Key-Value (KV) cache stores the key and va
 # │
 # │ Imports: mlsysim.book (check)
 # │ Exports: KVCacheCalc.kv_fp16_gb_str, KVCacheCalc.kv_int4_gb_str,
-# │          KVCacheCalc.kv_savings_gb_str, KVCacheCalc.kv_compression_str
+# │          KVCacheCalc.kv_savings_gb_str, KVCacheCalc.kv_compression_str,
+# │          KVCacheCalc.batch8_kv_fp16_gb_str, KVCacheCalc.gqa_kv_fp16_gb_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -2544,10 +2672,13 @@ class KVCacheCalc:
     kv_int4_gb = (kv_int4_bytes * byte).m_as(GB)
     kv_savings_gb = kv_fp16_gb - kv_int4_gb
     kv_compression = kv_fp16_gb/kv_int4_gb
+    batch8_kv_fp16_gb = kv_fp16_gb * 8
+    gqa_kv_fp16_gb = kv_fp16_gb * (8 / kv_heads)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check, MarkdownStr, fmt
     check(kv_fp16_gb > 5, f"KV cache should be substantial, got {kv_fp16_gb:.1f} GB")
+    check(abs(gqa_kv_fp16_gb - (kv_fp16_gb / 8)) < 1e-6, "GQA cache should be 8x smaller than MHA baseline")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     # MarkdownStr wraps the values so Quarto inserts them verbatim inside the
@@ -2558,13 +2689,15 @@ class KVCacheCalc:
     kv_savings_gb_str = fmt(kv_savings_gb, precision=1, commas=False)
     kv_compression_str = fmt(kv_compression, precision=0, commas=False)
     h100_mem_gb_str = fmt(h100_mem.m_as(GiB), precision=0, commas=False)
+    batch8_kv_fp16_gb_str = fmt(batch8_kv_fp16_gb, precision=0, commas=False)
+    gqa_kv_fp16_gb_str = fmt(gqa_kv_fp16_gb, precision=1, commas=False)
 ```
 
 $$
 \text{KV cache} = 2 \times 80 \times 64 \times 128 \times 4096 \times 2 \text{ bytes} \approx \text{`{python} KVCacheCalc.kv_fp16_gb_str`} \text{ GB (FP16)}
 $$
 
-A single request's KV cache alone consumes a substantial fraction of the H100's `{python} KVCacheCalc.h100_mem_gb_str` GB of HBM. For a batch of 8 concurrent requests, the KV cache would require `{python} f"{KVCacheCalc.kv_fp16_gb * 8:.0f}"` GB, exceeding single-GPU capacity. Reducing this footprint requires two complementary strategies: quantization and architectural optimization.
+A single request's KV cache alone consumes a substantial fraction of the H100's `{python} KVCacheCalc.h100_mem_gb_str` GB of HBM. For a batch of 8 concurrent requests, the KV cache would require `{python} KVCacheCalc.batch8_kv_fp16_gb_str` GB, exceeding single-GPU capacity. Reducing this footprint requires two complementary strategies: quantization and architectural optimization.
 
 #### KV cache quantization {#sec-inference-scale-kv-quantization}
 
@@ -2581,10 +2714,10 @@ An architectural complement to quantization is **Grouped Query Attention (GQA)**
 The impact on KV cache size is proportional to the KV head reduction. For our earlier 70B model, switching from MHA (64 KV heads) to GQA with 8 KV heads shrinks the KV cache by 8$\times$:
 
 $$
-\text{KV cache (GQA)} = 2 \times 80 \times 8 \times 128 \times 4096 \times 2 \approx 1.3 \text{ GB (FP16)}
+\text{KV cache (GQA)} = 2 \times 80 \times 8 \times 128 \times 4096 \times 2 \approx \text{`{python} KVCacheCalc.gqa_kv_fp16_gb_str`} \text{ GB (FP16)}
 $$
 
-At 1.3 GB, the GQA cache is dramatically more manageable than the `{python} KVCacheCalc.kv_fp16_gb_str` GB required by MHA. Combining GQA with INT8 KV cache quantization yields sub-gigabyte per-request cache sizes, enabling batch sizes of 50 or more on a single GPU. GQA has become the dominant architectural choice for inference-optimized LLMs (Llama 3, Mistral, Gemma) because its quality impact is typically less than 1 percent on standard benchmarks while enabling an order-of-magnitude increase in serving throughput.
+At `{python} KVCacheCalc.gqa_kv_fp16_gb_str` GB, the GQA cache is dramatically more manageable than the `{python} KVCacheCalc.kv_fp16_gb_str` GB required by MHA. Combining GQA with INT8 KV cache quantization yields sub-gigabyte per-request cache sizes, often enabling substantially larger batches on a single GPU. GQA has become a common architectural choice for inference-optimized LLMs because it reduces KV-cache bandwidth and capacity pressure with comparatively small quality impact in many deployments.
 
 ```{python}
 #| label: precision-dividend
@@ -2601,15 +2734,25 @@ class PrecisionDividend:
     avail_kv_fp16 = h100_mem_gb - fp16_weight_per_gpu
     int4_weight_per_gpu = fp16_weight_per_gpu * (int4_bits/fp16_bits)
     avail_kv_int4 = h100_mem_gb - int4_weight_per_gpu
+    kv_fp16_per_gpu = KVCacheCalc.kv_fp16_gb / 4
+    kv_int8_per_gpu = (KVCacheCalc.kv_fp16_gb / 2) / 4
+    max_batch_fp16 = int(avail_kv_fp16 / kv_fp16_per_gpu)
+    max_batch_int8 = int(avail_kv_int4 / kv_int8_per_gpu)
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(avail_kv_fp16 == 45, f"Expected 45, got {avail_kv_fp16}")
     check(abs(int4_weight_per_gpu - 8.75) < 0.01, f"Expected 8.75, got {int4_weight_per_gpu}")
+    check(max_batch_int8 > max_batch_fp16, "INT4 weights plus INT8 KV should increase max batch")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     # Keep raw `fp16_weight_per_gpu` int for arithmetic; add _str alias for prose.
     fp16_weight_per_gpu_str = fmt(fp16_weight_per_gpu, precision=0, commas=False)
     avail_kv_fp16_str = fmt(avail_kv_fp16, precision=0, commas=False)
     int4_weight_per_gpu_str = fmt(int4_weight_per_gpu, precision=2, commas=False)
     avail_kv_int4_str = fmt(avail_kv_int4, precision=2, commas=False)
+    kv_fp16_per_gpu_str = fmt(kv_fp16_per_gpu, precision=1, commas=False)
+    kv_int8_total_str = fmt(KVCacheCalc.kv_fp16_gb/2, precision=1, commas=False)
+    kv_int8_per_gpu_str = fmt(kv_int8_per_gpu, precision=1, commas=False)
+    max_batch_fp16_str = fmt(max_batch_fp16, precision=0, commas=False)
+    max_batch_int8_str = fmt(max_batch_int8, precision=0, commas=False)
 ```
 
 ::: {.callout-notebook title="The precision dividend"}
@@ -2620,15 +2763,15 @@ class PrecisionDividend:
 
 - Weights: 35 GB/GPU
 - Available for KV cache: $80 -$ `{python} PrecisionDividend.fp16_weight_per_gpu_str` $=$ `{python} PrecisionDividend.avail_kv_fp16_str` GB/GPU
-- KV cache per request: `{python} KVCacheCalc.kv_fp16_gb_str` GB $\div$ 4 GPUs $\approx$ `{python} f"{KVCacheCalc.kv_fp16_gb/4:.1f}"` GB/GPU
-- Maximum batch size: $\lfloor$ `{python} PrecisionDividend.avail_kv_fp16_str` $/$ `{python} f"{KVCacheCalc.kv_fp16_gb/4:.1f}"` $\rfloor$ $\approx$ `{python} f"{int(45 / (KVCacheCalc.kv_fp16_gb/4))}"` requests
+- KV cache per request: `{python} KVCacheCalc.kv_fp16_gb_str` GB $\div$ 4 GPUs $\approx$ `{python} PrecisionDividend.kv_fp16_per_gpu_str` GB/GPU
+- Maximum batch size: $\lfloor$ `{python} PrecisionDividend.avail_kv_fp16_str` $/$ `{python} PrecisionDividend.kv_fp16_per_gpu_str` $\rfloor$ $\approx$ `{python} PrecisionDividend.max_batch_fp16_str` requests
 
 **After optimization** (INT4 weights, INT8 KV cache):
 
 - Weights: `{python} PrecisionDividend.fp16_weight_per_gpu_str` GB $\times (4/16) =$ `{python} PrecisionDividend.int4_weight_per_gpu_str` GB/GPU (INT4)
 - Available for KV cache: $80 -$ `{python} PrecisionDividend.int4_weight_per_gpu_str` $=$ `{python} PrecisionDividend.avail_kv_int4_str` GB/GPU
-- KV cache per request (INT8): `{python} f"{KVCacheCalc.kv_fp16_gb/2:.1f}"` GB $\div$ 4 $\approx$ `{python} f"{KVCacheCalc.kv_fp16_gb/2/4:.1f}"` GB/GPU
-- Maximum batch size: $\lfloor$ `{python} PrecisionDividend.avail_kv_int4_str` $/$ `{python} f"{KVCacheCalc.kv_fp16_gb/2/4:.1f}"` $\rfloor$ $\approx$ `{python} f"{int(float(PrecisionDividend.avail_kv_int4) / (KVCacheCalc.kv_fp16_gb/2/4))}"` requests
+- KV cache per request (INT8): `{python} PrecisionDividend.kv_int8_total_str` GB $\div$ 4 $\approx$ `{python} PrecisionDividend.kv_int8_per_gpu_str` GB/GPU
+- Maximum batch size: $\lfloor$ `{python} PrecisionDividend.avail_kv_int4_str` $/$ `{python} PrecisionDividend.kv_int8_per_gpu_str` $\rfloor$ $\approx$ `{python} PrecisionDividend.max_batch_int8_str` requests
 
 **Takeaway**\index{Takeaway}: Precision engineering fundamentally changes serving economics by enabling larger batch sizes. Larger batches amortize the fixed cost of weight loading, shifting operations from memory-bound toward compute-bound.
 
@@ -2846,7 +2989,7 @@ For Llama-70B GQA with 4K context, KV cache is about 1.3 GB total per sequence, 
 
 Effective KV cache management combines multiple techniques:
 
-Sizing the KV cache pool
+**Sizing the KV cache pool.**
 
 ```
 Available GPU memory = Total - Weights - Activations - Overhead
@@ -2929,7 +3072,7 @@ The decode phase, by contrast, generates output tokens one at a time. Each token
 
 ::: {.callout-lighthouse title="Blackwell: The FP4 inference frontier"}
 
-The **Blackwell (B200)** architecture introduces native **FP4 support**\index{FP4 Support}, which doubles the effective memory bandwidth for the **Decode Phase**. Because the decode phase is strictly bandwidth-bound, shrinking the weights from 8 bits to 4 bits doubles the token-per-second throughput without increasing the clock speed. Furthermore, FP4's 2$\times$ reduction in the **KV Cache** footprint allows a single B200 to handle twice the concurrent sequences (batch size) compared to Hopper (H100), effectively halving the cost-per-token for interactive serving.
+The **Blackwell (B200)** architecture introduces native **FP4 support**\index{FP4 Support}, making 4-bit inference a first-class hardware target rather than a framework-specific workaround. Because decode is often bandwidth-bound, shrinking weights and cache entries can raise token throughput and concurrent sequence capacity without increasing clock speed. The exact cost-per-token gain depends on model architecture, kernel maturity, batch shape, and the fraction of time spent in prefill versus decode, so production systems should validate FP4 with workload-specific benchmarks rather than assuming a fixed multiplier.
 
 :::
 
@@ -3254,7 +3397,7 @@ Device 3:                      [Req1] [Req2] [Req3] [Req4] ...
 
 Once the pipeline is full, throughput equals $p$ times single-stage throughput, where $p$ is the number of pipeline stages. The steady-state latency remains approximately the single-device latency (sum of all stage times), but throughput scales with parallelism.
 
-When to use pipeline parallelism for inference
+**When to use pipeline parallelism for inference.**
 
 - When memory constraints require sharding but latency requirements are relaxed
 - When throughput is more important than individual request latency
@@ -3344,24 +3487,39 @@ from mlsysim.fmt import check, fmt
 
 class MoECapacityPlan:
     # ┌── 1. LOAD ──────────────────────────────────────────
+    moe_total_params_b = 671
     moe_active_params_b = 37
     bytes_fp8 = BYTES_INT8.m_as(byte)  # FP8 = 1 byte
+    node_gpus = 8
+    h100_mem_gb = 80
     n_gpus = 16
     alltoall_overhead_ms = 0.3
     h100_bw_gbs = H100_MEM_BW.m_as(GB/second)
+    h100_bw_tbs = H100_MEM_BW.m_as(TB/second)
     # ┌── 2. EXECUTE ───────────────────────────────────────
+    total_weight_gb = moe_total_params_b * bytes_fp8
+    node_capacity_gb = node_gpus * h100_mem_gb
+    nodes_needed = int((total_weight_gb + node_capacity_gb - 1) // node_capacity_gb)
+    cluster_capacity_gb = nodes_needed * node_capacity_gb
     active_mem_gb = moe_active_params_b * bytes_fp8
     read_per_gpu_gb = active_mem_gb/n_gpus
     t_read_ms = (read_per_gpu_gb/h100_bw_gbs) * 1000
     total_decode_ms = t_read_ms + alltoall_overhead_ms
     tokens_per_sec = round(1000 / total_decode_ms, -2)
     # ┌── 3. GUARD ─────────────────────────────────────────
+    check(nodes_needed == 2, f"Expected two nodes, got {nodes_needed}")
     check(0.5 < total_decode_ms < 2.0, f"Expected ~1ms, got {total_decode_ms:.2f}")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     read_per_gpu_str = fmt(read_per_gpu_gb, precision=1, commas=False)
     t_read_ms_str = fmt(t_read_ms, precision=2, commas=False)
     total_decode_ms_str = fmt(total_decode_ms, precision=1, commas=False)
     tokens_per_sec_str = fmt(tokens_per_sec, precision=0)
+    total_weight_gb_str = fmt(total_weight_gb, precision=0, commas=False)
+    node_capacity_gb_str = fmt(node_capacity_gb, precision=0, commas=False)
+    nodes_needed_str = fmt(nodes_needed, precision=0, commas=False)
+    cluster_capacity_gb_str = fmt(cluster_capacity_gb, precision=0)
+    active_mem_gb_str = fmt(active_mem_gb, precision=0, commas=False)
+    h100_bw_tbs_str = fmt(h100_bw_tbs, precision=2, commas=False)
 ```
 
 ::: {.callout-notebook title="MoE capacity planning"}
@@ -3370,11 +3528,11 @@ class MoECapacityPlan:
 
 **Math**:
 
-1.  **Memory**: Total weight memory = $671 \text{ GB}$. A single node (640 GB) is insufficient. Two nodes provide 1,280 GB, leaving enough room for KV caches.
-2.  **Latency**: Each decode step reads 37B active parameters (37 GB). Distributed across 16 GPUs, each reads about `{python} MoECapacityPlan.read_per_gpu_str` GB. At `{python} InferenceSetup.h100_mem_bw_tbs_str` TB/s HBM bandwidth, $t_{\text{read}} \approx$ `{python} MoECapacityPlan.t_read_ms_str` ms. AllToAll routing adds about 0.3 ms.
+1.  **Memory**: Total weight memory = `{python} MoECapacityPlan.total_weight_gb_str` GB. A single node (`{python} MoECapacityPlan.node_capacity_gb_str` GB) is insufficient. `{python} MoECapacityPlan.nodes_needed_str` nodes provide `{python} MoECapacityPlan.cluster_capacity_gb_str` GB, leaving enough room for KV caches.
+2.  **Latency**: Each decode step reads 37B active parameters (`{python} MoECapacityPlan.active_mem_gb_str` GB). Distributed across 16 GPUs, each reads about `{python} MoECapacityPlan.read_per_gpu_str` GB. At `{python} MoECapacityPlan.h100_bw_tbs_str` TB/s HBM bandwidth, $t_{\text{read}} \approx$ `{python} MoECapacityPlan.t_read_ms_str` ms. AllToAll routing adds about 0.3 ms.
 3.  **Floor**\index{Floor}: Estimated decode latency $\approx$ `{python} MoECapacityPlan.total_decode_ms_str` ms/token, or `{python} MoECapacityPlan.tokens_per_sec_str` tokens/second at batch size 1.
 
-**Takeaway**: MoE allows a 671B model to achieve the latency of a 37B dense model but requires 2$\times$ more hardware for memory capacity.
+**Takeaway**: MoE allows a 671B model to approach the per-token bandwidth cost of a much smaller dense model, but capacity planning is still driven by the full parameter set that must remain resident.
 
 :::
 
@@ -3685,6 +3843,67 @@ $$T_{\text{alltoall}} = (N-1) \times \left(\alpha + \frac{M/N}{\text{BW}}\right)
 
 Both equations make clear that the achievable bandwidth $\text{BW}$ and latency $\alpha$ of the underlying interconnect determine real-world sharding performance. The following *interconnect technology comparison* quantifies these differences across production hardware.
 
+```{python}
+#| echo: false
+#| label: allreduce-interconnect-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ ALLREDUCE INTERCONNECT CALCULATION (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-inference-allreduce-interconnect
+# │
+# │ Goal: Compute raw AllReduce time for an 8 MB activation across common
+# │       interconnects and express it as a fraction of a 30 ms layer budget.
+# │ Show: ~0.02 ms NVLink, ~0.56 ms InfiniBand HDR, ~1.12 ms 100G Ethernet.
+# │ How: T = 2 * (N-1)/N * M/BW for N=8 devices.
+# │
+# │ Imports: mlsysim.fmt (check, fmt)
+# │ Exports: AllReduceInterconnect.nvlink_ms_str,
+# │          AllReduceInterconnect.ib_ms_str,
+# │          AllReduceInterconnect.eth_ms_str,
+# │          AllReduceInterconnect.nvlink_bw_gbs_str,
+# │          AllReduceInterconnect.nvlink_pct_str,
+# │          AllReduceInterconnect.ib_pct_str,
+# │          AllReduceInterconnect.eth_pct_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check, fmt
+
+class AllReduceInterconnect:
+    """Raw AllReduce timing for an 8 MB activation payload."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    n_devices = 8
+    message_mb = 8
+    layer_budget_ms = 30
+    nvlink_bw_gbs = 900
+    ib_hdr_bw_gbs = 25
+    eth_100g_bw_gbs = 12.5
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    message_gb = message_mb / 1000
+    allreduce_factor = 2 * (n_devices - 1) / n_devices
+
+    nvlink_ms = allreduce_factor * message_gb / nvlink_bw_gbs * 1000
+    ib_ms = allreduce_factor * message_gb / ib_hdr_bw_gbs * 1000
+    eth_ms = allreduce_factor * message_gb / eth_100g_bw_gbs * 1000
+
+    nvlink_pct = nvlink_ms / layer_budget_ms * 100
+    ib_pct = ib_ms / layer_budget_ms * 100
+    eth_pct = eth_ms / layer_budget_ms * 100
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(nvlink_ms < ib_ms < eth_ms, "Interconnect timing should follow bandwidth order")
+    check(eth_pct < 5, f"Raw 100G Ethernet share should remain under 5%, got {eth_pct:.1f}%")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    nvlink_bw_gbs_str = fmt(nvlink_bw_gbs, precision=0, commas=False)
+    nvlink_ms_str = fmt(nvlink_ms, precision=2, commas=False)
+    ib_ms_str = fmt(ib_ms, precision=2, commas=False)
+    eth_ms_str = fmt(eth_ms, precision=2, commas=False)
+    nvlink_pct_str = fmt(nvlink_pct, precision=2, commas=False)
+    ib_pct_str = fmt(ib_pct, precision=1, commas=False)
+    eth_pct_str = fmt(eth_pct, precision=1, commas=False)
+```
+
 ::: {.callout-notebook title="Interconnect technology comparison"}
 
 Communication overhead depends heavily on the interconnect technology. @tbl-inference-interconnect-specs sets the physical limits that bound achievable sharding speedups:
@@ -3702,11 +3921,11 @@ NVLink provides the highest bandwidth for intra-node communication.
 
 **Example: 8-Way tensor parallelism communication.** Activation size: 8 MB per all-reduce (batch=1, hidden=8192). @tbl-inference-allreduce-interconnect translates each interconnect's bandwidth into AllReduce time as a fraction of a 30 ms transformer-layer budget:
 
-| **Interconnect**                 | **AllReduce Time** | **% of 30 ms Layer** |
-|:---------------------------------|-------------------:|---------------------:|
-| **NVLink**                       |            0.02 ms |         0.07 percent |
-| **InfiniBand**\index{InfiniBand} |             0.7 ms |          2.3 percent |
-| **100G Ethernet**                |             1.5 ms |            5 percent |
+| **Interconnect**                 |                                **AllReduce Time** |                                    **% of 30 ms Layer** |
+|:---------------------------------|--------------------------------------------------:|--------------------------------------------------------:|
+| **NVLink**                       | `{python} AllReduceInterconnect.nvlink_ms_str` ms | `{python} AllReduceInterconnect.nvlink_pct_str` percent |
+| **InfiniBand**\index{InfiniBand} |     `{python} AllReduceInterconnect.ib_ms_str` ms |     `{python} AllReduceInterconnect.ib_pct_str` percent |
+| **100G Ethernet**                |    `{python} AllReduceInterconnect.eth_ms_str` ms |    `{python} AllReduceInterconnect.eth_pct_str` percent |
 
 : **AllReduce Cost by Interconnect**: AllReduce time for an 8 MB activation across NVLink, InfiniBand, and 100G Ethernet, with each as a fraction of a 30 ms transformer-layer budget, showing why intra-node TP requires NVLink-class bandwidth. {#tbl-inference-allreduce-interconnect}
 
@@ -3953,7 +4172,7 @@ Inverse latency weighting automatically adapts to:
 
 An alternative to random selection is routing to the server with the fewest active connections (or shortest queue). This requires maintaining global state but provides better balance for variable-size requests.
 
-Least-connections algorithm
+**Least-connections algorithm.**
 
 1. Maintain a count of active requests per server
 2. Route each new request to the server with the minimum count
@@ -4821,7 +5040,7 @@ The cost savings above depend on anticipating traffic before it arrives. As @fig
 
 Maintaining a pool of prewarmed replicas reduces effective cold start time:
 
-Warm pool sizing
+**Warm pool sizing.**
 
 $$\text{Warm pool size} = \frac{\text{Max expected spike}}{\text{Per-replica throughput}} \times \text{Headroom factor}$$
 
@@ -5106,7 +5325,7 @@ For each layer's weight matrix W:
 
 The compensation step propagates quantization error to unquantized columns, where the Hessian-weighted update minimizes output deviation. This achieves $O(d_{\text{row}} \cdot d_{\text{col}}^2)$ complexity vs. $O(d_{\text{row}} \cdot d_{\text{col}}^3)$ for naive OBS.
 
-Quantization formula
+**Quantization formula.**
 
 $$w_q = \text{round}\left(\frac{w}{\Delta}\right) \cdot \Delta$$
 
@@ -5311,7 +5530,56 @@ TensorRT-LLM generates optimized kernels for specific GPU architectures, fuses o
 
 $$\text{Max batch} = \frac{\text{GPU Memory} - \text{Quantized Weights}}{\text{KV Cache per Sequence}}$$
 
-A 70B model with 4-bit weights requires approximately 35 GB, leaving 45 GB on an `{python} A100HardwareScenario.a100_mem_gb_str` GB A100 for KV cache. With FP16 KV cache at about 2.5 GB per 1K-token sequence for the MHA baseline, this supports ~18 concurrent 1K-token sequences. With FP16 weights, the same 70B model would not fit on one A100 at all, so weight-only quantization changes both feasibility and batch capacity.
+```{python}
+#| echo: false
+#| label: quantized-serving-capacity
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ QUANTIZED SERVING CAPACITY (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "Quantization + PagedAttention" prose in §Framework integration.
+# │
+# │ Goal: Compute A100 KV headroom after 4-bit weight quantization and estimate
+# │       the number of 1K-token MHA-baseline sequences it can hold.
+# │ Show: 80 GB A100, 35 GB weights, 45 GB KV headroom, ~2.6 GB per 1K sequence.
+# │ How: 70B * 0.5 bytes for INT4 weights; KV from KVCacheCalc normalized to 1K.
+# │
+# │ Imports: mlsysim.core.constants (A100_MEM_CAPACITY, GiB), mlsysim.fmt (check, fmt)
+# │ Exports: QuantizedServingCapacity.a100_mem_gb_str,
+# │          QuantizedServingCapacity.weight_int4_gb_str,
+# │          QuantizedServingCapacity.kv_headroom_gb_str,
+# │          QuantizedServingCapacity.kv_per_1k_sequence_gb_str,
+# │          QuantizedServingCapacity.max_1k_sequences_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import A100_MEM_CAPACITY, GiB
+from mlsysim.fmt import check, fmt
+
+class QuantizedServingCapacity:
+    """Estimate single-A100 batch capacity after 4-bit weight quantization."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    a100_mem_gb = A100_MEM_CAPACITY.m_as(GiB)
+    params_b = 70
+    bytes_int4 = 0.5
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    weight_int4_gb = params_b * bytes_int4
+    kv_headroom_gb = a100_mem_gb - weight_int4_gb
+    kv_per_1k_sequence_gb = KVCacheCalc.kv_fp16_gb / (KVCacheCalc.kv_seq_len / 1000)
+    max_1k_sequences = int(kv_headroom_gb // kv_per_1k_sequence_gb)
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(weight_int4_gb == 35, "70B INT4 weights should be 35 GB")
+    check(max_1k_sequences > 10, "Quantized model should leave room for multiple 1K sequences")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    a100_mem_gb_str = fmt(a100_mem_gb, precision=0, commas=False)
+    weight_int4_gb_str = fmt(weight_int4_gb, precision=0, commas=False)
+    kv_headroom_gb_str = fmt(kv_headroom_gb, precision=0, commas=False)
+    kv_per_1k_sequence_gb_str = fmt(kv_per_1k_sequence_gb, precision=1, commas=False)
+    max_1k_sequences_str = fmt(max_1k_sequences, precision=0, commas=False)
+```
+
+A 70B model with 4-bit weights requires approximately `{python} QuantizedServingCapacity.weight_int4_gb_str` GB, leaving `{python} QuantizedServingCapacity.kv_headroom_gb_str` GB on an `{python} QuantizedServingCapacity.a100_mem_gb_str` GB A100 for KV cache. With FP16 KV cache at about `{python} QuantizedServingCapacity.kv_per_1k_sequence_gb_str` GB per 1K-token sequence for the MHA baseline, this supports about `{python} QuantizedServingCapacity.max_1k_sequences_str` concurrent 1K-token sequences before other runtime overheads. With FP16 weights, the same 70B model would not fit on one A100 at all, so weight-only quantization changes both feasibility and batch capacity.
 
 ### Quantization selection guidelines {#sec-inference-scale-quantization-selection-guidelines-24fb}
 
@@ -5355,7 +5623,7 @@ These serving optimizations span continuous batching, PagedAttention, global loa
 
 ## Case Studies {#sec-inference-scale-case-studies-9689}
 
-Production-scale serving systems test the batching, sharding, caching, and routing techniques developed above against real workload variance, latency budgets, and operational constraints. OpenAI's ChatGPT handles unpredictable global request volume; TikTok serves recommendations to billions of users at sub-100-millisecond latency. The case studies below show how each system combines the chapter's techniques to meet its specific cost and latency targets.
+Production-scale serving systems test the batching, sharding, caching, and routing techniques developed above against real workload variance, latency budgets, and operational constraints. ChatGPT-style services handle unpredictable global request volume; TikTok-style recommenders serve ranked content at sub-100-millisecond latency. The case studies below show how each system combines the chapter's techniques to meet its specific cost and latency targets.
 
 ::: {.callout-war-story title="The continuous batching revolution"}
 
@@ -5417,13 +5685,13 @@ Three lessons emerge from this design:
 
 ### OpenAI API infrastructure {#sec-inference-scale-openai-api-infrastructure-a65e}
 
-OpenAI's API serves GPT-4, GPT-3.5-turbo, and other models to millions of developers. The infrastructure must handle highly variable request sizes (from 10 tokens to 128K tokens) while maintaining quality of service across diverse workloads.
+OpenAI-style API infrastructure serves GPT-class models to large developer and application workloads. The infrastructure must handle highly variable request sizes (from short prompts to long-context requests) while maintaining quality of service across diverse workloads.
 
 The system operates at the following scale:
 
 - Request volume: Millions of requests per hour
 - Latency target: Time-to-first-token (TTFT) <2s, throughput varies by model
-- Model sizes: 7B to 175B+ parameters
+- Model sizes: Billions to hundreds of billions of parameters
 - Context lengths: Up to 128K tokens
 
 The serving stack is organized as follows:
@@ -5436,11 +5704,11 @@ API Gateway → Rate Limiting → Request Router → Model Cluster → Response 
                               ┌─────────────┐
                               │ Model Pool  │
                               │ ┌─────────┐ │
-                              │ │ GPT-4   │ │
+                              │ │ Large   │ │
                               │ │ 8xH100  │ │
                               │ └─────────┘ │
                               │ ┌─────────┐ │
-                              │ │GPT-3.5  │ │
+                              │ │ Smaller │ │
                               │ │ 4xA100  │ │
                               │ └─────────┘ │
                               └─────────────┘
@@ -5458,9 +5726,9 @@ OpenAI was an early adopter of continuous batching (Orca-style) to maintain high
 
 : **Batching Strategy Comparison**: Three batching approaches with the resulting GPU utilization and 128K-prompt behavior. Static batching lets the longest request idle the whole batch; continuous batching lifts utilization to 75 percent but still stalls decode behind long prefills; chunked prefill interleaves prefill chunks with decode, capping decode stalls at a few seconds while reaching 85 percent utilization. {#tbl-batching-strategies-comparison}
 
-GPT-4 class models require 8-way or greater tensor parallelism for memory capacity and latency:
+Large GPT-class models often require 8-way or greater tensor parallelism for memory capacity and latency:
 
-- 8xH100 per GPT-4 shard group
+- 8xH100 per large-model shard group
 - NVLink for intra-node communication
 - Consistent hashing for session affinity (KV cache reuse)
 
@@ -5474,9 +5742,9 @@ OpenAI implements rate limiting at multiple levels to prevent noisy neighbors:
 During peak demand, OpenAI shifts capacity between models based on queue depth:
 
 ```
-if gpt4_queue_depth > threshold:
-    # Migrate some GPT-3.5 capacity to GPT-4
-    reallocate_cluster_capacity(from="gpt-3.5", to="gpt-4", fraction=0.2)
+if large_model_queue_depth > threshold:
+    # Migrate some smaller-model capacity to the larger model
+    reallocate_cluster_capacity(from="smaller-model", to="large-model", fraction=0.2)
 ```
 
 Three lessons emerge from this design:
@@ -5753,7 +6021,7 @@ class FinalSummaryHardware:
     h100_mem_bw_tbs_str = fmt(h100_bw_tbs_val, precision=2, commas=False)
 ```
 
-While larger GPU memory enables larger batches for models that fit in memory, the bottleneck often shifts before memory is exhausted. Memory bandwidth limits throughput for bandwidth-bound operations (LLM decode). Compute limits throughput for compute-bound operations (prefill, vision inference). A 7B LLM on an H100 with `{python} FinalSummaryHardware.h100_mem_gb_str` GB memory achieves ~2,000 tokens/sec decode throughput regardless of batch size beyond 128 requests because HBM3 bandwidth (`{python} FinalSummaryHardware.h100_mem_bw_tbs_str` TB/s) saturates first. Adding memory to a bandwidth-bound workload provides no benefit. Understanding whether the workload is compute-bound, memory-bandwidth-bound, or capacity-bound guides appropriate resource allocation.
+While larger GPU memory enables larger batches for models that fit in memory, the bottleneck often shifts before memory is exhausted. Memory bandwidth limits throughput for bandwidth-bound operations (LLM decode). Compute limits throughput for compute-bound operations (prefill, vision inference). A bandwidth-bound decode workload on an H100 with `{python} FinalSummaryHardware.h100_mem_gb_str` GB memory eventually plateaus when HBM3 bandwidth (`{python} FinalSummaryHardware.h100_mem_bw_tbs_str` TB/s) saturates; adding memory alone does not raise token throughput once that point is reached. Understanding whether the workload is compute-bound, memory-bandwidth-bound, or capacity-bound guides appropriate resource allocation.
 
 **Pitfall**: *Neglecting multi-tenancy isolation until production.*
 

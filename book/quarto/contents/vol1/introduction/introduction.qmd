@@ -1,7 +1,6 @@
 ---
 quiz: introduction_quizzes.json
 concepts: introduction_concepts.yml
-glossary: introduction_glossary.json
 engine: jupyter
 
 ---
@@ -113,7 +112,7 @@ Artificial intelligence has moved from research laboratories to the fabric of da
 
 Building these systems becomes an engineering challenge distinct from traditional software because of a **dual mandate**\index{Dual Mandate}. Every ML system must simultaneously manage statistical uncertainty, because the model's predictions are probabilistic, and physical constraints, because executing those predictions requires moving terabytes of data and performing quintillions of arithmetic operations, often within milliseconds. The difference becomes clearest at failure boundaries. When a traditional program crashes, an engineer traces the bug to specific lines of code. When an ML system's accuracy drops by 5 percentage points, there may be no bug to find: the code executes correctly, but the learned behavior has changed\index{Silent Degradation}. Concretely, a code bug causes a crash (a loud failure), whereas a data bug causes a wrong prediction (a silent failure). The training data may have shifted. The hardware may have run out of memory mid-training. The model may not have converged. Debugging, testing, and architectural design all change when a system's behavior is defined by data rather than by code.
 
-This dual mandate is visible in every large-scale AI deployment. ChatGPT coordinates thousands of GPUs[^fn-gpu-parallel] across data centers, executing trillions of operations per query while managing memory, network bandwidth, and thermal constraints. Modern driver-assistance and autonomous-driving systems process high-rate sensor streams, often combining cameras with radar, LiDAR, or other sensors depending on the vehicle platform, and fuse perception into control decisions within milliseconds. Google processes `{python} AIMomentStats.google_search_b_str` billion searches per day, each one triggering multiple AI systems for ranking, knowledge extraction, and spell-checking, all while meeting strict latency targets on globally distributed infrastructure. These systems do not merely run algorithms. They orchestrate data, computation, and hardware under tight physical constraints to deliver statistically reliable results at scale.
+This dual mandate is visible in every large-scale AI deployment. Conversational AI services coordinate large pools of GPUs[^fn-gpu-parallel] across data centers, executing enormous numbers of operations per query while managing memory, network bandwidth, and thermal constraints. Modern driver-assistance and autonomous-driving systems process high-rate sensor streams, often combining cameras with radar, LiDAR, or other sensors depending on the vehicle platform, and fuse perception into control decisions within milliseconds. Google processes `{python} AIMomentStats.google_search_b_str` billion searches per day, each one triggering multiple AI systems for ranking, knowledge extraction, and spell-checking, all while meeting strict latency targets on globally distributed infrastructure. These systems do not merely run algorithms. They orchestrate data, computation, and hardware under tight physical constraints to deliver statistically reliable results at scale.
 
 [^fn-gpu-parallel]: **GPU (Graphics Processing Unit)**: Originally designed for rendering video game graphics, a workload requiring thousands of simple, parallel pixel calculations. This hardware-algorithm alignment proved decisive for neural networks, where the same massively parallel arithmetic structure maps directly onto matrix multiplication, making GPUs the primary physical enabler of modern training scale (see @sec-hardware-acceleration). \index{GPU!etymology}
 
@@ -149,9 +148,50 @@ Google researchers quantified these consequences in a landmark 2015 paper.
 
 The critical implication is the data as code invariant (Principle \ref{pri-data-as-code}).\index{Software 2.0} In traditional software, a programmer writes explicit logic (`if x > 0 then y`). In machine learning, the programmer writes the *optimization meta-logic* (the training algorithm), but the actual operational logic is "compiled" from the training dataset through stochastic gradient descent[^fn-sgd-sampling] and related optimization methods. The dataset serves as source code, the training pipeline as compiler, and the model weights[^fn-model-weights-inference] as binary executable.
 
-[^fn-sgd-sampling]: **Stochastic Gradient Descent (SGD)**: The algorithm implements the "compilation" of logic from data by processing one small, random data sample (a "batch") at a time, instead of the entire dataset. This trade-off, statistical noise for computational speed, is the core engine of the training "compiler." The choice of batch size becomes a critical compilation flag; a batch too small (for example, < 32) fails to saturate the parallel processors of an accelerator, wasting over 90 percent of its potential computation. \index{Stochastic Gradient Descent!systems trade-off}
+[^fn-sgd-sampling]: **Stochastic Gradient Descent (SGD)**: The algorithm implements the "compilation" of logic from data by processing one small, random data sample (a "batch") at a time, instead of the entire dataset. This trade-off, statistical noise for computational speed, is the core engine of the training "compiler." The choice of batch size becomes a critical compilation flag; a batch that is too small may fail to saturate the parallel processors of an accelerator, wasting much of its potential computation. \index{Stochastic Gradient Descent!systems trade-off}
 
-[^fn-model-weights-inference]: **Model Weights**: The learned numerical parameters of a neural network, one value per connection between units. A GPT-3-scale model stores 175 billion such values, consuming 350 gigabytes in FP16 precision. Because every inference request must load these weights through the memory hierarchy, weight count is the single largest determinant of both memory footprint $(D_{\text{vol}})$ and serving cost (see @sec-neural-computation). \index{Model Weights!definition}
+```{python}
+#| echo: false
+#| label: gpt3-weight-footprint
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ GPT-3 FP16 WEIGHT FOOTPRINT
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Model Weights footnote in the Software 2.0 section
+# │
+# │ Goal: Avoid hand-computing the storage footprint of a GPT-3-scale model.
+# │ Show: 175B parameters at 2 bytes/parameter occupy about 350 GB.
+# │ How: Use mlsysim constants and the shared model_memory formula.
+# │
+# │ Imports: mlsysim.core.constants (GPT3_PARAMS, BYTES_FP16, Bparam, GB),
+# │          mlsysim.core.formulas (model_memory), mlsysim.fmt (fmt, check)
+# │ Exports: GPT3WeightFootprint.params_b_str, fp16_weights_gb_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GPT3_PARAMS, BYTES_FP16, Bparam, GB
+from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class GPT3WeightFootprint:
+    """Storage footprint for GPT-3-scale FP16 weights."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    params = GPT3_PARAMS
+    bytes_per_param = BYTES_FP16
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    params_b = params.m_as(Bparam)
+    fp16_weights_gb = model_memory(params, bytes_per_param, GB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(params_b == 175, f"GPT-3 parameter count should be 175B, got {params_b}.")
+    check(340 <= fp16_weights_gb <= 360, f"GPT-3 FP16 footprint should be about 350 GB, got {fp16_weights_gb:.1f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    fp16_weights_gb_str = fmt(fp16_weights_gb, precision=0, commas=False)
+```
+
+[^fn-model-weights-inference]: **Model Weights**: The learned numerical parameters of a neural network, one value per connection between units. A GPT-3-scale model stores `{python} GPT3WeightFootprint.params_b_str` billion such values, consuming `{python} GPT3WeightFootprint.fp16_weights_gb_str` gigabytes in FP16 precision. Because every inference request must load these weights through the memory hierarchy, weight count is the single largest determinant of both memory footprint $(D_{\text{vol}})$ and serving cost (see @sec-neural-computation). \index{Model Weights!definition}
 
 From a systems perspective, this represents a transition from *instruction-centric* to *data-centric* computing [@ng2021datacentric] \index{Data-Centric Computing}:
 
@@ -579,9 +619,9 @@ class AlexNetBreakthrough:
 \index{Convolutional Neural Networks|see{CNN}}
 \index{ImageNet}
 \index{High Bandwidth Memory|see{HBM}}\index{Large Language Model|see{LLM}}\index{Mixture of Experts|see{MoE}}\index{Neural Architecture Search|see{NAS}}\index{Tensor Processing Unit|see{TPU}}\index{Graphics Processing Unit|see{GPU}}\index{Dynamic Random Access Memory|see{DRAM}}\index{Static Random Access Memory|see{SRAM}}\index{Peripheral Component Interconnect Express|see{PCIe}}\index{Application-Specific Integrated Circuit|see{ASIC}}\index{Field-Programmable Gate Array|see{FPGA}}\index{Floating-Point Operations per Second|see{FLOPS}}\index{Non-Uniform Memory Access|see{NUMA}}\index{Multi-Instance GPU|see{MIG}}\index{Single Instruction Multiple Data|see{SIMD}}\index{Direct Memory Access|see{DMA}}\index{Remote Direct Memory Access|see{RDMA}}\index{Single Instruction Multiple Thread|see{SIMT}}\index{Recurrent Neural Network|see{RNN}}\index{Multilayer Perceptron|see{MLP}}\index{Generative Adversarial Network|see{GAN}}\index{ViT|see{Vision Transformer}}\index{IB|see{InfiniBand}}\index{NIC|see{Network Interface Card}}\index{AOT|see{Ahead-of-Time Optimization}}\index{DAM Taxonomy|see{D·A·M Taxonomy}}\index{Query Key Value|see{Query-Key-Value}}\index{Dynamic Voltage and Frequency Scaling|see{DVFS}}\index{Channelwise Quantization|see{Quantization}}\index{Layerwise Quantization|see{Quantization}}\index{Static Quantization|see{Quantization}}\index{Hardware Accelerator|see{Accelerator}}\index{Quantization Granularity|see{Quantization}}\index{Machine Learning Framework|see{ML Framework}}\index{Mini-Batch Gradient Descent|see{Stochastic Gradient Descent}}
-Deep learning removed the human feature engineering requirement. Neural networks learn representations directly from raw data (pixels, audio waveforms), enabling "end-to-end" learning. This shift was unlocked not by new algorithms (CNNs existed in the 1980s) but by **systems co-design**\index{Systems Co-design}. The AlexNet breakthrough\index{AlexNet} [@krizhevsky2012imagenet] occurred because algorithmic structure (parallel matrix operations) matched hardware capabilities (GPUs). With 60 million parameters distributed across two GTX 580 GPUs, AlexNet achieved 15.3 percent top-5 error, a `{python} AlexNetBreakthrough.alexnet_relative_improvement_str` percent relative improvement over the next-best entry that year, not through algorithmic novelty but through hardware-algorithm alignment. @fig-alexnet makes this co-design visible: the architecture's two parallel processing streams exist not for any algorithmic reason but because a single GTX 580 GPU lacked sufficient memory, making the network's very structure a product of its hardware constraints.
+Deep learning removed the human feature engineering requirement. Neural networks learn representations directly from raw data (pixels, audio waveforms), enabling "end-to-end" learning. This shift was unlocked not by new algorithms (CNNs existed in the 1980s) but by **systems co-design**\index{Systems Co-design}. The AlexNet breakthrough\index{AlexNet} [@krizhevsky2012imagenet] occurred because algorithmic structure (parallel matrix operations) matched hardware capabilities (GPUs). With `{python} AlexNetBreakthrough.alexnet_params_m_str` million parameters distributed across two GTX 580 GPUs, AlexNet achieved 15.3 percent top-5 error, a `{python} AlexNetBreakthrough.alexnet_relative_improvement_str` percent relative improvement over the next-best entry that year, not through algorithmic novelty but through hardware-algorithm alignment. @fig-alexnet makes this co-design visible: the architecture's two parallel processing streams exist not for any algorithmic reason but because a single GTX 580 GPU lacked sufficient memory, making the network's very structure a product of its hardware constraints.
 
-::: {#fig-alexnet fig-env="figure" fig-pos="htb" fig-cap="**AlexNet Architecture**: The network that launched the deep learning revolution at ImageNet 2012. Two parallel GPU streams process $224{\times}224$ input images through convolutional layers (green blocks) that extract spatial features at decreasing resolutions, converging through three fully connected layers to 1,000 output classes. With `{python} AlexNetBreakthrough.alexnet_params_m_str` million parameters trained across two GTX 580 GPUs, AlexNet achieved 15.3 percent top-5 error, a 42 percent relative improvement over the second-place entry." fig-alt="3D diagram of AlexNet with two parallel GPU streams. Green blocks show convolutional layers decreasing from 224x224 input. Red kernels overlay green blocks. Right side shows three dense layers converging to 1000 outputs."}
+::: {#fig-alexnet fig-env="figure" fig-pos="htb" fig-cap="**AlexNet Architecture**: The network that launched the deep learning revolution at ImageNet 2012. Two parallel GPU streams process $224{\times}224$ input images through convolutional layers (green blocks) that extract spatial features at decreasing resolutions, converging through three fully connected layers to 1,000 output classes. With `{python} AlexNetBreakthrough.alexnet_params_m_str` million parameters trained across two GTX 580 GPUs, AlexNet achieved 15.3 percent top-5 error, a `{python} AlexNetBreakthrough.alexnet_relative_improvement_str` percent relative improvement over the second-place entry." fig-alt="3D diagram of AlexNet with two parallel GPU streams. Green blocks show convolutional layers decreasing from 224x224 input. Red kernels overlay green blocks. Right side shows three dense layers converging to 1000 outputs."}
 
 ```{.tikz}
 \begin{tikzpicture}[line join=round,font=\usefont{T1}{phv}{m}{n}\small]
@@ -1086,26 +1126,33 @@ The shift from expert systems to statistical learning to deep learning has drama
 # │ Goal: Preserve a quantitative scale anchor without presenting undisclosed
 # │       GPT-4 training details as official facts.
 # │ Show: A common public-estimate regime for GPT-4-class training scale.
-# │ How: Multiply an illustrative 25,000 A100-class accelerators by 90 days.
+# │ How: Compare an illustrative 25,000-GPU, 90-day run with the mlsysim
+# │      GPT-4-class A100-GPU-day reference anchor.
 # │
-# │ Imports: mlsysim.fmt (fmt), mlsysim.core.constants (MILLION)
+# │ Imports: mlsysim.fmt (fmt), mlsysim.core.constants (GPT4_TRAINING_GPU_DAYS, MILLION)
 # │ Exports: GPT4ScaleEstimate.gpu_count_str, training_days_str, gpu_days_m_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import MILLION
+from mlsysim.core.constants import GPT4_TRAINING_GPU_DAYS, MILLION
 from mlsysim.fmt import fmt, check
 
+# ┌── LEGO ───────────────────────────────────────────────
 class GPT4ScaleEstimate:
     """Public-estimate scale anchor for GPT-4-class training; not an official disclosure."""
+
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     gpu_count = 25_000
     training_days = 90
+    reference_gpu_days = GPT4_TRAINING_GPU_DAYS
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    gpu_days = gpu_count * training_days
-    gpu_days_m = gpu_days / MILLION
+    illustrative_gpu_days = gpu_count * training_days
+    illustrative_gpu_days_m = illustrative_gpu_days / MILLION
+    gpu_days_m = reference_gpu_days / MILLION
+    estimate_ratio = illustrative_gpu_days / reference_gpu_days
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(gpu_days_m > 1.0, "GPT-4-class public estimate should be million-GPU-day scale.")
+    check(0.8 <= estimate_ratio <= 1.1, "Illustrative 25k GPU × 90 day estimate should be near the mlsysim anchor.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     gpu_count_str = fmt(gpu_count, precision=0, commas=True)
@@ -1113,7 +1160,7 @@ class GPT4ScaleEstimate:
     gpu_days_m_str = fmt(gpu_days_m, precision=1, commas=False)
 ```
 
-@tbl-ai-evolution-performance provides quantitative validation of this principle. Examine the rightmost column carefully: as computational resources grew from rule evaluation to CPU-era feature pipelines, multi-GPU training, and eventually large-scale distributed training, performance improved from amateur-level to superhuman. GPT-4's exact training configuration was not disclosed, but common public estimates put GPT-4-class runs around `{python} GPT4ScaleEstimate.gpu_count_str` A100-class GPUs for roughly `{python} GPT4ScaleEstimate.training_days_str` days, or about `{python} GPT4ScaleEstimate.gpu_days_m_str` million GPU-days.
+@tbl-ai-evolution-performance provides quantitative validation of this principle. Examine the rightmost column carefully: as computational resources grew from rule evaluation to CPU-era feature pipelines, multi-GPU training, and eventually large-scale distributed training, performance improved from amateur-level to superhuman. GPT-4's exact training configuration was not disclosed, but common public estimates place GPT-4-class runs in the same regime as `{python} GPT4ScaleEstimate.gpu_count_str` A100-class GPUs for roughly `{python} GPT4ScaleEstimate.training_days_str` days. The mlsysim reference anchor is about `{python} GPT4ScaleEstimate.gpu_days_m_str` million A100 GPU-days, so this value is a scale anchor rather than an official benchmark result.
 
 <!--
 ::: {.content-visible when-format="pdf"}
@@ -1121,13 +1168,13 @@ class GPT4ScaleEstimate:
 :::
 -->
 
-| **Era**                          | **Approach**                   | **Representative Task**       | **Performance**                             | **Computational Resources**                                                                                                                                                                                        |
-|:---------------------------------|:-------------------------------|:------------------------------|:--------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Expert Systems (1980s)**       | Hand-crafted rules             | Chess (Elo rating)            | ~2000 Elo (amateur)                         | Minimal (rule evaluation)                                                                                                                                                                                          |
-| **Statistical ML (1990s–2000s)** | Feature engineering + learning | Handwritten digit recognition | about 98–99 percent on MNIST-era benchmarks | CPU-era feature pipelines; resources varied by implementation                                                                                                                                                      |
-| **Deep Learning (2012)**         | End-to-end neural networks     | ImageNet top-5 accuracy       | 84.6 percent (AlexNet)                      | 6 days on 2 GPUs                                                                                                                                                                                                   |
-| **Modern Deep Learning (2020+)** | Large-scale transformers       | ImageNet top-5 accuracy       | 90.0 percent+ (ViT)                         | Hours on distributed systems                                                                                                                                                                                       |
-| **Modern Deep Learning (2023)**  | Foundation models              | MMLU benchmark                | 86.4 percent (GPT-4)                        | Not disclosed; public-estimate regime: `{python} GPT4ScaleEstimate.gpu_count_str` A100-class GPUs for `{python} GPT4ScaleEstimate.training_days_str` days (~`{python} GPT4ScaleEstimate.gpu_days_m_str`M GPU-days) |
+| **Era**                          | **Approach**                   | **Representative Task**       | **Performance**                             | **Computational Resources**                                                                                                                                                                                                       |
+|:---------------------------------|:-------------------------------|:------------------------------|:--------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Expert Systems (1980s)**       | Hand-crafted rules             | Chess (Elo rating)            | ~2000 Elo (amateur)                         | Minimal (rule evaluation)                                                                                                                                                                                                         |
+| **Statistical ML (1990s–2000s)** | Feature engineering + learning | Handwritten digit recognition | about 98–99 percent on MNIST-era benchmarks | CPU-era feature pipelines; resources varied by implementation                                                                                                                                                                     |
+| **Deep Learning (2012)**         | End-to-end neural networks     | ImageNet top-5 accuracy       | 84.6 percent (AlexNet)                      | 6 days on 2 GPUs                                                                                                                                                                                                                  |
+| **Modern Deep Learning (2020+)** | Large-scale transformers       | ImageNet top-5 accuracy       | 90.0 percent+ (ViT)                         | Hours on distributed systems                                                                                                                                                                                                      |
+| **Modern Deep Learning (2023)**  | Foundation models              | MMLU benchmark                | 86.4 percent (GPT-4)                        | Not disclosed; public-estimate regime of about `{python} GPT4ScaleEstimate.gpu_days_m_str`M A100 GPU-days (same scale as `{python} GPT4ScaleEstimate.gpu_count_str` GPUs for `{python} GPT4ScaleEstimate.training_days_str` days) |
 
 : **AI Performance Evolution Across Paradigms**: Each paradigm transition correlates with increased computational scale rather than algorithmic sophistication. Performance improved from amateur-level expert systems (2000 Elo) through high-accuracy statistical learning on constrained benchmarks to superhuman foundation models (86.4 percent Massive Multitask Language Understanding (MMLU)), while computational requirements grew from CPU-era feature pipelines to large-scale distributed training. GPT-4 training details are not official disclosures, so the rightmost value is a public-estimate scale anchor rather than a benchmark result. {#tbl-ai-evolution-performance tbl-colwidths="[17,15,20,19,29]"}
 
@@ -1147,13 +1194,55 @@ In Go, DeepMind's AlphaGo[^fn-alphago-scale] [@silver2016] achieved superhuman p
 
 The lesson is "bitter" because our intuition misleads us\index{bitter lesson, The}. We naturally assume that encoding human expertise should be the path to artificial intelligence. Yet repeatedly, systems that use computation to learn from data outperform systems that rely on human knowledge given sufficient scale. The pattern has held across symbolic AI, statistical learning, and deep learning eras.
 
+```{python}
+#| echo: false
+#| label: gpt3-training-energy
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ GPT-3 TRAINING ENERGY CONVERSION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: GPT-3 training energy footnote in the Bitter Lesson section
+# │
+# │ Goal: Keep the MWh-to-household comparison executable.
+# │ Show: 1,287 MWh is about 120 US household-years at a 10.7 MWh/year baseline.
+# │ How: Divide the Patterson et al. GPT-3 energy estimate by a round
+# │      household-year electricity baseline.
+# │
+# │ Imports: mlsysim.core.constants (GPT3_TRAINING_ENERGY_MWH),
+# │          mlsysim.fmt (fmt, check)
+# │ Exports: GPT3TrainingEnergy.energy_mwh_str, households_str,
+# │          household_mwh_year_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GPT3_TRAINING_ENERGY_MWH
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class GPT3TrainingEnergy:
+    """Energy scale conversion for the Patterson et al. GPT-3 estimate."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    energy_mwh = GPT3_TRAINING_ENERGY_MWH
+    household_mwh_year = 10.7
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    households = energy_mwh / household_mwh_year
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(1_000 <= energy_mwh <= 1_500, "GPT-3 training energy estimate should remain MWh-scale.")
+    check(100 <= households <= 140, "Household-year comparison should be roughly 120 homes.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    energy_mwh_str = fmt(energy_mwh, precision=0, commas=True)
+    households_str = fmt(households, precision=0, commas=False)
+    household_mwh_year_str = fmt(household_mwh_year, precision=1, commas=False)
+```
+
 Modern language models like GPT-4 and image generation systems like DALL-E illustrate this principle directly. Their capabilities emerge not from linguistic or artistic theories encoded by humans but from training general-purpose neural networks on vast amounts of data using substantial computational resources. Estimates for models at GPT-3's scale suggest thousands of megawatt-hours of energy[^fn-gpt3-training-energy] [@patterson2021carbon], and serving these models to millions of users demands data centers consuming power comparable to small cities.
 
-[^fn-gpt3-training-energy]: **GPT-3 Training Energy**: @patterson2021carbon estimated GPT-3's single training run consumed approximately 1,287 MWh and emitted 552 tonnes of CO~2~-equivalent, roughly the annual electricity of 120 average US households. The energy cost is dominated not by arithmetic but by data movement through the memory hierarchy, making the $D_{\text{vol}}/\text{BW}$ term of the iron law, not the compute term, the primary driver of the power bill at this scale. \index{GPT-3!training energy}
+[^fn-gpt3-training-energy]: **GPT-3 Training Energy**: @patterson2021carbon estimated GPT-3's single training run consumed approximately `{python} GPT3TrainingEnergy.energy_mwh_str` MWh and emitted 552 tonnes of CO~2~-equivalent, roughly the annual electricity of `{python} GPT3TrainingEnergy.households_str` average US households using a `{python} GPT3TrainingEnergy.household_mwh_year_str` MWh/household-year baseline. The energy cost is dominated not by arithmetic but by data movement through the memory hierarchy, making the $D_{\text{vol}}/\text{BW}$ term of the iron law, not the compute term, the primary driver of the power bill at this scale. \index{GPT-3!training energy}
 
 The implication is that realizing the bitter lesson's promise requires expertise in data engineering, hardware optimization, and systems coordination[^fn-memory-bandwidth-bottleneck] that goes far beyond algorithmic innovation. We explore these hardware constraints quantitatively in @sec-hardware-acceleration, where students will have the prerequisite background to analyze memory bandwidth limitations and their implications for system design.
 
-[^fn-memory-bandwidth-bottleneck]: **Memory Bandwidth**: The rate at which a model's parameters move from memory to the processor. The "thousands of megawatt-hours" of energy consumed by GPT-scale models are dominated not by computation but by the physically expensive process of fetching billions of weights through the memory hierarchy. Moving data from off-chip memory can consume over 500$\times$ more energy than the actual arithmetic, making this bandwidth, not processor speed, the direct cause of the data center's massive power draw. \index{Memory Bandwidth!bottleneck}
+[^fn-memory-bandwidth-bottleneck]: **Memory Bandwidth**: The rate at which a model's parameters move from memory to the processor. The "thousands of megawatt-hours" of energy consumed by GPT-scale models are dominated not by computation but by the physically expensive process of fetching billions of weights through the memory hierarchy. Moving data from off-chip memory can cost one to several orders of magnitude more energy than local arithmetic, depending on precision and memory level, making bandwidth, not processor speed alone, a direct driver of the data center's massive power draw. \index{Memory Bandwidth!bottleneck}
 
 Sutton's bitter lesson explains the motivation for ML systems engineering. If AI progress depends on our ability to scale computation effectively, then understanding *how* to build, deploy, and maintain these computational systems is essential for AI practitioners. Yet this understanding demands more than familiarity with any single technical domain. Computer Science advances ML algorithms, and Electrical Engineering develops specialized AI hardware, but neither discipline alone provides the engineering principles needed to deploy, optimize, and sustain ML systems at scale. The convergence of data management, algorithmic design, and infrastructure optimization into a single engineering challenge has given rise to a new discipline, one we define formally later in this chapter and develop across the entire book.
 
@@ -1220,11 +1309,77 @@ These three interconnected concerns, obtaining and managing training data at sca
 
 This definition motivates the **Data · Algorithm · Machine (D·A·M) taxonomy**, which we now formalize as a diagnostic tool\index{D·A·M Taxonomy}: when performance stalls or behavior degrades, ask *"Which axis is the bottleneck?"*
 
+```{python}
+#| echo: false
+#| label: resnet50-dam-roofline-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ RESNET-50 D·A·M ROOFLINE EXAMPLE
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: "The D·A·M taxonomy" significance paragraph
+# │
+# │ Goal: Ground the Machine-axis bottleneck example in checked arithmetic.
+# │ Show: Batch-size-one ResNet-50 on A100 is on the memory-bound side of ridge.
+# │ How: Compare FP16 weight-stream time to peak tensor-core compute time.
+# │
+# │ Imports: mlsysim.core.constants (RESNET50_FLOPs, RESNET50_PARAMS,
+# │          A100_FLOPS_FP16_TENSOR, A100_MEM_BW, units),
+# │          mlsysim.fmt (fmt, check)
+# │ Exports: ResNet50DamExample.weight_mb_str, a100_hbm_tbs_str,
+# │          memory_time_us_str, resnet_gflops_str, a100_peak_tflops_str,
+# │          compute_time_us_str, a100_ridge_str, workload_ai_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import (
+    RESNET50_FLOPs, RESNET50_PARAMS,
+    A100_FLOPS_FP16_TENSOR, A100_MEM_BW,
+    param, byte, MB, TB, GFLOPs, TFLOPs, second, US,
+)
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class ResNet50DamExample:
+    """
+    Namespace for the ResNet-50 D·A·M arithmetic used in the taxonomy example.
+    The estimate counts FP16 weight streaming only; activations and framework
+    overhead make real latency higher and workload-dependent.
+    """
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    params = RESNET50_PARAMS.m_as(param)
+    bytes_per_param_fp16 = 2
+    ops = RESNET50_FLOPs
+    a100_peak = A100_FLOPS_FP16_TENSOR
+    a100_hbm = A100_MEM_BW
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    weight_bytes = params * bytes_per_param_fp16 * byte
+    memory_time = weight_bytes / a100_hbm
+    compute_time = ops / a100_peak
+    workload_ai = ops.m_as(GFLOPs) * 1_000 / weight_bytes.m_as(MB)
+    a100_ridge = a100_peak.m_as(TFLOPs/second) / a100_hbm.m_as(TB/second)
+    memory_compute_ratio = memory_time.m_as(US) / compute_time.m_as(US)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(45 <= weight_bytes.m_as(MB) <= 60, "ResNet-50 FP16 weights should be about 50 MB.")
+    check(memory_time > compute_time, "Small-batch ResNet-50 example should be memory-side.")
+    check(workload_ai < a100_ridge, "Example should fall below the A100 FP16 ridge point.")
+    check(1.5 <= memory_compute_ratio <= 2.5, "Expected memory/compute ratio should be about 2x.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    weight_mb_str = fmt(weight_bytes.m_as(MB), precision=0, commas=False)
+    a100_hbm_tbs_str = fmt(a100_hbm.m_as(TB/second), precision=1, commas=False)
+    memory_time_us_str = fmt(memory_time.m_as(US), precision=0, commas=False)
+    resnet_gflops_str = fmt(ops.m_as(GFLOPs), precision=1, commas=False)
+    a100_peak_tflops_str = fmt(a100_peak.m_as(TFLOPs/second), precision=0, commas=False)
+    compute_time_us_str = fmt(compute_time.m_as(US), precision=0, commas=False)
+    a100_ridge_str = fmt(a100_ridge, precision=0, commas=False)
+    workload_ai_str = fmt(workload_ai, precision=0, commas=False)
+```
+
 ::: {.callout-definition title="The D·A·M taxonomy"}
 
 The ***D·A·M Taxonomy***\index{D·A·M Taxonomy!definition} is a diagnostic framework that classifies any machine learning system performance bottleneck along three axes: **Data**\index{Data!as source code} ($D_{\text{vol}}$, $\text{BW}$), **Algorithm** ($O$, model architecture), and **Machine** ($R_{\text{peak}}$, memory capacity). The goal is to identify which axis is the binding constraint.
 
-1.  **Significance (quantitative)**: The diagnostic power is concrete. A ResNet-50 inference run at batch size one is memory-bandwidth-bound (Machine axis): the A100's 2 terabytes per second bandwidth moves 25 megabytes of weights per forward pass in 12.5 μs, while the 4 GFLOP compute finishes in 2 μs. This 6$\times$ gap means hardware upgrades to $R_{\text{peak}}$ yield no improvement until the bandwidth bottleneck is resolved first.
+1.  **Significance (quantitative)**: The diagnostic power is concrete. A ResNet-50 inference run at batch size one on an A100 is on the memory-bound side of the roofline before activation traffic and framework overhead are included: moving `{python} ResNet50DamExample.weight_mb_str` MB of FP16 weights across `{python} ResNet50DamExample.a100_hbm_tbs_str` TB/s of HBM takes about `{python} ResNet50DamExample.memory_time_us_str` microseconds, while `{python} ResNet50DamExample.resnet_gflops_str` GFLOPs at a `{python} ResNet50DamExample.a100_peak_tflops_str` TFLOP/s tensor-core peak takes about `{python} ResNet50DamExample.compute_time_us_str` microseconds. The workload's arithmetic intensity is about `{python} ResNet50DamExample.workload_ai_str` FLOPs/byte, below the A100 FP16 ridge point of about `{python} ResNet50DamExample.a100_ridge_str` FLOPs/byte. The lesson is not a precise latency prediction; it is that small-batch inference cannot be optimized by buying peak FLOPS alone. The binding axis is the Machine axis, especially data reuse, memory bandwidth, and utilization.
 2.  **Distinction (durable)**: Unlike traditional software performance analysis, which treats code and data as separate concerns, the D·A·M taxonomy recognizes that algorithm choice directly determines both the data volume required (a transformer needs orders of magnitude more data than a linear model to generalize) and the machine required to run it.
 3.  **Common pitfall**: A frequent misconception is that the three axes are independent. Changing the algorithm (for example, switching from a CNN to a transformer) typically mandates a different machine (more memory for $O(N^2)$ attention) and a different data distribution (more diverse training data to avoid overfitting the flexible hypothesis space).
 
@@ -1402,7 +1557,7 @@ This hierarchy ensures that when we build a lab or a case study, engineers are n
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: Engineering Crux subsection — "Systems (The Platforms)" layer
 # │
-# │ Goal: Quantify the 9-order-of-magnitude span of the ML Systems landscape.
+# │ Goal: Quantify the multi-order-of-magnitude span of the ML Systems landscape.
 # │ Show: RAM, Compute, and Power constraints for the 4 deployment paradigms.
 # │ How: Reference the Systems Archetypes (Cloud, Edge, Mobile, Tiny).
 # │
@@ -1412,7 +1567,8 @@ This hierarchy ensures that when we build a lab or a case study, engineers are n
 # │          DeploymentSystems.edge_compute_str, DeploymentSystems.edge_power_str,
 # │          DeploymentSystems.mobile_mem_str, DeploymentSystems.mobile_compute_str,
 # │          DeploymentSystems.mobile_power_str,
-# │          DeploymentSystems.tiny_compute_str, DeploymentSystems.tiny_power_str,
+# │          DeploymentSystems.tiny_mem_str, DeploymentSystems.tiny_compute_str,
+# │          DeploymentSystems.tiny_power_str,
 # │          DeploymentSystems.mem_span_math, DeploymentSystems.compute_span_math
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core import Systems
@@ -1460,6 +1616,7 @@ class DeploymentSystems:
     mobile_compute_str = fmt(h_mobile.peak_flops.m_as(TFLOPs/second), precision=1)
     mobile_power_str = fmt(h_mobile.tdp.m_as(watt), precision=0)
 
+    tiny_mem_str = fmt(t_tiny.ram.m_as(KB), precision=0, commas=False)
     tiny_compute_str = fmt(h_tiny.peak_flops.m_as(TFLOPs/second), precision=4)
     tiny_power_str = fmt(h_tiny.tdp.m_as(milliwatt), precision=0)
 
@@ -1480,7 +1637,7 @@ The machine learning systems landscape spans roughly `{python} DeploymentSystems
 | **Cloud**     | H100 Cluster       |  `{python} DeploymentSystems.cloud_mem_str` gigabytes | `{python} DeploymentSystems.cloud_compute_str` TFLOPS  |  `{python} DeploymentSystems.cloud_power_str` W |
 | **Edge**      | Jetson Robotics    |  `{python} DeploymentSystems.edge_mem_str` gigabytes  |  `{python} DeploymentSystems.edge_compute_str` TFLOPS  |  `{python} DeploymentSystems.edge_power_str` W  |
 | **Mobile**    | Smartphone         | `{python} DeploymentSystems.mobile_mem_str` gigabytes | `{python} DeploymentSystems.mobile_compute_str` TFLOPS | `{python} DeploymentSystems.mobile_power_str` W |
-| **TinyML**    | ESP32-S3           |                     512 kilobytes                     |  `{python} DeploymentSystems.tiny_compute_str` TFLOPS  |  `{python} DeploymentSystems.tiny_power_str` mW |
+| **TinyML**    | ESP32-S3           |  `{python} DeploymentSystems.tiny_mem_str` kilobytes  |  `{python} DeploymentSystems.tiny_compute_str` TFLOPS  |  `{python} DeploymentSystems.tiny_power_str` mW |
 
 : **Four System Archetypes**: Representative memory, peak compute, and power budgets for cloud, edge, mobile, and TinyML systems, exposing the multi-order-of-magnitude span that prevents simple model reuse across tiers. {#tbl-introduction-system-archetypes}
 
@@ -1602,31 +1759,9 @@ Throughout this book, every optimization technique we study, from pruning to ker
 # │          GPT3Training.ops_math
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Models, Hardware
-from mlsysim.core.constants import (
-    GPT3_TRAINING_OPS, A100_FLOPS_FP16_TENSOR, TFLOPs, second, day,
-    TRILLION, SEC_PER_DAY, flop
-)
+from mlsysim.core.constants import TFLOPs, second, day, flop
 from mlsysim.core.formulas import dTime
-from mlsysim.fmt import fmt_percent, fmt, fmt_math
-
-#—Inputs (cluster configuration) ---
-num_gpus_value = 1024
-efficiency_eta_value = 0.45
-target_eta_value = 0.60
-
-#—Process (Iron Law training time calculation) ---
-training_time_value = dTime(
-    total_ops=GPT3_TRAINING_OPS,
-    num_devices=num_gpus_value,
-    peak_flops_per_device=A100_FLOPS_FP16_TENSOR,
-    efficiency_eta=efficiency_eta_value,
-)
-optimized_time_value = dTime(
-    total_ops=GPT3_TRAINING_OPS,
-    num_devices=num_gpus_value,
-    peak_flops_per_device=A100_FLOPS_FP16_TENSOR,
-    efficiency_eta=target_eta_value,
-)
+from mlsysim.fmt import fmt_percent, fmt, fmt_math, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class GPT3Training:
@@ -1639,24 +1774,27 @@ class GPT3Training:
     m_gpt3 = Models.GPT3
     h_a100 = Hardware.Cloud.A100
 
-    ops = m_gpt3.training_ops.m_as(flop)
+    ops_quantity = m_gpt3.training_ops
+    ops = ops_quantity.m_as(flop)
     num_gpus = 1024
-    peak_tflops = h_a100.peak_flops.m_as(TFLOPs/second)
+    peak_flops_per_device = h_a100.peak_flops
+    peak_tflops = peak_flops_per_device.m_as(TFLOPs/second)
     eta_base = 0.45
     eta_opt = 0.60
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # We use a static method or lambda for internal logic to avoid 'self' clutter
-    @staticmethod
-    def calc_days(ops, n, peak_tflops, eta):
-        # peak_tflops is in TFLOPS (1e12)
-        flops_per_sec = n * (peak_tflops * TRILLION) * eta
-        seconds = ops/flops_per_sec
-        return seconds/SEC_PER_DAY
-
-    # Compute values (these execute during class definition)
-    days_base = calc_days(ops, num_gpus, peak_tflops, eta_base)
-    days_opt = calc_days(ops, num_gpus, peak_tflops, eta_opt)
+    days_base = dTime(
+        total_ops=ops_quantity,
+        num_devices=num_gpus,
+        peak_flops_per_device=peak_flops_per_device,
+        efficiency_eta=eta_base,
+    ).m_as(day)
+    days_opt = dTime(
+        total_ops=ops_quantity,
+        num_devices=num_gpus,
+        peak_flops_per_device=peak_flops_per_device,
+        efficiency_eta=eta_opt,
+    ).m_as(day)
     days_saved = days_base - days_opt
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
@@ -1719,7 +1857,51 @@ The iron law governs *time*, but time is not the only constraint. For mobile dev
 Just as time is governed by physics, so is energy. We must add a fourth term to our mental model: **The Energy Tax.**\index{Energy!tax, data movement cost} In many modern systems (mobile, edge, and large-scale training), energy, not time, is the hard constraint. Let $D_{\text{vol}}$ be the total data volume moved (bytes), $E_{\text{move}}$ the energy per byte moved, $O$ the total operation count, and $E_{\text{compute}}$ the energy per operation. @eq-energy-cost formalizes this relationship:
 $$ E_{\text{total}} \approx \underbrace{ D_{\text{vol}} \times E_{\text{move}} }_{\text{Dominant Term}} + \underbrace{ O \times E_{\text{compute}} }_{\text{Secondary Term}} $$ {#eq-energy-cost}
 
-The dominant term is data movement: $E_{\text{move}} \gg E_{\text{compute}}$. Moving data through the memory hierarchy costs orders of magnitude more energy than arithmetic; depending on precision and memory level, commonly cited ratios range from roughly 100$\times$ to 500$\times$ or more. The physical reason is that data movement requires charging and discharging wires over macroscopic distances, while arithmetic is performed locally within a processing unit's circuits. Therefore, minimizing data movement $(D_{\text{vol}})$ is the primary lever for both speed *and* energy efficiency.
+```{python}
+#| echo: false
+#| label: energy-movement-ratios
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DATA MOVEMENT ENERGY RATIOS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Energy Tax paragraph in the Iron Law section
+# │
+# │ Goal: Keep the data-movement-vs-arithmetic comparison executable.
+# │ Show: DRAM byte movement is about 145× FP16 arithmetic and 800× INT8 arithmetic.
+# │ How: Compare one off-chip DRAM byte energy with one operation energy.
+# │
+# │ Imports: mlsysim.core.constants (ENERGY_* constants, byte, flop),
+# │          mlsysim.fmt (fmt, check)
+# │ Exports: EnergyMovementRatios.fp16_ratio_str, int8_ratio_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import (
+    ENERGY_DRAM_PJ_PER_BYTE, ENERGY_FLOP_FP16_PJ, ENERGY_FLOP_INT8_PJ,
+    byte, flop,
+)
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class EnergyMovementRatios:
+    """Compare off-chip data movement energy with local arithmetic energy."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    dram_byte_energy = ENERGY_DRAM_PJ_PER_BYTE * byte
+    fp16_op_energy = ENERGY_FLOP_FP16_PJ * flop
+    int8_op_energy = ENERGY_FLOP_INT8_PJ * flop
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    fp16_ratio = (dram_byte_energy / fp16_op_energy).to("").magnitude
+    int8_ratio = (dram_byte_energy / int8_op_energy).to("").magnitude
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(fp16_ratio > 100, "DRAM byte movement should exceed FP16 arithmetic energy by about two orders of magnitude.")
+    check(int8_ratio > 500, "DRAM byte movement should be hundreds of times more expensive than INT8 arithmetic.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    fp16_ratio_str = fmt(fp16_ratio, precision=0, commas=False)
+    int8_ratio_str = fmt(int8_ratio, precision=0, commas=False)
+```
+
+The dominant term is data movement: $E_{\text{move}} \gg E_{\text{compute}}$. Under the energy constants used in this text, moving one byte from off-chip DRAM costs about `{python} EnergyMovementRatios.fp16_ratio_str`$\times$ one FP16 operation and about `{python} EnergyMovementRatios.int8_ratio_str`$\times$ one INT8 operation. The exact ratio depends on precision and memory level, but the conclusion is stable: moving data through the memory hierarchy costs orders of magnitude more energy than arithmetic. The physical reason is that data movement requires charging and discharging wires over macroscopic distances, while arithmetic is performed locally within a processing unit's circuits. Therefore, minimizing data movement $(D_{\text{vol}})$ is the primary lever for both speed *and* energy efficiency.
 
 The relationship between time, energy, and data movement forms the central analytical tool of this book.
 
@@ -1748,21 +1930,21 @@ The iron law provides more than a diagnostic framework. It organizes the entire 
 
 Abstract equations become concrete through concrete workloads. This textbook employs five recurring **Lighthouse Models**\index{Lighthouse Model!diagnostic tool} as diagnostic tools for the iron law. These canonical workloads reappear across chapters to test how the same physical constraints affect different architectural patterns.
 
-Each lighthouse model represents a distinct extreme of the iron law. For instance, ResNet-50 allows us to investigate the compute term in its purest form, while GPT-2/Llama acts as our primary probe for **memory bandwidth** bottlenecks. By following these same workloads from data engineering through to edge deployment, each chapter demonstrates how a single architectural choice propagates physical and economic constraints across the entire system.
+Each lighthouse model represents a distinct stress case for the iron law. For instance, batched ResNet-50 convolution lets us investigate compute throughput once weight reuse is high, while the batch-size-one example above reminds us that small-batch inference can still sit on the memory side of the roofline. GPT-2/Llama acts as our primary probe for **memory bandwidth** bottlenecks. By following these same workloads from data engineering through to edge deployment, each chapter demonstrates how a single architectural choice propagates physical and economic constraints across the entire system.
 
 @tbl-lighthouse-examples summarizes why each lighthouse model serves as a diagnostic tool for specific system bottlenecks.
 
-| **Lighthouse Model**                                        | **System Bottleneck** | **What It Reveals**         | **Key Engineering Questions**                  |
-|:------------------------------------------------------------|:----------------------|:----------------------------|:-----------------------------------------------|
-| **ResNet-50**                                               | Compute throughput    | GPU utilization, batching   | Is my hardware doing math or waiting for data? |
-| **GPT-2/Llama**                                             | Memory bandwidth      | KV caching, weight loading  | How fast can I move model weights to compute?  |
-| **DLRM**                                                    | Memory capacity       | Embedding tables, scale-out | How do I fit terabyte-scale models in memory?  |
-| **MobileNetV2**\index{MobileNetV2!edge latency}             | Latency and power     | Efficient operator design   | Can I meet real-time constraints on battery?   |
-| **Keyword Spotting**\index{Keyword Spotting!power envelope} | Power envelope        | Extreme quantization        | Can I run always-on inference on milliwatts?   |
+| **Lighthouse Model**                                        | **System Bottleneck**          | **What It Reveals**         | **Key Engineering Questions**                  |
+|:------------------------------------------------------------|:-------------------------------|:----------------------------|:-----------------------------------------------|
+| **ResNet-50**                                               | Compute throughput under reuse | GPU utilization, batching   | Is my hardware doing math or waiting for data? |
+| **GPT-2/Llama**                                             | Memory bandwidth               | KV caching, weight loading  | How fast can I move model weights to compute?  |
+| **DLRM**                                                    | Memory capacity                | Embedding tables, scale-out | How do I fit terabyte-scale models in memory?  |
+| **MobileNetV2**\index{MobileNetV2!edge latency}             | Latency and power              | Efficient operator design   | Can I meet real-time constraints on battery?   |
+| **Keyword Spotting**\index{Keyword Spotting!power envelope} | Power envelope                 | Extreme quantization        | Can I run always-on inference on milliwatts?   |
 
 : **Lighthouse Models as Reference Workloads**: Each workload isolates a distinct bottleneck, enabling systematic investigation of how system constraints affect different architectural patterns. Quantitative specifications and architectural details appear in @sec-network-architectures. {#tbl-lighthouse-examples tbl-colwidths="[23,25,25,27]"}
 
-The iron law makes these differences precise. ResNet-50 applies the same small weight filters across millions of spatial positions, reusing each weight thousands of times; its $O/(R_{\text{peak}} \cdot \eta_{\text{hw}})$ term dominates because the processor must sustain enormous arithmetic throughput while the data footprint remains modest. GPT-2, by contrast, loads billions of unique weight parameters for every token it generates, and each weight is used only once before the next must be fetched; its $D_{\text{vol}}/\text{BW}$ term dominates because memory bandwidth, not arithmetic, is the binding constraint. The same equation, applied to two different workloads, yields opposite diagnoses and therefore opposite optimization strategies: doubling $R_{\text{peak}}$ accelerates ResNet-50 but barely affects GPT-2, while doubling $\text{BW}$ has the reverse effect.
+The iron law makes these differences precise. ResNet-50 applies the same small weight filters across many spatial positions and, under batching, across many inputs; that reuse can make $O/(R_{\text{peak}} \cdot \eta_{\text{hw}})$ the dominant term because the processor must sustain enormous arithmetic throughput while the data footprint remains modest. GPT-2, by contrast, loads billions of unique weight parameters for every token it generates, and each weight is used only once before the next must be fetched; its $D_{\text{vol}}/\text{BW}$ term dominates because memory bandwidth, not arithmetic, is the binding constraint. The same equation, applied to two different workloads, yields different diagnoses and therefore different optimization strategies: doubling $R_{\text{peak}}$ helps batched ResNet-50 once reuse lifts arithmetic intensity, but barely affects GPT-2 decode; doubling $\text{BW}$ has the reverse effect for bandwidth-bound decode.
 
 Each lighthouse model manifests different constraints along the D·A·M axes, ensuring that the principles developed throughout this text are tested against the diversity of real-world systems engineering challenges. Later in this chapter, these technical workloads are complemented with three deployment case studies, Waymo, FarmBeats, and AlphaFold, that illustrate how the same core challenges manifest in production systems under radically different constraints.
 
@@ -1774,21 +1956,21 @@ Each lighthouse model manifests different constraints along the D·A·M axes, en
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: ImageNet footnote [^fn-imagenet-scale] (D·A·M taxonomy discussion)
 # │
-# │ Goal: Quantify the scale of the ImageNet dataset.
-# │ Show: That even foundational benchmarks required significant systems engineering.
-# │ How: Calculate millions of training images from the mlsys Digital Twins.
+# │ Goal: Quantify the ILSVRC training-split scale used by AlexNet.
+# │ Show: That even foundational benchmarks required significant data engineering.
+# │ How: Calculate millions of training images from the mlsysim constants.
 # │
 # │ Imports: mlsysim.core.constants (IMAGENET_IMAGES)
 # │ Exports: ImageNetStats.images_m_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import IMAGENET_IMAGES, MILLION
-from mlsysim.fmt import fmt_percent, fmt, check
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class ImageNetStats:
     """
-    Namespace for ImageNet Scale Statistics.
-    Scenario: Quantifying dataset scale (1.2M images) for the ImageNet footnote.
+    Namespace for ImageNet scale statistics.
+    Scenario: Quantifying the ILSVRC training split for the ImageNet footnote.
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
@@ -1798,7 +1980,7 @@ class ImageNetStats:
     images_million = images_raw.m_as('count') / MILLION
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(images_million >= 1.0, f"ImageNet scale ({images_million}M) is too small.")
+    check(1.0 <= images_million <= 1.5, f"ImageNet training split should be about 1.3M images, got {images_million:.2f}M.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     images_m_str = fmt(images_million, precision=1)
@@ -1806,15 +1988,57 @@ class ImageNetStats:
 
 To see these Lighthouse Models' diagnostic power in action, consider the breakthrough moment that launched the deep learning era. The D·A·M taxonomy's interdependencies become concrete in the AlexNet victory [@krizhevsky2012imagenet], which reduced ImageNet[^fn-imagenet-scale] [@deng2009] top-5 error from 26.2 percent to 15.3 percent not through algorithmic novelty alone but because convolutional neural networks' parallel matrix operations aligned perfectly with GPU hardware capabilities.
 
-[^fn-imagenet-scale]: **ImageNet**: The 2009 dataset that proved data scale was the missing ingredient in computer vision. Fei-Fei Li marshaled 49,000 Mechanical Turk workers to label 14.2 million images across 21,841 categories, a data engineering operation that dwarfed the algorithmic novelty of everything it subsequently enabled, including AlexNet's 2012 breakthrough (see @sec-data-engineering). \index{ImageNet!scale}
+[^fn-imagenet-scale]: **ImageNet**: The 2009 dataset that proved data scale was the missing ingredient in computer vision. Fei-Fei Li marshaled 49,000 Mechanical Turk workers to label 14.2 million images across 21,841 categories; the 2012 challenge training split used by AlexNet contained about `{python} ImageNetStats.images_m_str` million labeled images. This data engineering operation dwarfed the algorithmic novelty of everything it subsequently enabled, including AlexNet's 2012 breakthrough (see @sec-data-engineering). \index{ImageNet!scale}
 
-This interdependence means that optimizing one component often shifts pressure to another. AlexNet's co-design success came at a cost affordable in 2012 (two consumer GPUs for a week), but modern models demand resources roughly seven orders of magnitude larger. If the iron law governs *how fast* a system runs, we still need a framework for reasoning about *how efficiently* it uses those resources.
+```{python}
+#| echo: false
+#| label: training-compute-growth-summary
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ TRAINING COMPUTE GROWTH SUMMARY
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Efficiency Framework setup, @fig-ai-training-compute-growth caption,
+# │          and summary takeaways
+# │
+# │ Goal: Keep the seven-orders-of-magnitude scale claim executable.
+# │ Show: GPT-4-class public estimates are about 10^7× AlexNet training compute.
+# │ How: Compare illustrative training-compute endpoints used in the figure.
+# │
+# │ Imports: math (standard library), mlsysim.fmt (fmt, check)
+# │ Exports: TrainingComputeGrowth.compute_growth_order_str,
+# │          compute_growth_m_str
+# └─────────────────────────────────────────────────────────────────────────────
+import math
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class TrainingComputeGrowth:
+    """Scale comparison between AlexNet and GPT-4-class training estimates."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    alexnet_training_flops = 1.2e18
+    gpt4_class_training_flops = 2.0e25
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    compute_growth_ratio = gpt4_class_training_flops / alexnet_training_flops
+    compute_growth_order = round(math.log10(compute_growth_ratio))
+    compute_growth_m = compute_growth_ratio / 1e6
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(1e7 <= compute_growth_ratio <= 3e7, f"Expected about 10^7 growth, got {compute_growth_ratio:.2e}.")
+    check(compute_growth_order == 7, f"Expected seven orders of magnitude, got {compute_growth_order}.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    compute_growth_order_str = fmt(compute_growth_order, precision=0, commas=False)
+    compute_growth_m_str = fmt(compute_growth_m, precision=0, commas=False)
+```
+
+This interdependence means that optimizing one component often shifts pressure to another. AlexNet's co-design success came at a cost affordable in 2012 (two consumer GPUs for a week), but modern models demand resources roughly `{python} TrainingComputeGrowth.compute_growth_order_str` orders of magnitude larger. If the iron law governs *how fast* a system runs, we still need a framework for reasoning about *how efficiently* it uses those resources.
 
 ## Efficiency Framework {#sec-introduction-efficiency-framework-8dd4}
 
 The bitter lesson establishes that scale drives AI progress, but it also creates a paradox: if advancing AI requires ever-larger datasets and compute budgets, participation narrows to only the most resource-rich organizations. Even those organizations face physical limits in data center power constraints, memory bandwidth bottlenecks, and the diminishing returns of adding more parameters.
 
-Common public estimates for GPT-4-class training place the compute budget above two million A100 GPU-days, representing millions of dollars in compute costs and substantial environmental impact. Many research institutions and companies cannot afford to compete through brute-force scaling. The reality motivates a complementary approach: rather than focusing solely on applying more compute, the field must also address how efficiently existing compute is used.
+Common public estimates for GPT-4-class training place the compute budget around `{python} GPT4ScaleEstimate.gpu_days_m_str` million A100 GPU-days, representing millions of dollars in compute costs and substantial environmental impact. Many research institutions and companies cannot afford to compete through brute-force scaling. The reality motivates a complementary approach: rather than focusing solely on applying more compute, the field must also address how efficiently existing compute is used.
 
 The answer defines the efficiency framework. Three complementary dimensions map directly to our D·A·M taxonomy (@tbl-dam-taxonomy), and they matured in a revealing historical sequence. **Algorithmic efficiency**\index{Algorithmic Efficiency!definition}, the earliest frontier, reduces computational requirements through better model design and training procedures. Techniques such as model compression\index{Model Compression} (pruning, quantization, knowledge distillation), efficient architectures like MobileNet, and neural architecture search all deliver more capability per FLOP. As algorithms demanded ever more computation, **compute efficiency**\index{Compute Efficiency!hardware utilization} became the second critical dimension. It maximizes hardware utilization by aligning algorithmic logic with machine physics, encompassing the evolution from general-purpose CPUs to specialized accelerators (GPUs, TPUs) and the hardware-software co-design principles that translate theoretical TFLOPS into real-world speedups. Most recently, **data selection**\index{Data Selection!efficiency dimension} emerged as the third dimension, extracting more learning signal from limited examples and thereby reducing the data numerator of the iron law. Techniques including transfer learning\index{Transfer Learning}, active learning\index{Active Learning}, and curriculum design ensure every sample provides maximum learning value. Together, these three dimensions provide the engineering tools to overcome the Data, Algorithm, and Machine walls that pure scaling alone cannot address.
 
@@ -1902,12 +2126,18 @@ text width=85mm](GB8){Data Selection};
 # │
 # │ Goal: Contrast AI compute growth with hardware scaling limits.
 # │ Show: That AI demand doubles 7× faster than Moore's Law silicon scaling.
-# │ How: Calculate the growth gap ratio between algorithmic demand and hardware supply.
+# │ How: Calculate the algorithmic halving period, Moore's-law window speedup,
+# │      and growth gap ratio between demand and hardware supply.
 # │
-# │ Imports: (none - pure calculation)
+# │ Imports: math (standard library), mlsysim.fmt (fmt, check)
 # │ Exports: EfficiencyGains.algo_efficiency_max_str,
-# │          EfficiencyGains.moores_speedup_str
+# │          EfficiencyGains.algo_halving_months_str,
+# │          EfficiencyGains.moores_window_speedup_str,
+# │          EfficiencyGains.growth_gap_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
+import math
+from mlsysim.fmt import fmt, check
+
 # ┌── LEGO ───────────────────────────────────────────────
 class EfficiencyGains:
     """
@@ -1917,24 +2147,31 @@ class EfficiencyGains:
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     algo_efficiency_max = 44.5          # EfficientNet vs. AlexNet (Hernandez & Brown 2020)
+    efficiency_window_years = 2019 - 2012
     moores_doubling_months = 24         # Silicon scaling
     ai_compute_doubling_months = 3.4    # Training compute scaling (Amodei 2018)
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # How much faster is AI demand growing than Silicon supply?
+    efficiency_window_months = efficiency_window_years * 12
+    algo_halving_months = efficiency_window_months / math.log2(algo_efficiency_max)
+    moores_window_speedup = 2 ** (efficiency_window_months / moores_doubling_months)
     growth_gap_ratio = moores_doubling_months/ai_compute_doubling_months
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(14 <= algo_halving_months <= 17, f"Algorithmic efficiency halving period should be about 16 months, got {algo_halving_months:.1f}.")
+    check(10 <= moores_window_speedup <= 12, f"Seven-year Moore's-law speedup should be about 11x, got {moores_window_speedup:.1f}.")
     check(growth_gap_ratio >= 5, f"AI growth ({ai_compute_doubling_months}mo) is not significantly faster than Moore's Law ({moores_doubling_months}mo). Gap: {growth_gap_ratio:.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     algo_efficiency_max_str = fmt(algo_efficiency_max, precision=1)
-    moores_speedup_str = fmt(growth_gap_ratio, precision=1)
+    algo_halving_months_str = fmt(algo_halving_months, precision=0, commas=False)
+    moores_window_speedup_str = fmt(moores_window_speedup, precision=1, commas=False)
+    growth_gap_ratio_str = fmt(growth_gap_ratio, precision=1, commas=False)
 ```
 
-The magnitude of efficiency improvements is measurable. Between 2012 and 2019, computational resources needed to train a neural network to achieve AlexNet-level performance on ImageNet classification decreased by approximately `{python} EfficiencyGains.algo_efficiency_max_str`$\times$ [@hernandez2020measuring]. This improvement, which halved every 16 months, outpaced hardware efficiency gains predicted by Moore's Law[^fn-moores-law-baseline], demonstrating that algorithmic innovation drives efficiency as much as hardware advances.
+The magnitude of efficiency improvements is measurable. Between 2012 and 2019, computational resources needed to train a neural network to achieve AlexNet-level performance on ImageNet classification decreased by approximately `{python} EfficiencyGains.algo_efficiency_max_str`$\times$ [@hernandez2020measuring]. This improvement, which halved about every `{python} EfficiencyGains.algo_halving_months_str` months, outpaced hardware efficiency gains predicted by Moore's Law[^fn-moores-law-baseline], demonstrating that algorithmic innovation drives efficiency as much as hardware advances.
 
-[^fn-moores-law-baseline]: **Moore’s Law**: Gordon Moore’s 1965 observation that transistor density doubles approximately every two years. Over the same 2012–2019 window where algorithmic efficiency improved 44$\times$, Moore’s Law delivered roughly 16$\times$ in transistor scaling, meaning algorithmic innovation closed more of the efficiency gap than hardware alone. Simultaneously, *demand* for training compute doubled every 3.4 months, outpacing both curves and forcing the shift to domain-specific accelerators. \index{Moore's Law!vs. AI growth}
+[^fn-moores-law-baseline]: **Moore’s Law**: Gordon Moore’s 1965 observation that transistor density doubles approximately every two years. Over the same 2012–2019 window where algorithmic efficiency improved `{python} EfficiencyGains.algo_efficiency_max_str`$\times$, a two-year doubling cadence yields roughly `{python} EfficiencyGains.moores_window_speedup_str`$\times$ in transistor scaling, meaning algorithmic innovation closed more of the efficiency gap than hardware alone. Simultaneously, *demand* for training compute doubled every 3.4 months, about `{python} EfficiencyGains.growth_gap_ratio_str`$\times$ faster than the two-year hardware cadence, forcing the shift to domain-specific accelerators. \index{Moore's Law!vs. AI growth}
 
 Simultaneously, the compute used in AI training increased by roughly five orders of magnitude from 2012 to 2018, doubling approximately every 3.4 months [@amodei2018aicompute]. This exponential growth far exceeds Moore's Law and explains *why* efficiency optimization is not optional. Without it, only the most resource-rich organizations could participate in AI development.
 
@@ -2055,7 +2292,7 @@ plt.close()
 
 Efficiency gains tell only half the story. @fig-ai-training-compute-growth reveals the countervailing trend: even as individual architectures become more efficient, the field's total appetite for compute has grown exponentially, making efficiency optimization not a luxury but a necessity for continued progress.
 
-::: {#fig-ai-training-compute-growth fig-env="figure" fig-pos="htb" fig-cap="**The Era of Scale**: Illustrative training-compute estimates (FLOPs) vs. year on a log scale. While early deep learning (blue) showed rapid growth, the transformer era (red) accelerated this trend significantly. From AlexNet (2012) to public estimates for GPT-4-class training (2023), compute requirements increased by roughly $10^7$ (10 million times), far outpacing Moore's Law. This exponential demand drives the specialized infrastructure described in this book." fig-alt="Scatter plot of estimated training compute FLOPs vs. year. Blue dots from 2012 to 2018 show deep learning models like ResNet. Red dots from 2018 to 2024 show large-scale models like GPT-4 rising faster on the log scale."}
+::: {#fig-ai-training-compute-growth fig-env="figure" fig-pos="htb" fig-cap="**The Era of Scale**: Illustrative training-compute estimates (FLOPs) vs. year on a log scale. While early deep learning (blue) showed rapid growth, the transformer era (red) accelerated this trend significantly. From AlexNet (2012) to public estimates for GPT-4-class training (2023), compute requirements increased by roughly `{python} TrainingComputeGrowth.compute_growth_order_str` orders of magnitude (`{python} TrainingComputeGrowth.compute_growth_m_str` million times), far outpacing Moore's Law. This exponential demand drives the specialized infrastructure described in this book." fig-alt="Scatter plot of estimated training compute FLOPs vs. year. Blue dots from 2012 to 2018 show deep learning models like ResNet. Red dots from 2018 to 2024 show large-scale models like GPT-4-class estimates rising faster on the log scale."}
 
 ```{python}
 #| echo: false
@@ -2065,7 +2302,7 @@ Efficiency gains tell only half the story. @fig-ai-training-compute-growth revea
 # │ Context: @fig-ai-training-compute-growth—The Era of Scale
 # │
 # │ Goal: Visualize the explosive growth of training compute.
-# │ Show: The $10^7$ growth in FLOPs that outpaces Moore's Law.
+# │ Show: The $10^7$-scale growth in FLOPs that outpaces Moore's Law.
 # │ How: Plot training compute data points from the Deep Learning era.
 # │
 # │ Imports: sys, os, matplotlib.pyplot, numpy, mlsysim.core.viz
@@ -2100,7 +2337,7 @@ training_compute_data = [
     {"Model": "GPT-3", "Year": 2020, "FLOPs": 3.1e23, "Era": "Large Scale"},
     {"Model": "Gopher", "Year": 2021, "FLOPs": 6.0e23, "Era": "Large Scale"},
     {"Model": "PaLM", "Year": 2022, "FLOPs": 2.5e24, "Era": "Large Scale"},
-    {"Model": "GPT-4", "Year": 2023, "FLOPs": 2.0e25, "Era": "Large Scale"},
+    {"Model": "GPT-4-class", "Year": 2023, "FLOPs": 2.0e25, "Era": "Large Scale"},
     {"Model": "Llama-3-70B", "Year": 2024, "FLOPs": 8.0e24, "Era": "Large Scale"},
     {"Model": "Gemini-Ultra", "Year": 2024, "FLOPs": 5.0e25, "Era": "Large Scale"},
 ]
@@ -2121,7 +2358,7 @@ for era in ["Deep Learning", "Large Scale"]:
         label=era,
     )
 # models
-labeled_models = ["AlexNet", "AlphaGoZero", "GPT-3", "PaLM", "GPT-4"]
+labeled_models = ["AlexNet", "AlphaGoZero", "GPT-3", "PaLM", "GPT-4-class"]
 
 # label styles for specific models
 label_styles = {
@@ -2145,7 +2382,7 @@ label_styles = {
         "ha": "center",
         "va": "bottom",
     },
-    "GPT-4": {
+    "GPT-4-class": {
         "xytext": (0, 6),
         "ha": "center",
         "va": "bottom",
@@ -2204,7 +2441,7 @@ plt.close()
 
 :::
 
-Taken together, these two figures reveal a seeming contradiction that defines the economics of modern AI development: @fig-algo-efficiency shows efficiency improving 44$\times$ while @fig-ai-training-compute-growth shows compute demand growing by seven orders of magnitude. The resolution lies in understanding how efficiency and scale co-evolve.
+Taken together, these two figures reveal a seeming contradiction that defines the economics of modern AI development: @fig-algo-efficiency shows efficiency improving `{python} EfficiencyGains.algo_efficiency_max_str`$\times$ while @fig-ai-training-compute-growth shows compute demand growing by roughly `{python} TrainingComputeGrowth.compute_growth_order_str` orders of magnitude. The resolution lies in understanding how efficiency and scale co-evolve.
 
 ::: {.callout-perspective title="The efficiency paradox"}
 
@@ -2558,32 +2795,46 @@ node[Txt,below=0pt,pos=0.5]{Requirements}(B4.160);
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ APPLICATION SCENARIOS (THE MISSIONS)
 # ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: Section "The Engineering Crux"
+# │ Context: "The engineering missions" callout in the lifecycle section
 # │
 # │ Goal: Connect Models, Systems, and Missions into concrete scenarios.
 # │ Show: How scenario workloads map to specific User Missions.
 # │ How: Reference the Application Archetypes (Frontier, AutoDrive, Doorbell).
 # │
-# │ Imports: mlsysim.Applications, mlsysim.book
+# │ Imports: mlsysim.Applications, mlsysim.fmt (fmt, MarkdownStr, check)
 # │ Exports: ScenarioRegistry.frontier_limit_str, ScenarioRegistry.drive_limit_str,
 # │          ScenarioRegistry.doorbell_limit_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Applications
-from mlsysim.fmt import fmt_percent, fmt, MarkdownStr
+from mlsysim.fmt import fmt, MarkdownStr, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class ScenarioRegistry:
-    """
-    Namespace for Application Scenarios.
-    """
+    """Critical constraints for the chapter's recurring application scenarios."""
+
+    # ┌── 1. LOAD (Scenario Twins) ─────────────────────────────────────────
     app_frontier = Applications.Frontier
     app_drive = Applications.AutoDrive
     app_doorbell = Applications.Doorbell
 
+    # ┌── 2. EXECUTE (Extract Constraints) ────────────────────────────────
+    frontier_latency_ms = app_frontier.sla_latency.m_as('ms')
+    drive_latency_ms = app_drive.sla_latency.m_as('ms')
+    doorbell_power_mw = app_doorbell.power_budget.m_as('mW') if app_doorbell.power_budget else None
+    doorbell_latency_ms = app_doorbell.sla_latency.m_as('ms')
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(frontier_latency_ms > drive_latency_ms, "Frontier training should have a looser SLA than autonomous perception.")
+    check(doorbell_power_mw is not None or doorbell_latency_ms > 0, "Doorbell scenario needs a power or latency constraint.")
+
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_limit_str = MarkdownStr(f"SLA: {fmt(app_frontier.sla_latency.m_as('ms'), precision=0)} ms latency")
-    drive_limit_str    = MarkdownStr(f"SLA: {fmt(app_drive.sla_latency.m_as('ms'), precision=0)} ms latency")
-    doorbell_limit_str = MarkdownStr(f"Power: {fmt(app_doorbell.power_budget.m_as('mW'), precision=0)} mW") if app_doorbell.power_budget else MarkdownStr(f"SLA: {fmt(app_doorbell.sla_latency.m_as('ms'), precision=0)} ms latency")
+    frontier_limit_str = MarkdownStr(f"SLA: {fmt(frontier_latency_ms, precision=0)} ms latency")
+    drive_limit_str    = MarkdownStr(f"SLA: {fmt(drive_latency_ms, precision=0)} ms latency")
+    doorbell_limit_str = MarkdownStr(
+        f"Power: {fmt(doorbell_power_mw, precision=0)} mW"
+        if doorbell_power_mw is not None
+        else f"SLA: {fmt(doorbell_latency_ms, precision=0)} ms latency"
+    )
 ```
 
 The data-dependent nature of ML systems creates dynamic lifecycles requiring continuous monitoring and adaptation. Unlike source code that changes only through developer modifications, data reflects real-world dynamics: distribution shifts can silently alter system behavior without any code changes. Traditional tools designed for deterministic code-based systems prove insufficient here. Version control excels at tracking discrete code changes but struggles with large, evolving datasets. Testing frameworks designed for deterministic outputs require adaptation for probabilistic predictions. We address data versioning and quality management in @sec-data-engineering and monitoring approaches that handle probabilistic behaviors in @sec-ml-operations.
@@ -2961,11 +3212,52 @@ With those tools in place, the chapter defined AI Engineering as a distinct disc
 
 ::: {.callout-takeaways title="Constraints drive architecture"}
 
+```{python}
+#| label: efficiency-scale-summary-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ EFFICIENCY AND SCALE SUMMARY ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Summary takeaway on efficiency and scale.
+# │
+# │ Goal: Keep algorithmic-efficiency and training-compute growth values local.
+# │ Show: EfficientNet-vs-AlexNet efficiency is 44.5x; training scale grew ~10^7.
+# │ How: Recompute from the same textbook anchor constants used above.
+# │
+# │ Imports: math (standard library), mlsysim.fmt (fmt, check)
+# │ Exports: EfficiencyScaleSummary.algo_efficiency_max_str,
+# │          .compute_growth_order_str
+# └─────────────────────────────────────────────────────────────────────────────
+import math
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class EfficiencyScaleSummary:
+    """Local summary values for algorithmic efficiency and training-compute scale."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    algo_efficiency_max = 44.5
+    alexnet_training_flops = 1.2e18
+    gpt4_class_training_flops = 2.0e25
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    compute_growth_ratio = gpt4_class_training_flops / alexnet_training_flops
+    compute_growth_order = round(math.log10(compute_growth_ratio))
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(40 <= algo_efficiency_max <= 50, "Algorithmic efficiency anchor should be about 44.5x.")
+    check(compute_growth_order == 7, f"Expected seven orders of magnitude, got {compute_growth_order}.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    algo_efficiency_max_str = fmt(algo_efficiency_max, precision=1)
+    compute_growth_order_str = fmt(compute_growth_order, precision=0, commas=False)
+```
+
 * **The D·A·M taxonomy governs all ML systems**: Data, Algorithm, and Machine are interdependent axes. Optimizing one axis in isolation shifts bottlenecks rather than eliminating them. When performance stalls, analysis should examine all three axes of the D·A·M taxonomy.
 * **ML systems fail silently, and the degradation equation quantifies why**: Unlike traditional software that crashes on errors, ML systems degrade as data distributions drift. Use the degradation equation to estimate expected accuracy loss over time and to set retraining triggers based on measurable drift.
 * **The iron law decomposes performance into three terms**: Data movement, computation, and overhead each resolve to time; the slowest term dominates. Reducing inference from `{python} AmdahlsPitfall.t_inference_str` ms to `{python} AmdahlsPitfall.t_inf_new_str` ms yields only `{python} AmdahlsPitfall.improv_pct_str` percent end-to-end improvement when preprocessing (`{python} AmdahlsPitfall.t_pre_str` ms) and postprocessing (`{python} AmdahlsPitfall.t_post_str` ms) dominate total latency.
 * **The bitter lesson applies**: Scale and compute outperform hand-crafted features. Systems that use general methods with more computation consistently outperform specialized approaches long term.
-* **Efficiency and scale co-evolve across the deployment spectrum**: Algorithmic improvements delivered a 44$\times$ compute reduction, yet total AI compute grew by seven orders of magnitude. Deployment context (from cloud to TinyML) determines which efficiency dimension (algorithmic, compute, or data) to prioritize.
+* **Efficiency and scale co-evolve across the deployment spectrum**: Algorithmic improvements delivered a `{python} EfficiencyScaleSummary.algo_efficiency_max_str`$\times$ compute reduction, yet total AI compute grew by roughly `{python} EfficiencyScaleSummary.compute_growth_order_str` orders of magnitude. Deployment context (from cloud to TinyML) determines which efficiency dimension (algorithmic, compute, or data) to prioritize.
 * **Five pillars require integration**: ML systems engineering encompasses Data Engineering, Training Systems, Deployment Infrastructure, Operations and Monitoring, and Ethics and Governance. Teams lacking expertise in any pillar face 60–85 percent project failure rates.
 * **Lifecycle and deployment context reshape every design decision**: ML systems require continuous iteration and monitoring, and the dominant bottlenecks shift across cloud, edge, mobile, and TinyML deployments.
 
@@ -2977,7 +3269,51 @@ This book makes a stronger claim: ML systems engineering is a *distinct engineer
 
 ::: {.callout-chapter-connection title="From vision to architecture"}
 
-Where should an ML model actually run? Physical laws dictate what is possible. The speed of light makes distant cloud servers useless for emergency braking. Thermodynamics prevents data-center-class models from running on a mobile device. Memory physics creates bandwidth ceilings that faster chips cannot overcome. @sec-ml-systems introduces the four deployment paradigms (Cloud, Edge, Mobile, and TinyML) that span roughly six orders of magnitude in compute and memory and several orders in power, explaining why each exists and how to choose among them.
+```{python}
+#| label: deployment-spectrum-summary
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DEPLOYMENT SPECTRUM SUMMARY
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Closing chapter-connection callout.
+# │
+# │ Goal: Keep compute and memory span values local to the closing transition.
+# │ Show: Cloud-to-TinyML spans about 10^7 in compute and 10^6 in memory.
+# │ How: Compare the same Cloud and TinyML archetypes used in the chapter table.
+# │
+# │ Imports: math (standard library), mlsysim.core.Systems, mlsysim.Hardware,
+# │          mlsysim.fmt (md_math, check)
+# │ Exports: DeploymentSpectrumSummary.compute_span_str, .mem_span_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core import Systems
+from mlsysim import Hardware
+from mlsysim.fmt import md_math, check
+import math
+
+# ┌── LEGO ───────────────────────────────────────────────
+class DeploymentSpectrumSummary:
+    """Local Cloud-to-TinyML span for the closing transition."""
+
+    # ┌── 1. LOAD (Archetypes) ───────────────────────────────────────────────
+    cloud_ram = Systems.Tiers.Cloud.ram
+    tiny_ram = Systems.Tiers.Tiny.ram
+    cloud_compute = Hardware.Cloud.H100.peak_flops
+    tiny_compute = Hardware.Tiny.ESP32.peak_flops
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    mem_scaling = (cloud_ram / tiny_ram).to("count").magnitude
+    compute_scaling = (cloud_compute / tiny_compute).to("count").magnitude
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(mem_scaling > 1e5, "Cloud memory should be >100,000x TinyML memory.")
+    check(compute_scaling > 1e6, "Cloud compute should be >1,000,000x TinyML compute.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    mem_span_str = MarkdownStr(f"$10^{{{round(math.log10(mem_scaling))}}}$")
+    compute_span_str = MarkdownStr(f"$10^{{{round(math.log10(compute_scaling))}}}$")
+```
+
+Where should an ML model actually run? Physical laws dictate what is possible. The speed of light makes distant cloud servers useless for emergency braking. Thermodynamics prevents data-center-class models from running on a mobile device. Memory physics creates bandwidth ceilings that faster chips cannot overcome. @sec-ml-systems introduces the four deployment paradigms (Cloud, Edge, Mobile, and TinyML) that span roughly `{python} DeploymentSpectrumSummary.compute_span_str` in compute and `{python} DeploymentSpectrumSummary.mem_span_str` in memory, plus several orders in power, explaining why each exists and how to choose among them.
 
 Welcome to AI Engineering.
 

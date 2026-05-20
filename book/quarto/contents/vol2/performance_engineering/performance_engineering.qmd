@@ -87,7 +87,7 @@ $$
 \text{Time} = \max\left( \frac{\text{Compute}}{\text{FLOPS}}, \; \frac{\text{Memory Access}}{\text{Bandwidth}} \right) + \text{Overhead}
 $$ {#eq-iron-law-perf}
 
-The $\max$ operator simplifies this equation: only one term is relevant at any given time. Optimizing the wrong term yields zero improvement. Optimizing compute throughput for a memory-bound workload yields no performance improvement. This equation necessitates diagnosis prior to optimization.
+The $\max$ operator simplifies this equation: one term usually dominates at a given operating point. Optimizing a clearly nondominant term yields little or no improvement. Increasing compute throughput for a memory-bound workload, for example, does not materially improve performance until the memory term is reduced. This equation makes diagnosis the first step rather than an afterthought.
 
 This equation decomposes execution time into three terms. The first fraction represents compute time: the total floating-point operations divided by the hardware's peak throughput. The second fraction represents memory time: the total bytes transferred divided by the memory bandwidth. The $\max$ operator reflects the roofline principle: the slower of the two determines performance. The overhead term captures everything else: kernel launch latency, synchronization, communication, and software stack inefficiency.
 
@@ -150,7 +150,7 @@ Configuration B achieves 60$\times$ lower cost per token than Configuration A, b
 
 ### The memory wall {#sec-performance-engineering-memory-wall-physics}
 
-The efficiency frontier establishes what we are optimizing *toward*. The physics of memory bandwidth determines where we start. Every performance engineering problem in modern ML begins with the same observation: memory bandwidth, not compute, is the bottleneck. Consider a single autoregressive decoding step in a large language model. The model reads its full weight matrix from High Bandwidth Memory (HBM)[^fn-hbm-perf] to generate a single token, performing only one or two multiply-accumulate operations per weight loaded.
+The efficiency frontier establishes what we are optimizing *toward*. The physics of memory bandwidth determines where we start. Many performance engineering problems in modern ML begin with the same observation: memory bandwidth, not compute, is the bottleneck. Consider a single autoregressive decoding step in a large language model. The model reads its full weight matrix from High Bandwidth Memory (HBM)[^fn-hbm-perf] to generate a single token, performing only one or two multiply-accumulate operations per weight loaded.
 
 [^fn-hbm-perf]: **HBM (High Bandwidth Memory)**: Achieves its bandwidth by vertically stacking DRAM dies connected through thousands of through-silicon vias (TSVs), a 3D packaging technique first commercialized by SK Hynix in 2013. Despite the "high bandwidth" label, HBM's 3.35 TB/s on the H100 is still 200--600$\times$ slower than on-chip SRAM access, making the memory hierarchy gap the central constraint of every optimization technique in this chapter. \index{HBM!memory hierarchy}
 
@@ -706,7 +706,60 @@ Each unfused kernel must also materialize its output in HBM. Consider a sequence
 2. **GELU kernel**\index{GELU!kernel}: Read $Z_1$ from HBM, compute $\text{GELU}(Z_1)$, write $Z_2$ to HBM.
 3. **LayerNorm kernel**\index{LayerNorm!kernel}: Read $Z_2$ from HBM, compute $\text{LayerNorm}(Z_2)$, write $Y$ to HBM.
 
-Intermediate tensors $Z_1$ and $Z_2$ each occupy the same memory as the output $Y$. For a hidden dimension of 4096 and batch size of 2048 in FP16, each intermediate tensor is $4096 \times 2048 \times 2 = 16$ MB. The unfused execution materializes 32 MB of intermediate tensors and performs 64 MB of intermediate HBM traffic, writing and then rereading each tensor. A fused kernel avoids that traffic entirely by holding $Z_1$ and $Z_2$ in registers or shared memory (SRAM) within the SM.
+```{python}
+#| label: fusion-traffic-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ FUSION INTERMEDIATE TRAFFIC (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-performance-engineering-kernel-launch unfused intermediate
+# │          tensor traffic example.
+# │
+# │ Goal: Compute the per-layer HBM traffic caused by materializing two FP16
+# │       intermediates for hidden=4096 and batch=2048.
+# │ Show: 16 MB per tensor, 32 MB materialized, 64 MB write/read traffic.
+# │ How: tensor_bytes = hidden * batch * bytes_fp16; each intermediate is written
+# │      once and read once before the next kernel consumes it.
+# │
+# │ Imports: mlsysim.core.constants (MB, GB, byte), mlsysim.fmt (check)
+# │ Exports: FusionTrafficCalc.tensor_mb_str, FusionTrafficCalc.materialized_mb_str,
+# │          FusionTrafficCalc.traffic_mb_str, FusionTrafficCalc.traffic_gb_str,
+# │          FusionTrafficCalc.num_layers_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import MB, GB, byte
+from mlsysim.fmt import check, fmt
+
+class FusionTrafficCalc:
+    """HBM traffic from unfused intermediate tensors."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    hidden_dim = 4096
+    batch_size = 2048
+    bytes_fp16 = 2
+    intermediates = 2
+    num_layers = 80
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    tensor_bytes = hidden_dim * batch_size * bytes_fp16
+    materialized_bytes = intermediates * tensor_bytes
+    traffic_bytes = 2 * materialized_bytes
+    traffic_bytes_all_layers = traffic_bytes * num_layers
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    tensor_mb = (tensor_bytes * byte).m_as(MB)
+    traffic_mb = (traffic_bytes * byte).m_as(MB)
+    check(15 < tensor_mb < 17, f"Expected ~16 MB tensor, got {tensor_mb:.1f} MB")
+    check(60 < traffic_mb < 70, f"Expected ~64 MB traffic, got {traffic_mb:.1f} MB")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    tensor_mb_str = fmt(tensor_mb, precision=0, commas=False)
+    materialized_mb_str = fmt((materialized_bytes * byte).m_as(MB), precision=0, commas=False)
+    traffic_mb_str = fmt(traffic_mb, precision=0, commas=False)
+    traffic_gb_str = fmt((traffic_bytes_all_layers * byte).m_as(GB), precision=1, commas=False)
+    num_layers_str = fmt(num_layers, precision=0, commas=False)
+```
+
+Intermediate tensors $Z_1$ and $Z_2$ each occupy the same memory as the output $Y$. For a hidden dimension of 4096 and batch size of 2048 in FP16, each intermediate tensor is `{python} FusionTrafficCalc.tensor_mb_str` MB. The unfused execution materializes `{python} FusionTrafficCalc.materialized_mb_str` MB of intermediate tensors and performs `{python} FusionTrafficCalc.traffic_mb_str` MB of intermediate HBM traffic, writing and then rereading each tensor. A fused kernel avoids that traffic entirely by holding $Z_1$ and $Z_2$ in registers or shared memory (SRAM) within the SM.
 
 @fig-fusion-before-after contrasts these two execution paths, making the HBM traffic savings visible.
 
@@ -718,19 +771,19 @@ Intermediate tensors $Z_1$ and $Z_2$ each occupy the same memory as the output $
 
 As @fig-fusion-before-after makes concrete, fusion reduces HBM round-trips from six to two per layer, a roughly 3$\times$ reduction in off-chip memory traffic for this layer block.
 
-In a naive implementation without operator fusion, executing one transformer layer requires roughly 50 separate kernel launches. If each launch incurs a 10-microsecond overhead, the system spends 500 microseconds purely on dispatch latency. If the actual arithmetic execution of the layer takes only 2 milliseconds, the launch overhead consumes 20 percent of the total wall-clock time, leaving the GPU compute units idle for one-fifth of the inference cycle. This "launch-bound" regime limits the benefits of faster hardware; doubling the GPU's FLOPS does nothing to reduce the 500-microsecond fixed cost. Operator fusion addresses this by compiling these 50 discrete operations into a small handful of fused kernels, often reducing the count to 5--10 launches, thereby reclaiming the lost cycles and shifting the workload back toward a compute-bound profile.
+In a naive implementation without operator fusion, executing one transformer layer requires roughly 50 separate kernel launches. If each launch incurs a 10-microsecond overhead, the system spends 500 microseconds purely on dispatch latency. If the actual arithmetic execution of the layer takes only 2 milliseconds, the launch overhead consumes 20 percent of the total wall-clock time, leaving the GPU compute units idle for one-fifth of the inference cycle. This "launch-bound" regime limits the benefits of faster hardware; doubling the GPU's FLOPS does nothing to reduce the 500-microsecond fixed cost. Operator fusion addresses this by compiling these 50 discrete operations into a small handful of fused kernels, often reducing the count to 5--10 launches, thereby reclaiming the lost cycles and shifting the workload away from dispatch overhead and back toward the hardware limits captured by the roofline model.
 
 ### Fusion categories {#sec-performance-engineering-fusion-categories}
 
 GPU kernel fusion falls into three categories, each with different complexity and performance impact.
 
-Element-wise fusion is the simplest form: consecutive element-wise operations (add, multiply, activation functions) combine into a single kernel. Because each output element depends on exactly one input element, this fusion is always legal and straightforward to implement. Every modern deep learning framework performs element-wise fusion automatically.
+Element-wise fusion is the simplest form: consecutive element-wise operations (add, multiply, activation functions) combine into a single kernel. Because each output element depends on exactly one input element, this fusion is always legal and straightforward to implement. Most modern deep learning frameworks perform element-wise fusion automatically for supported patterns.
 
 Reduction fusion combines an element-wise operation with a subsequent reduction (such as summing elements for a loss function, or computing mean and variance for layer normalization). Reductions require inter-thread communication within the kernel, using warp-level shuffle instructions or shared memory to aggregate partial results across threads. Despite this complexity, the memory savings are substantial: the intermediate tensor before the reduction never materializes in HBM. For layer normalization specifically, reduction fusion avoids writing the large prenormalization tensor to HBM and reading it back for the mean/variance computation.
 
-Operator-specific fusion is the most impactful and the most difficult category. These are custom kernels designed for a specific sequence of operations, such as fused attention or fused GEMM-bias-activation. The kernel architect must reason about data flow, shared memory allocation, and thread scheduling simultaneously. The payoff is substantial: FlashAttention, which we examine next, reduces attention memory traffic from quadratic to linear in sequence length.
+Operator-specific fusion is the most impactful and the most difficult category. These are custom kernels designed for a specific sequence of operations, such as fused attention or fused GEMM-bias-activation. The kernel architect must reason about data flow, shared memory allocation, and thread scheduling simultaneously. The payoff is substantial: FlashAttention, which we examine next, removes the quadratic attention workspace and keeps the online softmax state linear in sequence length.
 
-To appreciate the quantitative impact, consider each category applied to a single transformer layer with hidden dimension 4096 and batch size 2048 in FP16. Element-wise fusion of a bias-GELU-dropout chain eliminates two intermediate tensors of 16 MB each, saving 64 MB of HBM traffic (two writes plus two reads) per layer. Across 80 layers, this reclaims 5.1 GB of memory bandwidth per forward pass. Reduction fusion of LayerNorm avoids materializing the prenormalization tensor (16 MB) and the intermediate mean/variance statistics, saving an additional 48 MB per layer. Operator-specific attention fusion (FlashAttention) provides the largest single gain: for a sequence length of 8192, it eliminates the 134 MB per-head attention score matrix, saving over 4 GB per layer across 32 heads. The cumulative effect of all three fusion categories can reduce total HBM traffic by 60--80 percent for a transformer forward pass, translating directly into proportional wall-clock speedup for memory-bound workloads.
+To appreciate the quantitative impact, consider each category applied to a single transformer layer with hidden dimension 4096 and batch size 2048 in FP16. Element-wise fusion of a bias-GELU-dropout chain in this shape eliminates two intermediate tensors of `{python} FusionTrafficCalc.tensor_mb_str` MB each, saving `{python} FusionTrafficCalc.traffic_mb_str` MB of HBM traffic per layer. Across `{python} FusionTrafficCalc.num_layers_str` layers, this reclaims about `{python} FusionTrafficCalc.traffic_gb_str` GB of memory bandwidth per forward pass. Reduction fusion of LayerNorm avoids materializing large prenormalization tensors and intermediate statistics. Operator-specific attention fusion (FlashAttention) provides the largest single gain by removing the quadratic score and probability matrices that dominate long-context attention. The cumulative effect of all three fusion categories can remove a large fraction of HBM traffic for a memory-bound transformer forward pass, but the end-to-end speedup must still be verified with profiling because the bottleneck may shift.
 
 ### CUDA graphs: Eliminating launch overhead {#sec-performance-engineering-cuda-graphs}
 
@@ -756,14 +809,16 @@ Standard self-attention computes $\text{Softmax}(QK^T / \sqrt{d_k})V$, where $Q$
 #| label: flash-attention-savings-refactor
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
-# │ FLASHATTENTION MEMORY SAVINGS (LEGO)
+# │ FLASHATTENTION MATERIALIZED-STATE SAVINGS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: @sec-performance-engineering-flashattention FlashAttention prose
 # │
-# │ Goal: Quantify HBM traffic reduction from tiling attention for a 32-head,
+# │ Goal: Quantify materialized attention-state reduction from tiling attention for a 32-head,
 # │       seq_len=8192, head_dim=128, FP16 configuration.
-# │ Show: ~65x reduction in HBM traffic by avoiding NxN materialization.
-# │ How: Naive = (4*N^2 + 4*N*d) * h; Flash = 4*N*d * h. (bytes)
+# │ Show: ~65x reduction in materialized quadratic state by avoiding NxN tensors.
+# │ How: Naive materializes S and P plus Q/K/V/O; Flash keeps only linear Q/K/V/O
+# │      as persistent HBM-visible tensors. Kernel tile reload traffic is schedule
+# │      dependent and is intentionally not counted here.
 # │
 # │ Imports: mlsysim.core.constants (BYTES_FP16, MB, byte)
 # │ Exports: naive_mb_str, flash_mb_str, savings_str,
@@ -776,7 +831,7 @@ from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class FlashAttentionSavings:
-    """Memory traffic analysis for tiled attention vs naive."""
+    """Materialized-state analysis for tiled attention vs naive."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     seq_len = 8192
@@ -785,7 +840,7 @@ class FlashAttentionSavings:
     bytes_per_elem = BYTES_FP16.m_as(byte)
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # Step 1: Naive attention HBM traffic per head:
+    # Step 1: Naive attention materialized state per head:
     # Read Q, K, V once; write/read S; write/read P; write O once.
     # Step 2: Quadratic intermediates dominate for long sequences.
     naive_attn_bytes_per_head = (
@@ -794,7 +849,7 @@ class FlashAttentionSavings:
     )
     naive_attn_bytes_total = naive_attn_bytes_per_head * num_heads
 
-    # FlashAttention HBM traffic per head:
+    # FlashAttention persistent HBM-visible tensors per head:
     # Read Q, K, V once (3 * N * d * bytes), write O once (N * d * bytes)
     # Step 3: No NxN materialization
     flash_attn_bytes_per_head = (3 + 1) * seq_len * head_dim * bytes_per_elem
@@ -805,7 +860,7 @@ class FlashAttentionSavings:
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(savings_ratio > 10,
-          f"FlashAttention should save >10x HBM traffic, got {savings_ratio:.1f}x")
+          f"FlashAttention should save >10x materialized state, got {savings_ratio:.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     naive_mb_str = fmt((naive_attn_bytes_total * byte).m_as(MB), precision=0, commas=False)
@@ -820,9 +875,9 @@ class FlashAttentionSavings:
     flash_savings_factor_str = fmt(savings_ratio, precision=0, commas=False)
 ```
 
-FlashAttention [@dao2022] reformulates attention as a **tiled** computation. Instead of materializing the full $N{\times}N$ attention matrix, it processes $Q$, $K$, and $V$ in small blocks that fit in on-chip SRAM. The algorithm loads a block of $Q$ rows and iterates over blocks of $K$ and $V$ columns, computing partial attention scores and maintaining running statistics (online softmax) to produce the exact result without ever storing the full attention matrix in HBM.
+FlashAttention [@dao2022] reformulates attention as a **tiled** computation. Instead of materializing the full $N{\times}N$ attention matrix, it processes $Q$, $K$, and $V$ in small blocks that fit in on-chip SRAM. The algorithm loads tiles of $Q$, $K$, and $V$, computes partial attention scores, and maintains running statistics (online softmax) to produce the exact result without ever storing the full attention matrix in HBM.
 
-The HBM traffic reduction is dramatic. For a sequence length of `{python} FlashAttentionSavings.head_n_str`, 32 heads, and head dimension `{python} FlashAttentionSavings.head_d_str` in FP16, the naive attention moves approximately `{python} FlashAttentionSavings.naive_mb_str` MB through HBM for the full layer, or `{python} FlashAttentionSavings.naive_head_traffic_mb_str` MB per head. FlashAttention reads $Q$, $K$, $V$ and writes $O$ once each, totaling approximately `{python} FlashAttentionSavings.flash_mb_str` MB for the full layer, or `{python} FlashAttentionSavings.flash_head_traffic_mb_str` MB per head. This is a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in HBM traffic, translating directly into a proportional speedup for this memory-bound operation.
+The reduction in materialized attention state is dramatic. For a sequence length of `{python} FlashAttentionSavings.head_n_str`, 32 heads, and head dimension `{python} FlashAttentionSavings.head_d_str` in FP16, the naive implementation materializes and revisits approximately `{python} FlashAttentionSavings.naive_mb_str` MB of HBM-resident tensors for the full layer, or `{python} FlashAttentionSavings.naive_head_traffic_mb_str` MB per head. FlashAttention avoids the quadratic score and probability tensors; its persistent HBM-visible tensors are dominated by $Q$, $K$, $V$, and $O$, totaling approximately `{python} FlashAttentionSavings.flash_mb_str` MB for the full layer, or `{python} FlashAttentionSavings.flash_head_traffic_mb_str` MB per head. This simplified accounting excludes schedule-dependent tile reloads inside a particular kernel, but it captures the important scaling result: a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in materialized attention state for this configuration.
 
 The key insight behind FlashAttention is the **online softmax**[^fn-online-softmax-algo] trick, which makes tiling possible for an operation that appears to require global information.
 
@@ -845,7 +900,7 @@ A concrete numerical example clarifies the memory savings. Consider one attentio
 
 The na\"ive algorithm computes $S = QK^T$, a matrix of shape $8192{\times}8192$. In FP16, this score matrix occupies $8192 \times 8192 \times 2 \approx 134$ MB per head. After applying softmax, the result $P = \text{softmax}(S)$ is also $134$ MB. Computing $PV$ requires reading $P$ again. In total, the na\"ive algorithm reads $Q$, $K$, $V$ from HBM (6 MB), writes $S$ (134 MB), reads $S$ for softmax (134 MB), writes $P$ (134 MB), reads $P$ for the final multiply (134 MB), and writes $O$ (2 MB). The total HBM traffic is approximately 545 MB per head, dominated by the quadratic intermediates.
 
-FlashAttention processes the computation in tiles of size $B_r{\times}B_c$ (typically $128{\times}128$ on H100). For one tile, the algorithm loads a block of $Q$ ($128 \times 128 \times 2 \approx 33$ KB), a block of $K$ ($128 \times 128 \times 2 \approx 33$ KB), and a block of $V$ (33 KB), totaling approximately 98 KB. This fits comfortably in the H100's 228 KB of shared memory per SM. The tile score $S_{\text{tile}} = Q_{\text{tile}} K_{\text{tile}}^T$ is computed and consumed entirely within SRAM; it is never written to HBM. The algorithm iterates over $8192/128 = 64$ column tiles for each of $64$ row tiles, but the total HBM traffic is just the cost of reading $Q$, $K$, $V$ once (6 MB) and writing $O$ once (2 MB), totaling 8 MB per head. This is 65$\times$ less HBM traffic than the na\"ive algorithm, and the ratio grows quadratically with sequence length.
+FlashAttention processes the computation in tiles of size $B_r{\times}B_c$ (typically $128{\times}128$ on H100). For one tile, the algorithm loads a block of $Q$ ($128 \times 128 \times 2 \approx 33$ KB), a block of $K$ ($128 \times 128 \times 2 \approx 33$ KB), and a block of $V$ (33 KB), totaling approximately 98 KB. This fits comfortably in the H100's 228 KB of shared memory per SM. The tile score $S_{\text{tile}} = Q_{\text{tile}} K_{\text{tile}}^T$ is computed and consumed entirely within SRAM; it is never written to HBM. The algorithm iterates over $8192/128 = 64$ column tiles for each of $64$ row tiles, reloading tiles as required by the kernel schedule. The important point is that the 134 MB score matrix and the 134 MB probability matrix per head are never materialized. The persistent per-head tensors are $Q$, $K$, $V$, $O$, and $O(N)$ softmax statistics, roughly 8 MB plus small state in this example, instead of hundreds of megabytes of quadratic intermediates.
 
 FlashAttention-2 [@dao2023flashattention2] further optimizes the algorithm for modern GPU architectures by restructuring the parallelism pattern. The original FlashAttention parallelizes over batch and head dimensions, meaning each thread block handles one (batch, head) pair and iterates over the full sequence. FlashAttention-2 additionally parallelizes over the sequence dimension of the query matrix, distributing work across thread blocks more efficiently and achieving better occupancy on GPUs with many streaming multiprocessors. It also reduces the number of non-GEMM FLOPs by restructuring the rescaling operations and exploiting the asymmetry between the Q loop (outer) and K/V loop (inner).
 
@@ -853,11 +908,11 @@ FlashAttention-3 targets the H100's new hardware features: FP8 Tensor Cores and 
 
 ::: {.callout-war-story title="The FlashAttention breakthrough"}
 
-In 2022, Tri Dao challenged the prevailing wisdom that the attention mechanism's $O(N^2)$ complexity required better matrix multiplication kernels. His insight was that the bottleneck was not compute, but memory hierarchy. Standard attention materialized the massive $N{\times}N$ attention score matrix in high-latency HBM. FlashAttention restructured the algorithm using tiling to keep running statistics in on-chip SRAM, computing the softmax without ever writing the full matrix to global memory. This reduced memory complexity to linear $O(N)$ and wall-clock time by 2--4$\times$. Within six months, it was integrated into PyTorch, TensorFlow, and JAX, becoming the default attention implementation for the industry.
+In 2022, Tri Dao challenged the prevailing wisdom that the attention mechanism's $O(N^2)$ complexity required better matrix multiplication kernels. His insight was that the bottleneck was not compute, but memory hierarchy. Standard attention materialized the massive $N{\times}N$ attention score matrix in high-latency HBM. FlashAttention restructured the algorithm using tiling to keep running statistics in on-chip SRAM, computing the softmax without ever writing the full matrix to global memory. This reduced memory complexity to linear $O(N)$ and wall-clock time by 2--4$\times$ on relevant attention workloads. It quickly influenced the attention kernels used across major ML frameworks and serving stacks.
 
 :::
 
-@fig-flashattention-memory-savings quantifies the memory advantage across sequence lengths. Standard attention allocates the full $N{\times}N$ score matrix in HBM, while FlashAttention maintains only $O(N)$ running statistics. Standard-attention memory grows quadratically with sequence length while FlashAttention memory grows linearly, so the savings ratio grows linearly: at a typical 8K context, FlashAttention uses 4,096$\times$ less attention memory; at 64K long-context, the savings reach 32,768$\times$.
+@fig-flashattention-memory-savings quantifies the workspace advantage across sequence lengths. Standard attention allocates the full $N{\times}N$ score matrix in HBM, while FlashAttention maintains only $O(N)$ running statistics. Standard-attention workspace grows quadratically with sequence length while FlashAttention's running state grows linearly, so the savings ratio grows linearly: at a typical 8K context, the quadratic score workspace alone is 4,096$\times$ larger than FlashAttention's running statistics; at 64K long-context, the ratio reaches 32,768$\times$.
 
 ::: {.callout-checkpoint title="FlashAttention mechanics"}
 
@@ -892,6 +947,7 @@ Verify your understanding of memory-aware attention:
 import numpy as np
 import matplotlib.pyplot as plt
 from mlsysim.core.constants import byte, GB
+from mlsysim.fmt import check
 
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.figure(figsize=(10, 6))
@@ -972,7 +1028,7 @@ fig = plt.gcf()
 
 :::
 
-FlashAttention eliminates the memory wall within a single GPU by tiling across the SRAM-HBM boundary. For sequence lengths that exceed the memory capacity of a single GPU, the same tiling principle extends across multiple GPUs via Ring Attention\index{Ring Attention}. By distributing the KV cache across a ring of accelerators and overlapping communication with computation, Ring Attention enables million-token context windows that would be impossible on single-GPU configurations. @sec-distributed-training-systems-systems-ring-attention examines the distributed mechanics of Ring Attention.
+FlashAttention reduces the memory wall within a single GPU by tiling across the SRAM-HBM boundary. For sequence lengths that exceed the memory capacity of a single GPU, the same tiling principle extends across multiple GPUs via Ring Attention\index{Ring Attention}. By distributing the KV cache across a ring of accelerators and overlapping communication with computation, Ring Attention enables context windows that would be impractical on single-GPU configurations. @sec-distributed-training-systems-systems-ring-attention examines the distributed mechanics of Ring Attention.
 
 ## Precision Engineering {#sec-performance-engineering-precision}
 
@@ -1004,7 +1060,7 @@ AWQ [Activation-Aware Weight Quantization; @lin2025] observes that not all weigh
 
 SmoothQuant\index{SmoothQuant} [@xiao2023smoothquant] takes yet another approach to the outlier problem. Rather than handling outliers at runtime (LLM.int8()) or through weight optimization (GPTQ, AWQ), SmoothQuant smooths the activation distribution *before* quantization by migrating the quantization difficulty from activations to weights. The key observation is that activation outliers are channel-specific: certain hidden dimensions consistently produce large values across all tokens. SmoothQuant applies a per-channel scaling transformation that divides the activation by a smoothing factor and multiplies the corresponding weight by the same factor. This mathematically equivalent transformation reduces activation outlier magnitudes at the cost of slightly increasing weight magnitudes, making both tensors more amenable to uniform INT8 quantization. The result is efficient W8A8 (weight-8-bit, activation-8-bit) quantization that exploits INT8 Tensor Cores for both bandwidth and compute benefits.
 
-These four approaches, LLM.int8(), GPTQ, AWQ, and SmoothQuant, represent a progression in the sophistication of quantization techniques for LLMs. LLM.int8() handles outliers at runtime with mixed-precision decomposition but limits compression to INT8. GPTQ uses second-order information for aggressive INT4 weight compression but requires hours of calibration per model. AWQ achieves similar INT4 quality with minutes of calibration by focusing on activation-aware scaling. SmoothQuant enables W8A8 quantization by preprocessing the weight-activation pairs. In practice, AWQ has become the default choice for weight-only quantization in production LLM deployment, while SmoothQuant is preferred when both weight and activation quantization are needed for compute-bound workloads.
+These four approaches, LLM.int8(), GPTQ, AWQ, and SmoothQuant, represent a progression in the sophistication of quantization techniques for LLMs. LLM.int8() handles outliers at runtime with mixed-precision decomposition but limits compression to INT8. GPTQ uses second-order information for aggressive INT4 weight compression but requires hours of calibration per model. AWQ achieves similar INT4 quality with minutes of calibration by focusing on activation-aware scaling. SmoothQuant enables W8A8 quantization by preprocessing the weight-activation pairs. In practice, AWQ is a common choice for weight-only quantization in production LLM deployment, while SmoothQuant is often used when both weight and activation quantization are needed for compute-bound workloads.
 
 The choice among these techniques also depends on the deployment target. For GPU inference with Tensor Core support, GPTQ and AWQ produce INT4 weight representations that are dequantized to FP16 during the GEMM computation, using the GPU's FP16 Tensor Cores. For CPU inference or edge deployment, INT8 representations (LLM.int8() or static per-channel INT8 quantization) can directly exploit integer arithmetic units without dequantization overhead.
 
@@ -1018,13 +1074,13 @@ For **Archetype C (Federated MobileNet)**, quantization is a prerequisite for su
 
 ### Post-training vs. quantization-aware training {#sec-performance-engineering-ptq-qat}
 
-The trade-off between **Post-Training Quantization (PTQ)**\index{Post-Training Quantization} and **Quantization-Aware Training (QAT)**\index{Quantization-Aware Training} centers on the balance between engineering agility and model fidelity. For a model like Llama-2-70B, PTQ is the default choice for immediate deployment. Techniques like GPTQ or AWQ process the model layer-by-layer using a small calibration dataset (typically 128--1024 samples) to minimize reconstruction error. This process is computationally cheap, requiring approximately 4--8 GPU-hours on a single H100 to quantize a 70B model to INT4. While PTQ preserves greater than 99 percent of accuracy at INT8, aggressive quantization to INT4 or INT3 often incurs a steep penalty: perplexity may degrade by 0.5--1.0 points, and reasoning performance on benchmarks like Massive Multitask Language Understanding (MMLU) can drop from 69 percent to below 64 percent.
+The trade-off between **Post-Training Quantization (PTQ)**\index{Post-Training Quantization} and **Quantization-Aware Training (QAT)**\index{Quantization-Aware Training} centers on the balance between engineering agility and model fidelity. For a model like Llama-2-70B, PTQ is the usual first choice for immediate deployment. Techniques like GPTQ or AWQ process the model layer-by-layer using a small calibration dataset (typically 128--1024 samples) to minimize reconstruction error. This process is computationally cheap, often requiring hours rather than a distributed training run for a 70B model. While PTQ is usually robust at INT8, aggressive quantization to INT4 or INT3 can incur a visible penalty: perplexity may degrade, and reasoning benchmarks such as Massive Multitask Language Understanding (MMLU) can drop several percentage points if the quantization recipe does not protect sensitive layers and outlier channels.
 
 When PTQ fails to meet quality thresholds, QAT provides the remedy by integrating quantization noise directly into the training loop. By simulating low-precision rounding during the forward pass and approximating gradients during the backward pass via the straight-through estimator[^fn-ste-quantization] (STE), the network learns to adjust its weights to be robust to quantization.
 
 [^fn-ste-quantization]: **Straight-Through Estimator (STE)**: Proposed by @bengio2013estimating, the STE handles a fundamental calculus problem: the gradient of a rounding function is zero almost everywhere, making backpropagation through quantized layers impossible by standard rules. The STE simply passes the upstream gradient through the rounding step unchanged, pretending the rounding did not happen. This mathematically unjustified approximation works in practice because it preserves the gradient's direction even though it ignores the rounding noise, enabling QAT to converge. \index{Straight-Through Estimator!quantization}
 
-The cost is substantial: QAT is effectively a full fine-tuning run, often requiring hundreds of GPU-hours and a distributed training cluster. For a 70B model, this might mean a 3-day run on 8$\times$ H100s compared to the 4-hour single-GPU job for PTQ. Emerging techniques like **QLoRA**\index{QLoRA} (Quantized Low-Rank Adaptation) bridge this gap by freezing the base model in 4-bit precision and fine-tuning only a small set of high-precision adapter weights. This hybrid approach offers the quality recovery of QAT with a memory footprint small enough to run on a single consumer GPU, effectively democratizing high-fidelity quantization.
+The cost is substantial: QAT is effectively a full fine-tuning run, often requiring hundreds of GPU-hours and a distributed training cluster. For a 70B model, this can mean a multi-day multi-GPU job instead of an hours-scale PTQ calibration run. Emerging techniques like **QLoRA**\index{QLoRA} (Quantized Low-Rank Adaptation) bridge this gap by freezing the base model in 4-bit precision and fine-tuning only a small set of high-precision adapter weights. This hybrid approach offers some of the quality recovery of QAT with a memory footprint small enough to run on much smaller hardware.
 
 The practical workflow in most production environments follows a two-stage approach: deploy with PTQ first (because it is fast and requires no training infrastructure), then apply QAT or QLoRA only if the PTQ model fails to meet quality requirements at the target precision. This sequence minimizes engineering effort while preserving the option of higher quality when needed.
 
@@ -1085,7 +1141,6 @@ class KVCacheAnalysis:
     # Max batch calculations
     # Step 2: FP16 case: 45 GB available for KV
     avail_fp16_gb = gpu_total_gb - weight_fp16_shard_gb
-    max_batch_fp16_val = int(avail_fp16_gb / (kv_fp16_gb_val / 4)) # shared across 4 GPUs?
     max_batch_fp16_val = int(avail_fp16_gb / (kv_fp16_gb_val / 4))
 
     # Step 6: INT8 case
@@ -1101,6 +1156,9 @@ class KVCacheAnalysis:
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     kv_fp16_gb_str = fmt(kv_fp16_gb_val, precision=2, commas=False)
+    kv_fp16_per_gpu_gb_str = fmt(kv_fp16_gb_val/4, precision=4, commas=False)
+    kv_int8_total_gb_str = fmt(kv_fp16_gb_val/2, precision=3, commas=False)
+    kv_int8_per_gpu_gb_str = fmt(kv_fp16_gb_val/2/4, precision=4, commas=False)
     max_batch_fp16_str = fmt(max_batch_fp16_val, precision=0, commas=False)
     max_batch_int8_str = fmt(max_batch_int8_val, precision=0, commas=False)
     batch_ratio_str = fmt(batch_ratio, precision=1, commas=False)
@@ -1117,21 +1175,21 @@ class KVCacheAnalysis:
 
 - Weights: 35 GB/GPU
 - Available for KV cache: $80 - 35 =$ `{python} KVCacheAnalysis.avail_fp16_gb_str` GB/GPU
-- KV cache per request: `{python} KVCacheAnalysis.kv_fp16_gb_str` GB total, or approximately `{python} f"{KVCacheAnalysis.kv_fp16_gb_val/4:.4f}"` GB/GPU
+- KV cache per request: `{python} KVCacheAnalysis.kv_fp16_gb_str` GB total, or approximately `{python} KVCacheAnalysis.kv_fp16_per_gpu_gb_str` GB/GPU
 - Maximum batch size: approximately `{python} KVCacheAnalysis.max_batch_fp16_str` requests
 
 **After optimization** (INT4 weights, INT8 KV cache):
 
 - Weights: 35 GB $\times$ (4/16) = `{python} KVCacheAnalysis.weight_int4_gb_str` GB/GPU (INT4)
 - Available for KV cache: $80 -$ `{python} KVCacheAnalysis.weight_int4_gb_str` $=$ `{python} KVCacheAnalysis.avail_int8_gb_str` GB/GPU
-- KV cache per request (INT8): approximately `{python} f"{KVCacheAnalysis.kv_fp16_gb_val/2:.3f}"` GB total, or `{python} f"{KVCacheAnalysis.kv_fp16_gb_val/2/4:.4f}"` GB/GPU
+- KV cache per request (INT8): approximately `{python} KVCacheAnalysis.kv_int8_total_gb_str` GB total, or `{python} KVCacheAnalysis.kv_int8_per_gpu_gb_str` GB/GPU
 - Maximum batch size: approximately `{python} KVCacheAnalysis.max_batch_int8_str` requests
 
 **Systems insight**: Precision engineering changes serving economics by enabling larger batch sizes. Larger batches amortize the fixed cost of weight loading, shifting operations from memory-bound toward compute-bound. This single optimization can increase throughput by `{python} KVCacheAnalysis.batch_ratio_str`$\times$ or more.
 
 :::
 
-Precision engineering reduces the bytes per memory transaction. Operator fusion reduces the number of transactions. Together, they attack the same fundamental bottleneck from complementary directions: when data must traverse a slow bus, move less of it (precision) and move it fewer times (fusion). The multiplicative interaction between these two techniques explains why modern serving systems deploy both simultaneously: FlashAttention reduces attention HBM traffic from quadratic to linear, and INT8 KV cache compression further halves the linear term. The combined effect exceeds what either technique achieves alone.
+Precision engineering reduces the bytes per memory transaction. Operator fusion reduces the number of transactions. Together, they attack the same fundamental bottleneck from complementary directions: when data must traverse a slow bus, move less of it (precision) and move it fewer times (fusion). The multiplicative interaction between these two techniques explains why modern serving systems deploy both simultaneously: FlashAttention removes the quadratic attention intermediates, and INT8 KV cache compression further halves the remaining KV-cache bytes. The combined effect exceeds what either technique achieves alone.
 
 Graph compilers automate both of these optimizations, applying them systematically across an entire model.
 
@@ -1153,7 +1211,7 @@ During **graph-level optimization**\index{Optimization!graph-level}, the compile
 
 The operator fusion pass is the most critical for performance. It identifies sequences of operations that can be combined into single kernels to reduce memory traffic. For the FFN block, the compiler fuses the `GELU` activation into the tail of the first `Linear` kernel (if supported as an epilogue) or fuses the `GELU` and the subsequent `LayerNorm` into a single kernel. Instead of writing the intermediate result of the first `Linear` to HBM and reading it back for `GELU`, the fused kernel keeps the data in the GPU's SRAM or registers. This typically reduces the number of HBM accesses by 30--50 percent, directly alleviating the memory bandwidth bottleneck.
 
-The memory planning pass determines when to allocate and free tensors. Without optimization, a 24-layer transformer might allocate separate buffers for every intermediate activation. The compiler analyzes tensor lifetimes, recognizing that the input to the first `Linear` is no longer needed after the second `Linear` computes its output, and reuses the same physical memory addresses. For a 70B model where activations can consume gigabytes per layer, this buffer reuse reduces peak memory requirements from $O(L)$ to $O(1)$, where $L$ is the number of layers. For a model where activations consume 10 GB per layer across 80 layers, this optimization reduces peak activation memory from 800 GB (impossible on any single GPU) to approximately 10--20 GB (comfortably within a single H100). Memory planning also interacts with operator fusion: fusing two operations eliminates the intermediate tensor between them, which both removes the HBM traffic and removes the memory allocation. The compiler must reason about both effects jointly to make profitable decisions.
+The memory planning pass determines when to allocate and free tensors. Without optimization, a transformer might allocate separate buffers for every intermediate activation. The compiler analyzes tensor lifetimes, recognizing that the input to the first `Linear` is no longer needed after the second `Linear` computes its output, and reuses the same physical memory addresses. For inference and other forward-only workloads, this buffer reuse can turn peak temporary memory from the sum of many layer-local buffers into the maximum live working set. Training activations that must be saved for the backward pass require checkpointing or rematerialization; ordinary buffer reuse cannot make those saved tensors disappear. Memory planning also interacts with operator fusion: fusing two operations eliminates the intermediate tensor between them, which both removes the HBM traffic and removes the memory allocation. The compiler must reason about both effects jointly to make profitable decisions.
 
 The kernel selection pass maps each fused operation to a specific machine code implementation. For the computationally heavy linear projections, the compiler selects a vendor-optimized cuBLAS or CUTLASS GEMM kernel. For the fused `GELU-LayerNorm` sequence, it generates a custom Triton kernel that keeps data in SRAM. The result for the FFN block is a reduction from 4 separate kernels to 2 highly optimized kernels, with a corresponding reduction in global memory traffic.
 
@@ -1203,7 +1261,7 @@ XLA (Accelerated Linear Algebra\index{Accelerated Linear Algebra}) is Google's g
 
 The global view enables XLA's most distinctive capability: the **GSPMD (General Partitioner for SPMD)**\index{GSPMD}. In distributed training, GSPMD automatically partitions the computation graph across thousands of TPU cores based on a few high-level user annotations. While a PyTorch user must manually wrap models with `DistributedDataParallel` or `FullyShardedDataParallel`, an XLA user defines the computation for a single device and allows the compiler to infer the necessary communication primitives (AllReduce, AllGather) and insert them into the graph. This allows for complex hybrid sharding strategies that are difficult to implement manually.
 
-For TPU hardware specifically, XLA performs layout optimizations unavailable on other platforms. It maps matrix multiplications onto the TPU's systolic array architecture, padding dimensions to align with the $128{\times}128$ hardware units and scheduling instructions to hide the latency of HBM fetches. The impact of these optimizations is visible in MFU metrics. On large-scale LLM training workloads, JAX/XLA on TPUv4 typically achieves 55--65 percent MFU, outperforming the 40--55 percent MFU typical of PyTorch/GPU setups without extensive hand-tuning.
+For TPU hardware specifically, XLA performs layout optimizations unavailable on other platforms. It maps matrix multiplications onto the TPU's systolic array architecture, padding dimensions to align with the $128{\times}128$ hardware units and scheduling instructions to hide the latency of HBM fetches. The impact of these optimizations is visible in MFU metrics. On large-scale LLM training workloads, highly tuned JAX/XLA TPU runs often report MFU in the 55--65 percent range, while less-tuned PyTorch/GPU setups commonly sit lower.
 
 The trade-off for XLA's performance is compilation latency and rigidity. Because XLA must analyze the full static graph, initial compilation can take minutes for large models, compared to seconds for `torch.compile`. Any change in input shape triggers a full recompilation. This makes XLA excellent for steady-state production workloads where the graph is static and the model runs for days or weeks, but challenging for research environments involving dynamic shapes or rapid experimental iteration. The choice between `torch.compile` and XLA often depends on the deployment context: organizations using NVIDIA GPUs predominantly use PyTorch with `torch.compile`, while organizations using Google TPUs use JAX with XLA.
 
@@ -1213,7 +1271,7 @@ NVIDIA TensorRT is a specialized inference compiler that treats the model not as
 
 This calibration enables **mixed-precision quantization** at a granular level. Blindly quantizing all layers of a 70B parameter LLM to INT8 often degrades perplexity. TensorRT can calibrate INT8 ranges from representative data and can build mixed-precision inference engines when precisions are enabled or constrained; for LLMs, layer-wise fallback policies usually require explicit quantization analysis or user-specified precision constraints. TensorRT also eliminates training-only operations (dropout, batch normalization running statistics updates), optimizes for static shapes by generating kernels tuned for exact dimensions, and plans memory precisely since no gradient tensors are needed.
 
-TensorRT performs **kernel autotuning**\index{Kernel Autotuning} far beyond simple heuristics. For every operation in the graph, it benchmarks dozens of candidate kernels, varying tile sizes, thread block configurations, and unrolling factors, on the actual target hardware. It selects the single fastest implementation for that specific GPU and input shape. The performance gap between TensorRT and general-purpose compilers is substantial: in head-to-head comparisons for serving a 70B LLM, TensorRT-LLM typically achieves 1.3--1.8$\times$ higher throughput than `torch.compile` with TorchInductor.
+TensorRT performs **kernel autotuning**\index{Kernel Autotuning} far beyond simple heuristics. For every operation in the graph, it benchmarks dozens of candidate kernels, varying tile sizes, thread block configurations, and unrolling factors, on the actual target hardware. It selects the fastest implementation for that specific GPU and input shape. The performance gap between TensorRT and general-purpose compilers can be substantial, especially for stable inference workloads where the engine can specialize aggressively to a fixed shape range and GPU architecture.
 
 The trade-off for TensorRT's aggressive optimization is reduced flexibility and high compilation cost. Compilation times are measured in minutes to hours (30--60 minutes for a 70B model), and the resulting engine is strictly tied to the specific GPU architecture and input shape range. Changing any of these requires recompilation. This makes TensorRT the standard for stable, high-volume production deployments, while `torch.compile` remains the preferred choice for development and lower-volume services where rapid iteration matters more than extracting the last percentage of throughput.
 
@@ -1702,7 +1760,7 @@ ML system performance is characterized by a family of metrics, each capturing a 
 
 Model FLOPs Utilization (MFU) measures what fraction of the hardware's theoretical peak is being productively used by the model's computation. MFU captures the combined effect of all inefficiencies: memory bandwidth limitations, kernel launch overhead, communication wait time, and software stack overhead. For large-scale LLM training, MFU of 40--60 percent is typical; values above 60 percent indicate excellent optimization.
 
-Hardware FLOPs Utilization (HFU) is the simpler metric: total arithmetic operations executed (including overhead like activation recomputation) divided by peak FLOPS. HFU is always higher than MFU because it counts recomputed operations that do not directly advance the model's computation. The gap between HFU and MFU quantifies the "wasted" compute from techniques like activation checkpointing.
+Hardware FLOPs Utilization (HFU) is the simpler metric: total arithmetic operations executed (including overhead like activation recomputation) divided by peak FLOPS. HFU is usually at least as high as MFU because it counts recomputed operations that do not directly advance the model's computation. The gap between HFU and MFU quantifies the "wasted" compute from techniques like activation checkpointing.
 
 Time-to-first-token (TTFT) measures the latency from when a request arrives to when the first output token is generated. TTFT includes queue waiting time, prefill computation, and any initialization overhead. For interactive applications, TTFT below 500 ms is generally acceptable; below 200 ms feels responsive.
 
@@ -1722,7 +1780,7 @@ The roofline model from @sec-performance-engineering-roofline becomes a diagnost
 
 A kernel that falls far below both the compute ceiling and the bandwidth ceiling has an implementation problem: launch overhead, poor memory access patterns, or low occupancy. A kernel that reaches the bandwidth ceiling but falls below the compute ceiling is memory-bound, and further optimization requires reducing memory traffic (fusion, precision) rather than improving compute efficiency. A kernel at the compute ceiling is compute-bound and can only be improved by algorithmic changes (reducing FLOPs) or faster hardware.
 
-Consider a concrete example: a LayerNorm kernel profiled on an H100 reports 15 TFLOPS of achieved compute and 2.8 TB/s of achieved memory bandwidth. Its arithmetic intensity is $15 \text{ TFLOPS} / 2.8 \text{ TB/s} \approx 5.4$ FLOP/byte. The H100's ridge point is approximately `{python} RooflineRidgeCalc.h100_fp16_ridge_str` FLOP/byte at FP16. Since 5.4 is far below `{python} RooflineRidgeCalc.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved 2.8 TB/s (84 percent of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield zero gain; performance can only be improved by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
+Consider a concrete example: a LayerNorm kernel profiled on an H100 reports 15 TFLOPS of achieved compute and 2.8 TB/s of achieved memory bandwidth. Its arithmetic intensity is $15 \text{ TFLOPS} / 2.8 \text{ TB/s} \approx 5.4$ FLOP/byte. The H100's ridge point is approximately `{python} RooflineRidgeCalc.h100_fp16_ridge_str` FLOP/byte at FP16. Since 5.4 is far below `{python} RooflineRidgeCalc.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved 2.8 TB/s (84 percent of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield little gain; performance can only be improved materially by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
 
 ### PyTorch profiler workflow {#sec-performance-engineering-pytorch-profiler}
 
@@ -2026,7 +2084,7 @@ The most performant production systems combine multiple techniques simultaneousl
 
 The speedups from these techniques are not additive; they interact in ways that demand careful sequencing. For instance, INT4 weight quantization reduces per-token HBM traffic by 4$\times$, which might shift the bottleneck from memory-bound to compute-bound. Once compute-bound, further bandwidth optimizations (KV cache compression) yield diminishing returns, and compute optimizations (FP8 Tensor Cores) become the priority. This is why the iterative profile-optimize-verify loop is essential: the optimal combination depends on the specific model, hardware, and workload characteristics.
 
-The interaction between optimizations creates a dependency graph that the performance engineer must navigate. Some combinations are synergistic: FlashAttention reduces attention memory traffic, and INT8 KV cache compression reduces KV cache memory, together freeing enough memory for larger batch sizes that transform the economics of serving. Other combinations are redundant: applying both CUDA Graphs and the `reduce-overhead` mode of `torch.compile` achieves the same result, since `reduce-overhead` internally uses CUDA Graphs. Still other combinations conflict: speculative decoding benefits most at small batch sizes (where decode is memory-bound), while many throughput optimizations work by increasing batch size. At large batch sizes, speculation adds overhead without proportional benefit.
+The interaction between optimizations creates a dependency graph that the performance engineer must navigate. Some combinations are synergistic: FlashAttention removes attention intermediates, and INT8 KV cache compression reduces KV cache memory, together freeing enough memory for larger batch sizes that transform the economics of serving. Other combinations are redundant: applying both CUDA Graphs and the `reduce-overhead` mode of `torch.compile` achieves the same result, since `reduce-overhead` internally uses CUDA Graphs. Still other combinations conflict: speculative decoding benefits most at small batch sizes (where decode is memory-bound), while many throughput optimizations work by increasing batch size. At large batch sizes, speculation adds overhead without proportional benefit.
 
 A practical heuristic for sequencing optimizations is to apply them in order of decreasing impact and increasing effort:
 
@@ -2181,7 +2239,7 @@ Performance engineering transforms a model that should be efficient into one tha
 
 The Roofline Model provides the diagnostic framework, classifying operations as compute-bound or memory-bound based on their arithmetic intensity relative to the hardware's ridge point. For the NVIDIA H100, this ridge point is approximately `{python} RooflineRidgeCalc.h100_fp16_ridge_str` FLOP/byte at FP16, meaning most transformer operations fall in the memory-bound regime.
 
-Operator fusion eliminates redundant HBM round-trips by combining sequences of operations into single kernels. FlashAttention is the canonical example, reducing attention HBM traffic by `{python} FlashAttentionSavings.savings_str`$\times$ for long sequences through tiling and online softmax. Ring Attention extends this principle across GPUs for extreme sequence lengths.
+Operator fusion eliminates redundant HBM round-trips by combining sequences of operations into single kernels. FlashAttention is the canonical example, avoiding the quadratic attention intermediates that dominate long sequences through tiling and online softmax. In the 8K example above, this is a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in materialized attention state. Ring Attention extends this principle across GPUs for extreme sequence lengths.
 
 Precision engineering reduces bytes per transaction. FP8 formats (E4M3 for weights, E5M2 for gradients) double effective bandwidth on H100 hardware. Block-wise quantization (LLM.int8(), GPTQ, AWQ) handles the outlier features that defeat uniform quantization. KV cache compression to INT4 or INT8 directly increases serving batch size.
 
@@ -2189,7 +2247,7 @@ Graph compilation automates fusion, kernel selection, and memory planning. torch
 
 Speculative decoding trades extra compute for lower latency by using a fast draft model to generate candidate tokens verified in parallel by the target model, with mathematical guarantees on output quality. Speedups of 1.5--3$\times$ are typical for diverse workloads.
 
-Mixture of Experts decouples model capacity from per-token inference cost through sparse activation. DeepSeek-V3 demonstrates the frontier: 671B total parameters with only 37B active per token.
+Mixture of Experts decouples model capacity from per-token inference cost through sparse activation. Public MoE systems illustrate the scale: models such as DeepSeek-V3 report hundreds of billions of total parameters with only tens of billions active per token.
 
 Communication-computation overlap hides network latency by executing communication and computation concurrently on separate hardware engines. Zero-bubble pipeline schedules approach the theoretical minimum idle time.
 
@@ -2204,7 +2262,7 @@ The unifying principle is that performance engineering is not about making hardw
 ::: {.callout-takeaways title="Match the software to the silicon"}
 
 * The memory wall is the defining constraint of modern ML performance: most transformer operations are memory-bound, with arithmetic intensity far below the hardware ridge point. Performance engineering is primarily about reducing bytes moved, not operations computed.
-* **Operator Fusion** and **Tiling** (FlashAttention) eliminate redundant HBM traffic by keeping intermediate results in on-chip SRAM, reducing attention memory traffic from quadratic to linear in sequence length.
+* **Operator Fusion** and **Tiling** (FlashAttention) eliminate redundant HBM traffic by keeping intermediate results in on-chip SRAM and avoiding the quadratic attention intermediates that dominate long-context memory use.
 * **Precision Engineering** doubles effective bandwidth by reducing numerical representation (FP8, INT4), but requires careful handling of outlier features (LLM.int8(), GPTQ, AWQ) and dynamic scaling for training stability.
 * **Graph Compilation**\index{Graph Compilation!graph capture}\index{Graph Compilation!memory planning}\index{Graph Compilation!kernel selection} (torch.compile, XLA, TensorRT) automates known optimizations across the entire model graph, but cannot discover algorithmic innovations like FlashAttention or speculative decoding.
 * **Speculative Decoding** reduces *latency* for memory-bound decode without changing precision or batch size by trading abundant compute for scarce bandwidth through parallel verification of draft tokens.

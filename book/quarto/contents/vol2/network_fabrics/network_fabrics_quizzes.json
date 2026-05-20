@@ -58,11 +58,11 @@
             "question": "Two training jobs run on the same 1,024-GPU fabric. Job X performs an AllReduce of a 350 GB gradient buffer once per step. Job Y runs a mixture-of-experts model whose AllToAll must route a token from each expert to every other expert on every forward pass. Which statement best describes why Job Y stresses the fabric more per unit of useful work, and what design response is most appropriate?",
             "choices": [
               "Both operations stress the fabric identically because their total bytes moved is the same, so the only response needed is a faster link speed.",
-              "Unique-pairwise exchange in AllToAll creates dense cross-sectional traffic that cannot be decomposed into ring or tree patterns the way AllReduce can, so it saturates bisection bandwidth and benefits disproportionately from rail-optimized or high-bisection topologies.",
+              "Unique-pairwise exchange in AllToAll creates dense cross-sectional traffic that cannot be decomposed into ring or tree patterns the way AllReduce can, so it saturates bisection bandwidth and benefits disproportionately from high-bisection, adaptively routed topologies.",
               "AllReduce is unavoidably worse because gradient data is larger than activation data, so Job X is always the stressor regardless of topology.",
               "Job Y is cheaper per step because MoE models route only a small subset of tokens, so AllToAll traffic is always negligible compared to AllReduce."
             ],
-            "answer": "The correct answer is B. AllToAll forces each worker to send a distinct payload to every other worker, producing pairwise cross-fabric flows that stress the bisection cut; AllReduce decomposes into recursive-halving or ring patterns that reuse links and amortize bandwidth. An argument resting on 'same total bytes' misses that fabric stress depends on concurrent cross-sectional traffic, not cumulative volume — AllReduce traffic can be serialized across a ring, AllToAll cannot. The claim that AllReduce is always the stressor ignores that MoE workloads routinely make AllToAll the dominant collective, which is exactly why rail-optimized and high-bisection topologies are marketed for MoE-heavy deployments.",
+            "answer": "The correct answer is B. AllToAll forces each worker to send a distinct payload to every other worker, producing pairwise cross-fabric flows that stress the bisection cut; AllReduce decomposes into recursive-halving or ring patterns that reuse links and amortize bandwidth. An argument resting on 'same total bytes' misses that fabric stress depends on concurrent cross-sectional traffic, not cumulative volume — AllReduce traffic can be serialized across a ring, AllToAll cannot. The claim that AllReduce is always the stressor ignores that MoE workloads routinely make AllToAll the dominant collective, which is exactly why high-bisection topologies, adaptive routing, and congestion control matter for MoE-heavy deployments.",
             "learning_objective": "Compare AllReduce and AllToAll traffic patterns by the fabric stress they create and map each to the topology features that address it"
           },
           {
@@ -284,10 +284,10 @@
           "focus_areas": [
             "bisection bandwidth as the global-collective ceiling",
             "oversubscription and the ToR as a failure-domain boundary",
-            "rail-optimized fabrics for tensor parallelism",
+            "rail-optimized fabrics for same-rank data-parallel AllReduce",
             "fat-tree, dragonfly, and torus trade-offs for mixed workloads"
           ],
-          "question_strategy": "Open with the bisection-bandwidth identification, quantitatively analyze 4:1 oversubscription's cost, explain why rail-optimized helps tensor parallelism, test ToR failure-domain reasoning as a mechanism (replacing the trivia 'failure' FILL), and end with a topology-selection scenario and a hybrid-fabric synthesis.",
+          "question_strategy": "Open with the bisection-bandwidth identification, quantitatively analyze 4:1 oversubscription's cost, explain why rail-optimized helps same-rank data-parallel traffic, test ToR failure-domain reasoning as a mechanism (replacing the trivia 'failure' FILL), and end with a topology-selection scenario and a hybrid-fabric synthesis.",
           "difficulty_progression": "Moves from the bisection metric, to quantitative oversubscription consequences, to workload-topology matching, to reliability reasoning, to a topology-selection decision, and finally to a hybrid-design synthesis.",
           "integration": "Builds on the alpha-beta model and connects to prior parallelism vocabulary from training chapters.",
           "ranking_explanation": "Topology is explicitly called out in the learning objectives and contains several core architectural trade-offs, so it merits a full quiz."
@@ -313,15 +313,15 @@
           },
           {
             "question_type": "MCQ",
-            "question": "Why does a rail-optimized fabric benefit tensor-parallel traffic more than data-parallel traffic in a 1,024-GPU cluster?",
+            "question": "Why does a rail-optimized fabric primarily benefit same-rank data-parallel traffic in a 1,024-GPU cluster?",
             "choices": [
-              "Tensor-parallel activation exchanges happen between corresponding GPU ranks across nodes and can stay on dedicated rails, avoiding cross-rail hops for the latency-sensitive hot path; data-parallel gradient reduction traverses the full fabric anyway, so rails provide less specific benefit.",
+              "Data-parallel gradient synchronization often occurs between corresponding GPU ranks across nodes, so dedicated rails keep that traffic on short same-rank paths; tensor-parallel activation exchange is usually kept inside the node on NVLink.",
               "Data parallelism never uses collective communication, so no topology change can affect it.",
               "Rail optimization raises per-GPU FLOPS by dedicating one switch per accelerator.",
               "Rail optimization eliminates the need for any spine connectivity across the cluster."
             ],
-            "answer": "The correct answer is A. Tensor-parallel groups exchange activations between corresponding ranks (GPU i on node 1 talks to GPU i on node 2), so dedicated rails keep that traffic off the cross-rail spine, shortening paths and reducing contention. Data-parallel AllReduce aggregates gradients across all ranks globally, so it still uses the spine regardless of rails — the rail optimization is workload-specific. The FLOPS claim confuses networking with compute, and the spine-elimination answer misreads rail-optimized designs, which keep a spine for all-to-all and global reduction.",
-            "learning_objective": "Explain why rail-optimized wiring aligns with tensor-parallel communication patterns and gives less benefit to data-parallel traffic"
+            "answer": "The correct answer is A. In common 3D-parallel layouts, tensor-parallel groups stay inside each node, while the same local GPU rank in each replica participates in the data-parallel gradient exchange. Dedicated rails let GPU i on one node communicate with GPU i on other nodes over short, isolated paths, reducing hop count and contention for the AllReduce critical path. The FLOPS claim confuses networking with compute, and the spine-elimination answer misreads rail-optimized designs, which still need spine connectivity for cross-rank, pipeline, and AllToAll traffic.",
+            "learning_objective": "Explain why rail-optimized wiring aligns with same-rank data-parallel gradient synchronization"
           },
           {
             "question_type": "SHORT",
@@ -335,17 +335,17 @@
             "choices": [
               "Torus, because nearest-neighbor links naturally absorb arbitrary global traffic regardless of placement.",
               "Dragonfly, because group oversubscription guarantees full bandwidth under every placement choice.",
-              "Rail-only network with no cross-rail spine, because tensor-parallel traffic dominates every ML workload.",
+              "Rail-only network with no cross-rail spine, because same-rank data-parallel traffic is the only workload that matters.",
               "Fat-tree (Clos), because it provides full bisection bandwidth and many equal-cost global paths, so job placement is decoupled from performance."
             ],
-            "answer": "The correct answer is D. Fat-trees are the standard choice when placement is unpredictable and jobs need universally high bandwidth; the many equal-cost paths mean a scheduler does not have to reason about topology-aware placement to get good performance. Dragonfly trades cabling cost for group-local bandwidth, but jobs spanning groups suffer a real performance cliff. Torus is excellent for nearest-neighbor workloads (some HPC codes) but punishes arbitrary AllReduce and AllToAll with extra hops. A rail-only fabric over-specializes for tensor-parallel traffic and fails under MoE AllToAll.",
+            "answer": "The correct answer is D. Fat-trees are the standard choice when placement is unpredictable and jobs need universally high bandwidth; the many equal-cost paths mean a scheduler does not have to reason about topology-aware placement to get good performance. Dragonfly trades cabling cost for group-local bandwidth, but jobs spanning groups suffer a real performance cliff. Torus is excellent for nearest-neighbor workloads (some HPC codes) but punishes arbitrary AllReduce and AllToAll with extra hops. A rail-only fabric over-specializes for same-rank data-parallel traffic and fails under MoE AllToAll.",
             "learning_objective": "Select an appropriate topology for unpredictable mixed workloads by weighing universality against cabling and switch cost"
           },
           {
             "question_type": "SHORT",
-            "question": "A production cluster will run both 3D-parallel LLM training (heavy tensor-parallel and pipeline-parallel traffic) and MoE workloads (heavy AllToAll). Justify why a hybrid design — rail-optimized inside groups plus a fat-tree spine between groups — may outperform either a pure rail-optimized or pure fat-tree fabric.",
-            "answer": "Pure rail-optimized excels at predictable tensor-parallel traffic but struggles with the dense, unstructured AllToAll that MoE inference and training produce, because AllToAll cannot be confined to a single rail. Pure fat-tree gives universal bisection for AllToAll but forces tensor-parallel activation exchange to compete for spine bandwidth with global data-parallel AllReduce, adding latency to the hottest path. A hybrid preserves low-hop rail paths for tensor-parallel traffic (which is latency-sensitive and rank-aligned) while providing fat-tree-style spine capacity for global and many-to-many communication (which is bandwidth-hungry and unstructured). The consequence is that each workload gets topology features matched to its communication pattern, without forcing every workload through a single-pattern fabric.",
-            "learning_objective": "Evaluate topology trade-offs for a cluster serving both structured tensor-parallel and unstructured AllToAll workloads, and justify a hybrid design"
+            "question": "A production cluster will run both 3D-parallel LLM training (structured same-rank data-parallel AllReduce plus pipeline traffic) and MoE workloads (heavy AllToAll). Justify why a hybrid design — rail-optimized inside groups plus a fat-tree spine between groups — may outperform either a pure rail-optimized or pure fat-tree fabric.",
+            "answer": "Pure rail-optimized excels at predictable same-rank data-parallel AllReduce but struggles with the dense, unstructured AllToAll that MoE inference and training produce, because AllToAll cannot be confined to a single rail. Pure fat-tree gives universal bisection for AllToAll but can add extra hops and contention for the structured same-rank gradient path. A hybrid preserves low-hop rail paths for data-parallel gradient synchronization while providing fat-tree-style spine capacity for cross-rank, pipeline, and many-to-many communication. The consequence is that each workload gets topology features matched to its communication pattern, without forcing every workload through a single-pattern fabric.",
+            "learning_objective": "Evaluate topology trade-offs for a cluster serving both structured same-rank AllReduce and unstructured AllToAll workloads, and justify a hybrid design"
           }
         ]
       }
@@ -698,7 +698,7 @@
           {
             "question_type": "SHORT",
             "question": "Explain why this chapter argues that diagnosing a slow 1,000-GPU training run requires reasoning across multiple levels of the five-level model rather than blaming 'the network' as a single entity.",
-            "answer": "A slowdown visible as reduced MFU at the application layer can originate at any level. A degraded physical link (Level 1) can silently renegotiate to half its rate. A transport-level issue (Level 2) such as a high packet loss rate can trigger Go-Back-N cascades. Topology-level oversubscription (Level 3) can starve bisection bandwidth for global collectives. Fabric-behavior pathologies (Level 4) such as PFC storms or incast can make a healthy topology underperform. Operational issues (Level 5) such as mispplaced jobs or noisy neighbors in a multi-tenant cluster can expose any of the above. The same application symptom — 15 percent MFU drop — has entirely different root causes at each level, so effective engineering requires a top-down diagnosis that rules out each layer in turn, not a single-layer explanation. The practical consequence is that production ML infrastructure teams need the full layered model as their mental map, not a flat 'the network is slow' rubric.",
+            "answer": "A slowdown visible as reduced MFU at the application layer can originate at any level. A degraded physical link (Level 1) can silently renegotiate to half its rate. A transport-level issue (Level 2) such as a high packet loss rate can trigger Go-Back-N cascades. Topology-level oversubscription (Level 3) can starve bisection bandwidth for global collectives. Fabric-behavior pathologies (Level 4) such as PFC storms or incast can make a healthy topology underperform. Operational issues (Level 5) such as misplaced jobs or noisy neighbors in a multi-tenant cluster can expose any of the above. The same application symptom — 15 percent MFU drop — has entirely different root causes at each level, so effective engineering requires a top-down diagnosis that rules out each layer in turn, not a single-layer explanation. The practical consequence is that production ML infrastructure teams need the full layered model as their mental map, not a flat 'the network is slow' rubric.",
             "learning_objective": "Synthesize the five-level model into a cross-layer diagnostic discipline for distributed-training slowdowns"
           },
           {

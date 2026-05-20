@@ -336,11 +336,11 @@ class MaintenanceCommand:
             return False
 
         if ns.topic == "glossary":
-            if ns.action not in (None, "build"):
-                console.print("[red]❌ Supported action: maintain glossary build[/red]")
+            if ns.action not in (None, "paths"):
+                console.print("[red]❌ Supported action: maintain glossary paths[/red]")
                 return False
             volume = "vol1" if ns.vol1 and not ns.vol2 else "vol2" if ns.vol2 and not ns.vol1 else None
-            return self._maintain_glossary_build(volume=volume)
+            return self._maintain_glossary_paths(volume=volume)
 
         if ns.topic == "images":
             if ns.action not in (None, "compress"):
@@ -844,104 +844,24 @@ class MaintenanceCommand:
             console.print("[dim]  (dry-run — no files modified)[/dim]")
         return True
 
-    def _maintain_glossary_build(self, volume: str = None) -> bool:
-        """Build deduplicated volume glossary JSON files from chapter glossaries."""
+    def _maintain_glossary_paths(self, volume: str = None) -> bool:
+        """Show the canonical glossary source files."""
         book_dir = self.config_manager.book_dir
         volumes = [volume] if volume else ["vol1", "vol2"]
-        built = 0
-
-        def standardize_term_name(term: str) -> str:
-            return re.sub(r"[_\s]+", " ", term.strip().lower())
-
-        def find_best_definition(definitions_with_chapters):
-            if len(definitions_with_chapters) == 1:
-                return definitions_with_chapters[0]["definition"]
-
-            priority_chapters = ["nn_computation", "training", "ml_systems", "nn_architectures"]
-            for chapter_name in priority_chapters:
-                for item in definitions_with_chapters:
-                    if item["chapter"] == chapter_name and not item["definition"].startswith("Alternative definition:"):
-                        return item["definition"]
-
-            clean_definitions = []
-            for item in definitions_with_chapters:
-                def_text = item["definition"]
-                if "Alternative definition:" in def_text:
-                    def_text = def_text.split("Alternative definition:")[0].strip()
-                clean_definitions.append((def_text, item["chapter"]))
-            best_def, _ = max(clean_definitions, key=lambda x: len(x[0]))
-            return best_def.rstrip(".")
+        console.print("[bold]Glossary source of truth[/bold]")
+        console.print("The book renders glossary content directly from the volume QMD files.")
+        console.print("Glossary JSON generation has been retired to avoid stale parallel sources.\n")
 
         for vol in volumes:
-            source_files = sorted((book_dir / "contents" / vol).glob("**/*_glossary.json"))
-            if not source_files:
-                console.print(f"[yellow]⚠️ No chapter glossary JSON files found for {vol}[/yellow]")
-                continue
+            path = book_dir / "contents" / vol / "backmatter" / "glossary" / "glossary.qmd"
+            label = "Volume I" if vol == "vol1" else "Volume II"
+            if path.exists():
+                console.print(f"[green]✓[/green] {label}: {path}")
+            else:
+                console.print(f"[red]✗[/red] {label}: missing {path}")
+                return False
 
-            chapter_data = {}
-            for json_path in source_files:
-                try:
-                    with open(json_path, "r", encoding="utf-8") as handle:
-                        data = json.load(handle)
-                    chapter = data["metadata"]["chapter"]
-                    chapter_data[chapter] = data["terms"]
-                except Exception as exc:
-                    console.print(f"[yellow]⚠️ Skipping {json_path}: {exc}[/yellow]")
-
-            term_groups = defaultdict(list)
-            for chapter, terms in chapter_data.items():
-                for term_entry in terms:
-                    std_name = standardize_term_name(term_entry["term"])
-                    term_groups[std_name].append(
-                        {
-                            "original_term": term_entry["term"],
-                            "definition": term_entry["definition"],
-                            "chapter": chapter,
-                        }
-                    )
-
-            clean_terms = []
-            for _, group in sorted(term_groups.items()):
-                term_names = [item["original_term"] for item in group]
-                best_term_name = min(term_names, key=lambda x: (len(x), "_" in x, x.lower()))
-                best_definition = find_best_definition(group)
-                unique_chapters = sorted({item["chapter"] for item in group})
-                chapter_source = unique_chapters[0]
-
-                clean_term = {
-                    "term": best_term_name.lower(),
-                    "definition": best_definition,
-                    "chapter_source": chapter_source,
-                    "aliases": [],
-                    "see_also": [],
-                }
-                if len(unique_chapters) > 1:
-                    clean_term["appears_in"] = unique_chapters
-                clean_terms.append(clean_term)
-
-            clean_terms.sort(key=lambda x: x["term"])
-            glossary = {
-                "metadata": {
-                    "type": "volume_glossary",
-                    "volume": vol,
-                    "version": "1.0.0",
-                    "generated": datetime.now().isoformat(),
-                    "total_terms": len(clean_terms),
-                    "source": f"aggregated_from_{vol}_chapter_glossaries",
-                    "standardized": True,
-                    "description": f"Glossary for {vol.upper()} built from chapter glossaries",
-                },
-                "terms": clean_terms,
-            }
-
-            output_path = book_dir / "contents" / vol / "backmatter" / "glossary" / f"{vol}_glossary.json"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as handle:
-                json.dump(glossary, handle, indent=2, ensure_ascii=False)
-            console.print(f"[green]✅ Built {vol} glossary ({len(clean_terms)} terms): {output_path}[/green]")
-            built += 1
-
-        return built > 0
+        return True
 
     def _find_images_for_compression(self, min_size_mb: int):
         """Find large images under contents for bulk compression."""

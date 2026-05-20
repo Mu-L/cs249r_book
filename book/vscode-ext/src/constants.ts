@@ -74,7 +74,7 @@ export const PUBLISH_ACTIONS: ActionDef[] = [
 export const MAINTENANCE_ACTIONS: ActionDef[] = [
   { id: 'clean', label: 'Clean Build Artifacts', command: './book/binder clean', icon: 'trash' },
   { id: 'doctor', label: 'Doctor (Health Check)', command: './book/binder doctor', icon: 'heart' },
-  { id: 'glossary', label: 'Build Global Glossary', command: './book/binder fix glossary build', icon: 'book' },
+  { id: 'glossary', label: 'Show Glossary Paths', command: './book/binder maintain glossary paths', icon: 'book' },
   { id: 'compress-images', label: 'Compress Images (Dry Run)', command: './book/binder fix images compress --all --smart-compression', icon: 'file-media' },
   { id: 'repo-health', label: 'Repo Health Check', command: './book/binder fix repo-health', icon: 'pulse' },
   { id: 'bib-list', label: 'Bib: List All', command: './book/binder bib list', icon: 'list-unordered' },

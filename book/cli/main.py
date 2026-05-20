@@ -32,6 +32,7 @@ from cli.commands.bib import BibCommand
 from cli.commands.render import RenderCommand
 from cli.commands.newsletter import NewsletterCommand
 from cli.commands.headings import HeadingsCommand
+from cli.commands.layout import LayoutCommand
 
 console = Console()
 
@@ -68,6 +69,7 @@ class MLSysBookCLI:
         self.render_command = RenderCommand(self.config_manager, self.chapter_discovery)
         self.newsletter_command = NewsletterCommand(self.config_manager, verbose=verbose)
         self.headings_command = HeadingsCommand(self.config_manager, self.chapter_discovery)
+        self.layout_command = LayoutCommand(self.config_manager, self.chapter_discovery)
 
     def show_banner(self):
         """Display the CLI banner."""
@@ -136,6 +138,7 @@ class MLSysBookCLI:
         quality_table.add_row("info concepts|headers|acronyms", "Extract concepts, headers, acronyms", "./binder info concepts --vol1")
         quality_table.add_row("bib list|clean|update|sync", "Bibliography management", "./binder bib sync --vol1")
         quality_table.add_row("render plots [--vol1|chapter]", "Render matplotlib plots to PNG gallery", "./binder render plots --vol1")
+        quality_table.add_row("layout check <pdf> [--threshold]", "Flag PDF pages with excessive bottom whitespace", "./binder layout check book.pdf")
 
         # Newsletter Commands
         nl_table = Table(show_header=True, header_style="bold magenta", box=None)
@@ -411,6 +414,10 @@ class MLSysBookCLI:
         """Handle headings command group (check, dry-run, apply)."""
         return self.headings_command.run(args)
 
+    def handle_layout_command(self, args):
+        """Handle layout command group (check)."""
+        return self.layout_command.run(args)
+
 
     def handle_debug_command(self, args):
         """Handle debug command.
@@ -506,6 +513,7 @@ class MLSysBookCLI:
             "info": self.handle_info_command,
             "bib": self.handle_bib_command,
             "headings": self.handle_headings_command,
+            "layout": self.handle_layout_command,
             "render": self.handle_render_command,
             "newsletter": self.handle_newsletter_command,
             "setup": self.handle_setup_command,

@@ -5703,8 +5703,12 @@ class ValidateCommand:
         start = time.time()
         files = self._qmd_files(root)
         issues: List[ValidationIssue] = []
-        # Two+ digit numbers separated by a single hyphen (not en dash)
-        hyphen_range = re.compile(r"(\d{2,})-(\d{2,})")
+        # Two+ digit numbers separated by a single hyphen (not en dash).
+        # Word boundary + negative lookbehind on `CVE-` so CVE IDs like
+        # CVE-2021-44228 aren't flagged (where 2021-44228 is part of the
+        # identifier, not a year range). The \b prevents finditer from
+        # advancing into the middle of the CVE number and re-matching.
+        hyphen_range = re.compile(r"(?<!CVE-)\b(\d{2,})-(\d{2,})")
 
         for file in files:
             lines = self._read_text(file).splitlines()

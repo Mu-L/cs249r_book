@@ -1,7 +1,6 @@
 ---
 quiz: frameworks_quizzes.json
 concepts: frameworks_concepts.yml
-glossary: frameworks_glossary.json
 engine: jupyter
 ---
 
@@ -57,19 +56,18 @@ Neural networks are defined by mathematics (matrix multiplications, gradient com
 # │          also @sec-ml-frameworks-execution-strategy-matters-memory-wall-1ce8
 # │          and @sec-ml-frameworks-device-memory-management-9404 prose
 # │
-# │ Goal: Quantify A100 peak FP16 TFLOPS (dense ~312 and sparse ~624) to ground
+# │ Goal: Quantify A100 peak FP16/BF16 Tensor Core TFLOPS (dense ~312 and sparse ~624) to ground
 # │       the BLAS-hardware connection and Memory Wall discussion.
-# │ Show: "up to 312 TFLOPS (FP16/BF16/TF32) … or 624 TFLOPS with structured
+# │ Show: "up to 312 TFLOPS (FP16/BF16) … or 624 TFLOPS with structured
 # │       sparsity"—in fn-blas-performance footnote and Device Bandwidth Hierarchy prose.
 # │ How: Hardware.Cloud.A100.peak_flops → m_as(TFLOPs/second); sparse = 2×.
 # │
 # │ Note: PERSISTENT—A100BLAS.dense_tflops_str used again at line ~284
 # │       (Memory Wall), line ~2627 (Device Bandwidth Hierarchy), line ~3083
-# │       (Kernel Manager subsection). Also feeds GraphOptimizationStats.
+# │       (Kernel Manager subsection).
 # │
 # │ Imports: mlsysim.core.constants (TFLOPs, second), mlsysim.book (fmt, check)
-# │ Exports: graph_flop_reduction_str, A100BLAS.dense_tflops_str,
-# │          A100BLAS.sparse_tflops_str
+# │ Exports: A100BLAS.dense_tflops_str, A100BLAS.sparse_tflops_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware
 from mlsysim.fmt import fmt, check, MarkdownStr
@@ -1248,6 +1246,44 @@ Because the framework has the complete graph before execution, it can perform op
 
 [^fn-dce-graph-optimization]: **Dead Code Elimination (DCE)**: Removes graph nodes whose results are never consumed by any downstream operation. In ML graphs, dead code arises from debugging operations left in production (print nodes, assertions), unused conditional branches, and gradient computations for frozen layers. For large transformer models, DCE eliminates 5--15 percent of graph nodes, reducing both $O$ (fewer operations) and $L_{\text{lat}}$ (fewer kernel launches). The DAG structure makes this safe: the framework verifies no downstream node depends on a candidate before removing it. \index{Dead Code Elimination!graph optimization}
 
+```{python}
+#| label: graph-optimization-stats
+#| echo: false
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ GRAPH OPTIMIZATION STATS
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Ahead-of-time optimization prose on constant folding and DCE
+# │
+# │ Goal: Keep the FLOP-reduction range local to the static-graph optimization
+# │       discussion.
+# │ Show: "5-10%"—inline in the paragraph after the DCE footnote.
+# │ How: Format the min/max reduction percentages as a compact range.
+# │
+# │ Imports: mlsysim.fmt (check, MarkdownStr)
+# │ Exports: GraphOptimizationStats.flop_reduction_range_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check, MarkdownStr
+
+# ┌── LEGO ───────────────────────────────────────────────
+class GraphOptimizationStats:
+    """FLOP reduction range for graph-level optimizations."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    flop_reduction_min_pct = 5
+    flop_reduction_max_pct = 10
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    reduction_span_pct = flop_reduction_max_pct - flop_reduction_min_pct
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(reduction_span_pct > 0,
+          "Graph optimization FLOP reduction range must be increasing.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    flop_reduction_range_str = MarkdownStr(f"{flop_reduction_min_pct}-{flop_reduction_max_pct}%")
+```
+
 These optimizations map directly to iron law terms: kernel fusion reduces $D_{\text{vol}}$ by eliminating intermediate memory writes, constant folding reduces $O$ by computing values once, memory preallocation reduces $L_{\text{lat}}$ by avoiding runtime allocation overhead, and dead code elimination reduces both $O$ and $D_{\text{vol}}$. Concretely, in large transformer models, constant folding and dead code elimination can reduce total FLOPs by `{python} GraphOptimizationStats.flop_reduction_range_str` before the first batch even arrives.
 
 \index{XLA!definition}
@@ -1849,6 +1885,82 @@ Where:
 
 The decision rule is to compile when $\text{Compilation Benefit} > 1$. The ratio is dimensionless.
 
+```{python}
+#| label: compilation-benchmark-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ COMPILATION BENCHMARK CALCULATION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-training-benchmark caption and the compile-vs-eager prose
+# │          discussion of breakeven that follows (@eq-compile-breakeven).
+# │
+# │ Goal:    Quantify torch.compile and TensorRT speedups over eager mode
+# │          across four representative models and compute ResNet-50 breakeven.
+# │ Show:    Speedup ranges (min--max) and the ResNet-50 breakeven image count.
+# │ How:     Tabulate per-model throughputs, derive ratios, and solve the
+# │          breakeven equation for ResNet-50 at a reference compile cost.
+# │
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: CompilationBenchmark.resnet_eager_str, resnet_compile_str,
+# │          torch_compile_speedup_min_str,
+# │          torch_compile_speedup_max_str, tensorrt_speedup_min_str,
+# │          tensorrt_speedup_max_str, resnet_compile_speedup_pct_str,
+# │          resnet_tensorrt_speedup_str, compile_time_ref_s_str,
+# │          resnet_breakeven_images_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class CompilationBenchmark:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    throughput = {
+        "ResNet-50": {"eager": 1450, "compile": 2150, "tensorrt": 3800, "compile_min_s": 15, "compile_max_s": 30},
+        "BERT-Base": {"eager": 380, "compile": 520, "tensorrt": 890, "compile_min_s": 30, "compile_max_s": 60},
+        "ViT-B/16": {"eager": 620, "compile": 950, "tensorrt": 1650, "compile_min_s": 25, "compile_max_s": 45},
+        "GPT-2 (124M)": {"eager": 180, "compile": 260, "tensorrt": 420, "compile_min_s": 45, "compile_max_s": 90},
+    }
+    resnet = throughput["ResNet-50"]
+    compile_time_ref_s = 30
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    torch_compile_speedups = [
+        row["compile"] / row["eager"]
+        for row in throughput.values()
+    ]
+    tensorrt_speedups = [
+        row["tensorrt"] / row["eager"]
+        for row in throughput.values()
+    ]
+
+    resnet_compile_speedup_pct = (resnet["compile"] / resnet["eager"] - 1) * 100
+    resnet_tensorrt_speedup = resnet["tensorrt"] / resnet["eager"]
+    resnet_breakeven_images = compile_time_ref_s / (
+        (1 / resnet["eager"]) - (1 / resnet["compile"])
+    )
+    resnet_breakeven_images_rounded = round(resnet_breakeven_images, -3)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(130_000 <= resnet_breakeven_images <= 140_000,
+          f"ResNet-50 breakeven drifted to {resnet_breakeven_images:,.0f} images.")
+    check(45 <= resnet_compile_speedup_pct <= 50,
+          f"ResNet-50 compile speedup drifted to {resnet_compile_speedup_pct:.1f}%.")
+    check(min(torch_compile_speedups) > 1.3,
+          "torch.compile examples should all improve over eager mode.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    resnet_eager_str = fmt(resnet["eager"], precision=0, commas=True)
+    resnet_compile_str = fmt(resnet["compile"], precision=0, commas=True)
+
+    torch_compile_speedup_min_str = fmt(min(torch_compile_speedups), precision=1, commas=False)
+    torch_compile_speedup_max_str = fmt(max(torch_compile_speedups), precision=1, commas=False)
+    tensorrt_speedup_min_str = fmt(min(tensorrt_speedups), precision=1, commas=False)
+    tensorrt_speedup_max_str = fmt(max(tensorrt_speedups), precision=1, commas=False)
+
+    resnet_compile_speedup_pct_str = fmt(resnet_compile_speedup_pct, precision=0, commas=False)
+    resnet_tensorrt_speedup_str = fmt(resnet_tensorrt_speedup, precision=1, commas=False)
+    compile_time_ref_s_str = fmt(compile_time_ref_s, precision=0, commas=False)
+    resnet_breakeven_images_str = fmt(resnet_breakeven_images_rounded, precision=0, commas=True)
+```
+
 @tbl-training-benchmark provides representative throughput data across execution modes and model architectures:
 
 | **Model**        | **Eager** **(img/sec)** | **torch.compile** **(img/sec)** | **TensorRT** **(img/sec)** | **Compile Time** **(seconds)** |
@@ -1858,7 +1970,7 @@ The decision rule is to compile when $\text{Compilation Benefit} > 1$. The ratio
 | **ViT-B/16**     |           620           |               950               |           1,650            |             25--45             |
 | **GPT-2 (124M)** |           180           |               260               |            420             |             45--90             |
 
-: **Training and Inference Throughput**: Representative throughput comparison across execution modes for common model architectures on NVIDIA A100 GPU with batch size 32. torch.compile typically provides 1.4--1.5$\times$ speedup over eager mode, while TensorRT provides 2--3$\times$ speedup but requires longer compilation and is inference only. Compile times vary based on model complexity and optimization level. {#tbl-training-benchmark}
+: **Training and Inference Throughput**: Representative throughput comparison across execution modes for common model architectures on NVIDIA A100 GPU with batch size 32. The table values imply torch.compile speedups of `{python} CompilationBenchmark.torch_compile_speedup_min_str`--`{python} CompilationBenchmark.torch_compile_speedup_max_str`$\times$ over eager mode, while TensorRT implies `{python} CompilationBenchmark.tensorrt_speedup_min_str`--`{python} CompilationBenchmark.tensorrt_speedup_max_str`$\times$ speedups but requires longer compilation and is inference only. Compile times vary based on model complexity and optimization level. {#tbl-training-benchmark}
 
 These throughput differences across execution modes raise a practical question—which *framework execution strategy* best serves each workload archetype.
 
@@ -1875,19 +1987,19 @@ The optimal framework execution strategy depends on which iron law term dominate
 
 : **Framework Execution Strategy by Workload**: Recommended execution strategy for each workload archetype, aligned to the dominant iron law term. Compute-bound workloads benefit most from compilation, while irregular access patterns favor eager execution. {#tbl-framework-archetype-strategy tbl-colwidths="[17,31,22,30]"}
 
-**Key insight**: Compilation benefits scale with how much of the workload is *optimizable*. Compute Beasts (@tbl-training-benchmark: ResNet-50 sees 2.6$\times$ speedup from TensorRT) benefit most. Sparse Scatter workloads gain little because their bottleneck (embedding lookups) is inherently irregular.
+**Key insight**: Compilation benefits scale with how much of the workload is *optimizable*. Compute Beasts (@tbl-training-benchmark: ResNet-50 sees `{python} CompilationBenchmark.resnet_tensorrt_speedup_str`$\times$ speedup from TensorRT) benefit most. Sparse Scatter workloads gain little because their bottleneck (embedding lookups) is inherently irregular.
 
 :::
 
 This principle has concrete implications across three regimes. In *research prototyping* ($N_{\text{dev}} \gg N_{\text{prod}}$), teams should stay eager. If the architecture changes every few minutes, compilation overhead dominates. A 30-second compile time with ten iterations/hour means five minutes lost to compilation per hour, often more than the runtime savings.
 
-For *training runs* ($N_{\text{prod}} \gg N_{\text{dev}}$), compilation pays off. A typical training run executes millions of forward/backward passes, so even 60 seconds of compilation amortizes to microseconds per step. From @tbl-training-benchmark, torch.compile provides ~48 percent speedup on ResNet-50 (2,150 vs. 1,450 img/sec); this pays off after the breakeven point in @eq-compile-breakeven:
+For *training runs* ($N_{\text{prod}} \gg N_{\text{dev}}$), compilation pays off. A typical training run executes millions of forward/backward passes, so even 60 seconds of compilation amortizes to microseconds per step. From @tbl-training-benchmark, torch.compile provides `{python} CompilationBenchmark.resnet_compile_speedup_pct_str` percent higher throughput on ResNet-50 (`{python} CompilationBenchmark.resnet_compile_str` vs. `{python} CompilationBenchmark.resnet_eager_str` img/sec). Using a `{python} CompilationBenchmark.compile_time_ref_s_str` s compile cost, this pays off after the breakeven point in @eq-compile-breakeven:
 
 $$
-N_{\text{breakeven}} = \frac{T_{\text{compile}}}{T_{\text{eager}} - T_{\text{compiled}}} = \frac{30\text{s}}{(1/1450 - 1/2150)\text{s/img}} \approx 134{,}000 \text{ images}
+N_{\text{breakeven}} = \frac{T_{\text{compile}}}{T_{\text{eager}} - T_{\text{compiled}}}
 $$ {#eq-compile-breakeven}
 
-For ImageNet (1.28M training images), compilation pays off within the first epoch.
+Evaluating @eq-compile-breakeven with the ResNet-50 table values gives approximately `{python} CompilationBenchmark.resnet_breakeven_images_str` images. For ImageNet (1.28M training images), compilation pays off within the first epoch.
 
 For *production inference* ($N_{\text{dev}} \approx 0$, $N_{\text{prod}} \rightarrow \infty$), teams should maximize compilation. With no development iterations and potentially millions of requests, every optimization matters. Using `mode='max-autotune'` despite hour-long compilation is worthwhile because the cost is amortized over the deployment lifetime.
 
@@ -2683,19 +2795,22 @@ y.backward()
 ###### Detach vs. data {.unnumbered}
 
 \index{Gradient Flow!detaching tensors}\index{Gradient Flow!breaking with detach}
-Use `.detach()` to safely break gradient flow. @lst-detach-vs-data illustrates how the legacy `.data` attribute can silently corrupt gradient computation through in-place operations:
+Use `.detach()` to break gradient flow, and clone the result before in-place mutation. @lst-detach-vs-data illustrates how the legacy `.data` attribute can silently corrupt gradient computation through in-place operations:
 
-::: {#lst-detach-vs-data lst-cap="**Safe Gradient Detachment**: Use `.detach()` to safely break gradient flow. The legacy `.data` attribute can silently corrupt gradients through in-place operations."}
+::: {#lst-detach-vs-data lst-cap="**Safe Gradient Detachment**: Use `.detach()` to break gradient flow, and use `.detach().clone()` before in-place mutation. The legacy `.data` attribute can silently corrupt gradients through in-place operations."}
 
 ```{.python}
 x = torch.tensor([1.0], requires_grad=True)
 y = x * 2
 
-# SAFE: .detach() creates a new tensor that shares storage
-# but is not part of the computation graph
-z_safe = y.detach()
-z_safe.mul_(100)  # In-place op on detached tensor
-# y's data IS modified (shared storage), but autograd graph is intact
+# SAFE: clone before in-place mutation
+z_safe = y.detach().clone()
+z_safe.mul_(100)
+# y is unchanged; z_safe is outside the computation graph
+
+# READ-ONLY VIEW: .detach() shares storage with y
+z_view = y.detach()
+# Do not modify z_view in-place unless you intend to mutate y
 
 # DANGEROUS: .data bypasses autograd entirely
 # In-place modifications corrupt the computation graph
@@ -2976,7 +3091,13 @@ class ResNetAbstraction:
     """
     Namespace for ResNet-50 parameter scale in abstraction section.
     """
-    params_m = RESNET50_PARAMS.m_as(Mparam)
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    params = RESNET50_PARAMS
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    params_m = params.m_as(Mparam)
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(params_m > 20, f"ResNet-50 parameter count too low: {params_m:.1f}M")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
@@ -2996,11 +3117,51 @@ The first step is the data container itself. Framework data structures must sust
 \index{Tensor!etymology}
 At the foundation of every framework's data representation lies a single abstraction: the tensor.
 
+```{python}
+#| label: tensor-footprint-calc
+#| echo: false
+
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ TENSOR FOOTPRINT CALCULATION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Tensor definition callout
+# │
+# │ Goal: Make the 1024 × 1024 FP32 tensor footprint explicit in binary and
+# │       decimal units.
+# │ Show: 1024 × 1024 × 4 bytes ≈ 4.2 MB.
+# │ How: Multiply shape by BYTES_FP32 and format in MB.
+# │
+# │ Imports: mlsysim.core.constants (BYTES_FP32, byte, MB), mlsysim.book (fmt, check)
+# │ Exports: TensorFootprint.tensor_1024_fp32_mb_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import BYTES_FP32, byte, MB
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class TensorFootprint:
+    """Memory footprint for a contiguous 1024 × 1024 FP32 tensor."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    rows = 1024
+    cols = 1024
+    dtype_bytes = BYTES_FP32
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    footprint = rows * cols * dtype_bytes
+    footprint_mb = footprint.m_as(MB)
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(4.1 < footprint_mb < 4.2, f"Expected about 4.2 MB, got {footprint_mb}.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    tensor_1024_fp32_mb_str = fmt(footprint_mb, precision=1, commas=False)
+```
+
 ::: {.callout-definition title="Tensor"}
 
 ***Tensors***\index{Tensor!definition} are $n$-dimensional arrays with explicit shape, data type, and memory layout metadata that allow ML frameworks to map mathematical operations directly onto hardware vector units without intermediate data transformation.
 
-1.  **Significance (quantitative)**: Tensor memory footprint is fully deterministic from its metadata: a contiguous FP32 tensor of shape $[1024, 1024]$ occupies exactly $1024{\times}1024{\times}4 = 4$ MB. Noncontiguous layouts (for example, from a transpose operation) require explicit `.contiguous()` calls before certain CUDA kernels can execute, adding a memory-copy overhead that can dominate the $L_{\text{lat}}$ term for tensors under 1 MB.
+1.  **Significance (quantitative)**: Tensor memory footprint is fully deterministic from its metadata: a contiguous FP32 tensor of shape $[1024, 1024]$ occupies $1024{\times}1024{\times}4 = 4{,}194{,}304$ bytes (about `{python} TensorFootprint.tensor_1024_fp32_mb_str` MB). Noncontiguous layouts (for example, from a transpose operation) require explicit `.contiguous()` calls before certain CUDA kernels can execute, adding a memory-copy overhead that can dominate the $L_{\text{lat}}$ term for tensors under 1 MB.
 2.  **Distinction (durable)**: Unlike a Python list or generic NumPy array, a framework tensor carries device placement metadata (CPU vs. GPU), dtype (FP32, BF16, INT8), and stride information that enables zero-copy view operations and CUDA kernel dispatch without any runtime type checking or data movement.
 3.  **Common pitfall**: A frequent misconception is that tensor operations are always in-place. Framework tensor operations return new tensors by default, allocating fresh GPU memory for each intermediate result. In a long computation graph, these intermediate allocations accumulate and can exhaust GPU memory before any weights are updated.
 
@@ -3149,7 +3310,7 @@ minimum width=18,minimum height=18](3R){0};
 
 This rank hierarchy maps directly onto ML data. A color image is a rank-3 tensor: height by width by three channels (red, green, blue). @fig-tensor-data-structure-b breaks this apart, stacking the three color channels and illustrating how a single photograph becomes a three-layer numerical grid. Stacking a batch of $N$ images adds a fourth dimension. In PyTorch's channel-first convention this produces a rank-4 tensor of shape $[N, 3, H, W]$; in channel-last layouts the same batch is $[N, H, W, 3]$. Every convolutional layer in a vision model consumes and produces rank-4 image tensors, which is why the tensor abstraction is so central to framework design.
 
-::: {#fig-tensor-data-structure-b fig-env="figure" fig-pos="htb" fig-cap="**Image as RGB Tensor**: Three stacked grids representing the red, green, and blue color channels of an image, with dimension labels showing width, height, and channel depth forming a rank-3 tensor. *Credit: Niklas Lang.*" fig-alt="Three stacked 5x5 grids in red, green, and blue representing RGB channels. Dimension labels show width five pixels, height five pixels, and three color channels, forming a rank-3 tensor for image data."}
+::: {#fig-tensor-data-structure-b fig-env="figure" fig-pos="htb" fig-cap="**Image as RGB Tensor**: Three stacked grids representing the red, green, and blue color channels of an image, with dimension labels showing width, height, and channel depth forming a rank-3 tensor. *Credit: Niklas Lang.*" fig-alt="Three stacked grids in red, green, and blue representing RGB channels. Dimension labels show width three pixels, height three pixels, and three color channels, forming a rank-3 tensor for image data."}
 
 ```{.tikz}
 \scalebox{0.7}{%
@@ -3191,9 +3352,9 @@ This rank hierarchy maps directly onto ML data. A color image is a rank-3 tensor
 \node[Box,fill= BlueLine!80, draw= white,below=of 3B4](3B5){\textbf{3}};
 %
 \draw[dashed,Line,latex-latex]([yshift=-3mm]B7.south west)--
-            node[below=1mm]{Width: 3 Pixel}([yshift=-3mm]B9.south east);
+            node[below=1mm]{Width: 3 Pixels}([yshift=-3mm]B9.south east);
 \draw[dashed,Line,latex-latex]([xshift=-4mm]B7.south west)--
-            node[left]{Height: 3 Pixel}([xshift=-4mm]B1.north west);
+            node[left]{Height: 3 Pixels}([xshift=-4mm]B1.north west);
 \draw[dashed,Line,latex-latex,shorten <=2mm]([xshift=-4mm]B1.north west)--
             node[left=3mm,pos=0.6]{3 Color Channels}([xshift=-4mm]3B1.north west);
 \end{tikzpicture}}
@@ -3235,9 +3396,9 @@ Memory layout implementation introduces distinct challenges in tensor design. Wh
 \node[above=2pt of CB2.north east]{\textbf{Row-Major Layout}};
 % Column-major memory layout (RIGHT SIDE)
 \foreach \i in {0,1,2,3,4,5} {
-  \pgfmathsetmacro{\val}{int(mod(\i,2)*3 + int(\i/2) + 1)}
+  \pgfmathtruncatemacro{\val}{mod(\i,2)*3 + int(\i/2) + 1}
   \node[draw, minimum width=10mm, minimum height=8mm,
-         anchor=north west,fill=col3!50](ZE\i) at ($(ZE)+(\i*1.1, 0)$) {\val.0};
+         anchor=north west,fill=col3!50](ZE\i) at ($(ZE)+(\i*1.1, 0)$) {\val};
   \node[below=0pt of ZE\i, font=\tiny\usefont{T1}{phv}{m}{n}] {[\i]};
 }
 \node[above=2pt of ZE2.north east]{\textbf{Column-Major Layout}};
@@ -3280,14 +3441,15 @@ Tensors answer the first question---*what is the data?*---by encoding shape, lay
 # │ Context: Device and Memory Management section introducing bandwidth costs
 # │
 # │ Goal: Quantify the bandwidth hierarchy across system interconnects.
-# │ Show: The 60× bandwidth gap between PCIe (32 GB/s) and HBM (2 TB/s).
+# │ Show: The ~64× bandwidth gap between PCIe (32 GB/s) and HBM (~2 TB/s).
 # │ How: Compare transfer rates for standard interfaces and on-chip memory.
 # │
 # │ Imports: mlsysim.core.constants (PCIE_GEN4_BW, NVLINK_A100_BW, A100_MEM_BW, A100_MEM_CAPACITY,
 # │          A100_FLOPS_FP16_TENSOR), mlsysim.book (fmt)
 # │ Exports: pcie4_gbs_str, pcie4_bidir_gbs_str, nvlink_a100_gbs_str, a100_bw_gbs_str,
 # │          a100_bw_tbs_str, a100_tflops_fp16_str, pcie4_4mb_ms_str, nvlink_4mb_ms_str,
-# │          hbm_4mb_ms_str, pcie4_1gb_ms_str, pcie4_1gb_equiv_ops_str, a100_mem_str
+# │          hbm_4mb_ms_str, pcie4_1gb_ms_str, pcie4_1gb_equiv_ops_str, a100_mem_str,
+# │          pcie_to_hbm_gap_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import (PCIE_GEN4_BW, NVLINK_A100_BW, A100_MEM_BW, A100_MEM_CAPACITY,
                              A100_FLOPS_FP16_TENSOR, GB, TB, GiB, TFLOPs, flop, byte, second,
@@ -3323,6 +3485,12 @@ class DeviceBandwidthHierarchy:
     # Equiv Ops: (ms / 1000) * FLOPS
     pcie4_1gb_equiv_ops = (pcie4_1gb_ms/THOUSAND) * A100_FLOPS_FP16_TENSOR.m_as(flop/second)
 
+    pcie_to_hbm_gap = a100_bw_gbs / pcie4_gbs
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(60 <= pcie_to_hbm_gap <= 70,
+          f"PCIe-to-HBM bandwidth gap drifted to {pcie_to_hbm_gap:.1f}x.")
+
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     pcie4_gbs_str = fmt(pcie4_gbs, precision=0, commas=False)
     pcie4_bidir_gbs_str = fmt(pcie4_gbs * 2, precision=0, commas=False)
@@ -3336,6 +3504,7 @@ class DeviceBandwidthHierarchy:
     hbm_4mb_ms_str = fmt(hbm_4mb_ms, precision=3, commas=False)
     pcie4_1gb_ms_str = fmt(pcie4_1gb_ms, precision=0, commas=False)
     pcie4_1gb_equiv_ops_str = fmt((pcie4_1gb_equiv_ops * flop).m_as(TFLOPs), precision=1, commas=False)
+    pcie_to_hbm_gap_str = fmt(pcie_to_hbm_gap, precision=0, commas=False)
 ```
 
 \index{Device Management!CPU-GPU transfers}
@@ -3348,7 +3517,7 @@ Tensors and their memory layouts establish *what* the framework computes with. W
 
 The CUDA Runtime serves as this OS layer, providing the low-level primitives for launching kernels and managing device memory. The framework coordinates with this runtime to implement **Direct Memory Access (DMA)** over the PCIe bus. As established in @sec-hardware-acceleration, the bandwidth gap between the host (CPU) and device (GPU) is the primary "Data Loading Bottleneck." Frameworks mitigate this through **pinned memory** (page-locked memory) that allows the GPU to read directly from CPU RAM via DMA without interrupting the processor. This "HW/OS" interface is what makes high-throughput training loops possible on a single machine.
 
-Every tensor resides on a specific device, and cross-device operations incur transfer costs that can dominate execution time. PCIe 4.0 delivers `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s between CPU and GPU, while HBM2e provides `{python} MemoryWallSpecs.a100_bw_tbs_str` TB/s within the GPU. This bandwidth gap, exceeding 60$\times$, means a single misplaced tensor transfer can erase the entire speedup from GPU acceleration.
+Every tensor resides on a specific device, and cross-device operations incur transfer costs that can dominate execution time. PCIe 4.0 delivers `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s between CPU and GPU, while HBM2e provides `{python} DeviceBandwidthHierarchy.a100_bw_tbs_str` TB/s within the GPU. This `{python} DeviceBandwidthHierarchy.pcie_to_hbm_gap_str`$\times$ bandwidth gap means a single misplaced tensor transfer can erase the entire speedup from GPU acceleration.
 
 Device placement matters for framework design because the framework must track where every tensor lives and enforce that operations only combine tensors on the same device. When data must move, the framework must decide whether to block execution or overlap the transfer with other work. These decisions, invisible to most users, determine whether a training loop achieves 30 percent or 80 percent of theoretical hardware throughput.
 
@@ -3369,7 +3538,7 @@ The cost of moving data between devices varies by orders of magnitude depending 
 
 : **Device Transfer Overhead**: Transfer time for a 4 MB tensor across different interconnects. PCIe bandwidth shown is unidirectional (typical for GPU transfers), with full-duplex operation providing 2$\times$ total bandwidth. NVLink bandwidth is bidirectional (300 GB/s per direction). Transfer times dominate for small operations, making device placement critical for performance. {#tbl-device-transfer-overhead tbl-colwidths="[25,25,20,30]"}
 
-These numbers connect directly to the iron law of performance. Every cross-device transfer inflates the data movement term $(D_{\text{vol}}/\text{BW})$ at a fraction of the available on-device bandwidth. A PCIe 4.0 transfer at `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s means moving a 1 GB activation tensor adds approximately `{python} DeviceBandwidthHierarchy.pcie4_1gb_ms_str` ms to the data movement cost, equivalent to roughly `{python} DeviceBandwidthHierarchy.pcie4_1gb_equiv_ops_str` trillion operations on a GPU delivering `{python} A100BLAS.dense_tflops_str` TFLOPS. For a model forward pass taking 0.5 ms on GPU, transferring inputs and outputs over PCIe 3.0 doubles the total latency. When batches are small or models are lightweight, transfer overhead can exceed computation time entirely.
+These numbers connect directly to the iron law of performance. Every cross-device transfer inflates the data movement term $(D_{\text{vol}}/\text{BW})$ at a fraction of the available on-device bandwidth. A PCIe 4.0 transfer at `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s means moving a 1 GB activation tensor adds approximately `{python} DeviceBandwidthHierarchy.pcie4_1gb_ms_str` ms to the data movement cost, equivalent to roughly `{python} DeviceBandwidthHierarchy.pcie4_1gb_equiv_ops_str` trillion operations on a GPU delivering `{python} DeviceBandwidthHierarchy.a100_tflops_fp16_str` TFLOPS. For a model forward pass taking 0.5 ms on GPU, transferring inputs and outputs over PCIe 3.0 doubles the total latency. When batches are small or models are lightweight, transfer overhead can exceed computation time entirely.
 
 The systems implication is clear: every tensor should reside on the device where it will be consumed, and transfers should occur only when unavoidable. Frameworks track device placement for every tensor and raise errors when operations attempt to combine tensors from different devices, enforcing this discipline at the API level.
 
@@ -3473,7 +3642,7 @@ The performance difference between these approaches is not incremental but categ
 
 ###### Device placement discipline {.unnumbered}
 
-Every tensor carries a `device` attribute, and frameworks enforce a strict rule: operations can only combine tensors on the *same* device. A `RuntimeError` results from mixing `cuda:0` and `cuda:1` tensors, preventing silent cross-device transfers. The `.to()` method moves tensors between devices with copy-on-write semantics---calling `.to("cuda")` on a tensor already on the GPU returns the same object without copying. Module `.to()` recursively moves all parameters and buffers, ensuring the entire model hierarchy lands on a single device. Three placement principles prevent transfer bottlenecks: (1) allocate tensors on the target device from the start rather than creating on CPU and transferring, (2) reuse GPU memory across iterations rather than re-allocating, and (3) colocate all inputs, labels, and model parameters on the same device to eliminate implicit transfers. Violating any of these principles inserts PCIe transfers into the critical path, which at `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s can dominate a training iteration that otherwise runs at `{python} MemoryWallSpecs.a100_bw_tbs_str` TB/s on-device.
+Every tensor carries a `device` attribute, and frameworks enforce a strict rule: operations can only combine tensors on the *same* device. A `RuntimeError` results from mixing `cuda:0` and `cuda:1` tensors, preventing silent cross-device transfers. The `.to()` method moves tensors between devices with copy-on-write semantics---calling `.to("cuda")` on a tensor already on the GPU returns the same object without copying. Module `.to()` recursively moves all parameters and buffers, ensuring the entire model hierarchy lands on a single device. Three placement principles prevent transfer bottlenecks: (1) allocate tensors on the target device from the start rather than creating on CPU and transferring, (2) reuse GPU memory across iterations rather than re-allocating, and (3) colocate all inputs, labels, and model parameters on the same device to eliminate implicit transfers. Violating any of these principles inserts PCIe transfers into the critical path, which at `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s can dominate a training iteration that otherwise runs at `{python} DeviceBandwidthHierarchy.a100_bw_tbs_str` TB/s on-device.
 
 ###### Synchronization patterns {.unnumbered}
 
@@ -3637,7 +3806,7 @@ DataLoaders, Datasets, and collation functions answer the third question---*how 
 
 ##### Parameter structures {.unnumbered}
 
-A GPT-3 scale model stores `{python} GPT3Context.gpt3_params_b_str` billion parameters, occupying `{python} GPT3ParameterStructures.gpt3_fp16_gb_str` GB in FP16. Managing these parameters across devices, keeping gradients synchronized, and maintaining optimizer state (Adam state alone can add about 4$\times$ the FP16 weight memory, as the Administrative Tax notebook showed) is a core framework responsibility.
+A GPT-3 scale model stores `{python} GPT3ParameterStructures.gpt3_params_b_str` billion parameters, occupying `{python} GPT3ParameterStructures.gpt3_fp16_gb_str` GB in FP16. Managing these parameters across devices, keeping gradients synchronized, and maintaining optimizer state (Adam state alone can add about 4$\times$ the FP16 weight memory, as the Administrative Tax notebook showed) is a core framework responsibility.
 
 Because parameters persist throughout training and inference, frameworks organize them into compact structures that minimize memory while enabling fast read and write access [@li2014communication]. During multi-GPU training, frameworks may replicate parameters across devices for parallel computation while keeping a synchronized master copy. Synchronizing multi-billion parameter models can require transferring tens of GB of gradients per step, which is why frameworks implement gradient compression and efficient communication patterns like ring all-reduce\index{All-Reduce|see{AllReduce}}.
 
@@ -3654,7 +3823,7 @@ We introduce these concepts here because they shape framework API design even fo
 
 \index{Data Parallelism!definition}
 \index{Pipeline Parallelism!definition}
-When models exceed single-device memory, frameworks combine multiple parallelism strategies simultaneously. A GPT-3 scale model, for instance, cannot fit on a single GPU---its `{python} GPT3Context.gpt3_params_b_str` B parameters alone require `{python} GPT3ParameterStructures.gpt3_fp16_gb_str` GB in FP16, far exceeding any GPU's memory. Practitioners train such models by distributing computation across multiple devices using three complementary strategies. @fig-3d-parallelism lays out how large-scale training distributes computation across three orthogonal dimensions to overcome this constraint. In the figure, look for how each dimension addresses a different scaling need: **Pipeline Parallelism**\index{Pipeline Parallelism!layer splitting} runs horizontally across columns, distributing a single model's depth across stages; **ZeRO/Data Parallelism**\index{Data Parallelism!model replication} runs vertically across rows, scaling throughput and sharding replicated training state; and **Model Parallelism**\index{Model Parallelism!tensor sharding} shards tensors within each cluster for layers that are too large for one device. This "3D" approach\index{3D Parallelism!scaling strategy} allows frameworks to scale beyond the memory limits of any single device. @sec-model-training examines these parallelism strategies in depth, including their implementation trade-offs and communication patterns.
+When models exceed single-device memory, frameworks combine multiple parallelism strategies simultaneously. A GPT-3 scale model, for instance, cannot fit on a single GPU---its `{python} GPT3ParameterStructures.gpt3_params_b_str` B parameters alone require `{python} GPT3ParameterStructures.gpt3_fp16_gb_str` GB in FP16, far exceeding any GPU's memory. Practitioners train such models by distributing computation across multiple devices using three complementary strategies. @fig-3d-parallelism lays out how large-scale training distributes computation across three orthogonal dimensions to overcome this constraint. In the figure, look for how each dimension addresses a different scaling need: **Pipeline Parallelism**\index{Pipeline Parallelism!layer splitting} runs horizontally across columns, distributing a single model's depth across stages; **ZeRO/Data Parallelism**\index{Data Parallelism!model replication} runs vertically across rows, scaling throughput and sharding replicated training state; and **Model Parallelism**\index{Model Parallelism!tensor sharding} shards tensors within each cluster for layers that are too large for one device. This "3D" approach\index{3D Parallelism!scaling strategy} allows frameworks to scale beyond the memory limits of any single device. @sec-model-training examines these parallelism strategies in depth, including their implementation trade-offs and communication patterns.
 
 ::: {#fig-3d-parallelism fig-env="figure" fig-pos="htb" fig-cap="**3D Parallelism**: A grid of eight accelerator clusters arranged in two rows and four columns, each containing stacked computational units. Distinct labels encode the three parallelism dimensions: pipeline parallelism across columns, ZeRO/data parallelism across rows, and model parallelism within each cluster." fig-alt="Grid of 8 GPU clusters in two rows and four columns. A horizontal brace labels pipeline parallelism across columns, a vertical brace labels ZeRO data parallelism across rows, and a depth brace labels model parallelism within each cluster."}
 
@@ -3841,7 +4010,42 @@ The hardware abstraction layer isolates framework code from platform-specific de
 ##### Compute kernel management {.unnumbered}
 
 \index{Kernel Dispatch!hardware selection}
-The kernel manager dispatches each operation to the fastest available implementation for the current hardware. When a framework encounters a matrix multiplication, it selects among AVX-512 vector instructions on modern CPUs, cuBLAS\index{cuBLAS!kernel selection} [@nvidia_cublas] on NVIDIA GPUs, or dedicated tensor processing instructions on AI accelerators. The dispatch decision depends on input dimensions, data layout, and hardware capabilities. A $4096{\times}4096$ GEMM on an A100 GPU routes to cuBLAS Tensor Core kernels that sustain up to `{python} A100BLAS.dense_tflops_str` TFLOPS in FP16, while the same operation on a CPU falls back to an AVX-512 path at roughly 2 TFLOPS. When no specialized kernel exists, the manager falls back to a generic implementation rather than failing.
+```{python}
+#| label: kernel-dispatch-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ KERNEL DISPATCH A100 ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Compute kernel management paragraph immediately below.
+# │
+# │ Goal: Keep the A100 FP16 Tensor Core peak local to the dispatch example.
+# │ Show: A100 dense FP16 Tensor Core throughput in TFLOPS.
+# │ How: Read the hardware constant and format it for prose.
+# │
+# │ Imports: mlsysim.core.constants (A100_FLOPS_FP16_TENSOR, TFLOPs, second)
+# │ Exports: KernelDispatchAnchor.a100_tflops_fp16_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import A100_FLOPS_FP16_TENSOR, TFLOPs, second
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class KernelDispatchAnchor:
+    """A100 Tensor Core peak used in the kernel-dispatch example."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    a100_tflops_fp16 = A100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second)
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    # Direct hardware-constant lookup.
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(a100_tflops_fp16 > 300, "A100 FP16 Tensor Core peak should exceed 300 TFLOPS.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    a100_tflops_fp16_str = fmt(a100_tflops_fp16, precision=0, commas=False)
+```
+
+The kernel manager dispatches each operation to the fastest available implementation for the current hardware. When a framework encounters a matrix multiplication, it selects among AVX-512 vector instructions on modern CPUs, cuBLAS\index{cuBLAS!kernel selection} [@nvidia_cublas] on NVIDIA GPUs, or dedicated tensor processing instructions on AI accelerators. The dispatch decision depends on input dimensions, data layout, and hardware capabilities. A $4096{\times}4096$ GEMM on an A100 GPU routes to cuBLAS Tensor Core kernels that sustain up to `{python} KernelDispatchAnchor.a100_tflops_fp16_str` TFLOPS in FP16, while the same operation on a CPU falls back to an AVX-512 path at roughly 2 TFLOPS. When no specialized kernel exists, the manager falls back to a generic implementation rather than failing.
 
 ##### Memory system abstraction {.unnumbered}
 
@@ -3861,7 +4065,7 @@ The execution controller coordinates work across multiple processing units and m
 # │ Context: Basic Numerical Operations section discussing GEMM dominance
 # │
 # │ Goal: Demonstrate the computational dominance of GEMM in vision models.
-# │ Show: That ResNet-50 performs 8.2 GFLOPs per forward pass.
+# │ Show: That ResNet-50 performs 4.1 GFLOPs per forward pass.
 # │ How: Retrieve ResNet-50 GFLOPs from mlsysim.core.constants.
 # │
 # │ Imports: mlsysim.core.constants (RESNET50_FLOPs), mlsysim.book (fmt)
@@ -3902,7 +4106,49 @@ Hardware abstraction and numerical operations provide the building blocks; syste
 
 The operation scheduler analyzes the computational graph to find parallelism while respecting data dependencies. In a static graph, the scheduler sees the full dependency structure before execution begins and can plan an optimal ordering. In a dynamic graph, dependencies emerge at runtime, forcing the scheduler to make greedy decisions. Concretely, when a ResNet block produces two independent branch outputs, the scheduler launches both branches simultaneously rather than serializing them, reducing idle cycles on the GPU's streaming multiprocessors.
 
-The memory manager allocates and reclaims GPU memory across the computational graph's lifetime. Model parameters (a 7B-parameter model consumes approximately `{python} Model7B.model_7b_fp16_gb_str` GB in FP16) persist for the entire training run, while activation tensors live only until the backward pass consumes them. PyTorch's caching allocator maintains a memory pool, subdividing and reusing freed blocks without returning them to CUDA, which avoids repeated `cudaMalloc` calls that can cost tens of microseconds and may be worse when they synchronize the device. For models that exceed GPU memory, the manager applies gradient checkpointing: discarding selected activations during the forward pass and recomputing them during the backward pass, trading roughly 20--33 percent additional compute for 60 percent or more memory savings (with optimal checkpoint placement).
+```{python}
+#| label: module-memory-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MODULE MEMORY ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: System-level operations and nn.Module introduction below.
+# │
+# │ Goal: Keep 7B FP16 and ResNet-50 parameter counts local to module prose.
+# │ Show: A 7B FP16 checkpoint is 14 GB; ResNet-50 has about 25.6M params.
+# │ How: Use model_memory() and the ResNet-50 digital twin.
+# │
+# │ Imports: mlsysim (Models), mlsysim.core.constants, mlsysim.core.formulas
+# │ Exports: ModuleMemoryAnchor.model_7b_fp16_gb_str,
+# │          ModuleMemoryAnchor.resnet_params_m_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import BYTES_FP16, GB, Mparam, ureg
+from mlsysim.core.formulas import model_memory
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class ModuleMemoryAnchor:
+    """Local memory anchors for module-level framework abstractions."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    model_7b_params = 7e9 * ureg.param
+    resnet50 = Models.ResNet50
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    model_7b_fp16_gb = model_memory(model_7b_params, BYTES_FP16, GB)
+    resnet_params_m = resnet50.parameters.m_as(Mparam)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(round(model_7b_fp16_gb) == 14, "7B FP16 weights should be about 14 GB.")
+    check(25 <= resnet_params_m <= 26, "ResNet-50 parameter count should be about 25.6M.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    model_7b_fp16_gb_str = fmt(model_7b_fp16_gb, precision=0, commas=False)
+    resnet_params_m_str = fmt(resnet_params_m, precision=1, commas=False)
+```
+
+The memory manager allocates and reclaims GPU memory across the computational graph's lifetime. Model parameters (a 7B-parameter model consumes approximately `{python} ModuleMemoryAnchor.model_7b_fp16_gb_str` GB in FP16) persist for the entire training run, while activation tensors live only until the backward pass consumes them. PyTorch's caching allocator maintains a memory pool, subdividing and reusing freed blocks without returning them to CUDA, which avoids repeated `cudaMalloc` calls that can cost tens of microseconds and may be worse when they synchronize the device. For models that exceed GPU memory, the manager applies gradient checkpointing: discarding selected activations during the forward pass and recomputing them during the backward pass, trading roughly 20--33 percent additional compute for 60 percent or more memory savings (with optimal checkpoint placement).
 
 The resource optimizer integrates these scheduling and memory decisions. When two matrix multiplications with different shapes are ready to execute, it selects the algorithm variant (Winograd, Strassen, or standard tiled GEMM) that best fits each shape and the current memory pressure. A poorly scheduled graph wastes compute; a poorly managed memory pool triggers out-of-memory errors on hardware that theoretically has capacity to spare.
 
@@ -3917,7 +4163,7 @@ The abstraction problem is the bridge between *portable code* and *efficient exe
 
 :::
 
-The preceding sections examined what happens *beneath* the API surface: tensors manage data layout, streams overlap computation with communication, and kernel dispatch routes operations to hardware. These mechanisms operate at the level of individual tensors and operations---the raw materials of machine learning computation. Practitioners, however, rarely write code at this level. A ResNet-50 has `{python} ResNetMemory.resnet_params_m_str` million parameters organized into dozens of layers; manually tracking each tensor, registering it with an optimizer, and handling device placement would be error-prone and tedious. The abstraction problem is not fully solved by hardware-level mechanisms alone; it also requires a *programming model* that organizes these low-level primitives into the clean APIs that practitioners actually use.
+The preceding sections examined what happens *beneath* the API surface: tensors manage data layout, streams overlap computation with communication, and kernel dispatch routes operations to hardware. These mechanisms operate at the level of individual tensors and operations---the raw materials of machine learning computation. Practitioners, however, rarely write code at this level. A ResNet-50 has `{python} ModuleMemoryAnchor.resnet_params_m_str` million parameters organized into dozens of layers; manually tracking each tensor, registering it with an optimizer, and handling device placement would be error-prone and tedious. The abstraction problem is not fully solved by hardware-level mechanisms alone; it also requires a *programming model* that organizes these low-level primitives into the clean APIs that practitioners actually use.
 
 Individual operations---matrix multiplications, activations, normalizations---are the atoms of deep learning computation. Building models from individual operations, however, would be like building a house from individual atoms. Frameworks need an organizational abstraction that lets engineers compose operations into reusable, nestable building blocks. That abstraction is the *module*.
 
@@ -4055,7 +4301,7 @@ print(list(model.state_dict().keys())[:4])
 
 Hierarchical composition mirrors the hardware memory hierarchy in a systems-relevant way: each submodule's parameters can be loaded independently, enabling model parallelism across devices. When a model is too large for a single GPU, the framework can assign different subtrees of the module hierarchy to different devices, with the tree structure providing natural partition boundaries.
 
-The state dictionary mechanism provides the serialization half of this principle. The `state_dict()` method produces a flat key-value mapping of the full module tree, where dotted path names (for example, `blocks.0.conv1.weight`) encode the hierarchy. This flat structure enables efficient serialization: a 7B-parameter model's approximately `{python} Model7B.model_7b_fp16_gb_str` GB FP16 checkpoint can be written as a sequential byte stream, maximizing storage bandwidth utilization. The inverse operation, `load_state_dict()`, reconstructs the hierarchy from the flat mapping, enabling checkpoint recovery and cross-framework model exchange via formats like ONNX. @lst-nested_modules demonstrates how the module tree enables both recursive parameter access and hierarchical state serialization.
+The state dictionary mechanism provides the serialization half of this principle. The `state_dict()` method produces a flat key-value mapping of the full module tree, where dotted path names (for example, `blocks.0.conv1.weight`) encode the hierarchy. This flat structure enables efficient serialization: a 7B-parameter model's approximately `{python} ModuleMemoryAnchor.model_7b_fp16_gb_str` GB FP16 checkpoint can be written as a sequential byte stream, maximizing storage bandwidth utilization. The inverse operation, `load_state_dict()`, reconstructs the hierarchy from the flat mapping, enabling checkpoint recovery and cross-framework model exchange via formats like ONNX. @lst-nested_modules demonstrates how the module tree enables both recursive parameter access and hierarchical state serialization.
 
 The hierarchical structure also enables module-level traversal for systematic operations. Methods like `.named_modules()` iterate the entire tree, supporting bulk transformations such as replacing all BatchNorm layers with GroupNorm or applying Xavier initialization to every Linear layer. These traversal operations depend on the same tree structure that enables parameter discovery, illustrating how a single design decision propagates benefits across multiple use cases.
 
@@ -4064,10 +4310,10 @@ These three principles, automatic parameter discovery, mode-dependent behavior, 
 ::: {#lst-parameter_freezing lst-cap="**Parameter Freezing**: Demonstrates selective parameter freezing for transfer learning, where pretrained layers remain fixed while new layers train."}
 
 ```{.python}
+from torchvision.models import ResNet18_Weights, resnet18
+
 # Freeze all parameters in a pretrained model
-pretrained_model = torch.hub.load(
-    "pytorch/vision", "resnet18", pretrained=True
-)
+pretrained_model = resnet18(weights=ResNet18_Weights.DEFAULT)
 
 for param in pretrained_model.parameters():
     param.requires_grad = False
@@ -4222,7 +4468,7 @@ PyTorch's approach won the broader research community for the same reason: it tr
 
 PyTorch's answer to the Differentiation Problem is the tape-based autograd system examined in @sec-ml-frameworks-pytorch-autograd-internals-4fa0: flexible and debuggable, but harder to optimize globally because the tape is rebuilt each iteration. Its answer to the Abstraction Problem is more pragmatic than comprehensive: strong GPU support through cuBLAS and cuDNN, but deployment to mobile, edge, and browser environments requires exporting through ONNX or specialized runtimes rather than a native path.
 
-The trade-off is therefore a more fragmented deployment path. Because the graph is dynamic, the framework cannot easily perform global optimizations before execution. A model that works perfectly in development may hit performance walls in production when dispatch overhead dominates small operations. To bridge this research-to-production gap, PyTorch introduced TorchScript and PyTorch 2.0 (with `torch.compile`), which allow developers to capture a dynamic model and turn it into an optimized, static representation for deployment. This evolution shows PyTorch moving toward the production end of the compilation continuum while preserving the eager experience that made it dominant in research.
+The trade-off is therefore a more fragmented deployment path. Because the graph is dynamic, the framework cannot easily perform global optimizations before execution. A model that works perfectly in development may hit performance walls in production when dispatch overhead dominates small operations. To bridge this research-to-production gap, PyTorch introduced graph-capture and compilation paths, from TorchScript historically to modern `torch.compile` and export workflows, which allow developers to capture a dynamic model and turn it into an optimized representation for deployment. This evolution shows PyTorch moving toward the production end of the compilation continuum while preserving the eager experience that made it dominant in research.
 
 ### JAX: The functional transformation engine {#sec-ml-frameworks-jax-functional-transformation-engine-242e}
 
@@ -4285,17 +4531,17 @@ The functional constraints that JAX imposes become advantages in specific domain
 
 The preceding sections described each framework's design philosophy in qualitative terms: graph-first vs. eager-first, stateful vs. functional. Design philosophy claims, however, are only meaningful when backed by measurement. @tbl-mlfm-comparison quantifies how the architectural choices of TensorFlow, PyTorch, and JAX translate to system characteristics. When examining this comparison, note particularly the differences in execution mode, compilation optimization potential, and distributed scalability---these dimensions most directly impact production deployment decisions.
 
-| **Aspect**                    | **TensorFlow**                      | **PyTorch**             | **JAX**                          |
-|:------------------------------|:------------------------------------|:------------------------|:---------------------------------|
-| **Graph Type**                | Static (1.x), Dynamic (2.x)         | Dynamic                 | Functional transformations       |
-| **Programming Model**         | Imperative (2.x), Symbolic (1.x)    | Imperative              | Functional                       |
-| **Core Data Structure**       | Tensor (mutable)                    | Tensor (mutable)        | Array (immutable)                |
-| **Execution Mode**            | Eager (2.x default), Graph          | Eager                   | Just-in-time compilation         |
-| **Automatic Differentiation** | Reverse mode                        | Reverse mode            | Forward and Reverse mode         |
-| **Hardware Acceleration**     | CPU, GPU, TPU                       | CPU, GPU                | CPU, GPU, TPU                    |
-| **Compilation Optimization**  | XLA: 3--10$\times$ speedup          | TorchScript: 2$\times$  | XLA: 3--10$\times$ speedup       |
-| **Memory Efficiency**         | 70--90 percent (workload dependent) | 70--90 percent (varies) | 75--95 percent (with XLA fusion) |
-| **Distributed Scalability**   | High (1024+ GPUs)                   | High                    | Very High (1024+ GPUs)           |
+| **Aspect**                    | **TensorFlow**                      | **PyTorch**                                  | **JAX**                          |
+|:------------------------------|:------------------------------------|:---------------------------------------------|:---------------------------------|
+| **Graph Type**                | Static (1.x), Dynamic (2.x)         | Dynamic                                      | Functional transformations       |
+| **Programming Model**         | Imperative (2.x), Symbolic (1.x)    | Imperative                                   | Functional                       |
+| **Core Data Structure**       | Tensor (mutable)                    | Tensor (mutable)                             | Array (immutable)                |
+| **Execution Mode**            | Eager (2.x default), Graph          | Eager                                        | Just-in-time compilation         |
+| **Automatic Differentiation** | Reverse mode                        | Reverse mode                                 | Forward and Reverse mode         |
+| **Hardware Acceleration**     | CPU, GPU, TPU                       | CPU, GPU                                     | CPU, GPU, TPU                    |
+| **Compilation Optimization**  | XLA: workload dependent             | `torch.compile` / export: workload dependent | XLA: workload dependent          |
+| **Memory Efficiency**         | 70--90 percent (workload dependent) | 70--90 percent (varies)                      | 75--95 percent (with XLA fusion) |
+| **Distributed Scalability**   | High (1024+ GPUs)                   | High                                         | Very High (1024+ GPUs)           |
 
 : **Framework Characteristics**: Each column reflects a distinct answer to the three core problems. TensorFlow's static graph roots enable XLA compilation but constrain dynamic control flow; PyTorch's eager default maximizes debugging flexibility but limits ahead-of-time optimization; JAX's functional model enables composable transformations and achieves the highest memory efficiency through XLA fusion. {#tbl-mlfm-comparison}
 
@@ -4547,22 +4793,31 @@ optimizer.step()
 # │ Context: Phase 1 prose references matrix dimensions inline
 # │
 # │ Goal: Define model dimensions for the training step example.
-# │ Show: The matrix sizes for a 2-layer MLP (784 -> 1024 -> 10).
+# │ Show: The matrix sizes for a 2-layer MLP (784 -> 256 -> 10).
 # │ How: Set constants for input batch, hidden layers, and output classes.
 # │
-# │ Imports: mlsysim.fmt (fmt)
+# │ Imports: mlsysim.fmt (fmt, check)
 # │ Exports: train_batch (int), train_input (int), train_hidden (int), train_output (int),
 # │          train_batch_str, train_input_str, train_hidden_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class TrainingStepDims:
     """Model dimensions for the two-layer MLP training step example."""
 
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────────
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    image_side = 28
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    input_features = image_side * image_side
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(input_features == 784, f"MNIST flattened input should be 784, got {input_features}.")
+
+    # ┌── 4. OUTPUT (Variables) ───────────────────────────────────────────
     train_batch = 32                                                            # batch size
-    train_input = 784                                                           # MNIST input (28 × 28)
+    train_input = input_features                                                # MNIST input (28 × 28)
     train_hidden = 256                                                          # hidden layer
     train_output = 10                                                           # MNIST classes
 
@@ -4578,18 +4833,53 @@ class TrainingStepDims:
 
 When `h = torch.relu(x @ W1 + b1)` executes, PyTorch's eager execution triggers immediate computation:
 
-1. **Python Dispatch**\index{Python Dispatch!overhead} (~1μs): Python interpreter calls `torch.matmul`, which routes through PyTorch's dispatcher to select the CUDA backend.
+1. **Python Dispatch**\index{Python Dispatch!overhead} (microseconds-scale): Python interpreter calls `torch.matmul`, which routes through PyTorch's dispatcher to select the CUDA backend.
 
-2. **Kernel Selection**\index{BLAS Library!kernel selection} (~0.5μs): cuBLAS selects an optimized GEMM kernel based on matrix dimensions (`{python} TrainingStepDims.train_batch_str` $\times$ `{python} TrainingStepDims.train_input_str` $\times$ `{python} TrainingStepDims.train_hidden_str`). For these dimensions, it might choose a tiled algorithm optimized for L2 cache.
+2. **Kernel Selection**\index{BLAS Library!kernel selection}: cuBLAS selects an optimized GEMM kernel based on matrix dimensions (`{python} TrainingStepDims.train_batch_str` $\times$ `{python} TrainingStepDims.train_input_str` $\times$ `{python} TrainingStepDims.train_hidden_str`). For these dimensions, it might choose a tiled algorithm optimized for L2 cache.
 
-3. **Kernel Launch** (~5μs): The selected kernel is queued to the GPU's command buffer. The CPU continues immediately (asynchronous execution).
+3. **Kernel Launch** (a few microseconds): The selected kernel is queued to the GPU's command buffer. The CPU continues immediately (asynchronous execution).
 
-4. **GPU Execution** (~15μs):
-   - Load W1 from HBM[^fn-hbm-capacity-constraint] to L2 cache (~200 GB/s effective bandwidth)
+4. **GPU Execution** (workload-dependent, usually microseconds for this small GEMM):
+   - Load W1 from HBM[^fn-hbm-capacity-constraint] to L2 cache
    - Perform matrix multiply in tensor cores (if available)
    - Write result to HBM
 
-[^fn-hbm-capacity-constraint]: **HBM (High Bandwidth Memory)**: Provides 2--3 TB/s bandwidth on modern GPUs (introduced in @sec-hardware-acceleration-memory-hierarchy-1839). HBM bandwidth determines whether operations are memory bound or compute bound, and its `{python} DeviceBandwidthHierarchy.a100_mem_str` GB capacity on an A100 sets the hard ceiling on model size: weights, activations, gradients, and optimizer state must all fit simultaneously during training. When they do not, the framework must resort to offloading, checkpointing, or model parallelism, each adding complexity to what the programmer perceives as a single `loss.backward()` call. \index{HBM!capacity constraint}
+```{python}
+#| label: hbm-capacity-footnote-anchor
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ HBM CAPACITY FOOTNOTE ANCHOR
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: HBM capacity footnote immediately below.
+# │
+# │ Goal: Keep the A100 HBM capacity local to the training-step narrative.
+# │ Show: A100 has an 80 GB HBM capacity anchor in this chapter.
+# │ How: Read the A100 memory capacity constant and format it for prose.
+# │
+# │ Imports: mlsysim.core.constants (A100_MEM_CAPACITY, GiB)
+# │ Exports: HbmCapacityFootnote.a100_mem_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import A100_MEM_CAPACITY, GiB
+from mlsysim.fmt import fmt, check
+
+# ┌── LEGO ───────────────────────────────────────────────
+class HbmCapacityFootnote:
+    """Local A100 HBM capacity anchor for the training-step footnote."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    a100_mem_gb = A100_MEM_CAPACITY.m_as(GiB)
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    # Direct hardware-constant lookup.
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(a100_mem_gb >= 80, "A100 HBM capacity anchor should be at least 80 GB.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False)
+```
+
+[^fn-hbm-capacity-constraint]: **HBM (High Bandwidth Memory)**: Provides 2--3 TB/s bandwidth on modern GPUs (introduced in @sec-hardware-acceleration-memory-hierarchy-1839). HBM bandwidth determines whether operations are memory bound or compute bound, and its `{python} HbmCapacityFootnote.a100_mem_str` GB capacity on an A100 sets the hard ceiling on model size: weights, activations, gradients, and optimizer state must all fit simultaneously during training. When they do not, the framework must resort to offloading, checkpointing, or model parallelism, each adding complexity to what the programmer perceives as a single `loss.backward()` call. \index{HBM!capacity constraint}
 
 5. **Autograd Recording**: Simultaneously, PyTorch's autograd engine records a `MmBackward` node on the tape, storing references to `x` and `W1` for gradient computation.
 
@@ -4632,7 +4922,8 @@ Applying the Dispatch Overhead Equation (@eq-dispatch-overhead) to this step, @t
 # │ Exports: train_mm1_flops_str, train_mm1_mem_str, train_mm1_ai_str,
 # │          train_relu_flops_str, train_relu_mem_str, train_relu_ai_str,
 # │          train_mm2_flops_str, train_mm2_mem_str, train_mm2_ai_str, train_ce_flops_str,
-# │          train_ce_mem_str, train_ce_ai_str, train_bwd_flops_str
+# │          train_ce_mem_str, train_ce_ai_str, train_bwd_flops_str,
+# │          train_bwd_mem_str, train_bwd_ai_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check, MarkdownStr
 from mlsysim.core.constants import byte, KB, MB, flop, KFLOPs, MFLOPs
@@ -4665,14 +4956,20 @@ class TrainingStepCalc:
     ce_flops = _batch * _output * 3                                             # ~1K FLOPs (exp + sum + div)
     ce_mem_bytes = (_batch * _output) * 2 * 4
 
-    # Step 5: Backward pass (2x forward FLOPs)
-    bwd_flops = 2 * (mm1_flops + relu_flops + mm2_flops + ce_flops)
-    bwd_mem_str = MarkdownStr("~3.2 MB")                                        # approximation
-    bwd_ai_str = MarkdownStr("~8.0")                                            # approximation
+    # Step 5: Backward pass (2x forward FLOPs, ~3x forward memory traffic)
+    forward_flops = mm1_flops + relu_flops + mm2_flops + ce_flops
+    forward_mem_bytes = mm1_mem_bytes + relu_mem_bytes + mm2_mem_bytes + ce_mem_bytes
+    bwd_flops = 2 * forward_flops
+    bwd_mem_bytes = 3 * forward_mem_bytes
+    bwd_ai = bwd_flops / bwd_mem_bytes
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(mm1_flops/mm1_mem_bytes > relu_flops/relu_mem_bytes,
           "MatMul must have higher arithmetic intensity than ReLU.")
+    check(bwd_flops > forward_flops,
+          "Backward FLOPs should exceed forward FLOPs in this approximation.")
+    check(7 <= bwd_ai <= 9,
+          f"Backward arithmetic intensity ({bwd_ai:.1f}) drifted from the expected range.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     train_mm1_flops_str = fmt((mm1_flops * flop).m_as(MFLOPs), precision=1, commas=False) + "M"
@@ -4692,8 +4989,8 @@ class TrainingStepCalc:
     train_ce_ai_str = fmt(ce_flops/ce_mem_bytes, precision=1, commas=False)
 
     train_bwd_flops_str = fmt((bwd_flops * flop).m_as(MFLOPs), precision=0, commas=False) + "M"
-    train_bwd_mem_str = bwd_mem_str
-    train_bwd_ai_str = bwd_ai_str
+    train_bwd_mem_str = fmt((bwd_mem_bytes * byte).m_as(MB), precision=1, commas=False) + " MB"
+    train_bwd_ai_str = fmt(bwd_ai, precision=1, commas=False)
 ```
 
 | **Component**                    |                                        **FLOPs**                                        |               **Memory Traffic**               |            **Arithmetic Intensity**           |
@@ -4715,7 +5012,7 @@ class TrainingStepCalc:
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: Showing that small model training is overhead-bound, not compute-bound
 # │
-# │ Goal: On an A100, 40M FLOPs takes 0.1 μs and 5 MB memory takes 2.5 μs, but
+# │ Goal: On an A100, this small step's FLOPs take ~0.1 μs and memory takes ~2 μs, but
 # │      6 ops × 5 μs dispatch = 30 μs overhead. The step is overhead-bound!
 # │      This explains why torch.compile provides 2-3x speedup for small models.
 # │
@@ -4724,28 +5021,31 @@ class TrainingStepCalc:
 # │          a100_mem_bw_tbs_str, mnist_t_compute_us_str, mnist_t_memory_us_str,
 # │          mnist_n_ops_str, mnist_us_per_op_str, mnist_t_overhead_us_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import A100_FLOPS_FP16_TENSOR, A100_MEM_BW, TRILLION, flop, byte, second
+from mlsysim.core.constants import A100_FLOPS_FP16_TENSOR, A100_MEM_BW, TRILLION, MILLION, flop, byte, second
 from mlsysim.fmt import fmt, check, MarkdownStr
 
 class MnistTrainingStepCalc:
     """MNIST overhead-bound analysis: dispatch dominates compute and memory on A100."""
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    total_flops = 40e6                                                          # ~40M FLOPs total
-    mem_traffic_bytes = 5e6                                                     # ~5 MB traffic
+    total_flops = TrainingStepCalc.forward_flops + TrainingStepCalc.bwd_flops
+    mem_traffic_bytes = TrainingStepCalc.forward_mem_bytes + TrainingStepCalc.bwd_mem_bytes
     n_ops = 6                                                                   # 6 kernel launches
     us_per_op = 5                                                               # 5 μs dispatch/op
     peak_flops = A100_FLOPS_FP16_TENSOR.m_as(flop/second)                      # 312e12 FLOPS
     mem_bw_bytes = A100_MEM_BW.m_as(byte/second)                               # ~2e12 B/s
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     t_compute_us = total_flops/peak_flops * MILLION                          # ~0.1 μs
-    t_memory_us = mem_traffic_bytes/mem_bw_bytes * MILLION                   # ~2.5 μs
+    t_memory_us = mem_traffic_bytes/mem_bw_bytes * MILLION                   # ~2 μs
     t_overhead_us = n_ops * us_per_op                                          # 30 μs (dominant!)
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(t_overhead_us > 10 * max(t_compute_us, t_memory_us),
+          f"Expected overhead to dominate, got overhead={t_overhead_us:.1f} μs, compute={t_compute_us:.2f} μs, memory={t_memory_us:.2f} μs.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     mnist_t_compute_us_str = fmt(t_compute_us, precision=1, commas=False)
     mnist_t_memory_us_str = fmt(t_memory_us, precision=1, commas=False)
     mnist_t_overhead_us_str = fmt(t_overhead_us, precision=0, commas=False)
     mnist_total_flops_str = fmt(total_flops/MILLION, precision=0, commas=False, suffix="M")
-    mnist_mem_traffic_str = fmt(mem_traffic_bytes/MILLION, precision=0, commas=False, suffix="MB")
+    mnist_mem_traffic_str = fmt(mem_traffic_bytes/MILLION, precision=1, commas=False, suffix=" MB")
     mnist_n_ops_str = fmt(n_ops, precision=0, commas=False)
     mnist_us_per_op_str = fmt(us_per_op, precision=0, commas=False)
     a100_peak_tflops_str = fmt(peak_flops/TRILLION, precision=0, commas=False)
@@ -4826,8 +5126,10 @@ Engineers assume training framework choice is independent of deployment infrastr
 # │ Show: That 14 GB of weights consumes 18% of an A100 before training starts.
 # │ How: Calculate weight memory for 7B parameters in FP16.
 # │
-# │ Imports: mlsysim.core.constants (A100_MEM_CAPACITY, BYTES_FP16), mlsysim.formulas (model_memory)
-# │ Exports: model_7b_fp16_gb_str, a100_remaining_7b_gb_str, DeviceBandwidthHierarchy.a100_mem_str
+# │ Imports: mlsysim.core.constants (A100_MEM_CAPACITY, BYTES_FP16, GB, GiB),
+# │          mlsysim.formulas (model_memory)
+# │ Exports: Model7BMemory.model_7b_fp16_gb_str,
+# │          Model7BMemory.a100_remaining_7b_gb_str, Model7BMemory.a100_mem_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import A100_MEM_CAPACITY, BYTES_FP16, GB, GiB
 from mlsysim.core.formulas import model_memory
@@ -4840,15 +5142,18 @@ class Model7BMemory:
     a100_mem = A100_MEM_CAPACITY.m_as(GiB)                                     # 80 GB
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     fp16_gb = model_memory(params, BYTES_FP16, GB)                             # 14 GB
+    remaining_gb = a100_mem - fp16_gb
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(remaining_gb > 60, f"7B FP16 weights leave less A100 memory than expected: {remaining_gb:.1f} GB.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     model_7b_fp16_gb_str = fmt(fp16_gb, precision=0, commas=False)             # e.g. "14"
-    a100_remaining_7b_gb_str = fmt(a100_mem - fp16_gb, precision=0, commas=False)  # e.g. "66"
+    a100_remaining_7b_gb_str = fmt(remaining_gb, precision=0, commas=False)     # e.g. "66"
     a100_mem_str = fmt(a100_mem, precision=0, commas=False)                    # e.g. "80"
 ```
 
 **Fallacy**: *"Increasing batch size is a free throughput optimization within framework memory limits."*
 
-Engineers assume that if memory is available, larger batches always improve throughput. The mini-batch processing discussion in @sec-model-training-minibatch-processing-4eb0 explains the throughput target, but activation memory can reverse the benefit. A 7B parameter model in FP16 consumes `{python} Model7B.model_7b_fp16_gb_str` GB, leaving `{python} Model7BMemory.a100_remaining_7b_gb_str` GB on an A100-`{python} Model7BMemory.a100_mem_str` GB. Increasing batch size from 8 to 32 quadruples activation memory for transformers due to attention's $O(S^2)$ scaling, potentially triggering recomputation strategies that reduce throughput by 20--30 percent despite the larger batch. Teams that blindly maximize batch size often achieve *lower* throughput than smaller batches that avoid these memory management pathways.
+Engineers assume that if memory is available, larger batches always improve throughput. The mini-batch processing discussion in @sec-model-training-minibatch-processing-4eb0 explains the throughput target, but activation memory can reverse the benefit. A 7B parameter model in FP16 consumes `{python} Model7BMemory.model_7b_fp16_gb_str` GB, leaving `{python} Model7BMemory.a100_remaining_7b_gb_str` GB on an A100-`{python} Model7BMemory.a100_mem_str` GB. Increasing batch size from 8 to 32 quadruples activation memory for transformers due to attention's $O(S^2)$ scaling, potentially triggering recomputation strategies that reduce throughput by 20--30 percent despite the larger batch. Teams that blindly maximize batch size often achieve *lower* throughput than smaller batches that avoid these memory management pathways.
 
 **Pitfall**: *Treating compilation overhead as negligible.*
 
@@ -4862,29 +5167,43 @@ Engineers assume that if memory is available, larger batches always improve thro
 # │ Context: Pitfall about treating compilation overhead as negligible
 # │
 # │ Goal: Demonstrate that compilation costs can outweigh execution benefits.
-# │ Show: That frequent recompilation makes eager mode 40× faster than compiled.
-# │ How: Model total time = (compile_time * recompiles) + (exec_time * samples).
+# │ Show: That frequent recompilation makes eager mode over 40× faster than compiled.
+# │ How: Reuse the local ResNet-50 throughput table values, then model total
+# │      time = (compile_time * recompiles) + (exec_time * samples).
 # │
-# │ Imports: mlsysim.book (fmt)
-# │ Exports: n_images_str, n_recompilations_str, eager_throughput_str,
-# │          compiled_throughput_str, compilation_time_s_str, eager_total_str,
-# │          compiled_total_str
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: resnet_compile_speedup_pct_str, compile_min_s_str, compile_max_s_str,
+# │          n_images_str, n_recompilations_str, eager_total_str, compiled_total_str,
+# │          compilation_time_s_str, compiled_slowdown_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check
 
 class CompilationOverheadCalc:
     """Break-even analysis showing frequent recompilation negates compiled-mode throughput gains."""
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    benchmark = CompilationBenchmark.resnet
     n_images = 10_000                                                           # small experiment
-    eager_throughput = 1_450                                                    # images/sec (eager)
-    compiled_throughput = 2_150                                                 # images/sec (compiled)
+    eager_throughput = benchmark["eager"]                                       # images/sec (eager)
+    compiled_throughput = benchmark["compile"]                                  # images/sec (compiled)
+    compile_min_s = benchmark["compile_min_s"]
+    compile_max_s = benchmark["compile_max_s"]
     n_recompilations = 10                                                       # code changes
-    compilation_time_s = 30                                                     # seconds per compile
+    compilation_time_s = compile_max_s                                          # seconds per compile
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    eager_total = n_images/eager_throughput                                   # ~6.9 s
+    resnet_compile_speedup_pct = (compiled_throughput / eager_throughput - 1) * 100
+    eager_total = n_images/eager_throughput                                     # ~6.9 s
     compiled_total = (n_images/compiled_throughput +
                       n_recompilations * compilation_time_s)                   # ~304.7 s
+    compiled_slowdown = compiled_total / eager_total
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(45 <= resnet_compile_speedup_pct <= 50,
+          f"ResNet-50 compile speedup drifted to {resnet_compile_speedup_pct:.1f}%.")
+    check(compiled_slowdown > 40,
+          f"Expected frequent recompilation to be >40x slower, got {compiled_slowdown:.1f}x.")
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    resnet_compile_speedup_pct_str = fmt(resnet_compile_speedup_pct, precision=0, commas=False)
+    compile_min_s_str = fmt(compile_min_s, precision=0, commas=False)
+    compile_max_s_str = fmt(compile_max_s, precision=0, commas=False)
     n_images_str = fmt(n_images, precision=0)                                   # e.g. "10,000"
     n_recompilations_str = fmt(n_recompilations, precision=0, commas=False)    # e.g. "10"
     eager_throughput_str = fmt(eager_throughput, precision=0)                   # e.g. "1,450"
@@ -4892,9 +5211,10 @@ class CompilationOverheadCalc:
     compilation_time_s_str = fmt(compilation_time_s, precision=0, commas=False)  # e.g. "30"
     eager_total_str = fmt(eager_total, precision=1, commas=False)              # e.g. "6.9"
     compiled_total_str = fmt(compiled_total, precision=1, commas=False)        # e.g. "304.7"
+    compiled_slowdown_str = fmt(compiled_slowdown, precision=0, commas=False)  # e.g. "44"
 ```
 
-Engineers assume compilation overhead is a one-time cost that pays off quickly. @tbl-training-benchmark shows torch.compile achieves 48 percent higher ResNet-50 throughput but incurs fifteen to sixty seconds compilation overhead per graph change. For a `{python} CompilationOverheadCalc.n_images_str`-image experiment with `{python} CompilationOverheadCalc.n_recompilations_str` code changes: Eager completes in `{python} CompilationOverheadCalc.eager_total_str` seconds while Compiled requires `{python} CompilationOverheadCalc.compiled_total_str` seconds (including `{python} CompilationOverheadCalc.n_recompilations_str` $\times$ `{python} CompilationOverheadCalc.compilation_time_s_str` s recompilation overhead). Teams that enable compilation during rapid prototyping can waste minutes waiting for recompilations that negate any throughput gains.
+Engineers assume compilation overhead is a one-time cost that pays off quickly. @tbl-training-benchmark shows torch.compile achieves `{python} CompilationOverheadCalc.resnet_compile_speedup_pct_str` percent higher ResNet-50 throughput, but the same table also assigns ResNet-50 a compile window of `{python} CompilationOverheadCalc.compile_min_s_str` to `{python} CompilationOverheadCalc.compile_max_s_str` seconds per graph change. For a `{python} CompilationOverheadCalc.n_images_str`-image experiment with `{python} CompilationOverheadCalc.n_recompilations_str` code changes: Eager completes in `{python} CompilationOverheadCalc.eager_total_str` seconds while Compiled requires `{python} CompilationOverheadCalc.compiled_total_str` seconds (including `{python} CompilationOverheadCalc.n_recompilations_str` $\times$ `{python} CompilationOverheadCalc.compilation_time_s_str` s recompilation overhead), making the compiled workflow about `{python} CompilationOverheadCalc.compiled_slowdown_str`$\times$ slower in this rapid-prototyping scenario. Teams that enable compilation during rapid prototyping can waste minutes waiting for recompilations that negate any throughput gains.
 
 ## Summary {#sec-ml-frameworks-summary-07f0}
 
