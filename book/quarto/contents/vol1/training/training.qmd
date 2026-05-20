@@ -829,7 +829,7 @@ Gradient descent is the mathematical foundation of neural network training, iter
 
 The computational demands of gradient descent scale with both model size and dataset size. Computing gradients requires storing intermediate activations during the forward pass for backpropagation. These activations consume memory proportional to the depth of the network and the number of examples being processed.
 
-Traditional gradient descent processes the entire dataset before each parameter update. For a training set with one million examples, the system must compute an aggregate gradient over all examples before taking one step. @eq-gd-memory and @eq-gd-time capture the implementation distinction:
+Traditional gradient descent processes the entire dataset before each parameter update. For a training set with one million examples, the system must compute an aggregate gradient over all examples before taking one step. The peak-memory relation in @eq-gd-memory and the step-time relation in @eq-gd-time capture the implementation distinction:
 $$ \text{Peak Activation Memory} \propto B_{\text{micro}} \times \text{Activation Memory per Example} $$ {#eq-gd-memory}
 $$ T_{\text{step}} \propto N \times T_{\text{forward+backward per example}} $$ {#eq-gd-time}
 
@@ -2605,10 +2605,10 @@ class NetworkWall:
 
 #### System implications {#sec-model-training-system-implications-2539}
 
-The data pipeline and compute engine form a coupled system whose throughput equals the slower of the two (@eq-system-throughput):
+The data pipeline and compute engine form a coupled system whose throughput equals the slower of the two, as @eq-system-throughput states:
 $$R_{\text{system}} =\min(R_{\text{pipeline}}, R_{\text{compute}})$$ {#eq-system-throughput}
 
-This simple relationship has profound consequences. When $R_{\text{pipeline}} < R_{\text{compute}}$, the accelerator sits idle waiting for data, and accelerator utilization drops proportionally (@eq-gpu-utilization):
+This simple relationship has profound consequences. When $R_{\text{pipeline}} < R_{\text{compute}}$, the accelerator sits idle waiting for data, and accelerator utilization drops proportionally, as @eq-gpu-utilization shows:
 $$\text{Accelerator Utilization} = \frac{R_{\text{pipeline}}}{R_{\text{GPU}}} \times 100\%$$ {#eq-gpu-utilization}
 
 A ResNet-50 model on modern accelerator hardware can process 1,000 images per second, but if the data pipeline delivers only 200 images per second, accelerator utilization drops to 20 percent---the accelerator is idle 80 percent of the time. Crucially, upgrading to faster hardware does not help; an accelerator capable of 2,000 images per second would achieve only 10 percent utilization with the same pipeline. Balanced system design matters precisely here: the most expensive component in the system (the accelerator) must never be the one waiting.
@@ -2616,7 +2616,7 @@ A ResNet-50 model on modern accelerator hardware can process 1,000 images per se
 #### Data flows {#sec-model-training-data-flows-0b2e}
 
 \index{Memory Hierarchy!ML training tiers}
-Training data traverses three memory tiers on its way from disk to accelerator, and the bandwidth gap between these tiers, spanning three orders of magnitude, is the central challenge of data pipeline design. The effective transfer rate through the hierarchy is bounded by its slowest link (@eq-memory-hierarchy-bandwidth):
+Training data traverses three memory tiers on its way from disk to accelerator, and the bandwidth gap between these tiers, spanning three orders of magnitude, is the central challenge of data pipeline design. The effective transfer rate through the hierarchy is bounded by its slowest link, as @eq-memory-hierarchy-bandwidth shows:
 $$R_{\text{memory}} =\min(\text{BW}_{\text{storage}}, \text{BW}_{\text{system}}, \text{BW}_{\text{accelerator}})$$ {#eq-memory-hierarchy-bandwidth}
 
 ```{python}
@@ -2653,7 +2653,7 @@ class MemoryHierarchyBandwidth:
     v100_bw_str = fmt(v100_bw, precision=0, commas=False)
 ```
 
-Storage devices provide 1--2 GB/s, system memory delivers 50--100 GB/s, and accelerator HBM achieves `{python} MemoryHierarchyBandwidth.v100_bw_str` GB/s or higher. Each jump represents roughly a 50--100$\times$ bandwidth increase, which means data that flows freely within accelerator memory creates a severe bottleneck when it must be fetched from disk. This cascading bandwidth hierarchy explains why the iteration time of a well-pipelined system is governed by the *maximum* of its component latencies rather than their sum (@eq-iteration-time):
+Storage devices provide 1--2 GB/s, system memory delivers 50--100 GB/s, and accelerator HBM achieves `{python} MemoryHierarchyBandwidth.v100_bw_str` GB/s or higher. Each jump represents roughly a 50--100$\times$ bandwidth increase, which means data that flows freely within accelerator memory creates a severe bottleneck when it must be fetched from disk. This cascading bandwidth hierarchy explains why the iteration time of a well-pipelined system is governed by the *maximum* of its component latencies rather than their sum, as @eq-iteration-time shows:
 $$t_{\text{iteration}} =\max(t_{\text{fetch}}, t_{\text{process}}, t_{\text{transfer}})$$ {#eq-iteration-time}
 
 When pipeline stages overlap correctly (fetching the next batch from storage while preprocessing the current one and transferring the previous one to the accelerator), the iteration time equals the duration of the slowest stage rather than the sum of all stages. This overlap is exactly what prefetching achieves, turning a serial bottleneck into a parallel pipeline where each tier operates concurrently on different batches.
@@ -2661,13 +2661,13 @@ When pipeline stages overlap correctly (fetching the next batch from storage whi
 #### Practical architectures {#sec-model-training-practical-architectures-d54d}
 
 \index{NVMe!storage bandwidth}
-These throughput relationships become concrete when applied to real storage hardware. An NVMe storage device with `{python} StorageBandwidth.nvme_bw_str` GB/s theoretical bandwidth typically sustains approximately `{python} StorageBandwidth.nvme_bw_sustained_str` GB/s in practice (@eq-practical-throughput), and random access patterns for data shuffling reduce effective throughput by another 90 percent.
+These throughput relationships become concrete when applied to real storage hardware. An NVMe storage device with `{python} StorageBandwidth.nvme_bw_str` GB/s theoretical bandwidth typically sustains approximately `{python} StorageBandwidth.nvme_bw_sustained_str` GB/s in practice, as @eq-practical-throughput shows, and random access patterns for data shuffling reduce effective throughput by another 90 percent.
 $$R_{\text{practical}} = 0.5 \times \text{BW}_{\text{theoretical}}$$ {#eq-practical-throughput}
 
 To keep accelerators fed despite this bandwidth reduction, pipeline architectures maintain multiple data buffers simultaneously---prefetch buffers loading future batches, processing buffers holding data under transformation, and transfer buffers staging data for accelerator consumption. The total host memory required scales with batch size according to @eq-buffer-memory:
 $$M_{\text{required}} = (N_{\text{prefetch}} + N_{\text{processing}} + N_{\text{transfer}}) \times S_{\text{batch}}$$ {#eq-buffer-memory}
 
-The critical design constraint is that preprocessing must complete faster than accelerator computation (@eq-pipeline-condition). When this inequality is violated, expensive accelerators idle while CPUs finish transforming data:
+The critical design constraint is that preprocessing must complete faster than accelerator computation, as @eq-pipeline-condition states. When this inequality is violated, expensive accelerators idle while CPUs finish transforming data:
 $$t_{\text{preprocessing}} < t_{\text{GPU\_compute}}$$ {#eq-pipeline-condition}
 
 For image classification pipelines where resizing, augmentation, and normalization consume 20--40 ms per batch on a single CPU thread, while a modern GPU completes the forward-backward pass in 10--15 ms, satisfying this inequality requires parallel preprocessing with four to eight worker threads. This is exactly the configuration that @sec-model-training-data-prefetching-pipeline-overlapping-e984 optimizes.
