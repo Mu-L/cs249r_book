@@ -70,8 +70,18 @@ Neural networks are defined by mathematics (matrix multiplications, gradient com
 # │ Exports: A100BLAS.dense_tflops_str, A100BLAS.sparse_tflops_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, MarkdownStr
 from mlsysim.core.constants import TFLOPs, second
+
+# ┌── LEGO ───────────────────────────────────────────────
+class GraphOptimizationStats:
+    """
+    Namespace for graph-level optimization statistics.
+    """
+    flop_reduction_min_pct = 5
+    flop_reduction_max_pct = 10
+
+    flop_reduction_range_str = MarkdownStr(f"{flop_reduction_min_pct}-{flop_reduction_max_pct}%")
 
 # ┌── LEGO ───────────────────────────────────────────────
 class A100BLAS:
@@ -519,7 +529,7 @@ This graph representation is more than a visualization; it is the data structure
 - **For deployment**: execution independent of the Python interpreter.
 - **For flexibility**: control flow conditioned on computed tensor values.
 
-No single execution model optimizes all these dimensions. Frameworks must choose their position in this trade-off space, and practitioners must understand these trade-offs to select appropriate tools and write efficient code. The following sections examine *how* different execution strategies navigate these constraints.
+No single execution model optimizes all these dimensions. Frameworks must choose their position in this trade-off space, and practitioners must understand these trade-offs to select appropriate tools and write efficient code. We now examine *how* different execution strategies navigate these constraints.
 
 ### Three execution strategies {#sec-ml-frameworks-three-execution-strategies-5934}
 
@@ -883,11 +893,11 @@ class DispatchTax:
     check(large_tax_pct < 15, f"Large op tax ({large_tax_pct:.1f}%) should be negligible.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    python_overhead_str = f"{int(python_overhead_us)}"
-    small_kernel_str = f"{int(small_kernel_us)}"
-    large_kernel_str = f"{int(large_kernel_us)}"
-    small_tax_pct_str = f"{small_tax_pct:.0f}"
-    large_tax_pct_str = f"{large_tax_pct:.0f}"
+    python_overhead_str = fmt(int(python_overhead_us), precision=0, commas=False)
+    small_kernel_str = fmt(int(small_kernel_us), precision=0, commas=False)
+    large_kernel_str = fmt(int(large_kernel_us), precision=0, commas=False)
+    small_tax_pct_str = fmt(small_tax_pct, precision=0, commas=False)
+    large_tax_pct_str = fmt(large_tax_pct, precision=0, commas=False)
 ```
 
 ### The dispatch tax: Python overhead vs. GPU reality {#sec-ml-frameworks-dispatch-tax}
@@ -1248,10 +1258,10 @@ Because the framework has the complete graph before execution, it can perform op
 # │ Show: "5-10%"—inline in the paragraph after the DCE footnote.
 # │ How: Format the min/max reduction percentages as a compact range.
 # │
-# │ Imports: mlsysim.book (check)
+# │ Imports: mlsysim.fmt (check, MarkdownStr)
 # │ Exports: GraphOptimizationStats.flop_reduction_range_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import check
+from mlsysim.fmt import check, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class GraphOptimizationStats:
@@ -1269,7 +1279,7 @@ class GraphOptimizationStats:
           "Graph optimization FLOP reduction range must be increasing.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    flop_reduction_range_str = f"{flop_reduction_min_pct}-{flop_reduction_max_pct}%"
+    flop_reduction_range_str = MarkdownStr(f"{flop_reduction_min_pct}-{flop_reduction_max_pct}%")
 ```
 
 These optimizations map directly to iron law terms: kernel fusion reduces $D_{\text{vol}}$ by eliminating intermediate memory writes, constant folding reduces $O$ by computing values once, memory preallocation reduces $L_{\text{lat}}$ by avoiding runtime allocation overhead, and dead code elimination reduces both $O$ and $D_{\text{vol}}$. Concretely, in large transformer models, constant folding and dead code elimination can reduce total FLOPs by `{python} GraphOptimizationStats.flop_reduction_range_str` before the first batch even arrives.
@@ -1342,7 +1352,7 @@ traced = torch.jit.trace(conditional_forward, torch.tensor([1.0]))
 
 The alternative, scripting\index{JIT Compilation!scripting}, achieves generality by analyzing Python source code directly and compiling it to TorchScript IR without executing. The scripting compiler parses the abstract syntax tree (AST), converts supported operations to IR operations, and preserves the branching structure so that both branches of a conditional exist in the compiled representation. The cost of this generality is a restricted Python subset: type annotations are required where inference fails, arbitrary Python objects and standard library modules are excluded, and dynamic metaprogramming is forbidden.
 
-Tracing suits feed-forward models without conditionals (ResNet, VGG, Vision Transformer) and models where control flow depends only on hyperparameters fixed at trace time. Scripting suits models with data-dependent control flow (RNN variants, recursive networks, adaptive computation) and deployment to environments without a Python interpreter. The following examples demonstrate scripting syntax (@lst-torchscript-script), control flow preservation (@lst-torchscript-conditional), language restrictions (@lst-torchscript-restrictions), and IR inspection (@lst-torchscript-ir).
+Tracing suits feed-forward models without conditionals (ResNet, VGG, Vision Transformer) and models where control flow depends only on hyperparameters fixed at trace time. Scripting suits models with data-dependent control flow (RNN variants, recursive networks, adaptive computation) and deployment to environments without a Python interpreter. The mechanics appear across four practical views: scripting syntax (@lst-torchscript-script), control flow preservation (@lst-torchscript-conditional), language restrictions (@lst-torchscript-restrictions), and IR inspection (@lst-torchscript-ir).
 
 ::: {#lst-torchscript-script lst-cap="**TorchScript Scripting**: Compiles Python source code directly to TorchScript IR by parsing the AST, preserving control flow structure without requiring example inputs."}
 
@@ -1466,7 +1476,7 @@ forward(torch.tensor([2.0]))
 
 :::
 
-The compilation overhead in these examples (approximately 100 ms to compile the first time, microseconds to reuse) illustrates why torch.compile is so effective. The deeper question is *why* compilation helps so much. The answer lies in understanding *the physics of software overhead*. Dispatch costs that seem negligible for a single operation---a few microseconds here and there---compound dramatically across the thousands of operations in a forward pass. The following analysis quantifies this phenomenon.
+The compilation overhead in these examples (approximately 100 ms to compile the first time, microseconds to reuse) illustrates why torch.compile is so effective. The deeper question is *why* compilation helps so much. The answer lies in understanding *the physics of software overhead*. Dispatch costs that seem negligible for a single operation---a few microseconds here and there---compound dramatically across the thousands of operations in a forward pass. A simple fusion estimate makes the overhead concrete.
 
 ```{python}
 #| label: fusion-speedup-calc
@@ -1481,13 +1491,13 @@ The compilation overhead in these examples (approximately 100 ms to compile the 
 # │ Show: A 2× speedup from eliminating redundant kernel launches and memory traffic.
 # │ How: Model dispatch and memory overhead for eager vs. fused Add+ReLU.
 # │
-# │ Imports: mlsysim.book (check)
+# │ Imports: mlsysim.book (fmt, check)
 # │ Exports: python_dispatch_us_str, kernel_launch_only_us_str, memory_access_us_str,
 # │          kernel_launch_us_str, eager_overhead_str, compiled_overhead_str,
 # │          overhead_speedup_str, bw_efficiency_str
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.fmt import check
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class FusionSpeedup:
@@ -1520,16 +1530,16 @@ class FusionSpeedup:
     check(speedup >= 1.5, f"Fusion speedup ({speedup:.1f}x) is too small to justify compilation complexity.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    python_dispatch_us_str = f"{python_dispatch_us}"
-    kernel_launch_only_us_str = f"{kernel_launch_us}"
-    memory_access_us_str = f"{memory_access_us}"
-    kernel_launch_us_str = f"{launch_overhead}"
+    python_dispatch_us_str = fmt(python_dispatch_us, precision=0, commas=False)
+    kernel_launch_only_us_str = fmt(kernel_launch_us, precision=0, commas=False)
+    memory_access_us_str = fmt(memory_access_us, precision=0, commas=False)
+    kernel_launch_us_str = fmt(launch_overhead, precision=0, commas=False)
 
-    eager_overhead_str = f"{eager_total_overhead}"
-    compiled_overhead_str = f"{fused_total_overhead}"
+    eager_overhead_str = fmt(eager_total_overhead, precision=0, commas=False)
+    compiled_overhead_str = fmt(fused_total_overhead, precision=0, commas=False)
 
-    overhead_speedup_str = f"{int(speedup)}"
-    bw_efficiency_str = f"{int(bw_efficiency)}"
+    overhead_speedup_str = fmt(int(speedup), precision=0, commas=False)
+    bw_efficiency_str = fmt(int(bw_efficiency), precision=0, commas=False)
 
 # Note: Use FusionSpeedup.python_dispatch_us_str directly.
 ```
@@ -1856,7 +1866,7 @@ $$
 \text{Eager} \xrightarrow{\text{tracing}} \text{JIT} \xrightarrow{\text{AOT}} \text{Static Graph} \xrightarrow{\text{synthesis}} \text{Custom Hardware}
 $$ {#eq-execution-continuum}
 
-Each step rightward sacrifices flexibility for performance. The practical question is *where* on this continuum a given project should operate. The optimal compilation strategy depends on the ratio of *development iterations* to *production executions* (@eq-compilation-benefit):
+Each step rightward sacrifices flexibility for performance. The practical question is *where* on this continuum a given project should operate. The optimal compilation strategy depends on the ratio of *development iterations* to *production executions*, defined in @eq-compilation-benefit:
 
 $$
 \text{Compilation Benefit} = \frac{N_{\text{prod}} \cdot (T_{\text{eager}} - T_{\text{compiled}})}{T_{\text{compile}} + N_{\text{dev}} \cdot T_{\text{compile}}}
@@ -2069,7 +2079,7 @@ plt.show()
 #### The dispatch overhead law {#sec-ml-frameworks-dispatch-overhead-law-9e0a}
 
 \index{Dispatch Overhead!law}
-A second principle emerges from the Dispatch Overhead Equation (@eq-dispatch-overhead), which identifies the regime in which framework overhead, rather than compute or memory, dominates execution time. Let $N_{\text{ops}}$ be the number of operations (count), $t_{\text{dispatch}}$ the per-operation dispatch overhead (seconds), and $T_{\text{compute}}$ and $T_{\text{memory}}$ the total compute and memory times (seconds). Framework overhead dominates when operations are small relative to dispatch cost:
+A second principle emerges from @eq-dispatch-overhead, which identifies the regime in which framework overhead, rather than compute or memory, dominates execution time. Let $N_{\text{ops}}$ be the number of operations (count), $t_{\text{dispatch}}$ the per-operation dispatch overhead (seconds), and $T_{\text{compute}}$ and $T_{\text{memory}}$ the total compute and memory times (seconds). Framework overhead dominates when operations are small relative to dispatch cost:
 
 $$
 \text{Overhead Ratio} = \frac{N_{\text{ops}} \cdot t_{\text{dispatch}}}{T_{\text{compute}} + T_{\text{memory}}}
@@ -2092,13 +2102,13 @@ From the case study in @sec-ml-frameworks-putting-together-anatomy-training-step
 # │ Show: That small MLPs are 92% overhead-bound, while GPT-3 is <0.05% overhead.
 # │ How: Calculate the software-to-hardware execution time ratio for both cases.
 # │
-# │ Imports: mlsysim.book (fmt, md_math)
-# │ Exports: dispatch_n_ops_value, dispatch_us_per_op_value, dispatch_hw_time_us_value,
+# │ Imports: mlsysim.book (fmt, fmt_math)
+# │ Exports: dispatch_n_ops_str, dispatch_us_per_op_str, dispatch_hw_time_us_str,
 # │          dispatch_sw_time_str, dispatch_ratio_small_str, dispatch_overhead_pct_str,
-# │          dispatch_compilation_speedup_str, gpt3_hw_time_us_value, gpt3_sw_time_us_value,
-# │          dispatch_ratio_large_str, t_sw_md
+# │          dispatch_compilation_speedup_str, gpt3_hw_time_us_str, gpt3_sw_time_us_str,
+# │          dispatch_ratio_large_str, t_sw_math
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check, md_math
+from mlsysim.fmt import fmt, check, fmt_math
 
 # ┌── LEGO ───────────────────────────────────────────────
 class DispatchTaxSmallLarge:
@@ -2133,24 +2143,24 @@ class DispatchTaxSmallLarge:
     check(large_overhead_ratio <= 0.01, f"Large model overhead ({large_overhead_ratio:.4f}) is too high.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    dispatch_n_ops_value = small_ops_count
-    dispatch_us_per_op_value = small_dispatch_us
-    dispatch_hw_time_us_value = small_hw_us
+    dispatch_n_ops_str = fmt(small_ops_count, precision=0, commas=False)
+    dispatch_us_per_op_str = fmt(small_dispatch_us, precision=1, commas=False)
+    dispatch_hw_time_us_str = fmt(small_hw_us, precision=1, commas=False)
 
     dispatch_sw_time_str = fmt(small_sw_total, precision=0, commas=False)
     dispatch_ratio_small_str = fmt(small_overhead_ratio, precision=1, commas=False)
     dispatch_overhead_pct_str = fmt(small_overhead_pct, precision=0, commas=False)
     dispatch_compilation_speedup_str = fmt(small_speedup_limit, precision=0, commas=False)
 
-    gpt3_hw_time_us_value = large_hw_us
-    gpt3_sw_time_us_value = large_dispatch_us
+    gpt3_hw_time_us_str = fmt(large_hw_us, precision=1, commas=False)
+    gpt3_sw_time_us_str = fmt(large_dispatch_us, precision=1, commas=False)
     dispatch_ratio_large_str = fmt(large_overhead_ratio, precision=4, commas=False)
-    t_sw_md = md_math(f"T_{{sw}} \\approx {large_dispatch_us} \\, \\mu s")
+    t_sw_math = fmt_math(f"T_{{sw}} \\approx {large_dispatch_us} \\, \\mu s")
 
 # Note: Use CompilationOverheadCalc.dispatch_sw_time_str directly.
 ```
 
-This cumulative latency creates what is effectively *a dispatch tax* on execution. We define $T_{\text{hw}}$ as hardware execution time and $T_{\text{sw}}$ as software overhead time; both are measured in seconds.
+This cumulative latency acts as a per-call tax on execution. Whether that tax dominates depends on how the hardware execution time $T_{\text{hw}}$ compares to the software overhead $T_{\text{sw}}$ (both measured in seconds), and the regimes split sharply by model size.
 
 ::: {#nbk-frameworks-dispatch-tax .callout-notebook title="The dispatch tax"}
 
@@ -2158,18 +2168,18 @@ This cumulative latency creates what is effectively *a dispatch tax* on executio
 
 **Scenario one: Small multilayer perceptron (MLP) (Overhead Bound)**
 
-*   **Compute**: `{python} DispatchTaxSmallLarge.dispatch_n_ops_value` small matrix/element-wise operations.
-*   **Hardware time**: $T_{\text{hw}} \approx$ `{python} DispatchTaxSmallLarge.dispatch_hw_time_us_value` μs (mostly memory latency).
-*   **Software overhead**: $T_{\text{sw}} \approx$ `{python} DispatchTaxSmallLarge.dispatch_n_ops_value` ops $\times$ `{python} DispatchTaxSmallLarge.dispatch_us_per_op_value` $\mu$s/op = `{python} DispatchTaxSmallLarge.dispatch_sw_time_str` $\mu$s.
-*   **Ratio**: `{python} DispatchTaxSmallLarge.dispatch_sw_time_str`/`{python} DispatchTaxSmallLarge.dispatch_hw_time_us_value` ≈ **`{python} DispatchTaxSmallLarge.dispatch_ratio_small_str`**.
+*   **Compute**: `{python} DispatchTaxSmallLarge.dispatch_n_ops_str` small matrix/element-wise operations.
+*   **Hardware time**: $T_{\text{hw}} \approx$ `{python} DispatchTaxSmallLarge.dispatch_hw_time_us_str` μs (mostly memory latency).
+*   **Software overhead**: $T_{\text{sw}} \approx$ `{python} DispatchTaxSmallLarge.dispatch_n_ops_str` ops $\times$ `{python} DispatchTaxSmallLarge.dispatch_us_per_op_str` $\mu$s/op = `{python} DispatchTaxSmallLarge.dispatch_sw_time_str` $\mu$s.
+*   **Ratio**: `{python} DispatchTaxSmallLarge.dispatch_sw_time_str`/`{python} DispatchTaxSmallLarge.dispatch_hw_time_us_str` ≈ **`{python} DispatchTaxSmallLarge.dispatch_ratio_small_str`**.
 *   **Conclusion**: The system spends `{python} DispatchTaxSmallLarge.dispatch_overhead_pct_str` percent of time in host-side dispatch and kernel-launch overhead. Compilation yields **`{python} DispatchTaxSmallLarge.dispatch_compilation_speedup_str`$\times$ speedup**.
 
 **Scenario two: GPT-3 Layer (Compute Bound)**
 
 *   **Compute**: Huge matrix multiplications.
-*   **Hardware time**: $T_{\text{hw}} \approx 100$ ms = `{python} DispatchTaxSmallLarge.gpt3_hw_time_us_value` μs.
-*   **Software overhead**: `{python} DispatchTaxSmallLarge.t_sw_md`.
-*   **Ratio**: `{python} DispatchTaxSmallLarge.gpt3_sw_time_us_value`/`{python} DispatchTaxSmallLarge.gpt3_hw_time_us_value` ≈ **`{python} DispatchTaxSmallLarge.dispatch_ratio_large_str`**.
+*   **Hardware time**: $T_{\text{hw}} \approx 100$ ms = `{python} DispatchTaxSmallLarge.gpt3_hw_time_us_str` μs.
+*   **Software overhead**: `{python} DispatchTaxSmallLarge.t_sw_math`.
+*   **Ratio**: `{python} DispatchTaxSmallLarge.gpt3_sw_time_us_str`/`{python} DispatchTaxSmallLarge.gpt3_hw_time_us_str` ≈ **`{python} DispatchTaxSmallLarge.dispatch_ratio_large_str`**.
 *   **Conclusion**: Python overhead is negligible. Compilation helps only via kernel fusion (memory bandwidth), not dispatch elimination.
 
 :::
@@ -2251,7 +2261,7 @@ Micro-frameworks like **TensorFlow Lite Micro (TFLM)**\index{TensorFlow Lite Mic
 
 These micro-runtimes represent the "Pure AOT" endpoint of the continuum. By sacrificing all dynamic flexibility, they enable machine learning to run on devices consuming milliwatts of power, fulfilling the energy-movement invariant (Principle \ref{pri-energy-movement}) by keeping all data movement local to the chip.
 
-The spectrum of execution strategies, from dynamic eager execution to static graph compilation and specialized micro-runtimes, requires developers to make deliberate trade-offs. The following checkpoint summarizes the key decision points before we address the second core problem.
+The spectrum of execution strategies, from dynamic eager execution to static graph compilation and specialized micro-runtimes, requires developers to make deliberate trade-offs. Before turning to the second core problem, it is useful to collect the key execution-mode decisions in one place.
 
 ::: {#chk-frameworks-execution-models .callout-checkpoint title="Execution models"}
 
@@ -2294,7 +2304,7 @@ def f(x):
 
 :::
 
-Frameworks decompose this function into elementary operations, each with a known local derivative, and then combine these local derivatives via the chain rule to compute gradients through arbitrary compositions. The systems challenge is implementing this efficiently: the framework must record the computation graph during the forward pass, store intermediate values, and execute the backward pass with minimal memory overhead. The following subsections trace how production frameworks solve each of these problems.
+Frameworks decompose this function into elementary operations, each with a known local derivative, and then combine these local derivatives via the chain rule to compute gradients through arbitrary compositions. The systems challenge is implementing this efficiently: the framework must record the computation graph during the forward pass, store intermediate values, and execute the backward pass with minimal memory overhead. The rest of this section traces how production frameworks solve each of these problems.
 
 ### Forward and reverse mode differentiation {#sec-ml-frameworks-forward-reverse-mode-differentiation-f70a}
 
@@ -2651,7 +2661,7 @@ Mixed-precision training offers a third approach, reducing activation memory by 
 
 Production training systems require fine-grained control over gradient flow that goes beyond the default backward pass. Three categories of control arise in practice. First, **selective gradient computation**: transfer learning and fine-tuning require freezing subsets of parameters, which the framework supports through `requires_grad=False` flags and the `.detach()` mechanism described earlier. Second, **gradient inspection and modification**: debugging vanishing or exploding gradients, implementing per-tensor gradient clipping, and logging gradient statistics all require intercepting gradients mid-computation, which frameworks expose through hook APIs. Third, **custom differentiation rules**: operations not in the framework's built-in library (custom CUDA kernels, novel activation functions, domain-specific operations) require user-defined forward and backward implementations.
 
-These control mechanisms share a common systems design: they are callback-based extensions that the autograd engine invokes at specific points during graph traversal, without modifying the core differentiation algorithm. This extensibility pattern allows the framework to maintain a single optimized backward pass while supporting arbitrarily complex gradient manipulation. The following examples demonstrate these mechanisms in practice, showing how to inspect and control PyTorch's autograd system.
+These control mechanisms share a common systems design: they are callback-based extensions that the autograd engine invokes at specific points during graph traversal, without modifying the core differentiation algorithm. This extensibility pattern allows the framework to maintain a single optimized backward pass while supporting arbitrarily complex gradient manipulation. In practice, this control appears through a few recurring PyTorch mechanisms: retained graphs, accumulated gradients, custom backward rules, hooks, and safe detachment.
 
 ###### Retaining the computation graph {.unnumbered}
 
@@ -3046,7 +3056,7 @@ The problem decomposes into two interacting dimensions. The first is *data repre
 
 Solving the abstraction problem requires sophisticated software infrastructure: tensor representations that encode both mathematical semantics and hardware constraints, intermediate representations that enable hardware-specific compilation, and runtime systems that manage data movement across the memory hierarchy.
 
-To make this concrete, trace what must happen when a programmer writes `model(input)`. The framework must answer five questions in rapid succession: *What is the data?* (tensor shape, memory layout, numeric precision), *Where does it live?* (device placement and the bandwidth hierarchy connecting CPU, GPU, and accelerator memory), *How does it arrive fast enough?* (data pipelines that sustain hundreds of MB/s to keep the accelerator fed), *How does it scale beyond one device?* (parameter synchronization and distributed execution contexts), and *What actually runs on the hardware?* (kernel dispatch, scheduling, and resource optimization). The following sub-sections answer these questions in order, building from the data container up to the hardware execution layer.
+To make this concrete, trace what must happen when a programmer writes `model(input)`. The framework must answer five questions in rapid succession: *What is the data?* (tensor shape, memory layout, numeric precision), *Where does it live?* (device placement and the bandwidth hierarchy connecting CPU, GPU, and accelerator memory), *How does it arrive fast enough?* (data pipelines that sustain hundreds of MB/s to keep the accelerator fed), *How does it scale beyond one device?* (parameter synchronization and distributed execution contexts), and *What actually runs on the hardware?* (kernel dispatch, scheduling, and resource optimization). We answer these questions in order, building from the data container up to the hardware execution layer.
 
 ### Data structures and tensor abstractions {#sec-ml-frameworks-data-structures-tensor-abstractions-9cbf}
 
@@ -3153,7 +3163,7 @@ Every computation in a neural network operates on tensors.[^fn-tensor-hardware-c
 
 [^fn-tensor-hardware-contract]: **Tensor**: From Latin *tendere* ("to stretch"), coined in its mathematical sense by physicist Woldemar Voigt in 1898 for objects defined by how they transform under coordinate changes. ML inherited the term because framework tensors are similarly defined by transformation behavior: transposing changes strides but not data, reshaping changes metadata without moving bytes. This transformation-centric design is also the source of layout sensitivity: choosing NCHW when the target accelerator prefers NHWC (or vice versa) can halve computational throughput, because misaligned memory access patterns break hardware coalescing. \index{Tensor!hardware contract}
 
-The tensor abstraction consumes far more memory than model weights alone suggest. Engineers who estimate memory from parameter count alone allocate accordingly and encounter out-of-memory errors that seem inexplicable. The following notebook quantifies what we call the *administrative tax*: the shadow tensors for gradients, optimizer momentum, and stored activations that accompany every weight tensor.
+The tensor abstraction consumes far more memory than model weights alone suggest. Engineers who estimate memory from parameter count alone allocate accordingly and encounter out-of-memory errors that seem inexplicable. A quick memory accounting makes the hidden cost concrete: gradients, optimizer momentum, and stored activations accompany every weight tensor.
 
 ```{python}
 #| label: admin-tax-calc
@@ -3167,13 +3177,13 @@ The tensor abstraction consumes far more memory than model weights alone suggest
 # │ Show: That a 2 GB model requires ~19 GB of VRAM during training.
 # │ How: Sum gradients, optimizer states, and activations for a 1B param model.
 # │
-# │ Imports: mlsysim.core.constants (BYTES_FP16, BYTES_ADAM_STATE, GB), mlsysim.book (fmt, md_math)
+# │ Imports: mlsysim.core.constants (BYTES_FP16, BYTES_ADAM_STATE, GB), mlsysim.book (fmt, fmt_math)
 # │ Exports: admin_weights_gb_str, admin_grads_gb_str, admin_opt_gb_str, admin_act_gb_str,
 # │          admin_tax_gb_str, admin_batch_str, admin_layers_str, admin_width_str,
-# │          admin_act_calc_md
+# │          admin_act_calc_math
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import BYTES_FP16, BYTES_ADAM_STATE, GB, BILLION
-from mlsysim.fmt import fmt, check, md_math
+from mlsysim.fmt import fmt, check, fmt_math
 
 # ┌── LEGO ───────────────────────────────────────────────
 class AdminTax:
@@ -3213,7 +3223,7 @@ class AdminTax:
     admin_layers_str = fmt(layers, precision=0, commas=False)
     admin_width_str = fmt(width, precision=0, commas=False)
 
-    admin_act_calc_md = md_math(f"{admin_batch_str} \\times {admin_layers_str} \\times {admin_width_str}^{{2}} \\times 2 \\approx \\mathbf{{{admin_act_gb_str} \\text{{ GB}}}}")
+    admin_act_calc_math = fmt_math(f"{admin_batch_str} \\times {admin_layers_str} \\times {admin_width_str}^{{2}} \\times 2 \\approx \\mathbf{{{admin_act_gb_str} \\text{{ GB}}}}")
 ```
 
 ::: {#nbk-frameworks-administrative-tax .callout-notebook title="The administrative tax"}
@@ -3230,7 +3240,7 @@ The memory breakdown for ResNet-50 in @sec-ml-frameworks-principle-2-memorycompu
 4.  **Activations**: For a batch size of `{python} AdminTax.admin_batch_str` and a `{python} AdminTax.admin_layers_str`-layer network, the framework must store every intermediate layer output for the backward pass.
 
     $$ \text{Activations} \approx \text{Batch} \times \text{Layers} \times \text{Width}^{2} \times 2 \text{ bytes} $$
-    For a `{python} AdminTax.admin_width_str`-width model: `{python} AdminTax.admin_act_calc_md`. (Each layer's activation is a $\text{Width}{\times}\text{Width}$ matrix per sample---appropriate for transformer-style models where intermediate projections scale with hidden dimension squared.)
+    For a `{python} AdminTax.admin_width_str`-width model: `{python} AdminTax.admin_act_calc_math`. (Each layer's activation is a $\text{Width}{\times}\text{Width}$ matrix per sample---appropriate for transformer-style models where intermediate projections scale with hidden dimension squared.)
 
 **Systems conclusion**: A `{python} AdminTax.admin_weights_gb_str` GB model carries persistent training state before the first batch is processed (`{python} AdminTax.admin_grads_gb_str` GB gradients + `{python} AdminTax.admin_opt_gb_str` GB optimizer state). During a training step, batch-dependent activations add another `{python} AdminTax.admin_act_gb_str` GB, raising the peak **"Administrative Tax"** to ~`{python} AdminTax.admin_tax_gb_str` GB beyond the weights. During training, **Data Movement** includes saving and retrieving these activations, which is why training is often 3--4$\times$ slower than pure inference.
 
@@ -3657,7 +3667,7 @@ When overlap is insufficient, profiling reveals where time is lost. NVIDIA provi
 # │ How: Calculate bandwidth from image resolution, batch size, and rate.
 # │
 # │ Imports: mlsysim.core.constants (PCIE_GEN4_BW, BYTES_FP32), mlsysim.book (fmt)
-# │ Exports: img_res, dataloader_mbs_str, batch_mb_str, batch_transfer_ms_str, DeviceBandwidthHierarchy.pcie4_gbs_str
+# │ Exports: img_res_str, dataloader_mbs_str, batch_mb_str, batch_transfer_ms_str, DeviceBandwidthHierarchy.pcie4_gbs_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import PCIE_GEN4_BW, BYTES_FP32, MB, GB, byte, second, MS_PER_SEC
 from mlsysim.fmt import fmt, check
@@ -3692,6 +3702,7 @@ class DataloaderThroughput:
     check(dataloader_mbs > 100, f"Throughput requirement ({dataloader_mbs:.1f} MB/s) too low.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    img_res_str = fmt(img_res, precision=0, commas=False)
     dataloader_mbs_str = fmt(dataloader_mbs, precision=0, commas=False)
     batch_mb_str = fmt(batch_mb, precision=0, commas=False)
     batch_transfer_ms_str = fmt(batch_transfer_ms, precision=1, commas=False)
@@ -3699,7 +3710,7 @@ class DataloaderThroughput:
 ```
 
 \index{Data Pipeline!throughput optimization}
-Streams and events address the second question---*where does data live, and how does it move?*---by overlapping transfers with computation so that the GPU rarely stalls on a single tensor. Scheduling alone, however, cannot help if data arrives too slowly in the first place. The third question concerns *how data arrives fast enough* to sustain throughput. The core systems principle is straightforward: the data pipeline must sustain the accelerator's consumption rate. A GPU processing 1,000 images per second at `{python} DataloaderThroughput.img_res` by `{python} DataloaderThroughput.img_res` resolution requires approximately `{python} DataloaderThroughput.dataloader_mbs_str` MB/s of sustained data throughput. If the pipeline cannot maintain this rate, the accelerator idles and the effective utilization term in the iron law drops below 1.
+Streams and events address the second question---*where does data live, and how does it move?*---by overlapping transfers with computation so that the GPU rarely stalls on a single tensor. Scheduling alone, however, cannot help if data arrives too slowly in the first place. The third question concerns *how data arrives fast enough* to sustain throughput. The core systems principle is straightforward: the data pipeline must sustain the accelerator's consumption rate. A GPU processing 1,000 images per second at `{python} DataloaderThroughput.img_res_str` by `{python} DataloaderThroughput.img_res_str` resolution requires approximately `{python} DataloaderThroughput.dataloader_mbs_str` MB/s of sustained data throughput. If the pipeline cannot maintain this rate, the accelerator idles and the effective utilization term in the iron law drops below 1.
 
 Frameworks address this throughput requirement through three mechanisms. The first is *parallel worker processes*: the DataLoader\index{DataLoader!throughput optimization} spawns multiple CPU processes, each independently loading and preprocessing samples. Because data loading involves disk I/O and CPU-bound transformations (decoding, augmentation, normalization), a single process cannot saturate a modern GPU. Multiple workers overlap I/O wait times with preprocessing computation, collectively sustaining throughput that no single process could achieve. When `num_workers > 0`, the DataLoader distributes sample indices across workers through a shared queue, and workers push completed samples to a data queue that the main process assembles into batches.
 
@@ -4638,7 +4649,7 @@ The **Open Neural Network Exchange (ONNX)**\index{ONNX!definition}\index{ONNX!cr
 
 :::
 
-ONNX reduces the cost of framework fragmentation, but it does not eliminate the initial selection decision. With the deployment landscape mapped and interoperability options understood, we can now address the practical question: given a specific project's requirements, the question becomes how an engineer should select a framework.
+ONNX reduces the cost of framework fragmentation, but it does not eliminate the initial selection decision. With the deployment landscape mapped and interoperability options understood, we can now ask how to choose a framework for a specific project's constraints.
 
 ## Framework Selection {#sec-ml-frameworks-selecting-framework-2949}
 
@@ -4679,7 +4690,7 @@ Three dimensions structure systematic framework evaluation: what the model requi
 
 #### Model requirements {#sec-ml-frameworks-model-requirements-ca8b}
 
-The first question is whether a framework can express the models a project requires. Examine @tbl-tf-comparison: notice how operator count drops from approximately $10^3$ (full TensorFlow) to $10^2$ (TensorFlow Lite) to $10^1$ (TensorFlow Lite Micro). Each reduction eliminates training capability and general-purpose operations while adding native quantization tooling. The engineering principle is that expressiveness and efficiency trade against each other: fewer supported operations enable tighter code generation, smaller binaries, and hardware-specific optimization paths. This progressive constraint model applies to any framework family, not just TensorFlow. The choice between *dynamic and static computational graphs* further shapes which optimizations each constraint level permits.
+The first question is whether a framework can express the models a project requires. Examine @tbl-tf-comparison: notice how operator count drops from approximately $10^3$ (full TensorFlow) to $10^2$ (TensorFlow Lite) to $10^1$ (TensorFlow Lite Micro). Each reduction eliminates training capability and general-purpose operations while adding native quantization tooling. The engineering principle is that expressiveness and efficiency trade against each other: fewer supported operations enable tighter code generation, smaller binaries, and hardware-specific optimization paths. This progressive constraint model applies to any framework family, not just TensorFlow. Layered on top of operator count is a separate axis with its own trade-off: when the graph is captured statically before execution versus assembled dynamically at runtime.
 
 ::: {#psp-frameworks-dynamic-vs-static-computational-graphs .callout-perspective title="Dynamic vs. static computational graphs"}
 
@@ -4773,10 +4784,11 @@ optimizer.step()
 # │ Show: The matrix sizes for a 2-layer MLP (784 -> 256 -> 10).
 # │ How: Set constants for input batch, hidden layers, and output classes.
 # │
-# │ Imports: mlsysim.book (check)
-# │ Exports: train_batch, train_input, train_hidden, train_output
+# │ Imports: mlsysim.fmt (fmt, check)
+# │ Exports: train_batch (int), train_input (int), train_hidden (int), train_output (int),
+# │          train_batch_str, train_input_str, train_hidden_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import check
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class TrainingStepDims:
@@ -4791,11 +4803,18 @@ class TrainingStepDims:
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(input_features == 784, f"MNIST flattened input should be 784, got {input_features}.")
 
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    # ┌── 4. OUTPUT (Variables) ───────────────────────────────────────────
     train_batch = 32                                                            # batch size
     train_input = input_features                                                # MNIST input (28 × 28)
     train_hidden = 256                                                          # hidden layer
     train_output = 10                                                           # MNIST classes
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    # Suffix aliases for inline {python} use; raw ints kept for arithmetic at
+    # the downstream consumer cell (see ForwardCost class below).
+    train_batch_str = fmt(train_batch, precision=0, commas=False)
+    train_input_str = fmt(train_input, precision=0, commas=False)
+    train_hidden_str = fmt(train_hidden, precision=0, commas=False)
 ```
 
 ### Phase 1: Forward pass (solving the execution problem) {.unnumbered}
@@ -4804,7 +4823,7 @@ When `h = torch.relu(x @ W1 + b1)` executes, PyTorch's eager execution triggers 
 
 1. **Python Dispatch**\index{Python Dispatch!overhead} (microseconds-scale): Python interpreter calls `torch.matmul`, which routes through PyTorch's dispatcher to select the CUDA backend.
 
-2. **Kernel Selection**\index{BLAS Library!kernel selection}: cuBLAS selects an optimized GEMM kernel based on matrix dimensions (`{python} TrainingStepDims.train_batch` $\times$ `{python} TrainingStepDims.train_input` $\times$ `{python} TrainingStepDims.train_hidden`). For these dimensions, it might choose a tiled algorithm optimized for L2 cache.
+2. **Kernel Selection**\index{BLAS Library!kernel selection}: cuBLAS selects an optimized GEMM kernel based on matrix dimensions (`{python} TrainingStepDims.train_batch_str` $\times$ `{python} TrainingStepDims.train_input_str` $\times$ `{python} TrainingStepDims.train_hidden_str`). For these dimensions, it might choose a tiled algorithm optimized for L2 cache.
 
 3. **Kernel Launch** (a few microseconds): The selected kernel is queued to the GPU's command buffer. The CPU continues immediately (asynchronous execution).
 
@@ -4872,7 +4891,7 @@ When `loss.backward()`\index{Backward Pass!triggering gradient computation} exec
 
 ### Phase 3: Memory traffic analysis (the physics at work) {.unnumbered}
 
-Applying the Dispatch Overhead Equation (@eq-dispatch-overhead) to this step, @tbl-training-step-roofline breaks down the FLOPs, memory traffic, and arithmetic intensity for each operation:
+Applying @eq-dispatch-overhead to this step, @tbl-training-step-roofline breaks down the FLOPs, memory traffic, and arithmetic intensity for each operation:
 
 ```{python}
 #| label: training-step-calc
@@ -4894,7 +4913,7 @@ Applying the Dispatch Overhead Equation (@eq-dispatch-overhead) to this step, @t
 # │          train_ce_mem_str, train_ce_ai_str, train_bwd_flops_str,
 # │          train_bwd_mem_str, train_bwd_ai_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, MarkdownStr
 from mlsysim.core.constants import byte, KB, MB, flop, KFLOPs, MFLOPs
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -4991,7 +5010,7 @@ class TrainingStepCalc:
 # │          mnist_n_ops_str, mnist_us_per_op_str, mnist_t_overhead_us_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import A100_FLOPS_FP16_TENSOR, A100_MEM_BW, TRILLION, MILLION, flop, byte, second
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, MarkdownStr
 
 class MnistTrainingStepCalc:
     """MNIST overhead-bound analysis: dispatch dominates compute and memory on A100."""
@@ -5013,8 +5032,8 @@ class MnistTrainingStepCalc:
     mnist_t_compute_us_str = fmt(t_compute_us, precision=1, commas=False)
     mnist_t_memory_us_str = fmt(t_memory_us, precision=1, commas=False)
     mnist_t_overhead_us_str = fmt(t_overhead_us, precision=0, commas=False)
-    mnist_total_flops_str = f"{total_flops/MILLION:.0f}M"
-    mnist_mem_traffic_str = f"{mem_traffic_bytes/MILLION:.1f} MB"
+    mnist_total_flops_str = fmt(total_flops/MILLION, precision=0, commas=False, suffix="M")
+    mnist_mem_traffic_str = fmt(mem_traffic_bytes/MILLION, precision=1, commas=False, suffix=" MB")
     mnist_n_ops_str = fmt(n_ops, precision=0, commas=False)
     mnist_us_per_op_str = fmt(us_per_op, precision=0, commas=False)
     a100_peak_tflops_str = fmt(peak_flops/TRILLION, precision=0, commas=False)
@@ -5056,7 +5075,7 @@ Understanding this flow enables informed optimization: fuse operations to reduce
 
 :::
 
-This detailed trace through a single training step demonstrates how deeply the three core problems interact. Even simple code exercises the full framework stack, and seemingly minor decisions---device placement, batch size, compilation mode---cascade through execution, differentiation, and abstraction layers in ways that are difficult to predict without systems-level understanding. The following section catalogs the most common misconceptions that arise when engineers lack this understanding.
+This detailed trace through a single training step demonstrates how deeply the three core problems interact. Even simple code exercises the full framework stack, and seemingly minor decisions---device placement, batch size, compilation mode---cascade through execution, differentiation, and abstraction layers in ways that are difficult to predict without systems-level understanding. The pitfalls that follow are the common failure modes when that systems view is missing.
 
 ## Fallacies and Pitfalls {#sec-ml-frameworks-fallacies-pitfalls-61ef}
 
@@ -5173,10 +5192,10 @@ class CompilationOverheadCalc:
     resnet_compile_speedup_pct_str = fmt(resnet_compile_speedup_pct, precision=0, commas=False)
     compile_min_s_str = fmt(compile_min_s, precision=0, commas=False)
     compile_max_s_str = fmt(compile_max_s, precision=0, commas=False)
-    n_images_str = f"{n_images:,}"                                              # e.g. "10,000"
+    n_images_str = fmt(n_images, precision=0)                                   # e.g. "10,000"
     n_recompilations_str = fmt(n_recompilations, precision=0, commas=False)    # e.g. "10"
-    eager_throughput_str = f"{eager_throughput:,}"                              # e.g. "1,450"
-    compiled_throughput_str = f"{compiled_throughput:,}"                        # e.g. "2,150"
+    eager_throughput_str = fmt(eager_throughput, precision=0)                   # e.g. "1,450"
+    compiled_throughput_str = fmt(compiled_throughput, precision=0)             # e.g. "2,150"
     compilation_time_s_str = fmt(compilation_time_s, precision=0, commas=False)  # e.g. "30"
     eager_total_str = fmt(eager_total, precision=1, commas=False)              # e.g. "6.9"
     compiled_total_str = fmt(compiled_total, precision=1, commas=False)        # e.g. "304.7"
@@ -5201,7 +5220,7 @@ These problems are interconnected and constrained by the iron law of performance
 
 * **Three problems define every framework**: Execution (how to run), differentiation (how to train), and abstraction (how to express). TensorFlow prioritizes abstraction for deployment breadth, PyTorch prioritizes execution for research velocity, and JAX reframes differentiation through composable function transformations. These are infrastructure commitments, not tooling preferences.
 * **The memory wall drives optimization**: Compute has grown approximately 1000$\times$ faster than memory bandwidth. Kernel fusion, activation checkpointing, mixed-precision training, and data layout optimizations all target the data movement term $(D_{\text{vol}})$ in the iron law, not the compute term.
-* **Compilation pays off only at scale**: The Compilation Continuum principle (@eq-compilation-benefit) quantifies when compilation benefits exceed costs. Research prototyping favors eager mode; production training and inference favor progressive compilation from JIT to AOT. The Dispatch Overhead Law (@eq-dispatch-overhead) explains why small models benefit disproportionately.
+* **Compilation pays off only at scale**: The compilation continuum principle in @eq-compilation-benefit quantifies when compilation benefits exceed costs. Research prototyping favors eager mode; production training and inference favor progressive compilation from JIT to AOT. The dispatch overhead law in @eq-dispatch-overhead explains why small models benefit disproportionately.
 * **The nn.Module pattern is widely adopted**: Automatic parameter discovery, mode-dependent behavior, and hierarchical composition with serialization appear across major frameworks, enabling million-parameter optimization in a single `optimizer.step()` call regardless of API syntax.
 * **Framework choice constrains deployment by orders of magnitude**: Specialized inference engines, mobile runtimes, and microcontroller runtimes make different trade-offs about operator coverage, memory allocation, compilation, and hardware delegates. A 2--10$\times$ latency gap between untuned eager execution and specialized inference, or the gap between GB-scale server runtimes and <256 KB microcontroller budgets, is not an implementation detail. The deployment target must be evaluated before framework selection.
 

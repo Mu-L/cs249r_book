@@ -34,7 +34,7 @@ sys.path.insert(0, _book_dir)
 
 from mlsysim.core.constants import *
 from mlsysim.core.formulas import *
-from mlsysim.fmt import fmt, sci, fmt_full, fmt_split
+from mlsysim.fmt import fmt, fmt_sci
 
 FAILURES = []
 
@@ -357,17 +357,17 @@ def test_ridge_points():
 # ── 16. Formula Helper Functions ─────────────────────────────────────
 
 def test_formula_helpers():
-    """Verify fmt() and sci() produce correct formatted strings."""
+    """Verify fmt() and fmt_sci() produce correct formatted strings."""
     ok = True
 
     # fmt()
     ok &= check("fmt GB/s", float(fmt(A100_MEM_BW, "GB/s", precision=0, commas=False)), 2039.0)
     ok &= check("fmt ms", float(fmt(RESNET50_FLOPs / A100_FLOPS_FP16_TENSOR, "ms", 3, commas=False)), 0.013, tol=0.1)
 
-    # sci() - check format, not value
-    result = sci(RESNET50_FLOPs)
+    # fmt_sci() - check format, not value
+    result = fmt_sci(RESNET50_FLOPs)
     if "× 10" not in result or not any(c in result for c in '⁰¹²³⁴⁵⁶⁷⁸⁹'):
-        FAILURES.append(f"  ✗ sci() format: got '{result}', expected Unicode scientific notation (e.g., 4.10 × 10⁹)")
+        FAILURES.append(f"  ✗ fmt_sci() format: got '{result}', expected Unicode scientific notation (e.g., 4.10 × 10⁹)")
         ok = False
 
     return ok
@@ -478,60 +478,11 @@ def test_failure_probability_mixed_types():
     return ok
 
 
-# ── 21. fmt_full(): Compact String Display ────────────────────────────
-
-def test_fmt_full_returns_string():
-    """fmt_full must return a non-empty 'value unit' string for a valid Quantity."""
-    ok = True
-    result = fmt_full(A100_MEM_BW)
-    if not isinstance(result, str):
-        FAILURES.append(f"  ✗ fmt_full must return str, got {type(result).__name__}")
-        ok = False
-    elif " " not in result:
-        FAILURES.append(f"  ✗ fmt_full result '{result}' must contain 'value unit' with space")
-        ok = False
-    return ok
-
-
-def test_fmt_full_rejects_raw_number():
-    """fmt_full() must reject raw numbers (int/float) with TypeError."""
-    ok = True
-    try:
-        fmt_full(2039)
-        FAILURES.append("  ✗ fmt_full() accepted raw int without raising TypeError")
-        ok = False
-    except TypeError:
-        pass  # Expected
-    try:
-        fmt_full(2039.0)
-        FAILURES.append("  ✗ fmt_full() accepted raw float without raising TypeError")
-        ok = False
-    except TypeError:
-        pass  # Expected
-    return ok
-
-
-# ── 22. fmt_split(): Table Column Tuple ───────────────────────────────
-
-def test_fmt_split_returns_tuple():
-    """fmt_split must return a (value_str, unit_str) 2-tuple of non-empty strings."""
-    ok = True
-    result = fmt_split(A100_MEM_BW)
-    if not isinstance(result, tuple) or len(result) != 2:
-        FAILURES.append(f"  ✗ fmt_split must return 2-tuple, got {result!r}")
-        ok = False
-    else:
-        val, unit = result
-        if not isinstance(val, str) or not isinstance(unit, str):
-            FAILURES.append(
-                f"  ✗ fmt_split must return (str, str), got "
-                f"({type(val).__name__}, {type(unit).__name__})"
-            )
-            ok = False
-        elif not val or not unit:
-            FAILURES.append(f"  ✗ fmt_split must return non-empty strings, got ({val!r}, {unit!r})")
-            ok = False
-    return ok
+# NOTE: tests for fmt_full() and fmt_split() were retired alongside the
+# helpers themselves (2026-05). The two-pattern unification (fmt() with
+# prefix=/suffix= params + fmt_val()/fmt_unit() for Pint-magnitude/unit
+# split) replaced both. If you need to format "value unit" combined, use
+# fmt(qty, suffix=" unit"); for separate columns, use fmt_val + fmt_unit.
 
 
 # ── Runner ───────────────────────────────────────────────────────────
@@ -553,15 +504,12 @@ if __name__ == "__main__":
         ("Energy specs (FP32 > FP16 > INT8)", test_energy_specs),
         ("Model specs (GPT-2, BERT, MobileNet)", test_model_specs),
         ("Ridge point derivations (V100/A100/H100)", test_ridge_points),
-        ("Formula helpers (fmt, sci)", test_formula_helpers),
+        ("Formula helpers (fmt, fmt_sci)", test_formula_helpers),
         # ── Robustness tests (Changes 1-6 verification) ──────────────────
         ("Robustness: wrong-unit HardwareSpec raises DimensionalityError", test_hardware_wrong_unit_raises),
         ("Robustness: model_memory() rejects wrong-unit params", test_model_memory_wrong_units),
         ("Fleet formulas: accept Quantities, return typed Quantities", test_fleet_formulas_accept_quantities),
         ("Fleet formulas: failure probability rejects mixed types", test_failure_probability_mixed_types),
-        ("fmt_full(): returns compact 'value unit' string", test_fmt_full_returns_string),
-        ("fmt_full(): rejects raw numbers with TypeError", test_fmt_full_rejects_raw_number),
-        ("fmt_split(): returns (value_str, unit_str) tuple", test_fmt_split_returns_tuple),
     ]
 
     all_ok = True
