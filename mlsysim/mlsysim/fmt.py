@@ -88,6 +88,48 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False,
     return out
 
 
+def fmt_val(quantity, default="-"):
+    """
+    Format the magnitude of a Pint Quantity (or a plain scalar) using Python's
+    ``:g`` general format — compact, no trailing zeros, variable precision.
+
+    Returns a MarkdownStr. Pairs with ``fmt_unit()`` for side-by-side
+    value/unit table columns where ``fmt()``'s fixed-precision output is
+    too rigid (e.g., a column that mixes ``2``, ``2.5``, ``80``, ``9.5e10``).
+
+    >>> fmt_val(2.0)        # "2"
+    >>> fmt_val(2.5)        # "2.5"
+    >>> fmt_val(quantity)   # "80" for 80 GB; "9.5e+10" for 95 GFLOPS as TFLOPS
+    """
+    if isinstance(quantity, ureg.Quantity):
+        val = quantity.magnitude
+    else:
+        val = quantity
+    if val is None:
+        return MarkdownStr(default)
+    out = MarkdownStr(f"{val:g}")
+    assert isinstance(out, MarkdownStr), "fmt_val() must return MarkdownStr"
+    return out
+
+
+def fmt_unit(quantity, default="-"):
+    """
+    Extract the unit string of a Pint Quantity. Returns a MarkdownStr.
+    For non-Pint values, returns ``default`` wrapped in MarkdownStr.
+
+    Pairs with ``fmt_val()`` for value/unit table columns.
+
+    >>> fmt_unit(80 * GB)        # "gigabyte"
+    >>> fmt_unit(80)             # "-"
+    """
+    if isinstance(quantity, ureg.Quantity):
+        out = MarkdownStr(f"{quantity.units}")
+    else:
+        out = MarkdownStr(default)
+    assert isinstance(out, MarkdownStr), "fmt_unit() must return MarkdownStr"
+    return out
+
+
 def fmt_percent(ratio, precision=1, commas=False):
     """
     Format a ratio (0.0 to 1.0) as a percentage string for display.

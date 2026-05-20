@@ -76,7 +76,7 @@ PLAIN_ASSIGN = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*([^=].*)$")
 
 # Pattern: matches calls to canonical formatter helpers on the RHS.
 CANONICAL_STR_CALL = re.compile(
-    r"\b(fmt|fmt_percent|fmt_full|fmt_split|sci|MarkdownStr)\s*\("
+    r"\b(fmt|fmt_percent|fmt_full|fmt_split|fmt_val|fmt_unit|sci|MarkdownStr)\s*\("
 )
 CANONICAL_MATH_CALL = re.compile(
     r"\b(md_math|md|md_sci|MarkdownStr)\s*\("
