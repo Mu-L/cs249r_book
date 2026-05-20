@@ -268,6 +268,8 @@ Just as single-machine analysis depends on a set of core numbers, fleet-scale en
 Fleet reasoning depends on a few node-level numbers that directly affect fleet design: **about 14 bytes per parameter** for common Adam checkpoint state, with larger footprints when gradients, activations, metadata, or extra optimizer buffers are included; **NVLink vs. HBM bandwidth** (intra-node parallelism placement); **peak FLOPS and HBM capacity** (MFU and effective FLOPS, batch and model sharding). @tbl-fleet-numbers-quick-ref and the communication numbers below give inter-node and current-generation values; the memory hierarchy and roofline ridge points within a node provide the necessary baseline.
 :::
 
+Those node-level baselines make the fleet-level ratios easier to interpret.
+
 ::: {.callout-takeaways title="Three fleet numbers that matter most"}
 If only three numbers stick from this section, they should be these:
 
@@ -528,7 +530,7 @@ class FleetCheckpointSizes:
 
 #### Overhead budgets {.unnumbered}
 
-As @tbl-fleet-overhead-budgets shows, at fleet scale, four categories of overhead consume wall-clock time that is not spent on useful training:
+Failure recovery and checkpointing are only part of the wall-clock budget. At fleet scale, @tbl-fleet-overhead-budgets separates four recurring categories of overhead that consume time not spent on useful training:
 
 ```{python}
 #| label: fleet-overhead-budget
@@ -918,21 +920,31 @@ For fleet-scale cost calculations, PUE directly multiplies the electricity bill.
 
 ## Fallacies and Pitfalls {#sec-fleet-foundations-fallacies-pitfalls}
 
+The same reference numbers also expose several common design mistakes. Each pitfall below follows directly from one of the scaling, communication, failure, or power constraints introduced above.
+
 ::: {.callout-warning title="Fallacy: Adding more GPUs always makes training faster"}
 Amdahl's Law caps speedup at $1/s$ for a fixed workload. At `{python} FleetAmdahlExample.s_fleet_pct_str` percent serial overhead, no fleet larger than ~`{python} FleetAmdahlExample.max_speedup_str`$\times$ the baseline delivers meaningful additional speedup. Beyond the Amdahl limit, every additional GPU contributes nearly zero marginal throughput while increasing failure probability and communication overhead. The solution is weak scaling: grow the problem to match the hardware.
 :::
+
+Scaling mistakes are often paired with networking mistakes, because both hide behind aggregate throughput numbers.
 
 ::: {.callout-warning title="Fallacy: InfiniBand is just fast Ethernet"}
 InfiniBand and Ethernet differ architecturally, not just in speed. InfiniBand provides kernel-bypass (RDMA), hardware-managed flow control, and credit-based congestion avoidance. Ethernet relies on software-managed TCP/IP stacks with orders-of-magnitude higher latency. RoCE (RDMA over Converged Ethernet) bridges some of this gap, but requires lossless Ethernet configuration (PFC, ECN) that introduces its own failure modes. The choice between InfiniBand and Ethernet is a system architecture decision, not a bandwidth selection.
 :::
 
+Once the network is treated as architecture, failure probability must be treated the same way.
+
 ::: {.callout-warning title="Pitfall: Ignoring failure probability at scale"}
 A single GPU with a `{python} fmt(GPU_MTTF_HOURS, precision=0)`-hour MTTF seems extremely reliable---that is nearly 6 years. At `{python} fmt(FF.cl_large, precision=0)` GPUs, however, the cluster MTBF drops to `{python} FleetMtbfTable.mtbf_8192_str` hours (`{python} FleetMtbfTable.mtbf_8192_min_str` minutes). The probability of at least one failure in a 24-hour training window is `{python} FleetMtbfTable.pfail_8192_str` percent. Designing a training system without automated failure recovery at this scale guarantees that every long-running job will fail and require manual intervention.
 :::
 
+Even a reliable fleet can still be mismeasured if useful work and scaling losses are collapsed into one utilization number.
+
 ::: {.callout-warning title="Pitfall: Optimizing MFU without considering scaling efficiency"}
 A team achieves 50 percent MFU on a single node---excellent performance. They scale to 1,024 GPUs and expect `{python} fmt(1024 * 0.5, precision=0)`$\times$ throughput (512 GPU-equivalents of useful work). Scaling efficiency at 1,024 GPUs, however, is ~`{python} FF.eff_1024_str` percent, so actual throughput is only `{python} fmt(1024 * 0.5 * SCALING_EFF_1024GPU, precision=0)` GPU-equivalents---half the expected value. MFU and scaling efficiency are independent multiplicative factors; optimizing one without measuring the other leads to incorrect capacity estimates.
 :::
+
+Finally, the physical plant has its own nonnegotiable limits.
 
 ::: {.callout-warning title="Fallacy: Air cooling is sufficient for AI workloads"}
 Air cooling physically cannot remove heat fast enough above ~`{python} FF.air_limit_str` kW per rack. Current-generation AI racks consume `{python} FF.rack_ai_str`--`{python} FF.rack_ai_high_str` kW, well beyond this limit. Attempting to air-cool an AI cluster leads to thermal throttling, reduced clock speeds, and ultimately component failure. Liquid cooling is not an optimization for AI clusters---it is a physical requirement.

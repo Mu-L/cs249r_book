@@ -706,6 +706,8 @@ plt.close()
 
 :::
 
+The same model also identifies when communication overtakes computation.
+
 ::: {#nb-allreduce-bottleneck .callout-notebook title="When does AllReduce become the bottleneck?"}
 
 ```{python}
@@ -834,7 +836,7 @@ For ML training, where all-to-all communication is standard, full bisection band
 
 :::
 
-@fig-network-topologies (below) illustrates these definitions: fat-trees achieve non-blocking behavior through redundant switch tiers, rail-optimized networks exploit workload structure to approximate it at lower cost, and dragonflies trade bisection bandwidth for reduced cabling [@kim2008].
+The topology comparison in @fig-network-topologies illustrates these definitions: fat-trees achieve non-blocking behavior through redundant switch tiers, rail-optimized networks exploit workload structure to approximate it at lower cost, and dragonflies trade bisection bandwidth for reduced cabling [@kim2008].
 
 The comparison quantifies how fat-tree topologies achieve full bisection bandwidth at the cost of additional switch tiers, while rail-optimized and dragonfly designs sacrifice worst-case bisection bandwidth to reduce cabling complexity and cost. This trade-off between guaranteed bandwidth and economic scalability drives every topology decision in large-scale ML clusters.
 
@@ -904,6 +906,8 @@ class FatTreeScaling:
 
 A fat-tree built from switches with radix[^fn-switch-radix-density] $k$ supports $N = k^3/4$ hosts at three tiers, or $k^2/2$ at two tiers. In a two-tier leaf-spine fabric using radix-64 switches (with $k$ leaves each providing $k/2$ host ports and $k/2$ spine uplinks), the topology supports up to 2,048 GPUs, comfortably accommodating our 1,000-GPU reference cluster with only leaf and spine layers. (A standard fat-tree pod with the leaf-aggregation pair supports $(k/2)^2 = 1{,}024$ hosts per pod; the difference is whether the second tier uplinks to a core layer or terminates as spines.)
 
+A concrete bisection estimate shows how quickly oversubscription turns into synchronization delay.
+
 ```{python}
 #| label: bisection-bandwidth-scaling
 #| echo: false
@@ -969,6 +973,8 @@ Bisection bandwidth ($\text{BW}_{\text{bisect}}$) is the minimum pipe diameter b
 
 :::
 
+This oversubscription calculation turns the topology definition into a design rule: the subscription ratio at each tier determines whether a fat-tree can sustain global collectives.
+
 ::: {#chk-network-fabrics-fat-tree-topologies .callout-checkpoint title="Fat-tree topologies"}
 
 Verify your understanding of hierarchical switch fabrics:
@@ -1001,6 +1007,8 @@ As @fig-rail-optimized-cabling shows, in modern ML nodes GPUs are partitioned in
 The wiring pattern in @fig-rail-optimized-cabling ensures that same-rank inter-node communication between corresponding GPUs (GPU 0 to GPU 0, GPU 1 to GPU 1) travels over a dedicated rail switch rather than competing for shared ToR bandwidth. In standard 3D parallelism with tensor parallelism confined intra-node, this same-rank traffic is the data-parallel AllReduce path, eliminating cross-traffic congestion on the gradient-synchronization critical path.
 
 In distributed training, data parallelism\index{Data Parallelism} creates a deterministic and highly stratified communication pattern that standard topologies fail to exploit. When tensor-parallel groups stay inside each node, the same local GPU rank in every replica owns the corresponding shard of the model. GPU 0 on one node therefore synchronizes that shard's gradients with GPU 0 on other nodes, but rarely with GPU 1. A **rail-optimized topology** physically hardwires this logic by isolating these same-rank communication paths into dedicated networks. Instead of connecting all 8 GPUs in a node to a single ToR switch, the network connects all GPU 0s across the entire cluster to a dedicated "Rail 0" switch fabric, all GPU 1s to "Rail 1," and so on.
+
+A simple hop-count estimate shows the payoff.
 
 ```{python}
 #| label: rail-optimized-latency-notebook
@@ -1051,6 +1059,8 @@ Communication latency ($\alpha$) is proportional to the number of switch hops.
 
 :::
 
+This same-rank structure is not an abstract optimization; it is the architectural pattern behind the largest dense-model fleets.
+
 ::: {#lhs-network-fabrics-archetype-gpt-4-llama-3-rail-optimized-fleet .callout-lighthouse title="Archetype A (GPT-4/Llama-3): The rail-optimized fleet"}
 
 **Archetype A (GPT-4)** is the primary driver for rail-optimized fabrics. Because it uses **3D Parallelism**\index{3D Parallelism}, it generates two distinct traffic patterns: (1) massive, bandwidth-hungry gradient averaging for data parallelism, and (2) high-frequency, latency-sensitive activation exchanges for tensor parallelism. The rail-optimized design ensures that data-parallel traffic traverses only a single switch hop between nodes, minimizing the latency that would otherwise stall the synchronous training loop.
@@ -1097,6 +1107,8 @@ The choice of network topology dictates the upper bound of training efficiency. 
 3. For a 2D mesh computation (a physics simulation or specific parallel strategy), which topology offers the best locality by mapping physical neighbor links directly to hardware?
 
 :::
+
+Violating the bisection requirement has a direct economic cost.
 
 ::: {#nb-bisection-bottleneck .callout-notebook title="The bisection bottleneck"}
 
@@ -1240,6 +1252,8 @@ The danger of PFC lies in its cascading nature. When a switch port's buffer fill
 ::: {#fig-congestion-cascade fig-env="figure" fig-pos="htb" fig-cap="**The Incast Problem in Distributed Training**: During AllReduce synchronization, every GPU node sends line-rate traffic to a common aggregation switch port, producing a many-to-one traffic burst. The figure shows 256 GPU nodes each at 50 GB/s converging on a switch port with 400 Gb/s (50 GB/s) capacity and a 32 MB buffer: 12.8 TB/s of offered load against 50 GB/s of capacity oversubscribes the egress port by 256×. This deterministic overload is the root cause of the PFC backpressure cascades described later in this section." fig-alt="Eight labeled GPU nodes (with 248 more implied) each at 50 GB/s converge on a central Switch Port with 400 Gb/s capacity and a 32 MB buffer that overflows. Callout notes 256-times egress oversubscription: 256 times 50 GB/s = 12.8 TB/s vs. 50 GB/s port capacity."}
 ![](images/svg/incast-flow.svg)
 :::
+
+A production incident shows how this cascade can freeze a cluster.
 
 ```{python}
 #| label: pfc-storm-probability
@@ -1397,6 +1411,8 @@ As cluster sizes push past 100,000 accelerators, the physics tax of current inte
 The **Ultra Ethernet Consortium (UEC)** represents a clean-slate overhaul of Ethernet specifically for AI and HPC. Recognizing that TCP/IP is too heavy and RoCEv2's reliance on PFC is too fragile, UEC integrates HPC-native features directly into the standard: packet spraying across multiple paths, flexible ordered and unordered reliable delivery services, packet-trimming and link-layer-retry mechanisms, and new congestion-control schemes intended to reduce reliance on Priority Flow Control for AI/HPC traffic. The goal is to provide the losslessness of InfiniBand with the ubiquity and multi-vendor economics of Ethernet.
 
 The power consumption of pluggable transceivers is becoming unsustainable at scale. **Co-Packaged Optics (CPO)** addresses this by moving the optical engine from the faceplate directly into the switch ASIC package. By driving optical signals almost from the silicon itself, CPO eliminates the power-hungry electrical traces across the PCB, reducing power per port by 30–50 percent.
+
+A quick estimate makes the power dividend concrete.
 
 ```{python}
 #| label: optical-dividend-calc
