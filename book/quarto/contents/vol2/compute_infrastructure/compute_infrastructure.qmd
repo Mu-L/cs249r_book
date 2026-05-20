@@ -1307,25 +1307,40 @@ class TensorCoreH100Specs:
     fp16_tc_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs / second)
     fp8_tc_tflops = H100_FLOPS_FP8_TENSOR.m_as(TFLOPs / second)
     fp32_cuda_tflops = H100_FLOPS_FP32_CUDA.m_as(TFLOPs / second)
+    # MFU-example anchors: 7B-parameter transformer, single H100, batch
+    # of 4 sequences × 2,048 tokens = 8,192 tokens per step, 1.0 second
+    # step time. Pedagogical anchor — typical single-GPU pretraining
+    # workload that lands at ~35% MFU, below the 40-50% "good" band.
+    mfu_params = 7e9
+    mfu_tokens_per_step = 8192
+    mfu_step_seconds = 1.0
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
     ratio = fp16_tc_tflops / fp32_cuda_tflops  # ≈ 15× (989 / 67)
+    mfu_example_value = (
+        6 * mfu_params * mfu_tokens_per_step
+        / (fp16_tc_tflops * 1e12 * mfu_step_seconds)
+    )
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
     check(14 < ratio < 16, "TC-vs-CUDA ratio should be ~15x for H100")
+    check(
+        0.33 < mfu_example_value < 0.37,
+        f"MFU example should land ~35%, got {mfu_example_value:.3f}",
+    )
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
     h100_fp16_tc_str = fmt(fp16_tc_tflops, precision=0, commas=False)
     h100_fp8_tc_str = fmt(fp8_tc_tflops, precision=0, commas=True)
     h100_fp32_cuda_str = fmt(fp32_cuda_tflops, precision=0, commas=False)
     tc_vs_cuda_ratio_str = fmt(ratio, precision=0, commas=False)
-    # Pre-build the MFU-example math expression with the constant-driven
-    # H100 FP16 peak so the numerator and denominator stay in sync if
-    # H100_FLOPS_FP16_TENSOR ever changes. Branded result (~33%) is the
-    # pedagogical anchor; the inputs are constants.
+    # Pre-build the MFU-example math expression with constant-driven
+    # H100 FP16 peak and explicit tokens-per-step factor so the formula
+    # stays in sync if H100_FLOPS_FP16_TENSOR or the example anchors
+    # change. Branded result (~35%) is the pedagogical anchor.
     mfu_example_math = fmt_math(
-        f"\\text{{MFU}} = 6 \\times 7 \\times 10^9 / "
-        f"({h100_fp16_tc_str} \\times 10^{{12}} \\times 0.13)"
+        f"\\text{{MFU}} = 6 \\times 7 \\times 10^9 \\times {mfu_tokens_per_step} / "
+        f"({h100_fp16_tc_str} \\times 10^{{12}} \\times {mfu_step_seconds:.1f})"
     )
 ```
 
@@ -1387,7 +1402,7 @@ For capacity planning, the sustained throughput rate, not the peak rate, should 
 
 ***Model FLOPs Utilization (MFU)***\index{Model FLOPs Utilization!definition} is the ratio of a model's theoretical FLOP count per training step (calculated from architecture parameters alone) to the product of hardware peak throughput and elapsed wall-clock time, measuring what fraction of the hardware's theoretical capacity is doing useful model computation rather than overhead.
 
-1.  **Significance (quantitative)**: $\text{MFU} = C_{\text{model}} / (R_{\text{peak}} \cdot T_{\text{step}})$, where $C_{\text{model}} \approx 6P$ FLOPs for a $P$-parameter transformer. For a 7B-parameter model on H100 ($R_{\text{peak}} =$ `{python} TensorCoreH100Specs.h100_fp16_tc_str` TFLOPS FP16) with a step time of 0.13 seconds: `{python} TensorCoreH100Specs.mfu_example_math` $\approx 33\%$. A practical ceiling of 55–65 percent applies even in highly optimized implementations; the gap represents inescapable memory stalls ($\text{BW}$ bottleneck), AllReduce overhead $(L_{\text{lat}})$, and pipeline bubbles.
+1.  **Significance (quantitative)**: $\text{MFU} = C_{\text{model}} / (R_{\text{peak}} \cdot T_{\text{step}})$, where $C_{\text{model}} \approx 6PD$ FLOPs for a $P$-parameter transformer processing $D$ tokens per step. For a 7B-parameter model on H100 ($R_{\text{peak}} =$ `{python} TensorCoreH100Specs.h100_fp16_tc_str` TFLOPS FP16) with $D = 8{,}192$ tokens per step (a batch of 4 sequences of 2,048 tokens) and a step time of 1.0 second: `{python} TensorCoreH100Specs.mfu_example_math` $\approx 35\%$. A practical ceiling of 55–65 percent applies even in highly optimized implementations; the gap represents inescapable memory stalls ($\text{BW}$ bottleneck), AllReduce overhead $(L_{\text{lat}})$, and pipeline bubbles.
 2.  **Distinction (durable)**: Unlike hardware utilization (the fraction of clock cycles during which the GPU reports being "busy"), MFU counts only cycles spent on useful forward- or backward-pass arithmetic—not recomputed activations, padding computation, or gradient buffer copies that consume cycles but do not advance model training.
 3.  **Common pitfall**: A frequent misconception is that high hardware utilization implies high MFU. Engineers optimizing for GPU utilization metrics can find the GPU reports 95 percent busy while MFU is below 20 percent, because cycles spent on gradient recomputation, speculative computation, or excessive kernel launches are visible to utilization counters but not to MFU.
 
