@@ -1692,19 +1692,24 @@ from mlsysim.fmt import fmt_percent, fmt, check
 class AttentionIntensity:
     """
     Namespace for Attention Intensity.
-    Scenario: H/8 intensity formula application.
+    Scenario: Materialized attention-score intensity.
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     h_small = 768 # GPT-2 Small
+    heads_small = 12
+    head_dim = h_small // heads_small
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # Intensity = H / 8
-    intensity = h_small / 8
+    # Materialized score attention: QK^T costs 2*S*S*d_head FLOPs per head,
+    # while writing and later reading the S*S FP16 score matrix costs 4 bytes.
+    intensity = head_dim / 2
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     attn_intensity_str = fmt(intensity, precision=0, commas=False)
     H_small_str = fmt(h_small, precision=0, commas=False)
+    heads_small_str = fmt(heads_small, precision=0, commas=False)
+    head_dim_str = fmt(head_dim, precision=0, commas=False)
 
 # Note: Use AttentionIntensity.attn_intensity_str directly.
 ```
@@ -1781,7 +1786,7 @@ class AcceleratorSpecs:
 ```
 
 \index{Arithmetic Intensity!attention layer}
-Consider a GPT-2 attention layer where Q, K, V projections with dimensions $(B{\times}S{\times}H)$ multiplied by $(H{\times}H)$ produce $BSH^2$ FLOPs. Data movement requires reading Q, K, V ($3 \times BSH \times 2$ bytes) plus writing the output ($BSH \times 2$ bytes). The arithmetic intensity equals $BSH^2$ divided by $8BSH$, which simplifies to $H/8$. For GPT-2 Small ($H=$ `{python} AttentionIntensity.H_small_str`, the 117M variant, used here because its lower intensity falls below the ridge point), this yields `{python} AttentionIntensity.attn_intensity_str` FLOP/byte, below the A100's ridge point, making standard attention memory bound. GPT-2 XL $(H=1600)$ would yield 200 FLOP/byte, above the ridge point, illustrating how model scale shifts the same operation between regimes.
+Consider a GPT-2 attention layer that materializes the $S{\times}S$ attention-score matrix. For each head, the $QK^\top$ product costs approximately $2S^2d_{\text{head}}$ FLOPs, while writing the FP16 score matrix and reading it back for softmax traffic moves about $4S^2$ bytes. The arithmetic intensity of this materialized score path is therefore $d_{\text{head}}/2$. For GPT-2 Small ($H=$ `{python} AttentionIntensity.H_small_str` across `{python} AttentionIntensity.heads_small_str` heads, so $d_{\text{head}}=$ `{python} AttentionIntensity.head_dim_str`), this yields `{python} AttentionIntensity.attn_intensity_str` FLOP/byte, below the A100's ridge point, making standard materialized attention memory bound. Scaling the hidden dimension raises projection intensity, but it does not remove the $O(S^2)$ score-matrix traffic that FlashAttention targets.
 
 Accelerators have characteristic hardware ridge points where operations transition from memory-bound to compute bound. The A100 with `{python} AcceleratorSpecs.a100_tflops_fp16_str` TFLOPS FP16 Tensor Core and `{python} AcceleratorSpecs.a100_bw_tbs_str` TB/s bandwidth has a ridge point of `{python} AcceleratorSpecs.a100_ridge_str` FLOP/byte. The H100 SXM with `{python} AcceleratorSpecs.h100_tflops_fp16_str` TFLOPS FP16 Tensor Core and `{python} AcceleratorSpecs.h100_bw_tbs_str` TB/s bandwidth has a ridge point of approximately `{python} AcceleratorSpecs.h100_ridge_str` FLOP/byte. Operations below the ridge point are memory bound; above are compute bound.
 
@@ -2570,13 +2575,13 @@ While data pipeline throughput determines how fast training data reaches the GPU
 # │ Show: That AllReduce time can exceed computation time for large models.
 # │ How: Calculate synchronization latency over a 100 Gbps network.
 # │
-# │ Imports: mlsysim.core.constants (BYTES_FP16, ALLREDUCE_FACTOR),
-# │          mlsysim.book (fmt)
+# │ Imports: mlsysim.core.constants (BYTES_FP16, byte), mlsysim.book (fmt)
 # │ Exports: model_params_b_str, gradient_size_str, allreduce_str,
-# │          network_time_str, network_bw_str
+# │          network_time_str, network_bw_str, n_gpus_str,
+# │          allreduce_factor_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt_percent, fmt, check
-from mlsysim.core.constants import BYTES_FP16, ALLREDUCE_FACTOR
+from mlsysim.core.constants import BYTES_FP16, byte
 
 # ┌── LEGO ───────────────────────────────────────────────
 class NetworkWall:
@@ -2589,21 +2594,25 @@ class NetworkWall:
     params_b = 7
     bytes_per_param = BYTES_FP16.m_as(byte) # 2
     network_bw_gbs = 12.5 # 100 Gbps
+    n_gpus = 8
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Gradient Size = 7B * 2 bytes = 14 GB
     gradient_size_gb = params_b * bytes_per_param
 
-    # Ring AllReduce sends 2x data
-    allreduce_gb = ALLREDUCE_FACTOR * gradient_size_gb
+    # Ring AllReduce sends 2(N-1)/N copies of the gradient per worker.
+    allreduce_factor = 2 * (n_gpus - 1) / n_gpus
+    allreduce_gb = allreduce_factor * gradient_size_gb
 
     # Time = Data/Bandwidth
     time_s = allreduce_gb/network_bw_gbs
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     model_params_b_str = fmt(params_b, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus, precision=0, commas=False)
     gradient_size_str = fmt(gradient_size_gb, precision=0, commas=False)
-    allreduce_str = fmt(allreduce_gb, precision=0, commas=False)
+    allreduce_factor_str = fmt(allreduce_factor, precision=2, commas=False)
+    allreduce_str = fmt(allreduce_gb, precision=1, commas=False)
     network_time_str = fmt(time_s, precision=1, commas=False)
     network_bw_str = fmt(network_bw_gbs, precision=1, commas=False)
 
@@ -2612,12 +2621,12 @@ class NetworkWall:
 
 ::: {.callout-notebook #notebook-network-wall title="The network wall"}
 
-**Problem**: A team is training a large model on eight GPUs. Is the network the bottleneck?
+**Problem**: A team is training a large model on `{python} NetworkWall.n_gpus_str` GPUs. Is the network the bottleneck?
 
 **Math**: For a `{python} NetworkWall.model_params_b_str` B parameter model with FP16 gradients:
 
 1. **Gradient size**: `{python} NetworkWall.model_params_b_str` $\times 10^9 \times 2$ bytes = `{python} NetworkWall.gradient_size_str` GB per step.
-2. **AllReduce cost**: Ring AllReduce sends $2\times$ `{python} NetworkWall.gradient_size_str` GB = `{python} NetworkWall.allreduce_str` GB total.
+2. **AllReduce cost**: Ring AllReduce sends `{python} NetworkWall.allreduce_factor_str`$\times$ the gradient per worker, because $2(N-1)/N$ equals `{python} NetworkWall.allreduce_factor_str` for `{python} NetworkWall.n_gpus_str` GPUs. That gives `{python} NetworkWall.allreduce_factor_str` $\times$ `{python} NetworkWall.gradient_size_str` GB = `{python} NetworkWall.allreduce_str` GB total.
 3. **Network time**: At 100 Gbps (`{python} NetworkWall.network_bw_str` GB/s) InfiniBand: `{python} NetworkWall.allreduce_str` / `{python} NetworkWall.network_bw_str` = `{python} NetworkWall.network_time_str` s.
 4. **Compute time**: If forward + backward takes $1 \text{ s}$, network is the bottleneck.
 
@@ -3548,9 +3557,9 @@ class ProfilingScenarios:
     profile_data_pct      = 40
     profile_compute_pct   = 35
     profile_mem_pct       = 25
-    seq_pipeline_time     = 90
+    seq_pipeline_time     = 105
     opt_pipeline_time     = 55
-    pipeline_speedup_pct  = 40
+    pipeline_speedup_pct  = (1 - opt_pipeline_time/seq_pipeline_time) * 100
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
     gpt2_attn_time_pct_str    = fmt(gpt2_attn_time_pct, precision=0, commas=False)
@@ -3680,7 +3689,7 @@ Prefetching and overlapping techniques illustrate the systematic framework in ac
 
 Training machine learning models involves significant data movement between storage, memory, and computational units. The data pipeline consists of sequential transfers: from disk storage to CPU memory, CPU memory to GPU memory, and through the GPU processing units. @fig-fetching-naive exposes the inefficiency of sequential data transfer: the GPU remains idle during file operations (Open 1, Open 2), and training steps cannot begin until read operations complete, leaving expensive compute resources underutilized for significant portions of each epoch.
 
-::: {#fig-fetching-naive fig-env="figure" fig-pos="htb" fig-cap="**Sequential Data Fetching**: File open, read, and train operations execute serially across two epochs, with the GPU remaining idle during all file operations. The full sequential pipeline spans approximately `{python} ProfilingScenarios.seq_pipeline_time_str` seconds, establishing the baseline that overlapped prefetching improves upon." fig-alt="Gantt chart showing sequential data pipeline over two epochs. Four rows: Open, Read, Train, and Epoch. Operations execute serially with gaps between phases, spanning from 00:00 to 01:30."}
+::: {#fig-fetching-naive fig-env="figure" fig-pos="htb" fig-cap="**Sequential Data Fetching**: File open, read, and train operations execute serially across two epochs, with the GPU remaining idle during all file operations. The full sequential pipeline spans approximately `{python} ProfilingScenarios.seq_pipeline_time_str` seconds, establishing the baseline that overlapped prefetching improves upon." fig-alt="Gantt chart showing sequential data pipeline over two epochs. Four rows: Open, Read, Train, and Epoch. Operations execute serially with gaps between phases, spanning from 00:00 to 01:45."}
 
 ```{.tikz}
 \begin{tikzpicture}[
@@ -3689,7 +3698,7 @@ Training machine learning models involves significant data movement between stor
   execute at begin picture={
     %
     \def\W{140mm}   % total width of the diagram (time axis)
-    \def\Tmax{90}   % total duration (units on x-axis)
+    \def\Tmax{105}  % total duration (units on x-axis)
     \def\rowH{9mm}  % row height
     %
     \pgfmathsetlengthmacro{\Xunit}{\W/\Tmax}
@@ -3788,7 +3797,8 @@ Training machine learning models involves significant data movement between stor
   45/00:45,
   60/01:00,
   75/01:15,
-  90/01:30
+  90/01:30,
+  105/01:45
 }{
   \node[font=\scriptsize\usefont{T1}{phv}{m}{n}, anchor=north] at (\t,\yAxis+0.20) {\lbl};
 }
@@ -4280,8 +4290,8 @@ class MixedPrecisionMemory:
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     batch_size = 32
 
-    # Baseline activation size is representative for GPT-2 XL at batch=32.
-    act_fp32_gb = 65.0
+    # Reuse the explicit activation calculation above so examples do not drift.
+    act_fp32_gb = GPT2ActivationMemory.act_fp32_gb
     checkpoint_factor = 4
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
@@ -5333,7 +5343,8 @@ To answer that question, let us walk through the memory-feasibility path for GPT
 # │          total_fp32_str, params_fp16_str, grads_fp16_str,
 # │          master_weights_str, adam_amp_str, act_fp16_str, total_amp_str,
 # │          static_mem_str, act_ckpt_str, total_ckpt_str, wt_v100_mem_str,
-# │          amp_reduction_str, recompute_overhead_str, checkpoint_factor_str
+# │          amp_reduction_str, recompute_overhead_str, checkpoint_factor_str,
+# │          memory_reduction_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import GPT2_PARAMS, GPT2_LAYERS, GPT2_HIDDEN_DIM, V100_MEM_CAPACITY, GiB, BYTES_FP32, BYTES_FP16, GB, byte
 from mlsysim.fmt import fmt_percent, fmt, check
@@ -5346,7 +5357,7 @@ class GPT2WalkthroughCalc:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     batch_size = 32
     seq_len = 1024
-    act_fp32_gb = 65.0  # empirical activations for GPT-2 XL, batch=32, seq=1024
+    act_fp32_gb = GPT2ActivationMemory.act_fp32_gb
     checkpoint_factor = 4  # checkpoint every 4 layers → 4× reduction
     recompute_overhead_pct = 33  # empirical: ~33% more compute
 
@@ -5375,11 +5386,13 @@ class GPT2WalkthroughCalc:
 
     # Improvement calculations
     amp_reduction_pct = (1 - total_amp_gb/total_fp32_gb) * 100
+    memory_reduction = total_fp32_gb / total_ckpt_gb
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     total_fp32_str = fmt(total_fp32_gb, precision=1, commas=False)
     total_amp_str = fmt(total_amp_gb, precision=1, commas=False)
     total_ckpt_str = fmt(total_ckpt_gb, precision=1, commas=False)
+    memory_reduction_str = fmt(memory_reduction, precision=1, commas=False)
     amp_reduction_str = fmt(amp_reduction_pct, precision=0, commas=False)
     recompute_overhead_str = fmt(recompute_overhead_pct, precision=0, commas=False)
 ```
@@ -5423,12 +5436,12 @@ After optimization:
 
 **Step 6**: Final profile and results. @tbl-training-gpt2-final-profile contrasts the naive baseline against the optimized configuration:
 
-| **Metric**                  | **Naive** |  **Optimized**   |    **Improvement**    |
-|:----------------------------|:---------:|:----------------:|:---------------------:|
-| **Memory**                  |   89 GB   |      32 GB       | 2.8$\times$ reduction |
-| **Accelerator utilization** |    N/A    |    85 percent    |       Trainable       |
-| **Throughput**              |    N/A    | 1,200 tokens/sec |           —           |
-| **Time per epoch**          |    N/A    |    8.3 hours     |           —           |
+| **Metric**                  |                    **Naive**                     |                  **Optimized**                   |                            **Improvement**                            |
+|:----------------------------|:------------------------------------------------:|:------------------------------------------------:|:---------------------------------------------------------------------:|
+| **Memory**                  | `{python} GPT2WalkthroughCalc.total_fp32_str` GB | `{python} GPT2WalkthroughCalc.total_ckpt_str` GB | `{python} GPT2WalkthroughCalc.memory_reduction_str`$\times$ reduction |
+| **Accelerator utilization** |                       N/A                        |                    85 percent                    |                               Trainable                               |
+| **Throughput**              |                       N/A                        |                 1,200 tokens/sec                 |                                   —                                   |
+| **Time per epoch**          |                       N/A                        |                    8.3 hours                     |                                   —                                   |
 
 : **GPT-2 Optimization Final Profile**: Naive vs. optimized memory, accelerator utilization, throughput, and per-epoch time after composing mixed precision, gradient checkpointing, and data prefetching, marking the shift from infeasible to compute-bound. {#tbl-training-gpt2-final-profile}
 
@@ -5474,19 +5487,19 @@ class GPT2SummaryCalc:
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     # Baseline (FP32)
-    b_param = 6.0       # GB
-    b_grad = 6.0        # GB
+    b_param = GPT2WalkthroughCalc.params_fp32_gb
+    b_grad = GPT2WalkthroughCalc.grads_fp32_gb
     b_master = 0.0      # GB
-    b_opt = 12.0        # GB
-    b_act = 65.0        # GB
+    b_opt = GPT2WalkthroughCalc.adam_fp32_gb
+    b_act = GPT2WalkthroughCalc.act_fp32_gb
     b_time = 14.0       # days
 
     # Optimized (AMP + checkpointing)
-    o_param = 3.0       # GB
-    o_grad = 3.0        # GB
-    o_master = 6.0      # GB
-    o_opt = 12.0        # GB
-    o_act = 8.0         # GB
+    o_param = GPT2WalkthroughCalc.params_fp16_gb
+    o_grad = GPT2WalkthroughCalc.grads_fp16_gb
+    o_master = GPT2WalkthroughCalc.master_weights_gb
+    o_opt = GPT2WalkthroughCalc.adam_amp_gb
+    o_act = GPT2WalkthroughCalc.act_ckpt_gb
     o_time = 8.4        # days
     gpu_count = 32
     host_cpu_power_w = 200
@@ -5510,8 +5523,8 @@ class GPT2SummaryCalc:
     energy_reduction_pct = (1 - o_energy / b_energy) * 100
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
-    check(round(b_total_mem) == 89, f"Baseline memory should be about 89 GB, got {b_total_mem}")
-    check(round(o_total_mem) == 32, f"Optimized memory should be about 32 GB, got {o_total_mem}")
+    check(abs(b_total_mem - GPT2WalkthroughCalc.total_fp32_gb) < 1e-9, "Summary baseline memory should match walkthrough.")
+    check(abs(o_total_mem - GPT2WalkthroughCalc.total_ckpt_gb) < 1e-9, "Summary optimized memory should match walkthrough.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     # Note: Units embedded in _str vars because these populate a summary table
@@ -5554,7 +5567,7 @@ class GPT2SummaryCalc:
 | **Electricity Cost (USD 0.10/kWh)**                          |     `{python} GPT2SummaryCalc.b_cost_str`      |     `{python} GPT2SummaryCalc.o_cost_str`      | —                                   |
 | **Carbon Footprint**\index{Carbon Footprint!training impact} |    `{python} GPT2SummaryCalc.b_carbon_str`     |    `{python} GPT2SummaryCalc.o_carbon_str`     | Regional grid average (0.45 kg/kWh) |
 
-: **GPT-2 Training Optimization Summary**: Applying mixed-precision training and gradient checkpointing reduces memory from 89 GB to 32 GB; the data-pipeline utilization gains in the walkthrough reduce training time by 40 percent, energy consumption by `{python} GPT2SummaryCalc.energy_reduction_pct_str` percent, and carbon footprint proportionally. {#tbl-gpt2-summary tbl-colwidths="[30,18,18,34]"}
+: **GPT-2 Training Optimization Summary**: Applying mixed-precision training and gradient checkpointing reduces memory from `{python} GPT2SummaryCalc.b_total_mem_str` to `{python} GPT2SummaryCalc.o_total_mem_str`; the data-pipeline utilization gains in the walkthrough reduce training time by 40 percent, energy consumption by `{python} GPT2SummaryCalc.energy_reduction_pct_str` percent, and carbon footprint proportionally. {#tbl-gpt2-summary tbl-colwidths="[30,18,18,34]"}
 
 ```{python}
 #| label: optimization-summary-calc
@@ -5606,7 +5619,7 @@ Yet some models simply will not fit, and some training runs would take years eve
 ## Scaling Training Systems {#sec-model-training-scaling-training-systems-adfd}
 
 \index{Training!scaling strategies}\index{Scaling!single-device limitations}\index{Conservation of Complexity!distributed training}
-The optimization toolkit developed in the previous section (mixed precision, Flash Attention, gradient checkpointing, and data prefetching) can transform an infeasible training configuration into a practical one on a single machine. The GPT-2 walkthrough demonstrated reducing memory from 89 GB to 32 GB, bringing a 1.5B parameter model within reach of a single A100 (40 GB). However, some models simply will not fit, no matter how aggressively these techniques are applied. A 70B parameter model requires about 140 GB for FP16 weights alone, which exceeds the 80 GB configurations of A100 and H100 SXM accelerators and leaves little or no room even on higher-capacity variants like the H100 NVL (94 GB) and H200 (141 GB) once gradients, optimizer state, and activations are included. Even when a model does fit, training on a single device may take years rather than weeks.
+The optimization toolkit developed in the previous section (mixed precision, Flash Attention, gradient checkpointing, and data prefetching) can transform an infeasible training configuration into a practical one on a single machine. The GPT-2 walkthrough demonstrated reducing memory from `{python} GPT2SummaryCalc.b_total_mem_str` to `{python} GPT2SummaryCalc.o_total_mem_str`, bringing a 1.5B parameter model within reach of a single A100 (40 GB). However, some models simply will not fit, no matter how aggressively these techniques are applied. A 70B parameter model requires about 140 GB for FP16 weights alone, which exceeds the 80 GB configurations of A100 and H100 SXM accelerators and leaves little or no room even on higher-capacity variants like the H100 NVL (94 GB) and H200 (141 GB) once gradients, optimizer state, and activations are included. Even when a model does fit, training on a single device may take years rather than weeks.
 
 When single-machine optimization has been exhausted, the only remaining option is to spread computation across multiple devices. Multi-device training provides three capabilities unavailable to a single GPU: aggregate memory capacity, aggregate compute throughput, and aggregate storage bandwidth. Scaling beyond a single device begins with multi-GPU configurations inside one machine, then reaches the threshold where distributed systems become necessary. The key parallelism strategies and their trade-offs are introduced here; the implementation details of multi-node distributed training (collective communication primitives, fault tolerance, and elastic scheduling) are beyond our current scope.
 
@@ -6763,7 +6776,7 @@ This co-design principle, where algorithms, software frameworks, and hardware ar
 * **Mixed precision provides substantial performance gains**: FP16 training with FP32 accumulation delivers approximately 2$\times$ throughput and 2$\times$ memory reduction with typically <1 percent accuracy impact on most workloads.
 * **IO-aware algorithm design transforms bottleneck regimes**: Flash Attention's tiling strategy converts attention from memory-bound to compute-bound by never materializing the full $n{\times}n$ matrix in HBM, achieving 2--4$\times$ speedups and enabling 4$\times$ longer sequences. The principle extends beyond attention: optimizing data movement often yields larger gains than optimizing computation.
 * **Gradient checkpointing trades compute for memory**: Recomputing activations during the backward pass enables training larger models (for example, GPT-3 scales from 1.3B to 3.7B parameters on V100s) or achieves 3--4$\times$ activation memory reduction. Essential when memory is the binding constraint.
-* **Optimizations compose and must be applied systematically**: No single technique addresses all bottlenecks. The GPT-2 walkthrough demonstrates how mixed precision, gradient checkpointing, and data prefetching must be layered together, guided by iterative profiling, to transform an infeasible 89 GB memory requirement into a practical 32 GB configuration.
+* **Optimizations compose and must be applied systematically**: No single technique addresses all bottlenecks. The GPT-2 walkthrough demonstrates how mixed precision, gradient checkpointing, and data prefetching must be layered together, guided by iterative profiling, to transform an infeasible `{python} GPT2SummaryCalc.b_total_mem_str` memory requirement into a practical `{python} GPT2SummaryCalc.o_total_mem_str` configuration.
 * **Single-machine optimizations reduce the cost of scaling out**: Distributed training adds communication overhead and complexity. A well-optimized single GPU often outperforms a poorly-optimized multi-GPU setup; assess prefetching, mixed precision, checkpointing, and accumulation before scaling out.
 * **Energy and cost scale linearly with training time**: The same optimizations that accelerate training also reduce carbon emissions and cloud costs. Efficiency improvements directly translate to reduced resource consumption.
 
@@ -6773,7 +6786,7 @@ The practitioners who internalize the iron law can look at a slow training job a
 
 ::: {.callout-chapter-connection title="From training to compression"}
 
-Training produces the model artifact: a collection of billions of learned parameters that encode patterns extracted from data. The expense of creating this artifact is incurred once, but the real challenge begins when it must be *deployed* on cloud servers processing thousands of requests per second, on edge devices with limited memory, or on mobile phones with strict power budgets. A model that required 32 GB to train is far too large to serve efficiently in these environments. The optimization journey (@sec-model-compression) begins by asking: how much of this trained model is actually necessary? Quantization\index{Quantization!model compression} reduces parameter precision from 32-bit floats to four-bit integers, shrinking the model by 8$\times$ with minimal accuracy loss; pruning\index{Pruning!model compression} removes redundant connections entirely; knowledge distillation\index{Knowledge Distillation!model compression} compresses a large "teacher" model into a smaller "student." These compression techniques transform training's output, an expensively trained but unwieldy model, into something deployable in the real world.
+Training produces the model artifact: a collection of billions of learned parameters that encode patterns extracted from data. The expense of creating this artifact is incurred once, but the real challenge begins when it must be *deployed* on cloud servers processing thousands of requests per second, on edge devices with limited memory, or on mobile phones with strict power budgets. A model that required `{python} GPT2SummaryCalc.o_total_mem_str` to train is far too large to serve efficiently in these environments. The optimization journey (@sec-model-compression) begins by asking: how much of this trained model is actually necessary? Quantization\index{Quantization!model compression} reduces parameter precision from 32-bit floats to four-bit integers, shrinking the model by 8$\times$ with minimal accuracy loss; pruning\index{Pruning!model compression} removes redundant connections entirely; knowledge distillation\index{Knowledge Distillation!model compression} compresses a large "teacher" model into a smaller "student." These compression techniques transform training's output, an expensively trained but unwieldy model, into something deployable in the real world.
 
 :::
 

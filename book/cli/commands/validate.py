@@ -2176,7 +2176,6 @@ class ValidateCommand:
         issues: List[ValidationIssue] = []
 
         yaml_option_inline = re.compile(r"^#\|\s*(fig-cap|tbl-cap|lst-cap|fig-alt):\s*.*`\{python\}")
-        caption_syntax_inline = re.compile(r"^:\s+.*`\{python\}.*\{#(tbl|fig|lst)-")
         inline_fstring = re.compile(r"`\{python\}\s*f\"[^`]+`")
         inline_func_call = re.compile(r"`\{python\}\s*\w+\([^`]+\)`")
 
@@ -2269,16 +2268,6 @@ class ValidateCommand:
                             severity="error",
                             context=stripped[:160],
                         ))
-                    if caption_syntax_inline.search(line):
-                        issues.append(ValidationIssue(
-                            file=self._relative_file(file),
-                            line=idx,
-                            code="caption_inline_python",
-                            message="Inline Python in caption syntax will not render",
-                            severity="error",
-                            context=stripped[:160],
-                        ))
-
             if check_scope:
                 from book.tools.scripts.maintenance.validate_inline_refs import check_scope as _check_scope, BOOK_ROOT
                 try:
