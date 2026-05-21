@@ -650,34 +650,34 @@ Different model architectures stress different operations, and selecting the wro
 ### The six core primitives {#sec-collective-communication-six-core-primitives-8a66}
 
 1.  **Broadcast**\index{Broadcast}: One sender transmits data to all receivers.
-    *   *Use Case*: Distributing initial model weights from rank 0 to all workers at startup. Used across **all parallelism strategies** during initialization.
-    *   *Complexity*: $O(\log N)$ latency with tree algorithms; bandwidth cost $O(M)$ as data traverses tree levels.
+    *   Use case: Distributing initial model weights from rank 0 to all workers at startup. Used across **all parallelism strategies** during initialization.
+    *   Complexity: $O(\log N)$ latency with tree algorithms; bandwidth cost $O(M)$ as data traverses tree levels.
 
 2.  **Reduce**\index{Reduce}: Data from all workers is aggregated (sum, min, max) to a single root worker.
-    *   *Use Case*: Aggregating validation metrics (loss, accuracy) to a logging process. Common in **monitoring and checkpointing** across all training strategies.
-    *   *Complexity*: $O(\log N)$ latency with tree algorithms; bandwidth cost $O(M)$ total.
+    *   Use case: Aggregating validation metrics (loss, accuracy) to a logging process. Common in **monitoring and checkpointing** across all training strategies.
+    *   Complexity: $O(\log N)$ latency with tree algorithms; bandwidth cost $O(M)$ total.
 
 3.  **AllReduce**: Data from all workers is aggregated, and the *result* is distributed to all workers.
-    *   *Use Case*: Data Parallelism. In the data-parallel training strategy from @sec-distributed-training-systems-systems-data-parallelism-6132, AllReduce synchronizes gradients so every GPU computes the same weight update.
-    *   *Semantics*: $y_i = \sum_{j=0}^{N-1} x_j$ for all $i$.
-    *   *Complexity*: Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but $O(N)$ latency; Tree achieves $O(\log N)$ latency but suboptimal bandwidth.
+    *   Use case: Data Parallelism. In the data-parallel training strategy from @sec-distributed-training-systems-systems-data-parallelism-6132, AllReduce synchronizes gradients so every GPU computes the same weight update.
+    *   Semantics: $y_i = \sum_{j=0}^{N-1} x_j$ for all $i$.
+    *   Complexity: Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but $O(N)$ latency; Tree achieves $O(\log N)$ latency but suboptimal bandwidth.
 
 4.  **AllGather**: Every worker sends its data to every other worker. The result is a concatenation of all inputs.
-    *   *Use Case*: Sharded Data Parallelism (FSDP[^fn-fsdp-memory]/ZeRO). Collecting sharded parameters before a forward/backward pass.
-    *   *Semantics*: Worker $i$ starts with $x_i$, ends with $[x_0, x_1, \dots, x_{N-1}]$.
-    *   *Complexity*: Ring achieves $\frac{N-1}{N}\frac{M}{\beta}$ bandwidth cost when $M$ is the full gathered tensor; each worker's resident data grows from a local $M/N$ shard to the full $M$.
+    *   Use case: Sharded Data Parallelism (FSDP[^fn-fsdp-memory]/ZeRO). Collecting sharded parameters before a forward/backward pass.
+    *   Semantics: Worker $i$ starts with $x_i$, ends with $[x_0, x_1, \dots, x_{N-1}]$.
+    *   Complexity: Ring achieves $\frac{N-1}{N}\frac{M}{\beta}$ bandwidth cost when $M$ is the full gathered tensor; each worker's resident data grows from a local $M/N$ shard to the full $M$.
 
 5.  ReduceScatter\index{ReduceScatter}: Data is reduced (summed), but the result is scattered such that each worker receives only a distinct chunk of the result.
-    *   *Use Case*: Sharded Data Parallelism. Reducing gradients but keeping them sharded to save memory. Also used in Sequence Parallelism to distribute activations.
-    *   *Semantics*: Worker $i$ receives the $i$-th block of $\sum x_j$.
-    *   *Complexity*: Ring achieves $\frac{N-1}{N}\frac{M}{\beta}$; functionally the inverse of AllGather.
+    *   Use case: Sharded Data Parallelism. Reducing gradients but keeping them sharded to save memory. Also used in Sequence Parallelism to distribute activations.
+    *   Semantics: Worker $i$ receives the $i$-th block of $\sum x_j$.
+    *   Complexity: Ring achieves $\frac{N-1}{N}\frac{M}{\beta}$; functionally the inverse of AllGather.
 
 A key insight is that AllReduce can be decomposed into ReduceScatter followed by AllGather. This is not merely a mathematical equivalence; it is precisely how Ring AllReduce works internally (the Scatter-Reduce phase is a ReduceScatter, the AllGather phase is an AllGather). FSDP exploits this decomposition by AllGathering parameter shards before a module needs them and ReduceScattering gradients after backward so each rank retains only its shard for the optimizer step. This shards parameters, gradients, and optimizer state across workers, reducing persistent model-state memory roughly by $N \times$, while temporary full-parameter buffers and prefetching determine peak memory.
 
 6.  **AllToAll**: The most general pattern. Worker $i$ sends a distinct chunk of data to worker $j$. This is effectively a matrix transpose of distributed data.
-    *   *Use Case*: Mixture of Experts (MoE) routing tokens to experts; DLRM[^fn-dlrm-embedding] exchanging embedding lookups across workers.
-    *   *Semantics*: Worker $i$ sends $x_{i \to j}$ to worker $j$ and receives $x_{j \to i}$ from worker $j$, for all $j$.
-    *   *Complexity*: $O(N^2)$ logical connections create potential for network congestion; bandwidth cost is $\frac{N-1}{N}M$ per worker, but contention makes this the hardest primitive to scale.
+    *   Use case: Mixture of Experts (MoE) routing tokens to experts; DLRM[^fn-dlrm-embedding] exchanging embedding lookups across workers.
+    *   Semantics: Worker $i$ sends $x_{i \to j}$ to worker $j$ and receives $x_{j \to i}$ from worker $j$, for all $j$.
+    *   Complexity: $O(N^2)$ logical connections create potential for network congestion; bandwidth cost is $\frac{N-1}{N}M$ per worker, but contention makes this the hardest primitive to scale.
 
 [^fn-fsdp-memory]: **FSDP (Fully Sharded Data Parallel)**: PyTorch's implementation of ZeRO-3, which shards parameters, gradients, and optimizer states across $N$ workers, reducing per-GPU memory from $16P$ bytes under FP32 Adaptive Moment Estimation (Adam) to $16P/N$ bytes. The trade-off is communication frequency: FSDP issues $2L_{\text{layers}}$ collective operations per step (AllGather + ReduceScatter per layer) instead of data parallelism's single AllReduce, making it more sensitive to the $\alpha$ overhead. \index{FSDP!memory trade-off}
 
@@ -1177,12 +1177,12 @@ class RingVsTree:
 
 **Math**:
 
-*Latency Terms:*
+***Latency**:*
 
 1.  **Ring Latency**\index{Latency!ring}: $2(N-1)\alpha = 2 \times 63 \times 10\ \mu$s = **`{python} RingVsTree.ring_lat_str` $\mu$s**.
 2.  **Tree Latency**\index{Latency!tree}: $2(\log_2 N)\alpha = 2 \times 6 \times 10\ \mu$s = **`{python} RingVsTree.tree_lat_str` $\mu$s**.
 
-*Bandwidth Terms (note the difference!):*
+***Bandwidth** (note the difference):*
 
 3.  **Ring Bandwidth**\index{Bandwidth!ring}: $2\frac{N-1}{N}\frac{M}{\beta} \approx 2 \times \frac{1\text{ MB}}{10\text{ GB/s}}$ = **`{python} RingVsTree.ring_bw_str` $\mu$s** (optimal: each byte sent once).
 4.  **Tree Bandwidth**\index{Bandwidth!tree}: $2\log_2 N \cdot \frac{M}{\beta} = 12 \times \frac{1\text{ MB}}{10\text{ GB/s}}$ = **`{python} RingVsTree.tree_bw_str` $\mu$s** (each level sends full message).
@@ -1380,7 +1380,7 @@ class HierarchicalAllreduceCalc:
 1. **Intra-node ReduceScatter**: Each GPU sends `{python} HierarchicalAllreduceCalc.intra_data_mb_str` MB at `{python} HierarchicalAllreduceCalc.nvlink_bw_gbs_str` GB/s → ~`{python} HierarchicalAllreduceCalc.intra_rs_ms_str` ms
 2. **Inter-Node AllReduce**\index{AllReduce!inter-node}: Each GPU AllReduces a $1\ \text{GB}/8$ = `{python} HierarchicalAllreduceCalc.inter_data_mb_str` MB shard over InfiniBand; Ring moves roughly $2(N-1)/N$ times that payload, giving ~`{python} HierarchicalAllreduceCalc.inter_time_ms_str` ms at `{python} HierarchicalAllreduceCalc.ib_bw_gbs_str` GB/s
 
-   *(Only 1/8 of the data crosses InfiniBand!)*
+   (Only 1/8 of the data crosses InfiniBand!)
 
 3. **Intra-node AllGather**: Each GPU receives `{python} HierarchicalAllreduceCalc.intra_data_mb_str` MB at `{python} HierarchicalAllreduceCalc.nvlink_bw_gbs_str` GB/s → ~`{python} HierarchicalAllreduceCalc.intra_ag_ms_str` ms
 4. **Total time**: $\approx$ `{python} HierarchicalAllreduceCalc.intra_rs_ms_str` + `{python} HierarchicalAllreduceCalc.inter_time_ms_str` + `{python} HierarchicalAllreduceCalc.intra_ag_ms_str` = `{python} HierarchicalAllreduceCalc.hier_total_ms_str` ms
