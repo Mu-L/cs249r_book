@@ -1579,8 +1579,9 @@ A concrete GPT-3 synchronization estimate makes the coordination tax visible by 
 # │
 # │ Goal: Quantify the Coordination Tax (time) and Energy Tax (joules)
 # │       for GPT-3 synchronization across IB HDR vs 100G Ethernet.
-# │ Show: "~700" GB sync size, "~4%" IB efficiency, "~2%" Ethernet efficiency,
-# │       "~84" J per synchronization, and "~84" MJ for 1M synchronizations.
+# │ Show: "~700" GB per-endpoint sync size, "~4%" IB efficiency,
+# │       "~2%" Ethernet efficiency, "~84" J per endpoint synchronization,
+# │       and "~84" MJ for 1M endpoint synchronizations.
 # │ How: sync_size = 2 × params × 2 bytes; energy = sync_bits * Energy_per_bit.
 # │
 # │ Imports: mlsysim.core.constants (GPT3_PARAMS, INFINIBAND_HDR_BW, Gbps,
@@ -1653,7 +1654,7 @@ class GPT3SyncTax:
 **Problem**: Calculate the scaling efficiency and energy cost of training GPT-3 (175B params) on a cluster connected by 100G Ethernet vs. 200G InfiniBand.
 
 **Physics**:
-To synchronize 175B parameters (FP16), a Ring All-Reduce\index{Ring All-Reduce} must move approximately **`{python} GPT3SyncTax.sync_size_gb_str` GB** of data across the network per iteration.
+To synchronize 175B parameters (FP16), a Ring All-Reduce\index{Ring All-Reduce} must move approximately **`{python} GPT3SyncTax.sync_size_gb_str` GB** of data through each participating accelerator endpoint per iteration.
 
 **The comparison (iron law of scale)**:
 
@@ -1661,7 +1662,7 @@ To synchronize 175B parameters (FP16), a Ring All-Reduce\index{Ring All-Reduce} 
 *   **Ethernet (100 Gbps)**: Lower bandwidth and higher overhead collapse the scaling efficiency to **`{python} GPT3SyncTax.eth_efficiency_pct_str` percent**. The fleet spends even more of its time waiting for the network.
 
 **The thermodynamic cost (energy wall)**:
-Each gradient synchronization consumes approximately **`{python} GPT3SyncTax.sync_energy_j_str` Joules** of energy across the network fabric (at 15 pJ/bit). In a training run of `{python} GPT3SyncTax.million_steps_str` steps, the network movement alone consumes about `{python} GPT3SyncTax.sync_energy_mj_str` MJ of energy.
+Each endpoint's gradient synchronization consumes approximately **`{python} GPT3SyncTax.sync_energy_j_str` Joules** across the network fabric (at 15 pJ/bit). In a training run of `{python} GPT3SyncTax.million_steps_str` steps, the endpoint network movement alone accounts for about `{python} GPT3SyncTax.sync_energy_mj_str` MJ of energy before multiplying by the number of participating accelerators.
 
 **Systems insight**: Scale makes the network the primary "processor." If the network is inefficient, the GPUs sit idle, wasting millions of dollars in compute capacity. Furthermore, the thermodynamic cost of data movement (the energy wall) means that "more GPUs" is not a sustainable scaling strategy without communication-hiding and compression.
 
@@ -2016,7 +2017,42 @@ This **"Cloud-Lite" Fallacy** treats edge systems as resource-constrained cloud 
 
 **Pitfall**: ***Assuming scaling laws predict efficiency requirements linearly across all scales.***
 
-The **Linear Scaling Fallacy**\index{Linear Scaling Fallacy} occurs when teams extrapolate resource requirements using power-law relationships without accounting for coordination overhead. $\mathcal{L}(N) = A N^{-\alpha} + B$ works within validated ranges but fails at the boundaries. A team training 100B-parameter models by extrapolating from 10B-parameter experiments might predict a 3$\times$ improvement but achieve only 1.3$\times$ because coordination and communication overhead consumes 40 percent of compute time at that scale. Production systems designed assuming linear scaling have experienced 2--3$\times$ cost overruns when empirical performance deviated from power-law predictions beyond validated thresholds.
+```{python}
+#| echo: false
+#| label: linear-scaling-fallacy-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ LINEAR SCALING FALLACY CHECK (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-vol2-intro-pitfalls; worked example for coordination overhead.
+# │ Goal: Keep the claimed realized speedup tied to the stated overhead fraction.
+# │ How: realized_speedup = ideal_speedup × (1 - coordination_fraction).
+# │ Exports: LinearScalingFallacy.ideal_speedup_str,
+# │          LinearScalingFallacy.coord_overhead_pct_str,
+# │          LinearScalingFallacy.realized_speedup_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class LinearScalingFallacy:
+    """Realized speedup under a coordination-overhead fraction."""
+
+    # ┌── 1. LOAD (Scenario) ────────────────────────────────────────────────
+    ideal_speedup = 3.0
+    coord_overhead_fraction = 0.40
+
+    # ┌── 2. EXECUTE (The Compute) ──────────────────────────────────────────
+    realized_speedup = ideal_speedup * (1 - coord_overhead_fraction)
+
+    # ┌── 3. GUARD (Invariants) ─────────────────────────────────────────────
+    check(abs(realized_speedup - 1.8) < 1e-9, f"Expected 1.8x, got {realized_speedup}")
+    check(0 < coord_overhead_fraction < 1, "Coordination overhead must be a fraction")
+
+    # ┌── 4. OUTPUT (Formatting) ────────────────────────────────────────────
+    ideal_speedup_str = fmt(ideal_speedup, precision=0)
+    coord_overhead_pct_str = fmt(coord_overhead_fraction * 100, precision=0)
+    realized_speedup_str = fmt(realized_speedup, precision=1)
+```
+
+The **Linear Scaling Fallacy**\index{Linear Scaling Fallacy} occurs when teams extrapolate resource requirements using power-law relationships without accounting for coordination overhead. $\mathcal{L}(N) = A N^{-\alpha} + B$ works within validated ranges but fails at the boundaries. A team training 100B-parameter models by extrapolating from 10B-parameter experiments might predict a `{python} LinearScalingFallacy.ideal_speedup_str`$\times$ improvement but achieve only `{python} LinearScalingFallacy.realized_speedup_str`$\times$ if coordination and communication overhead consumes `{python} LinearScalingFallacy.coord_overhead_pct_str` percent of the scaled step time. Production systems designed assuming linear scaling have experienced 2--3$\times$ cost overruns when empirical performance deviated from power-law predictions beyond validated thresholds.
 
 ## Summary {#sec-vol2-intro-summary-66bb}
 

@@ -102,8 +102,20 @@ class FECLatency:
     """FEC processing latency bounds per hop (nanoseconds)."""
     ns_low  = 100
     ns_high = 200
+    three_hops = 3
+    round_trip_hops = 6
+    three_hop_low = ns_low * three_hops
+    three_hop_high = ns_high * three_hops
+    round_trip_low = ns_low * round_trip_hops
+    round_trip_high = ns_high * round_trip_hops
+    check(three_hop_low == 300, "Three-hop one-way FEC lower bound should be 300 ns")
+    check(round_trip_high == 1200, "Six-hop round-trip FEC upper bound should be 1200 ns")
     ns_low_str  = fmt(ns_low, precision=0, commas=False)
     ns_high_str = fmt(ns_high, precision=0, commas=False)
+    three_hop_low_str = fmt(three_hop_low, precision=0, commas=False)
+    three_hop_high_str = fmt(three_hop_high, precision=0, commas=False)
+    round_trip_low_str = fmt(round_trip_low, precision=0, commas=False)
+    round_trip_high_str = fmt(round_trip_high, precision=0, commas=False)
 ```
 
 ## The Synchronization Backbone {#sec-network-fabrics-introduction}
@@ -400,7 +412,7 @@ Before analyzing protocols and topologies, we must understand the physical mediu
 
 To achieve `{python} NetworkFabricsContextScenario.ib_ndr_gbps_str` Gbps, we cannot simply toggle a voltage on and off faster. Signal attenuation in copper and chromatic dispersion in fiber impose a hard ceiling on the **symbol rate**\index{Symbol Rate} (the number of signal transitions per second). Modern links overcome this by using PAM4 to pack more information into each transition.
 
-However, the gap between adjacent voltage levels in PAM4 shrinks by a factor of three compared to NRZ, making the link highly susceptible to noise. Consequently, modern high-speed links operate near the physical limits of reliable detection and require **Forward Error Correction (FEC)** at the physical layer, typically Reed-Solomon RS(544,514) codes. FEC processing adds `{python} FECLatency.ns_low_str` to `{python} FECLatency.ns_high_str` ns of latency per hop to every packet. For our 175B model training, which generates 350 GB of gradient traffic per step across 1,000 GPUs, this latency floor is nonnegotiable. A packet crossing three switch hops in a fat-tree incurs nearly 1 $\mu$s of irreducible latency from FEC decoding and encoding at each port. This "physics tax" sets a hard floor on the $\alpha$ term of our performance models, limiting the speed of latency-sensitive collectives like AllReduce regardless of software optimizations.
+However, the gap between adjacent voltage levels in PAM4 shrinks by a factor of three compared to NRZ, making the link highly susceptible to noise. Consequently, modern high-speed links operate near the physical limits of reliable detection and require **Forward Error Correction (FEC)** at the physical layer, typically Reed-Solomon RS(544,514) codes. FEC processing adds `{python} FECLatency.ns_low_str` to `{python} FECLatency.ns_high_str` ns of latency per hop to every packet. For our 175B model training, which generates 350 GB of gradient traffic per step across 1,000 GPUs, this latency floor is nonnegotiable. A packet crossing three switch hops in a fat-tree incurs `{python} FECLatency.three_hop_low_str`--`{python} FECLatency.three_hop_high_str` ns of one-way irreducible latency from FEC decoding and encoding, or `{python} FECLatency.round_trip_low_str`--`{python} FECLatency.round_trip_high_str` ns over a three-hop path in each direction. This "physics tax" sets a hard floor on the $\alpha$ term of our performance models, limiting the speed of latency-sensitive collectives like AllReduce regardless of software optimizations.
 
 ### Reach and medium: Copper vs. optics {#sec-network-fabrics-copper-optics}
 
@@ -816,6 +828,40 @@ The $\alpha$-$\beta$ model quantifies the speed of a single link, but our 175B-p
 
 The physical arrangement of switches determines the bisection bandwidth and whether the fabric is non-blocking. These two properties govern how well the network supports the global communication patterns that dominate distributed training, a constraint captured by the bisection bandwidth theorem (Principle \ref{pri-bisection-bandwidth}).
 
+```{python}
+#| label: nonblocking-oversubscription-loss
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ NON-BLOCKING OVERSUBSCRIPTION LOSS (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @dfn-network-fabrics-non-blocking-fabric.
+# │ Goal: Tie the stated throughput loss to the communication fraction and
+# │       oversubscription ratio.
+# │ How: relative_throughput = 1 / ((1 - f_comm) + f_comm × oversub_ratio).
+# │ Exports: NonBlockingOversubscription.comm_pct_str,
+# │          NonBlockingOversubscription.throughput_loss_pct_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class NonBlockingOversubscription:
+    """Throughput loss from a 2:1 oversubscribed spine."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    comm_fraction = 0.30
+    oversubscription_ratio = 2.0
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    relative_throughput = 1 / ((1 - comm_fraction) + comm_fraction * oversubscription_ratio)
+    throughput_loss_pct = (1 - relative_throughput) * 100
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(abs(throughput_loss_pct - 23.0769230769) < 1e-6, f"Expected about 23.1%, got {throughput_loss_pct}")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    comm_pct_str = fmt(comm_fraction * 100, precision=0, commas=False)
+    throughput_loss_pct_str = fmt(throughput_loss_pct, precision=0, commas=False)
+```
+
 ::: {#dfn-network-fabrics-bisection-bandwidth .callout-definition title="Bisection bandwidth"}
 
 ***Bisection Bandwidth***\index{Bisection Bandwidth!definition} is a network topology metric defined as the minimum aggregate link capacity crossing any partition that divides the cluster into two equal halves, representing the worst-case throughput ceiling for all-to-all communication patterns such as AllReduce.
@@ -832,7 +878,7 @@ For ML training, where all-to-all communication is standard, full bisection band
 
 ***Non-blocking Fabric***\index{Non-blocking Fabric!definition} is a network topology in which any permutation of input-output port pairs can communicate simultaneously at full line rate without internal contention, achieved by ensuring that uplink capacity at every switch tier equals or exceeds downlink capacity.
 
-1.  **Significance (quantitative)**: In ML fleets, a non-blocking fabric ensures that AllReduce traffic from any accelerator subset does not compete for shared links, preserving the full $\text{BW}$ term of the iron law. A 2:1 oversubscribed spine halves the effective bisection bandwidth, doubling AllReduce time for global gradients and dropping system efficiency $\eta_{\text{scaling}}$ accordingly—in a 30 percent-communication workload, this costs roughly 15 percent of total cluster throughput.
+1.  **Significance (quantitative)**: In ML fleets, a non-blocking fabric ensures that AllReduce traffic from any accelerator subset does not compete for shared links, preserving the full $\text{BW}$ term of the iron law. A 2:1 oversubscribed spine halves the effective bisection bandwidth, doubling AllReduce time for global gradients and dropping system efficiency $\eta_{\text{scaling}}$ accordingly—in a `{python} NonBlockingOversubscription.comm_pct_str` percent-communication workload, this costs roughly `{python} NonBlockingOversubscription.throughput_loss_pct_str` percent of total cluster throughput.
 2.  **Distinction (durable)**: Unlike oversubscribed fabrics common in web data centers, where upper-tier links are shared among many lower-tier nodes, a non-blocking fabric provides dedicated path capacity for every possible pairing of senders and receivers simultaneously.
 3.  **Common pitfall**: A frequent misconception is that non-blocking means zero congestion. Endpoint congestion (incast) can still occur if multiple senders simultaneously target the same receiver port, regardless of how much internal fabric capacity is available.
 
@@ -1096,7 +1142,7 @@ The trade-offs between these topologies become stark when quantified for a large
 
 @fig-network-topologies quantifies the bandwidth and cost differences between these common families.
 
-::: {#fig-network-topologies fig-env="figure" fig-pos="htb" fig-cap="**Network Topologies for ML: Bandwidth vs. Cost**: Bar chart comparing bisection bandwidth (Tb/s, left axis) and cost per Gb/s (right axis) for five topologies on a 1,024-GPU cluster: Fat-tree (25.6 Tb/s, \\$3.0/Gb/s), Dragonfly (20.0, \\$4.0), Torus 3D (8.0, \\$1.5), Rail-opt (12.8, \\$2.0), Butterfly (6.4, \\$5.0). Fat-tree provides full bisection bandwidth but at 2× the cost of Torus 3D per Gb/s." fig-alt="Bar chart of five topologies (Fat-tree, Dragonfly, Torus 3D, Rail-opt, Butterfly) with two y-axes: bisection bandwidth in Tb/s on the left and cost per Gb/s on the right. Fat-tree is tallest (25.6 Tb/s); Torus 3D is cheapest per Gb/s."}
+::: {#fig-network-topologies fig-env="figure" fig-pos="htb" fig-cap="**Network Topologies for ML: Bandwidth vs. Cost**: Bar chart comparing bisection bandwidth (TB/s, left axis) and cost per Gb/s (right axis) for five topologies on a 1,024-GPU cluster: Fat-tree (25.6 TB/s, \\$3.0/Gb/s), Dragonfly (20.0, \\$4.0), Torus 3D (8.0, \\$1.5), Rail-opt (12.8, \\$2.0), Butterfly (6.4, \\$5.0). Fat-tree provides full bisection bandwidth but at 2× the cost of Torus 3D per Gb/s." fig-alt="Bar chart of five topologies (Fat-tree, Dragonfly, Torus 3D, Rail-opt, Butterfly) with two y-axes: bisection bandwidth in TB/s on the left and cost per Gb/s on the right. Fat-tree is tallest (25.6 TB/s); Torus 3D is cheapest per Gb/s."}
 ![](images/svg/topology-bandwidth.svg)
 :::
 
@@ -1266,11 +1312,14 @@ A production incident shows how this cascade can freeze a cluster.
 # │ Context: "The Probability of a PFC Storm" .callout-notebook
 # │
 # │ Goal: Quantify the risk of congestion spreading in a large RoCE cluster.
-# │ Show: storm_prob_pct ≈ 12%—inline in notebook result.
-# │ How: P(storm) = 1 - (1 - p_link_degrade)^N_links.
+# │ Show: storm_prob_pct ≈ 22%—inline in notebook result.
+# │ How: P(storm) = 1 - (1 - p_transceiver_degrade)^N_transceivers.
 # │
 # │ Imports: mlsysim.book (check)
-# │ Exports: pfc_n_gpus_str, pfc_p_degrade_str, pfc_storm_prob_str
+# │ Exports: pfc_n_gpus_str, pfc_p_degrade_str, pfc_total_links_str,
+# │          pfc_total_transceivers_str, pfc_safe_prob_str,
+# │          pfc_storm_prob_decimal_str, pfc_storm_prob_str,
+# │          pfc_storm_prob_rounded_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check, MarkdownStr
 
@@ -1278,17 +1327,34 @@ class PfcStormRisk:
     # ┌── 1. LOAD ──────────────────────────────────────────
     n_gpus = 4096
     links_per_gpu = 3 # leaf + spine + core
-    p_link_degrade = 1e-5 # 0.001% per day
+    transceivers_per_link = 2
+    p_transceiver_degrade = 1e-5 # 0.001% per day
     # ┌── 2. EXECUTE ───────────────────────────────────────
     n_total_links = n_gpus * links_per_gpu
-    p_safe = (1 - p_link_degrade) ** n_total_links
+    n_total_transceivers = n_total_links * transceivers_per_link
+    p_safe = (1 - p_transceiver_degrade) ** n_total_transceivers
     p_storm = 1 - p_safe
     # ┌── 3. GUARD (Invariants) ─────────────────────────────────────────
-    check(0.1 < p_storm < 0.2, f"Storm probability {p_storm:.2f} outside expected range")
+    check(n_total_links == 12288, f"Total links {n_total_links} outside expected range")
+    check(n_total_transceivers == 24576, f"Total transceivers {n_total_transceivers} outside expected range")
+    check(0.2 < p_storm < 0.23, f"Storm probability {p_storm:.2f} outside expected range")
     # ┌── 4. OUTPUT (Formatting) ────────────────────────────────────────
     pfc_n_gpus_str = fmt(n_gpus, precision=0, commas=False)
     pfc_p_degrade_str = MarkdownStr("0.001%")
+    pfc_total_links_str = fmt(n_total_links, precision=0)
+    pfc_total_transceivers_str = fmt(n_total_transceivers, precision=0)
+    pfc_safe_prob_str = fmt(p_safe, precision=2, commas=False)
+    pfc_storm_prob_decimal_str = fmt(p_storm, precision=2, commas=False)
     pfc_storm_prob_str = fmt(p_storm * 100, precision=1, commas=False)
+    pfc_storm_prob_rounded_str = fmt(p_storm * 100, precision=0, commas=False)
+    pfc_safe_prob_math = fmt_math(
+        f"P(\\text{{safe}}) = (1 - 0.00001)^{{{pfc_total_transceivers_str}}} "
+        f"\\approx {pfc_safe_prob_str}"
+    )
+    pfc_storm_prob_math = fmt_math(
+        f"P(\\text{{storm}}) = 1 - {pfc_safe_prob_str} "
+        f"= \\mathbf{{{pfc_storm_prob_decimal_str}}}"
+    )
 
 ```
 
@@ -1313,9 +1379,9 @@ A simple probability calculation shows that such incidents are not rare edge cas
 **Math**:
 In a lossless Ethernet fabric, one bad link can pause its neighbor, which pauses its neighbor, eventually freezing the entire tree.
 
-1. **Total links**\index{Total Links}: 4,096 GPUs $\times$ 3 tiers = ~12,288 links.
-2. **Probability of zero failures**\index{Probability of Zero Failures}: $P(\text{safe}) = (1 - 0.00001)^{12,288} \approx 0.88$.
-3. **Probability of at least one storm**\index{Probability of at Least One Storm}: $P(\text{storm}) = 1 - 0.88 = \mathbf{0.12}$ (12 percent).
+1. **Total exposure**\index{Total Links}: 4,096 GPUs $\times$ 3 tiers = `{python} PfcStormRisk.pfc_total_links_str` links, or `{python} PfcStormRisk.pfc_total_transceivers_str` transceivers.
+2. **Probability of zero transceiver failures**\index{Probability of Zero Failures}: `{python} PfcStormRisk.pfc_safe_prob_math`.
+3. **Probability of at least one storm**\index{Probability of at Least One Storm}: `{python} PfcStormRisk.pfc_storm_prob_math` (about `{python} PfcStormRisk.pfc_storm_prob_rounded_str` percent).
 
 **Systems insight**: Even with "five-nines" reliable components, a large-scale RoCE cluster faces a **`{python} PfcStormRisk.pfc_storm_prob_str` percent daily risk** of a fabric-wide freeze. That is not guaranteed to happen every day, but it is frequent enough to be a weekly-scale operational concern. RoCE deployments therefore require aggressive **PFC Watchdogs** and hardware-level telemetry, because at scale, "rare" link degradations become recurring operational realities that must be handled automatically.
 

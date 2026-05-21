@@ -167,10 +167,22 @@ class FleetFoundations:
     pue_typical = PUE_TYPICAL
     pue_legacy = PUE_LEGACY
     rack_ratio = rack_ai/rack_trad
+    cl_large_str = fmt(cl_large, precision=0)
+    cl_mega_str = fmt(cl_mega, precision=0)
+    mtbf_100k_min_str = fmt(mtbf_100k_min, precision=0)
+    gpu_mttf_hours_str = fmt(GPU_MTTF_HOURS, precision=0)
+    eff_fraction_pct_str = fmt_percent(eff_fraction, precision=1, commas=False)
     rack_trad_str = fmt(rack_trad, precision=0, commas=False)
     rack_ai_str = fmt(rack_ai, precision=0, commas=False)
     rack_ai_high_str = fmt(rack_ai_high, precision=0, commas=False)
     air_limit_str = fmt(air_limit, precision=0, commas=False)
+    pue_liquid_str = fmt(pue_liquid, precision=2, commas=False)
+    pue_air_str = fmt(pue_air, precision=2, commas=False)
+    pue_typical_str = fmt(pue_typical, precision=2, commas=False)
+    pue_legacy_str = fmt(pue_legacy, precision=2, commas=False)
+    rack_ratio_str = fmt(rack_ratio, precision=1, commas=False)
+    expected_1024_mfu50_str = fmt(1024 * 0.5, precision=0)
+    actual_1024_mfu50_str = fmt(1024 * 0.5 * SCALING_EFF_1024GPU, precision=0)
 
     # Accelerator table (scalars for fmt)
     h100_flops = int(H100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second))
@@ -275,9 +287,9 @@ If only three numbers stick from this section, they should be these:
 
 1. **18$\times$ gap**: NVLink bandwidth within a node is ~`{python} FF.nvlink_to_ib_str`$\times$ faster than InfiniBand between nodes. This ratio determines where parallelism boundaries belong---model parallelism within a node, data parallelism across nodes.
 
-2. **MTBF scales as $1/N$**: A cluster's mean time between failures is the single-component MTBF divided by the number of components. At `{python} fmt(FF.cl_mega, precision=0)` GPUs, expect a failure every `{python} fmt(FF.mtbf_100k_min, precision=0)` minutes.
+2. **MTBF scales as $1/N$**: A cluster's mean time between failures is the single-component MTBF divided by the number of components. At `{python} FF.cl_mega_str` GPUs, expect a failure every `{python} FF.mtbf_100k_min_str` minutes.
 
-3. **~`{python} fmt_percent(FF.eff_fraction)` percent effective utilization**: After MFU, scaling efficiency, and overhead losses compound, a 1,024-GPU cluster delivers roughly `{python} fmt_percent(FF.eff_fraction)` percent of its peak FLOPS as useful training work.
+3. **~`{python} FF.eff_fraction_pct_str` percent effective utilization**: After MFU, scaling efficiency, and overhead losses compound, a 1,024-GPU cluster delivers roughly `{python} FF.eff_fraction_pct_str` percent of its peak FLOPS as useful training work.
 :::
 
 Quick reference—@tbl-fleet-numbers-quick-ref condenses the fleet-scale numbers into one place. Use it for back-of-envelope checks; use the detailed tables in each subsection when designing or debugging.
@@ -346,7 +358,7 @@ For $N$ independent components, each with mean time to failure $\text{MTTF}$, @e
 
 $$ \text{MTBF}_{\text{cluster}} = \frac{\text{MTTF}_{\text{component}}}{N} $$ {#eq-fleet-mtbf-cluster}
 
-This is pure arithmetic, not an approximation. Doubling the cluster size halves the time between failures. At `{python} fmt(FF.cl_mega, precision=0)` GPUs with a `{python} fmt(GPU_MTTF_HOURS, precision=0)`-hour per-GPU MTTF, the cluster experiences a GPU failure every `{python} fmt(FF.mtbf_100k_min, precision=0)` minutes. No fault tolerance strategy can avoid this---the question is how quickly the system recovers.
+This is pure arithmetic, not an approximation. Doubling the cluster size halves the time between failures. At `{python} FF.cl_mega_str` GPUs with a `{python} FF.gpu_mttf_hours_str`-hour per-GPU MTTF, the cluster experiences a GPU failure every `{python} FF.mtbf_100k_min_str` minutes. No fault tolerance strategy can avoid this---the question is how quickly the system recovers.
 
 #### AllReduce overhead scaling {.unnumbered}
 
@@ -444,7 +456,7 @@ At fleet scale, coordination---failure recovery, checkpointing, and maintenance-
 
 #### Failure rates by cluster size {.unnumbered}
 
-@tbl-fleet-mtbf shows how cluster MTBF shrinks with scale, using a per-GPU MTTF of `{python} fmt(GPU_MTTF_HOURS, precision=0)` hours (~5.7 years). The failure probability column shows the likelihood of at least one GPU failure during a 24-hour training window.
+@tbl-fleet-mtbf shows how cluster MTBF shrinks with scale, using a per-GPU MTTF of `{python} FF.gpu_mttf_hours_str` hours (~5.7 years). The failure probability column shows the likelihood of at least one GPU failure during a 24-hour training window.
 
 ```{python}
 #| label: fleet-mtbf-table
@@ -583,16 +595,16 @@ class FleetOverheadBudget:
 
 Fleet-scale capacity planning and sustainability reporting require a few power numbers that every fleet engineer should know. At fleet scale, the critical numbers are **rack power density**, **PUE**, and the **air-cooling limit**---they determine where construction is feasible and what the facility load will be. @tbl-appendix-fleet-power-cooling-reference collects these reference values:
 
-| **Quantity**               | **Typical value**                                          | **Use**                                          |
-|:---------------------------|:-----------------------------------------------------------|:-------------------------------------------------|
-| **Traditional rack**       | `{python} FF.rack_trad_str` kW                             | Baseline for non-AI data centers                 |
-| **AI rack (current gen)**  | `{python} FF.rack_ai_str` kW                               | Liquid cooling required                          |
-| **AI rack (high-density)** | `{python} FF.rack_ai_high_str` kW                          | Direct-to-chip liquid                            |
-| **Air cooling limit**      | ~`{python} FF.air_limit_str` kW per rack                   | Physics ceiling; above this, liquid is mandatory |
-| **PUE (liquid-cooled AI)** | ~`{python} fmt(FF.pue_liquid, precision=2, commas=False)`  | Best case: facility load ≈ IT load               |
-| **PUE (best air-cooled)**  | ~`{python} fmt(FF.pue_air, precision=2, commas=False)`     | Hyperscale best practice                         |
-| **PUE (industry average)** | ~`{python} fmt(FF.pue_typical, precision=2, commas=False)` | Sanity check for cost/carbon                     |
-| **H100 TDP**               | `{python} FF.h100_tdp_str` W per GPU                       | IT load: 10K GPUs $\times$ 700 W = 7 MW          |
+| **Quantity**               | **Typical value**                        | **Use**                                          |
+|:---------------------------|:-----------------------------------------|:-------------------------------------------------|
+| **Traditional rack**       | `{python} FF.rack_trad_str` kW           | Baseline for non-AI data centers                 |
+| **AI rack (current gen)**  | `{python} FF.rack_ai_str` kW             | Liquid cooling required                          |
+| **AI rack (high-density)** | `{python} FF.rack_ai_high_str` kW        | Direct-to-chip liquid                            |
+| **Air cooling limit**      | ~`{python} FF.air_limit_str` kW per rack | Physics ceiling; above this, liquid is mandatory |
+| **PUE (liquid-cooled AI)** | ~`{python} FF.pue_liquid_str`            | Best case: facility load ≈ IT load               |
+| **PUE (best air-cooled)**  | ~`{python} FF.pue_air_str`               | Hyperscale best practice                         |
+| **PUE (industry average)** | ~`{python} FF.pue_typical_str`           | Sanity check for cost/carbon                     |
+| **H100 TDP**               | `{python} FF.h100_tdp_str` W per GPU     | IT load: 10K GPUs $\times$ 700 W = 7 MW          |
 
 : **Power and Cooling Reference Numbers**: Rack power densities, air-cooling limits, and PUE values that govern fleet-scale capacity planning and sustainability reporting. Each row pairs a typical value with the engineering decision it informs. {#tbl-appendix-fleet-power-cooling-reference}
 
@@ -796,6 +808,7 @@ class FleetCommCompRatio:
     # ── OUTPUTS ─────────────────────────────────────────────────────────────
     ar_7b_ms_str          = fmt(allreduce_time_7b.m_as(ureg.millisecond),   precision=1, commas=False)
     rho_7b_str            = fmt(rho_7b,   precision=2, commas=False)
+    rho_7b_pct_str        = fmt(rho_7b * 100, precision=0)
     comp_time_7b_str      = fmt(comp_time_7b, precision=1, commas=False)
     ar_350m_ms_str        = fmt(allreduce_time_350m.m_as(ureg.millisecond), precision=1, commas=False)
     rho_350m_str          = fmt(rho_350m, precision=1, commas=False)
@@ -813,7 +826,7 @@ class FleetCommCompRatio:
 
 : **Communication-Computation Ratio ($\rho$)**: When $\rho \ll 1$, communication can be fully overlapped with computation. When $\rho \gg 1$, the system is communication-bound and GPUs sit idle waiting for data. Tensor parallelism within a node benefits from NVLink's high bandwidth, keeping $\rho$ small. {#tbl-fleet-comm-comp}
 
-The 7B model on 256 GPUs achieves $\rho =$ `{python} FleetCommCompRatio.rho_7b_str`---communication takes about `{python} fmt(FleetCommCompRatio.rho_7b * 100, precision=0)` percent as long as computation, which can be partially overlapped. The 350M model on the same cluster has $\rho =$ `{python} FleetCommCompRatio.rho_350m_str`---communication dominates, making this configuration communication-bound. The solution is either to use fewer GPUs (reduce $N$ in the AllReduce) or to increase the computation per step (larger batch size, gradient accumulation).
+The 7B model on 256 GPUs achieves $\rho =$ `{python} FleetCommCompRatio.rho_7b_str`---communication takes about `{python} FleetCommCompRatio.rho_7b_pct_str` percent as long as computation, which can be partially overlapped. The 350M model on the same cluster has $\rho =$ `{python} FleetCommCompRatio.rho_350m_str`---communication dominates, making this configuration communication-bound. The solution is either to use fewer GPUs (reduce $N$ in the AllReduce) or to increase the computation per step (larger batch size, gradient accumulation).
 
 Tensor parallelism within a node achieves $\rho =$ `{python} FleetCommCompRatio.rho_tp_str`, confirming that NVLink bandwidth is sufficient to keep intra-node parallelism compute-bound. This is the quantitative reason why tensor parallelism is confined within nodes while data parallelism spans across them.
 
@@ -897,7 +910,7 @@ The shift from traditional data center workloads to AI training has created a **
 
 : **Power Density: Traditional vs. AI Workloads**: AI racks consume roughly 5.8$\times$ the power of traditional racks. Air cooling physically cannot remove heat fast enough above ~30 kW per rack, making liquid cooling mandatory for modern AI clusters. {#tbl-fleet-power-density-fleet}
 
-The `{python} fmt(FF.rack_ratio, precision=1, commas=False)`$\times$ increase in rack power density between traditional and AI workloads is not merely an engineering challenge---it represents a fundamental constraint on facility design. Existing data centers built for `{python} FF.rack_trad_str` kW racks cannot simply be "retrofitted" with AI hardware. The electrical distribution, cooling infrastructure, and floor loading must all be redesigned. This is why new AI-focused data centers are being built from the ground up with liquid cooling as the baseline assumption.
+The `{python} FF.rack_ratio_str`$\times$ increase in rack power density between traditional and AI workloads is not merely an engineering challenge---it represents a fundamental constraint on facility design. Existing data centers built for `{python} FF.rack_trad_str` kW racks cannot simply be "retrofitted" with AI hardware. The electrical distribution, cooling infrastructure, and floor loading must all be redesigned. This is why new AI-focused data centers are being built from the ground up with liquid cooling as the baseline assumption.
 
 ### The energy hierarchy at scale {#sec-fleet-foundations-energy-hierarchy}
 
@@ -905,12 +918,12 @@ Power Usage Effectiveness (PUE) measures how efficiently a data center converts 
 
 @tbl-fleet-pue-fleet compares PUE across data center generations and cooling technologies.
 
-| **Data Center Type**             | **PUE**                                                   | **Overhead per MW of IT Load** |
-|:---------------------------------|:----------------------------------------------------------|:-------------------------------|
-| **Liquid-cooled AI data center** | `{python} fmt(FF.pue_liquid, precision=2, commas=False)`  | 60 kW cooling + infrastructure |
-| **Best-in-class air-cooled**     | `{python} fmt(FF.pue_air, precision=2, commas=False)`     | 120 kW overhead                |
-| **Industry average**             | `{python} fmt(FF.pue_typical, precision=2, commas=False)` | 400 kW overhead                |
-| **Legacy enterprise**            | `{python} fmt(FF.pue_legacy, precision=2, commas=False)`  | 580 kW overhead                |
+| **Data Center Type**             | **PUE**                       | **Overhead per MW of IT Load** |
+|:---------------------------------|:------------------------------|:-------------------------------|
+| **Liquid-cooled AI data center** | `{python} FF.pue_liquid_str`  | 60 kW cooling + infrastructure |
+| **Best-in-class air-cooled**     | `{python} FF.pue_air_str`     | 120 kW overhead                |
+| **Industry average**             | `{python} FF.pue_typical_str` | 400 kW overhead                |
+| **Legacy enterprise**            | `{python} FF.pue_legacy_str`  | 580 kW overhead                |
 
 : **Power Usage Effectiveness (PUE)**: Lower is better. Liquid cooling achieves PUE near 1.0 because it removes heat directly from the chip without the intermediate step of heating air. The gap between legacy (1.58) and liquid-cooled (1.06) represents about a 33 percent reduction in total facility power at fixed IT load; the non-IT overhead drops from 0.58 MW to 0.06 MW per MW of IT load. {#tbl-fleet-pue-fleet}
 
@@ -935,13 +948,13 @@ InfiniBand and Ethernet differ architecturally, not just in speed. InfiniBand pr
 Once the network is treated as architecture, failure probability must be treated the same way.
 
 ::: {.callout-warning title="Pitfall: Ignoring failure probability at scale"}
-A single GPU with a `{python} fmt(GPU_MTTF_HOURS, precision=0)`-hour MTTF seems extremely reliable---that is nearly 6 years. At `{python} fmt(FF.cl_large, precision=0)` GPUs, however, the cluster MTBF drops to `{python} FleetMtbfTable.mtbf_8192_str` hours (`{python} FleetMtbfTable.mtbf_8192_min_str` minutes). The probability of at least one failure in a 24-hour training window is `{python} FleetMtbfTable.pfail_8192_str` percent. Designing a training system without automated failure recovery at this scale guarantees that every long-running job will fail and require manual intervention.
+A single GPU with a `{python} FF.gpu_mttf_hours_str`-hour MTTF seems extremely reliable---that is nearly 6 years. At `{python} FF.cl_large_str` GPUs, however, the cluster MTBF drops to `{python} FleetMtbfTable.mtbf_8192_str` hours (`{python} FleetMtbfTable.mtbf_8192_min_str` minutes). The probability of at least one failure in a 24-hour training window is `{python} FleetMtbfTable.pfail_8192_str` percent. Designing a training system without automated failure recovery at this scale guarantees that every long-running job will fail and require manual intervention.
 :::
 
 Even a reliable fleet can still be mismeasured if useful work and scaling losses are collapsed into one utilization number.
 
 ::: {.callout-warning title="Pitfall: Optimizing MFU without considering scaling efficiency"}
-A team achieves 50 percent MFU on a single node---excellent performance. They scale to 1,024 GPUs and expect `{python} fmt(1024 * 0.5, precision=0)`$\times$ throughput (512 GPU-equivalents of useful work). Scaling efficiency at 1,024 GPUs, however, is ~`{python} FF.eff_1024_str` percent, so actual throughput is only `{python} fmt(1024 * 0.5 * SCALING_EFF_1024GPU, precision=0)` GPU-equivalents---half the expected value. MFU and scaling efficiency are independent multiplicative factors; optimizing one without measuring the other leads to incorrect capacity estimates.
+A team achieves 50 percent MFU on a single node---excellent performance. They scale to 1,024 GPUs and expect `{python} FF.expected_1024_mfu50_str`$\times$ throughput (512 GPU-equivalents of useful work). Scaling efficiency at 1,024 GPUs, however, is ~`{python} FF.eff_1024_str` percent, so actual throughput is only `{python} FF.actual_1024_mfu50_str` GPU-equivalents---half the expected value. MFU and scaling efficiency are independent multiplicative factors; optimizing one without measuring the other leads to incorrect capacity estimates.
 :::
 
 Finally, the physical plant has its own nonnegotiable limits.
@@ -958,7 +971,7 @@ Air cooling physically cannot remove heat fast enough above ~`{python} FF.air_li
 - **The 18$\times$ bandwidth gap**: NVLink provides ~`{python} FleetCommNumbers.nvlink_to_ib_str`$\times$ more bandwidth than InfiniBand. This invariant ratio determines parallelism placement: tensor parallelism within nodes, data parallelism across nodes.
 - **Failure is certain at scale**: Cluster MTBF scales as $1/N$. At 8,192 GPUs, expect a failure every `{python} FleetMtbfTable.mtbf_8192_min_str` minutes. Fault tolerance is not optional---it is a prerequisite for completing any fleet-scale training job.
 - **Compound utilization loss**: After MFU (~`{python} FleetEffectiveFlops.mfu_pct_str` percent), scaling efficiency (~`{python} FleetEffectiveFlops.scaling_pct_str` percent), and operational overhead (~`{python} FleetEffectiveFlops.goodput_pct_str` percent goodput) compound, a 1,024-GPU cluster delivers ~`{python} FleetEffectiveFlops.eff_pct_str` percent of peak FLOPS as useful work.
-- **Power density demands liquid cooling**: AI racks consume `{python} fmt(FF.rack_ratio, precision=1, commas=False)`$\times$ the power of traditional racks. Air cooling fails above ~`{python} FF.air_limit_str` kW per rack, making liquid cooling a physical requirement for modern AI clusters.
+- **Power density demands liquid cooling**: AI racks consume `{python} FF.rack_ratio_str`$\times$ the power of traditional racks. Air cooling fails above ~`{python} FF.air_limit_str` kW per rack, making liquid cooling a physical requirement for modern AI clusters.
 - **Communication-computation ratio ($\rho$) governs scaling strategy**: When $\rho > 1$, GPUs are idle waiting for data---reduce parallelism or increase computation per step. When $\rho \ll 1$, communication can be fully overlapped.
 - **Weak scaling is the fleet-scale paradigm**: Engineers do not use more GPUs to solve the same problem faster (strong scaling); they use more GPUs to solve larger problems in reasonable time. This keeps the serial fraction small and utilization high.
 
