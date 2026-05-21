@@ -231,7 +231,7 @@ class ServingCostSimple:
     efficiency_gain = 0.10
     # ┌── 2. EXECUTE ───────────────────────────────────────
     annual_reqs = dau * reqs_per_day * days_per_year
-    annual_reqs_b = round(annual_reqs / BILLION)
+    annual_reqs_b = annual_reqs / BILLION
     annual_serving_cost = annual_reqs * cost_per_request
     serving_training_ratio = annual_serving_cost / training_cost
     efficiency_savings = annual_serving_cost * efficiency_gain
@@ -239,7 +239,7 @@ class ServingCostSimple:
     check(annual_reqs > 10e9, "Should be >10B annual requests")
     check(round(serving_training_ratio) == 9, "Serving/training ratio should round to 9x")
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    annual_reqs_b_str = fmt(annual_reqs_b, precision=0, commas=False)
+    annual_reqs_b_str = fmt(annual_reqs_b, precision=2, commas=False)
     annual_serving_cost_str = fmt(annual_serving_cost, precision=0, prefix="\\$")
     serving_training_ratio_str = fmt(serving_training_ratio, precision=0, commas=False)
     efficiency_savings_str = fmt(efficiency_savings/1_000_000, precision=1, commas=False, prefix="\\$", suffix="M")
@@ -1039,21 +1039,21 @@ For our linear service time model with deterministic service (variance zero with
 
 $$E[W(B)] = \frac{\lambda \cdot S(B)^2}{2B(1 - \lambda \cdot S(B)/B)}$$
 
-Taking the derivative with respect to $B$ and setting equal to zero yields the optimal batch size. While the full derivation involves solving a cubic equation, the approximate solution for systems where $\alpha \gg \beta$ (high fixed overhead, typical of LLMs) reveals a square-root scaling law for batch sizing:
+For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $S(B)=\alpha+\beta B$, the constraint $\rho=\lambda S(B)/B \leq \rho_{\text{target}}$ gives:
 
-$$B \approx \sqrt{\frac{2\alpha\lambda}{1 - \rho_{\text{target}}}}$$ {#eq-optimal-batch-approx}
+$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda\alpha}{\rho_{\text{target}} - \lambda\beta}$$ {#eq-optimal-batch-approx}
 
-where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom).
+where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda\beta$.
 
-::: {.callout-important title="The square root law for batch sizing"}
+::: {.callout-important title="Target-utilization batch sizing"}
 
-@eq-optimal-batch-approx reveals a fundamental insight: **optimal batch size scales with the square root of the fixed overhead times arrival rate**. This means:
+@eq-optimal-batch-approx reveals a fundamental insight: **minimum stable batch size grows with fixed overhead and arrival rate**. This means:
 
-1. **Higher traffic** $(\lambda)$: Optimal batch size increases, but sublinearly
-2. **Higher fixed overhead** $(\alpha)$: Optimal batch size increases (amortize more overhead)
-3. **Higher target utilization** $(\rho_{\text{target}})$: Optimal batch size increases (more aggressive batching)
+1. **Higher traffic** $(\lambda)$: Required batch size increases
+2. **Higher fixed overhead** $(\alpha)$: Required batch size increases to amortize overhead
+3. **Higher target utilization** $(\rho_{\text{target}})$: Required batch size decreases, but with less latency headroom
 
-The square root relationship explains why LLMs (high $\alpha$ from weight loading) benefit from larger batches than vision models (low $\alpha$), even at the same arrival rate.
+This utilization-constrained sizing explains why LLMs (high $\alpha$ from weight loading) benefit from larger batches than vision models (low $\alpha$), even at the same arrival rate.
 
 :::
 
@@ -1107,25 +1107,25 @@ For the prefill phase (processing input prompt), service time follows @eq-servic
 
 $$S(B) = 50 + 0.5 \cdot B \text{ ms}$$
 
-Applying @eq-optimal-batch-approx to compute the optimal batch size:
+Applying @eq-optimal-batch-approx to compute the minimum batch size that preserves 75 percent utilization headroom:
 
-$$B \approx \sqrt{\frac{2 \times 0.05 \times 100}{1 - 0.75}} = \sqrt{\frac{10}{0.25}} = \sqrt{40} \approx 6.3$$
+$$B_{\min} \approx \frac{100 \times 0.05}{0.75 - 100 \times 0.0005} = \frac{5}{0.70} \approx 7.14$$
 
-While this approximation suggests a small batch size $(B \approx 6)$, the high resulting utilization $(\rho > 80\%)$ leads to excessive queuing delay under the full Pollaczek-Khinchine model. The true optimal point for latency minimization lies higher, approaching the system's memory-constrained limits (typically capping $B_{\text{max}} = 32$ for large LLMs):
+Rounding up gives $B=8$ as the smallest batch size that meets the target utilization headroom. Evaluating the full response-time expression then shows how larger batches reduce utilization but add batch-accumulation delay:
 
 **Performance at different batch sizes.**
 
 @tbl-batch-size-comparison quantifies the tradeoffs across batch sizes from 1 to 32:
 
-| **Size B** | **S(B) (ms)** | **(req/s)** |             **$\rho$** | **E[W] (ms)** | **E[T] (ms)** |
-|:-----------|--------------:|------------:|-----------------------:|:--------------|:--------------|
-| **1**      |          50.5 |        19.8 | 505 percent (unstable) | $\infty$      | $\infty$      |
-| **4**      |          52.0 |        76.9 | 130 percent (unstable) | $\infty$      | $\infty$      |
-| **8**      |          54.0 |       148.1 |           67.5 percent | 42.3          | 96.3          |
-| **16**     |          58.0 |       275.9 |           36.2 percent | 16.4          | 74.4          |
-| **32**     |          66.0 |       484.8 |           20.6 percent | 8.9           | 74.9          |
+| **Size B** | **S(B) (ms)** | **(req/s)** |             **$\rho$** | **E[W] (ms)** | **B/(2λ) (ms)** | **E[T] (ms)** |
+|:-----------|--------------:|------------:|-----------------------:|:--------------|----------------:|:--------------|
+| **1**      |          50.5 |        19.8 | 505 percent (unstable) | $\infty$      |             5.0 | $\infty$      |
+| **4**      |          52.0 |        76.9 | 130 percent (unstable) | $\infty$      |            20.0 | $\infty$      |
+| **8**      |          54.0 |       148.1 |           67.5 percent | 56.1          |            40.0 | 150.1         |
+| **16**     |          58.0 |       275.9 |           36.3 percent | 16.5          |            80.0 | 154.5         |
+| **32**     |          66.0 |       484.8 |           20.6 percent | 8.6           |           160.0 | 234.6         |
 
-: **Batch Size Impact on GPT-3 Serving Performance**: Batch sizes below 8 cannot sustain 100 QPS (utilization exceeds 100 percent). The latency minimum occurs near B=16, while B=32 leaves more headroom because it runs at lower utilization despite having a slightly higher total latency. {#tbl-batch-size-comparison}
+: **Batch Size Impact on GPT-3 Serving Performance**: Batch sizes below 8 cannot sustain 100 QPS (utilization exceeds 100 percent). After including batch-accumulation delay, the latency minimum in this simple model occurs near B=8; B=16 has nearly the same mean latency with lower utilization, while B=32 leaves more headroom but pays a large accumulation-delay penalty. {#tbl-batch-size-comparison}
 
 ```{python}
 #| label: littles-law-verify
@@ -1155,20 +1155,23 @@ class GPT3ServingResults:
     # Batch 8 results
     b8_service_ms = 54.0
     b8_util_pct = 67.5
-    b8_wait_ms = 42.3
-    b8_total_ms = 96.3
+    b8_wait_ms = 56.1
+    b8_accum_ms = 40.0
+    b8_total_ms = 150.1
 
     # Batch 16 results
     b16_service_ms = 58.0
-    b16_util_pct = 36.2
-    b16_wait_ms = 16.4
-    b16_total_ms = 74.4
+    b16_util_pct = 36.3
+    b16_wait_ms = 16.5
+    b16_accum_ms = 80.0
+    b16_total_ms = 154.5
 
     # Batch 32 results
     b32_service_ms = 66.0
     b32_util_pct = 20.6
-    b32_wait_ms = 8.9
-    b32_total_ms = 74.9
+    b32_wait_ms = 8.6
+    b32_accum_ms = 160.0
+    b32_total_ms = 234.6
 
     # Prose-facing canonical strings (preserve raw floats for arithmetic above)
     b8_service_ms_str = fmt(b8_service_ms, precision=1, commas=False)
@@ -1190,7 +1193,7 @@ class LittlesLawVerify:
     in_service = batch_size * utilization
     in_queue = L - in_service
     # ┌── 3. GUARD ─────────────────────────────────────────
-    check(7 < L < 8, f"L should be ~7.4, got {L:.2f}")
+    check(15 < L < 16, f"L should be ~15.5, got {L:.2f}")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     batch_size_str = fmt(batch_size, precision=0, commas=False)
     expected_total_str = fmt(expected_total_ms, precision=1, commas=False)
@@ -1211,7 +1214,7 @@ class LittlesLawVerify:
 ![](images/svg/queuing-hockey-stick.svg)
 :::
 
-3. **Batch size 16 minimizes total latency**\index{Batch Size!16 minimizes total latency}: Despite longer service time (`{python} GPT3ServingResults.b16_service_ms_str` ms vs. `{python} GPT3ServingResults.b8_service_ms_str` ms), the reduction in queue wait time (`{python} GPT3ServingResults.b16_wait_ms_str` ms vs. `{python} GPT3ServingResults.b8_wait_ms_str` ms) yields the lowest total latency, while B=32 leaves more utilization headroom.
+3. **Batch sizes 8--16 form the latency knee**\index{Batch Size!latency knee}: Batch size 8 gives the lowest mean latency in this model. Batch size 16 trades a few milliseconds of additional total latency for lower utilization and queue wait time (`{python} GPT3ServingResults.b16_wait_ms_str` ms vs. `{python} GPT3ServingResults.b8_wait_ms_str` ms), while B=32 leaves still more utilization headroom but pays too much batch-accumulation delay.
 
 4. **Diminishing returns beyond B=32**\index{Diminishing Returns Beyond B=32}: Further batch size increases would reduce utilization but memory constraints prevent exploration.
 
@@ -1230,7 +1233,7 @@ With batch size `{python} LittlesLawVerify.batch_size_str` and utilization `{pyt
 - Expected requests in service: `{python} LittlesLawVerify.batch_size_str` $\times$ `{python} LittlesLawVerify.utilization_str` = `{python} LittlesLawVerify.in_service_str`
 - Expected requests in queue: `{python} LittlesLawVerify.l_str` - `{python} LittlesLawVerify.in_service_str` = `{python} LittlesLawVerify.in_queue_str`
 
-This matches our queue wait calculation: approximately 1-2 requests waiting on average.
+This matches the response-time decomposition: roughly 6 requests are in service and roughly 10 are waiting or accumulating into batches on average.
 
 :::
 
@@ -1359,7 +1362,7 @@ With 10 requests per batch:
 
 Utilization: $\rho = 500 \times 0.0012 = 0.6$ (comfortable)
 
-**Tradeoff**\index{Tradeoff}: Option C achieves 25 percent better throughput (lower utilization) at the cost of higher average latency (22 ms vs. 15 ms). Both meet the 50 ms P99 SLO.
+**Tradeoff**\index{Tradeoff}: Option C achieves about 33 percent higher per-replica capacity, or 25 percent lower utilization, at the cost of higher average latency (22 ms vs. 15 ms). Both meet the 50 ms P99 SLO.
 
 :::
 
@@ -2877,7 +2880,7 @@ The mathematical guarantee is crucial: speculative decoding is **provably lossle
 
 #### Speedup analysis {#sec-inference-scale-speculative-speedup}
 
-The speedup depends on the **acceptance rate** $\alpha$ (probability that the draft token matches the target model's distribution) and the **draft length** $K$. The expected number of accepted tokens per round is approximately $\sum_{i=0}^{K} \alpha^i = \frac{1 - \alpha^{K+1}}{1 - \alpha}$.
+The speedup depends on the **acceptance rate** $\alpha$ (probability that the draft token matches the target model's distribution) and the **draft length** $K$. The expected number of emitted tokens per round, including the target model's correction token, is approximately $\sum_{i=0}^{K} \alpha^i = \frac{1 - \alpha^{K+1}}{1 - \alpha}$.
 
 ```{python}
 #| echo: false
@@ -3026,7 +3029,7 @@ When a new high-priority request cannot fit, the system follows a sequence of st
 | **CPU DRAM** |         1 TB |      1–5 ms | Swapped sequences |
 | **NVMe SSD** |        10 TB |    10–50 ms | Long-term cache   |
 
-: **KV Cache Memory Hierarchy**: Capacity, swap-in latency, and intended use case for the three tiers production inference servers use to manage KV-cache memory pressure. GPU HBM (80 GB) holds active sequences at zero swap cost; CPU DRAM (1 TB) absorbs preempted sequences at 1--5 ms; NVMe SSD (10 TB) backs long-term prefix and session caches at 10--50 ms. The 1,000$\times$ capacity range across tiers is what makes swap-based preemption viable when GPU memory fills. {#tbl-inference-kv-cache-memory-hierarchy}
+: **KV Cache Memory Hierarchy**: Capacity, swap-in latency, and intended use case for the three tiers production inference servers use to manage KV-cache memory pressure. GPU HBM (80 GB) holds active sequences at zero swap cost; CPU DRAM (1 TB) absorbs preempted sequences at 1--5 ms; NVMe SSD (10 TB) backs long-term prefix and session caches at 10--50 ms. The roughly 125$\times$ capacity range across the listed tiers is what makes swap-based preemption viable when GPU memory fills. {#tbl-inference-kv-cache-memory-hierarchy}
 
 **Swap implementation**\index{Swap Implementation}:
 
@@ -4003,7 +4006,7 @@ $$E[\text{max queue}] = \Theta\left(\frac{\log n}{\log \log n}\right)$$ {#eq-ran
 
 where $n$ is the number of servers. For 1,000 servers, this is approximately 4-5 requests. This seems small, but the unlucky requests in long queues experience significantly higher latency.
 
-The power of two choices (Principle \ref{pri-power-two-choices}) provides the theoretical foundation: querying just two random replicas and selecting the least-loaded one exponentially reduces tail latency from $O(\log n)$ to $O(\log \log n)$.
+The power of two choices (Principle \ref{pri-power-two-choices}) provides the theoretical foundation: querying just two random replicas and selecting the least-loaded one exponentially reduces tail latency from $O(\log n / \log \log n)$ to $O(\log \log n)$.
 
 ### The power of two choices {#sec-inference-scale-power-two-choices-ffdd}
 
@@ -4073,7 +4076,7 @@ A weighted-routing example shows how the policy handles mixed GPU hardware in pr
 # │   across H100 (1000 QPS) and A100 (600 QPS) servers at 15,000 QPS target,
 # │   versus equal-share routing that overloads A100s.
 # │ Show: total_cap_str="22,000" QPS, h100_util_str="68"%, a100_util_str="68"%;
-# │   a100_util_equal_str="83"% (overloaded)—inline in the callout.
+# │   a100_util_equal_str="83"% (reduced headroom)—inline in the callout.
 # │ How: Weight each server type by capacity/total_cap; compute per-type load
 # │   and utilization %; compare with naive equal-share routing.
 # │
@@ -4154,8 +4157,8 @@ Consider a cluster with mixed GPU types:
 
 **Expected load per server**\index{Expected Load Per Server}:
 
-- H100: $15000 \times 0.045$ = `{python} HeterogeneousGpuCluster.h100_load_str` QPS (`{python} HeterogeneousGpuCluster.h100_util_str` percent utilization)
-- A100: $15000 \times 0.027$ = `{python} HeterogeneousGpuCluster.a100_load_str` QPS (`{python} HeterogeneousGpuCluster.a100_util_str` percent utilization)
+- H100: $15000 \times (1000/22000)$ = `{python} HeterogeneousGpuCluster.h100_load_str` QPS (`{python} HeterogeneousGpuCluster.h100_util_str` percent utilization)
+- A100: $15000 \times (600/22000)$ = `{python} HeterogeneousGpuCluster.a100_load_str` QPS (`{python} HeterogeneousGpuCluster.a100_util_str` percent utilization)
 
 Both server types operate at equal utilization, maximizing overall capacity while maintaining latency consistency.
 
@@ -4163,7 +4166,7 @@ Both server types operate at equal utilization, maximizing overall capacity whil
 
 - Per-server load: 15000/30 = `{python} HeterogeneousGpuCluster.equal_load_str` QPS
 - H100 utilization: `{python} HeterogeneousGpuCluster.h100_util_equal_str` percent (underutilized)
-- A100 utilization: `{python} HeterogeneousGpuCluster.a100_util_equal_str` percent (overloaded, latency spikes)
+- A100 utilization: `{python} HeterogeneousGpuCluster.a100_util_equal_str` percent (high utilization, reduced latency headroom)
 
 :::
 
@@ -4787,10 +4790,10 @@ Once the instance is available, model loading ($T_{\text{load}}$) transfers weig
 | **Model Size**\index{Model Size} | **Load Time (SSD)** | **Load Time (S3)** |
 |:---------------------------------|--------------------:|-------------------:|
 | **7B (14 GB)**                   |                  5s |                30s |
-| **70B (140 GB)**                 |                 45s |               5min |
+| **70B (140 GB)**                 |                 25s |               5min |
 | **175B (350 GB)**                |                1min |              12min |
 
-: **Model Load Time by Storage Tier**: Local SSD loads weights at roughly 6 GB/s; remote object storage (S3) loads at roughly 0.5 GB/s. The 12$\times$ gap matters most for the largest models: a 175B model takes about 1 minute from SSD (350 GB at 6 GB/s) vs. 12 minutes from S3, dominating the cold-start budget for any serving deployment that has to pull weights from object storage on each scale-up. {#tbl-model-load-time}
+: **Model Load Time by Storage Tier**: Local SSD loads weights at roughly 6 GB/s; remote object storage (S3) loads at roughly 0.5 GB/s before additional validation and runtime overhead. The 12$\times$ gap matters most for the largest models: a 175B model takes about 1 minute from SSD (350 GB at 6 GB/s) vs. 12 minutes from S3, dominating the cold-start budget for any serving deployment that has to pull weights from object storage on each scale-up. {#tbl-model-load-time}
 
 Even after weights reside in GPU memory, the first inference runs slower than steady state because just-in-time (JIT) kernel compilation, CUDA context initialization, memory pool allocation, and cache population must complete. This warmup phase ($T_{\text{warmup}}$) typically requires 10--30 dummy inferences, adding 5--30 seconds. The phase-by-phase timeline for Llama-70B shows how these delays accumulate in practice.
 
@@ -4798,30 +4801,30 @@ Even after weights reside in GPU memory, the first inference runs slower than st
 
 @tbl-inference-cold-start-timeline-llama70b traces the per-phase and cumulative duration of bringing up a new replica for Llama-70B on H100:
 
-| **Phase**                     |     **Duration** | **Cumulative** |
-|:------------------------------|-----------------:|---------------:|
-| **Cloud API request**         |               5s |             5s |
-| **GPU instance provisioning** |              60s |            65s |
-| **Container startup**         |              10s |            75s |
-| **Model download (S3)**       |             180s |           255s |
-| **Model load to GPU**         |              45s |           300s |
-| **CUDA warmup**               |              15s |           315s |
-| **Readiness probe pass**      |               5s |           320s |
-| **Total cold start**          | **5 min 20 sec** |                |
+| **Phase**                     | **Duration** | **Cumulative** |
+|:------------------------------|-------------:|---------------:|
+| **Cloud API request**         |           5s |             5s |
+| **GPU instance provisioning** |          60s |            65s |
+| **Container startup**         |          10s |            75s |
+| **Model download (S3)**       |         300s |           375s |
+| **Model load to GPU**         |          25s |           400s |
+| **CUDA warmup**               |          15s |           415s |
+| **Readiness probe pass**      |           5s |           420s |
+| **Total cold start**          |    **7 min** |                |
 
-: **Cold-Start Timeline for a Llama-70B Replica (H100)**: Per-phase and cumulative duration for bringing up a fresh Llama-70B serving replica on an H100 instance. Cloud API request, GPU provisioning, container startup, S3 model download, GPU load, CUDA warmup, and the readiness probe sum to 5 minutes 20 seconds, with the 180-second S3 model download dominating the budget. The 5+ minute lag is why reactive autoscaling alone cannot absorb sudden traffic spikes for GPU serving fleets with latency SLOs. {#tbl-inference-cold-start-timeline-llama70b}
+: **Cold-Start Timeline for a Llama-70B Replica (H100)**: Per-phase and cumulative duration for bringing up a fresh Llama-70B serving replica on an H100 instance. Cloud API request, GPU provisioning, container startup, S3 model download, GPU load, CUDA warmup, and the readiness probe sum to about 7 minutes, with the 300-second S3 model download dominating the budget. The multi-minute lag is why reactive autoscaling alone cannot absorb sudden traffic spikes for GPU serving fleets with latency SLOs. {#tbl-inference-cold-start-timeline-llama70b}
 
-**Implication**\index{Implication}: Scaling decisions must anticipate demand 5+ minutes in advance. Reactive scaling alone cannot handle sudden traffic spikes.
+**Implication**\index{Implication}: Scaling decisions must anticipate demand several minutes in advance. Reactive scaling alone cannot handle sudden traffic spikes.
 
 @fig-cold-start-breakdown visualizes the cumulative timeline:
 
 :::
 
-::: {#fig-cold-start-breakdown fig-env="figure" fig-pos="htb" fig-cap="**Anatomy of a Cold Start**: Bringing up a new GPU inference replica is a multi-step process taking minutes. While container startup is fast, provisioning the specialized instance and downloading massive model weights (100 GB+) dominate the timeline. CUDA context initialization and \"warmup\" inference passes add further delay. This 5+ minute lag makes purely reactive scaling dangerous for handling sudden traffic spikes." fig-alt="Horizontal stacked bar timeline from 0 to 5 minutes. Four segments: Provision (0-1m), Model Download (1-4m, largest), Load (4-4.75m), Warmup (4.75-5.25m). Brace above shows total cold start exceeds 5 minutes."}
+::: {#fig-cold-start-breakdown fig-env="figure" fig-pos="htb" fig-cap="**Anatomy of a Cold Start**: Bringing up a new GPU inference replica is a multi-step process taking minutes. While container startup is fast, provisioning the specialized instance and downloading massive model weights (100 GB+) dominate the timeline. CUDA context initialization and \"warmup\" inference passes add further delay. This roughly 7-minute lag makes purely reactive scaling dangerous for handling sudden traffic spikes." fig-alt="Horizontal stacked bar timeline from 0 to 7 minutes. Four segments: Provision (0-1.25m), Model Download (1.25-6.25m, largest), Load (6.25-6.7m), Warmup (6.7-7m). Brace above shows total cold start is about 7 minutes."}
 
 ```{.tikz}
-\begin{tikzpicture}[font=\small\usefont{T1}{phv}{m}{n}, xscale=0.025, yscale=0.8]
-  % xscale: 1cm = 40 seconds. Total 320s = 8cm
+\begin{tikzpicture}[font=\small\usefont{T1}{phv}{m}{n}, xscale=0.02, yscale=0.8]
+  % xscale: 1cm = 50 seconds. Total 420s = 8.4cm
   \definecolor{ProvColor}{HTML}{FCE4CC}
   \definecolor{DownColor}{HTML}{D1E6F3}
   \definecolor{LoadColor}{HTML}{D4EFDF}
@@ -4832,19 +4835,19 @@ Even after weights reside in GPU memory, the first inference runs slower than st
   }
 
   % Axis
-  \draw[->] (0, 0) -- (330, 0) node[right] {Seconds};
-  \foreach \x/\label in {0/0s, 60/1m, 120/2m, 180/3m, 240/4m, 300/5m} {
+  \draw[->] (0, 0) -- (430, 0) node[right] {Seconds};
+  \foreach \x/\label in {0/0s, 60/1m, 120/2m, 180/3m, 240/4m, 300/5m, 360/6m, 420/7m} {
       \draw (\x, 0.1) -- (\x, -0.1) node[below, font=\scriptsize\usefont{T1}{phv}{m}{n}] {\label};
   }
 
   % Bar Stack
-  \node[bar, fill=ProvColor, minimum width=1.625cm] (prov) at (0, 1.5) {Provision};
-  \node[bar, fill=DownColor, minimum width=4.5cm, right=0cm of prov] (down) {Model Download (Big!)};
-  \node[bar, fill=LoadColor, minimum width=1.125cm, right=0cm of down] (load) {Load};
-  \node[bar, fill=WarmColor, minimum width=0.625cm, right=0cm of load] (warm) {Warm};
+  \node[bar, fill=ProvColor, minimum width=1.5cm] (prov) at (0, 1.5) {Provision};
+  \node[bar, fill=DownColor, minimum width=6.0cm, right=0cm of prov] (down) {Model Download (Big!)};
+  \node[bar, fill=LoadColor, minimum width=0.5cm, right=0cm of down] (load) {Load};
+  \node[bar, fill=WarmColor, minimum width=0.4cm, right=0cm of load] (warm) {Warm};
 
   % Connect total
-  \draw[decorate, decoration={brace, amplitude=5pt, raise=5pt}] (prov.south west |- 0, 2) -- (warm.south east |- 0, 2) node[midway, above=10pt, font=\bfseries\usefont{T1}{phv}{b}{n}] {Total Cold Start: > 5 Minutes};
+  \draw[decorate, decoration={brace, amplitude=5pt, raise=5pt}] (prov.south west |- 0, 2) -- (warm.south east |- 0, 2) node[midway, above=10pt, font=\bfseries\usefont{T1}{phv}{b}{n}] {Total Cold Start: ~7 Minutes};
 
   % Legend
   \node[anchor=west, font=\scriptsize\usefont{T1}{phv}{m}{n}] at (0, 3.5) {\textbf{Breakdown for 70B Model}};
@@ -5137,13 +5140,13 @@ def handle_spot_termination():
 
 A spot-aware architecture splits traffic between on-demand and spot replicas by SLO class, as shown in @fig-spot-aware-routing. SLO-critical requests always route to on-demand capacity, while best-effort requests absorb the cost savings and interruption risk of spot instances.
 
-::: {#fig-spot-aware-routing fig-env="figure" fig-pos="htb" fig-cap="**Spot-Aware Traffic Distribution**: The load balancer routes 70 percent of traffic to on-demand replicas (guaranteed availability) and 30 percent to spot replicas (cost savings, preemption risk). SLO-critical requests always use on-demand; best-effort requests tolerate occasional retries on eviction. The mixed fleet achieves ~50 percent cost reduction vs. 100 percent on-demand." fig-alt="Load Balancer box with two fan-out arrows: a solid green arrow labeled 70 percent to On-Demand Replicas box containing three active GPU workers, and a dashed orange arrow labeled 30 percent to Spot Replicas box containing two spot workers and one preempted worker."}
+::: {#fig-spot-aware-routing fig-env="figure" fig-pos="htb" fig-cap="**Spot-Aware Traffic Distribution**: The load balancer routes 70 percent of traffic to on-demand replicas (guaranteed availability) and 30 percent to spot replicas (cost savings, preemption risk). SLO-critical requests always use on-demand; best-effort requests tolerate occasional retries on eviction. With typical 60--90 percent spot discounts, the mixed fleet achieves roughly 18--27 percent cost reduction vs. 100 percent on-demand." fig-alt="Load Balancer box with two fan-out arrows: a solid green arrow labeled 70 percent to On-Demand Replicas box containing three active GPU workers, and a dashed orange arrow labeled 30 percent to Spot Replicas box containing two spot workers and one preempted worker."}
 
 ![](images/svg/spot-aware-routing.svg)
 
 :::
 
-The split architecture in @fig-spot-aware-routing achieves approximately 50 percent cost reduction compared to a fully on-demand fleet by absorbing preemption risk only for best-effort traffic, while SLO-critical requests remain on guaranteed capacity.
+The split architecture in @fig-spot-aware-routing achieves approximately 18--27 percent cost reduction compared to a fully on-demand fleet when spot instances are 60--90 percent cheaper than on-demand capacity, while absorbing preemption risk only for best-effort traffic and keeping SLO-critical requests on guaranteed capacity.
 
 ### Global inference infrastructure {#sec-inference-scale-global-inference-infrastructure-df52}
 
@@ -5437,7 +5440,7 @@ where $H$ is a Hadamard matrix (orthogonal, efficiently computable without stora
 
 ```
 Original:  [1000, 1, 1, 1]     # One large outlier
-Hadamard:  [252, 250, 250, 250] # Uniform distribution
+Hadamard:  [502, 500, 500, 500] # Uniform distribution
 ```
 
 After transformation, no single value dominates, enabling uniform quantization.
@@ -5462,9 +5465,9 @@ After transformation, no single value dominates, enabling uniform quantization.
 | **GPTQ**        |                          W4A16 |                       3.24 |            +0.12 |
 | **QuaRot**      |                           W4A4 |                       3.31 |            +0.19 |
 
-: **Quantization Perplexity on LLaMA-2-70B**: Perplexity degradation across four quantization methods on a 70B model. QuaRot's W4A4 lands within 0.2 perplexity of FP16 baseline while delivering roughly 8$\times$ memory reduction, demonstrating that rotation-based methods make 4-bit activation quantization viable for production inference. {#tbl-quarot-perplexity}
+: **Quantization Perplexity on LLaMA-2-70B**: Perplexity degradation across four quantization methods on a 70B model. QuaRot's W4A4 lands within 0.2 perplexity of FP16 baseline while delivering roughly 4$\times$ memory reduction for quantized tensors, demonstrating that rotation-based methods make 4-bit activation quantization viable for production inference. {#tbl-quarot-perplexity}
 
-QuaRot achieves 4-bit weights AND 4-bit activations with quality competitive to GPTQ's 4-bit weights only. This enables approximately 8$\times$ memory reduction vs. FP16.
+QuaRot achieves 4-bit weights AND 4-bit activations with quality competitive to GPTQ's 4-bit weights only. This enables approximately 4$\times$ memory reduction vs. FP16 for quantized weights and activations.
 
 **SpinQuant**: An extension of QuaRot that learns optimal rotation matrices during a short fine-tuning phase, improving quality at the cost of training compute.
 
@@ -5826,7 +5829,7 @@ Rather than running one expensive model on all candidates, Google uses a ranking
 
 : **Google Ranking Cascade**: Four-stage cascade that filters a million candidates down to ten while spending compute proportional to depth. Each stage uses a more expensive model on fewer candidates, so total cost is dominated by the cheap early stages rather than the expensive final ensemble. {#tbl-google-ranking-cascade}
 
-The cascade achieves 100$\times$ cost reduction compared to running L3 on all candidates.
+The cascade reduces final L3 evaluations by 10,000$\times$ compared to running L3 on all candidates. Under this simplified linear latency model, the full cascade is roughly 5,600$\times$ lower cost than applying L3 to the entire candidate set.
 
 Given tight latency budgets, Google uses speculative execution for model ensembles:
 
@@ -5981,7 +5984,7 @@ Continuous batching dramatically improves GPU utilization for LLM serving, but i
 
 **Pitfall**: *Sizing capacity based on average throughput.*
 
-Queuing theory establishes that systems provisioned for average load violate SLOs during traffic peaks. At 80 percent average utilization, a modest 25 percent traffic spike pushes utilization above 100 percent, causing unbounded queue growth. As discussed in @sec-inference-scale-autoscaling-168d, the cold start problem exacerbates this: by the time new capacity is available (5+ minutes for GPU instances), SLO violations have already occurred. Capacity planning must account for peak load plus headroom, not average load.
+Queuing theory establishes that systems provisioned for average load violate SLOs during traffic peaks. At 80 percent average utilization, a modest 25 percent traffic spike pushes utilization above 100 percent, causing unbounded queue growth. As discussed in @sec-inference-scale-autoscaling-168d, the cold start problem exacerbates this: by the time new capacity is available (multiple minutes for GPU instances), SLO violations have already occurred. Capacity planning must account for peak load plus headroom, not average load.
 
 **Fallacy**: *Load balancing does not matter much for inference.*
 

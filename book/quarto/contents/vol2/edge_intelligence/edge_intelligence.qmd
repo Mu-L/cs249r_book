@@ -2313,9 +2313,10 @@ Real-world federated deployments exhibit $\beta$ values that vary dramatically b
 # │ Context: @sec-edge-intelligence-quantifying-heterogeneity-practice-eece
 # │
 # │ Goal: Compute the round and client-epoch costs for IID vs non-IID FedAvg.
-# │ Show: IID 200 rounds; non-IID 5,625 rounds; E=2 reduces to 900 rounds.
+# │ Show: IID 200 rounds; non-IID 5,625 rounds; E=2 reduces to 3,125 rounds.
 # │ How: R_iid = sigma^2/(C*E*epsilon^2);
-# │      R_non_iid = beta^2*E^2/epsilon; client_epochs = R*C*E.
+# │      R_non_iid = max((1+beta)^2/(C*E*epsilon^2),
+# │                      beta^2*E^2/epsilon); client_epochs = R*C*E.
 # │
 # │ Imports: mlsysim.fmt (check)
 # │ Exports: fc_* formatted strings for the worked example below.
@@ -2340,9 +2341,19 @@ class FederatedConvergence:
     reduced_local_epochs_sq = reduced_local_epochs**2
     iid_rounds = int(sigma**2 / (clients_per_round * local_epochs * epsilon_sq))
     iid_client_epochs = iid_rounds * clients_per_round * local_epochs
-    non_iid_rounds = int(beta_non_iid_sq * local_epochs_sq / epsilon)
+    non_iid_variance_rounds = int(
+        (1 + beta_non_iid) ** 2
+        / (clients_per_round * local_epochs * epsilon_sq)
+    )
+    non_iid_heterogeneity_rounds = int(beta_non_iid_sq * local_epochs_sq / epsilon)
+    non_iid_rounds = max(non_iid_variance_rounds, non_iid_heterogeneity_rounds)
     non_iid_client_epochs = non_iid_rounds * clients_per_round * local_epochs
-    reduced_rounds = int(beta_non_iid_sq * reduced_local_epochs_sq / epsilon)
+    reduced_variance_rounds = int(
+        (1 + beta_non_iid) ** 2
+        / (clients_per_round * reduced_local_epochs * epsilon_sq)
+    )
+    reduced_heterogeneity_rounds = int(beta_non_iid_sq * reduced_local_epochs_sq / epsilon)
+    reduced_rounds = max(reduced_variance_rounds, reduced_heterogeneity_rounds)
     reduced_client_epochs = reduced_rounds * clients_per_round * reduced_local_epochs
     round_increase = non_iid_rounds / iid_rounds
     round_reduction = non_iid_rounds / reduced_rounds
@@ -2352,7 +2363,7 @@ class FederatedConvergence:
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(iid_rounds == 200, f"IID rounds {iid_rounds} unexpected")
     check(non_iid_rounds == 5625, f"Non-IID rounds {non_iid_rounds} unexpected")
-    check(reduced_rounds == 900, f"Reduced rounds {reduced_rounds} unexpected")
+    check(reduced_rounds == 3125, f"Reduced rounds {reduced_rounds} unexpected")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────
     fc_total_clients_str = fmt(total_clients, precision=0, commas=False)
@@ -2370,8 +2381,11 @@ class FederatedConvergence:
     fc_iid_rounds_str = fmt(iid_rounds, precision=0)
     fc_iid_client_epochs_str = fmt(iid_client_epochs, precision=0)
     fc_non_iid_rounds_str = fmt(non_iid_rounds, precision=0)
+    fc_non_iid_variance_rounds_str = fmt(non_iid_variance_rounds, precision=0)
     fc_non_iid_client_epochs_str = fmt(non_iid_client_epochs, precision=0)
     fc_reduced_rounds_str = fmt(reduced_rounds, precision=0)
+    fc_reduced_variance_rounds_str = fmt(reduced_variance_rounds, precision=0)
+    fc_reduced_heterogeneity_rounds_str = fmt(reduced_heterogeneity_rounds, precision=0)
     fc_reduced_client_epochs_str = fmt(reduced_client_epochs, precision=0)
     fc_round_increase_str = fmt(round_increase, precision=1, commas=False)
     fc_round_reduction_str = fmt(round_reduction, precision=2, commas=False)
@@ -2389,7 +2403,7 @@ $$
 
 With `{python} FederatedConvergence.fc_clients_per_round_str` clients per round and `{python} FederatedConvergence.fc_local_epochs_str` local epochs, this represents `{python} FederatedConvergence.fc_iid_rounds_str` $\times$ `{python} FederatedConvergence.fc_clients_per_round_str` $\times$ `{python} FederatedConvergence.fc_local_epochs_str` = `{python} FederatedConvergence.fc_iid_client_epochs_str` total client-epochs of computation.
 
-*Non-IID Case* $(\beta = 1.5)$: The heterogeneity penalty requires satisfying both terms of the bound. The dominant constraint becomes:
+*Non-IID Case* $(\beta = 1.5)$: The heterogeneity penalty requires satisfying both terms of the bound. With $E=5$, the variance term requires `{python} FederatedConvergence.fc_non_iid_variance_rounds_str` rounds, while the heterogeneity term dominates:
 
 $$
 \frac{\beta^2 E^2}{R} \leq \epsilon \implies R \geq \frac{\beta^2 E^2}{\epsilon} = \frac{2.25 \times 25}{0.01} = 5,625 \text{ rounds}
@@ -2400,7 +2414,9 @@ This represents a roughly `{python} FederatedConvergence.fc_round_increase_str`$
 *Reducing Local Epochs:* The quadratic dependence on $E$ suggests reducing local computation when heterogeneity is high. With $E = 2$ instead of $E = 5$:
 
 $$
-R \geq \frac{2.25 \times 4}{0.01} = 900 \text{ rounds}
+R \geq \max\left(\frac{(1+\beta)^2}{C \cdot E \cdot \epsilon^2}, \frac{\beta^2 E^2}{\epsilon}\right)
+= \max\left(\frac{2.5^2}{10 \cdot 2 \cdot 0.0001}, \frac{2.25 \times 4}{0.01}\right)
+= \max(3,125, 900) = 3,125 \text{ rounds}
 $$
 
 This reduces total rounds by `{python} FederatedConvergence.fc_round_reduction_str`$\times$ at the cost of `{python} FederatedConvergence.fc_local_compute_ratio_str`$\times$ more communication per unit of local computation. The total client-epochs become `{python} FederatedConvergence.fc_reduced_rounds_str` $\times$ `{python} FederatedConvergence.fc_clients_per_round_str` $\times$ `{python} FederatedConvergence.fc_reduced_local_epochs_str` = `{python} FederatedConvergence.fc_reduced_client_epochs_str`, a `{python} FederatedConvergence.fc_client_epoch_reduction_str`$\times$ reduction from the $E$ = `{python} FederatedConvergence.fc_local_epochs_str` non-IID case. This illustrates why adaptive local epoch selection based on estimated data heterogeneity significantly improves federated learning efficiency.
@@ -2783,7 +2799,7 @@ The asynchronous nature of federated coordination introduces additional complexi
 
 Real-world federated learning deployments exhibit extreme heterogeneity across multiple dimensions simultaneously: hardware capabilities, network conditions, data distributions, and availability patterns. This multi-dimensional heterogeneity fundamentally challenges traditional distributed machine learning assumptions about homogeneous participants operating under similar conditions.
 
-Real-world federated learning deployments face multi-dimensional device heterogeneity that creates extreme variation across every system dimension. Computational variation spans about 1,700$\times$ differences in processing power between flagship smartphones running at `{python} EdgeIntelligenceSetup.mobile_npu_tops_str` TOPS and IoT microcontrollers operating at just 0.03 TOPS, fundamentally limiting what models can train on different device tiers. Memory constraints exhibit even more dramatic 100--10,000$\times$ differences in available RAM across device categories, ranging from 256 KB on microcontrollers to 16 GB on premium smartphones, determining whether devices can perform any local training at all or must rely purely on inference. Energy limitations force training sessions to be carefully scheduled around charging patterns, thermal constraints, and battery preservation requirements: background adaptation often targets roughly 500–1000 mW, even though phones may sustain 2--3 W for foreground ML workloads and burst higher briefly. Network diversity introduces orders-of-magnitude performance differences as WiFi, 4G, 5G, and satellite connectivity exhibit vastly different bandwidth (ranging from 1 Mbps to 1 Gbps), latency (10 ms to 600 ms), and reliability characteristics that determine feasible update frequencies and compression requirements.
+Real-world federated learning deployments face multi-dimensional device heterogeneity that creates extreme variation across every system dimension. Computational variation spans about 1,700$\times$ differences in processing power between flagship smartphones running at `{python} EdgeIntelligenceSetup.mobile_npu_tops_str` TOPS and IoT microcontrollers operating at just 0.03 TOPS, fundamentally limiting what models can train on different device tiers. Memory constraints exhibit even more dramatic differences in available RAM across device categories, up to roughly 65,000$\times$ between 256 KB microcontrollers and 16 GB premium smartphones, determining whether devices can perform any local training at all or must rely purely on inference. Energy limitations force training sessions to be carefully scheduled around charging patterns, thermal constraints, and battery preservation requirements: background adaptation often targets roughly 500–1000 mW, even though phones may sustain 2--3 W for foreground ML workloads and burst higher briefly. Network diversity introduces orders-of-magnitude performance differences as WiFi, 4G, 5G, and satellite connectivity exhibit vastly different bandwidth (ranging from 1 Mbps to 1 Gbps), latency (10 ms to 600 ms), and reliability characteristics that determine feasible update frequencies and compression requirements.
 
 Adaptive coordination protocols address this heterogeneity through sophisticated tiered participation strategies that optimize resource utilization across the device spectrum. High-capability devices such as flagship smartphones can perform complex local training with large batch sizes and multiple epochs, while resource-constrained IoT devices contribute through lightweight updates, specialized subtasks, or even simple data aggregation. This creates a natural computational hierarchy where powerful devices act as "super-peers" performing disproportionate computation, while edge devices contribute specialized local knowledge and coverage.
 
@@ -3196,7 +3212,7 @@ This belief assumes that any local adaptation is beneficial regardless of the qu
 
 **Pitfall**: *Ignoring the heterogeneity challenges across different device types and capabilities.*
 
-Teams design on-device learning systems assuming uniform hardware capabilities across deployment devices. Real-world deployments span diverse hardware with varying computational power, memory capacity, energy constraints, and networking capabilities. Edge device capabilities span 6+ orders of magnitude: from 32 KB RAM microcontrollers to 16 GB smartphones, 48 MHz ARM Cortex-M0+ (~10 MIPS) to 3 GHz A-series processors (~100,000 MIPS), and 10 μW sensor nodes to 5 W flagship phones. A learning algorithm that works well on high-end smartphones may fail catastrophically on resource-constrained IoT devices. Federated learning algorithms must dynamically adapt through quantized inference on low-end devices, selective participation based on capability, and tiered aggregation strategies that account for 10,000$\times$ performance differences within a single deployment.
+Teams design on-device learning systems assuming uniform hardware capabilities across deployment devices. Real-world deployments span diverse hardware with varying computational power, memory capacity, energy constraints, and networking capabilities. Edge device capabilities span nearly six orders of magnitude in memory and power, and four orders in CPU throughput: from 32 KB RAM microcontrollers to 16 GB smartphones, 48 MHz ARM Cortex-M0+ (~10 MIPS) to 3 GHz A-series processors (~100,000 MIPS), and 10 μW sensor nodes to 5 W flagship phones. A learning algorithm that works well on high-end smartphones may fail catastrophically on resource-constrained IoT devices. Federated learning algorithms must dynamically adapt through quantized inference on low-end devices, selective participation based on capability, and tiered aggregation strategies that account for 10,000$\times$ performance differences within a single deployment.
 
 **Pitfall**: *Underestimating the complexity of orchestrating learning across distributed edge systems.*
 
