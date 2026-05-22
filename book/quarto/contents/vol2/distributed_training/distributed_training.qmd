@@ -159,7 +159,7 @@ A single GPU with 100 terabytes of memory and an exaflop of compute would make d
 
 Before optimizing algorithms, we must understand the physical constraints of the Machine Learning Fleet. The performance of any distributed training job is governed by the distributed step-time law (Principle \ref{pri-distributed-step-time}), introduced alongside the fleet law in @sec-vol2-introduction-fleet-law:
 
-$$ T_{\text{step}}(N) = \frac{T_{\text{compute}}}{N} + T_{\text{comm}}(N) - T_{\text{overlap}} $$
+$$ T_{\text{step}}(N) = \frac{T_{\text{compute}}}{N} + T_{\text{comm}}(N) + T_{\text{sync}}(N) - T_{\text{overlap}} $$
 
 The critical term is the communication-computation ratio $(T_{\text{comm}}/T_{\text{compute}})$. This ratio determines whether a cluster behaves as a supercomputer or a collection of idling heaters.
 
@@ -521,7 +521,7 @@ BSP provides strong guarantees where every worker sees identical parameter value
 
 Stale Synchronous Parallel\index{Stale Synchronous Parallel!bounded staleness} (SSP) relaxes this constraint by allowing workers to proceed up to $s$ iterations ahead of the slowest worker before blocking. This bounds staleness while reducing synchronization delays. SSP requires careful learning rate tuning since workers compute gradients on slightly different parameter versions. The bounded staleness guarantee with $s$ typically set to 2-5 provides a middle ground between BSP's strong consistency and fully asynchronous approaches.
 
-Asynchronous SGD\index{Asynchronous SGD!staleness penalty} eliminates synchronization barriers entirely as workers update parameters independently. This maximizes hardware utilization but introduces gradient staleness that can degrade convergence. When a worker computes gradients on parameters that are already $\tau$ steps stale, the effective learning rate decreases. Compensation techniques include learning rate scaling with $\eta' = \eta / \sqrt{\tau}$ or momentum correction.
+Asynchronous SGD\index{Asynchronous SGD!staleness penalty} eliminates synchronization barriers entirely as workers update parameters independently. This maximizes hardware utilization but introduces gradient staleness that can degrade convergence. When a worker computes gradients on parameters that are already $\tau_{\text{stale}}$ steps stale, the effective learning rate decreases. Compensation techniques include learning rate scaling with $\eta' = \eta / \sqrt{\tau_{\text{stale}}}$ or momentum correction.
 
 The key trade-offs across synchronization models are summarized in @tbl-sync-models, and @fig-sync-model-timeline illustrates how each strategy schedules work across workers over time.
 
@@ -1024,21 +1024,22 @@ plt.close()
 
 We can formalize the distributed step time law (Principle \ref{pri-distributed-step-time}) and map it directly to our iron law variables:
 
-$$ T_{\text{step}}(N) = \underbrace{\frac{T_{\text{compute}}}{N}}_{\text{FLOPS Term}} + \underbrace{T_{\text{comm}}(N)}_{\text{Bandwidth Term}} - T_{\text{overlap}} $$
+$$ T_{\text{step}}(N) = \underbrace{\frac{T_{\text{compute}}}{N}}_{\text{FLOP/s Term}} + \underbrace{T_{\text{comm}}(N)}_{\text{Bandwidth Term}} + \underbrace{T_{\text{sync}}(N)}_{\text{Coordination Term}} - T_{\text{overlap}} $$
 
 Where:
 
-*   **FLOPS Term** $(T_{\text{compute}})$: The total computation required for the batch. In an ideal world, this scales perfectly with $N$.
+*   **FLOP/s Term** $(T_{\text{compute}})$: The total computation required for the batch. In an ideal world, this scales perfectly with $N$.
 *   **Bandwidth Term** $(T_{\text{comm}})$: The time spent moving data. This is governed by the iron law's data-movement term, $D_{\text{vol}}/\text{BW}$. For Ring AllReduce, this term is $\frac{2(N-1)}{N} \times \frac{M}{\text{BW}_{\text{net}}}$, where $M$ is the communicated gradient or model-state bytes and $\text{BW}_{\text{net}}$ is network bandwidth.
+*   **Coordination Term** $(T_{\text{sync}})$: The nonoverlapped cost of barriers, ordering, and straggler waiting.
 *   **Overlap** $(T_{\text{overlap}})$: The portion of communication hidden behind computation.
 
 The distributed step time equation leads to the scaling efficiency metric for fixed global work, where $T_{\text{compute}}$ is the single-device compute time for that work:
 
-This is the scaling efficiency bound (Principle \ref{pri-scaling-efficiency}): perfect linear scaling $(\eta_{\text{scaling}} = 1.0)$ is a *theoretical limit*, not a *practical target*. Real systems achieve $\eta_{\text{scaling}} = 0.85$–$0.95$ at moderate scale and degrade further as $N$ grows. The gap between $\eta_{\text{scaling}} = 1.0$ and the achieved efficiency is the **communication tax**\index{Communication Tax!scaling efficiency}—the price of coordination.
+This is the scaling efficiency bound (Principle \ref{pri-scaling-efficiency}): perfect linear scaling $(\eta_{\text{scaling}} = 1.0)$ is a *theoretical limit*, not a *practical target*. Real systems achieve $\eta_{\text{scaling}} = 0.85$–$0.95$ at moderate scale and degrade further as $N$ grows. The gap between $\eta_{\text{scaling}} = 1.0$ and the achieved efficiency is the **communication and coordination tax**\index{Communication Tax!scaling efficiency}—the price of distributed execution.
 
-$$ \eta_{\text{scaling}} = \frac{T_{\text{compute}}}{N \times T_{\text{step}}(N)} = \frac{1}{1 + \frac{N(T_{\text{comm}}(N) - T_{\text{overlap}})}{T_{\text{compute}}}} $$
+$$ \eta_{\text{scaling}} = \frac{T_{\text{compute}}}{N \times T_{\text{step}}(N)} = \frac{1}{1 + \frac{N(T_{\text{comm}}(N) + T_{\text{sync}}(N) - T_{\text{overlap}})}{T_{\text{compute}}}} $$
 
-The equation reveals the **Scaling Wall**: as $N$ increases, the compute term $(T_{\text{compute}}/N)$ shrinks, but the communication term $(T_{\text{comm}})$ remains constant or grows. Eventually, the denominator is dominated by communication, driving efficiency toward zero. Beyond wall-clock time, this communication overhead imposes an energy tax\index{Energy Tax!communication overhead} that scales with physical distance between devices.
+The equation reveals the **Scaling Wall**: as $N$ increases, the compute term $(T_{\text{compute}}/N)$ shrinks, but the communication and synchronization terms can remain constant or grow. Eventually, the denominator is dominated by overhead, driving efficiency toward zero. Beyond wall-clock time, this communication overhead imposes an energy tax\index{Energy Tax!communication overhead} that scales with physical distance between devices.
 
 ::: {#psp-distributed-training-energy-tax-scale .callout-perspective title="The energy tax of scale"}
 
@@ -1080,13 +1081,13 @@ However, the theorem assumes perfect synchronization (BSP). When workers proceed
 
 ### Staleness impact: BSP vs. SSP vs. ASP {#sec-distributed-training-systems-systems-staleness-impact-bsp-vs.-ssp-vs.-asp-e153}
 
-Synchronization models fundamentally affect convergence behavior. The staleness parameter $\tau$ quantifies how many iterations behind a gradient may be when applied to parameters.
+Synchronization models fundamentally affect convergence behavior. The staleness parameter $\tau_{\text{stale}}$ quantifies how many iterations behind a gradient may be when applied to parameters.
 
 ::: {#dfn-distributed-training-gradient-staleness .callout-definition title="Gradient staleness"}
 
-***Gradient Staleness ($\tau$)***\index{Gradient!staleness, definition} is the number of parameter updates that occur between the time a gradient is computed and the time it is applied to the global model state.
+***Gradient Staleness ($\tau_{\text{stale}}$)***\index{Gradient!staleness, definition} is the number of parameter updates that occur between the time a gradient is computed and the time it is applied to the global model state.
 
-1.  **Significance (quantitative)**: It represents the **Synchronization Error** in distributed optimization. Increasing $\tau$ can improve throughput by reducing barrier waits $(L_{\text{lat}})$, but it typically degrades the **Rate of Convergence**, requiring more operations $(O)$ to reach the same accuracy.
+1.  **Significance (quantitative)**: It represents the **Synchronization Error** in distributed optimization. Increasing $\tau_{\text{stale}}$ can improve throughput by reducing barrier waits $(L_{\text{lat}})$, but it typically degrades the **Rate of Convergence**, requiring more operations $(O)$ to reach the same accuracy.
 2.  **Distinction (durable)**: Unlike network latency, which is a physical delay, staleness is an algorithmic offset that arises from the choice of synchronization protocol (e.g., ASP, SSP).
 3.  **Common pitfall**: A frequent misconception is that Staleness is "always bad." In reality, it is a **Throughput-Convergence Trade-off**: for some large-scale workloads, allowing bounded staleness is the only way to keep thousands of GPUs in use.
 
@@ -1094,9 +1095,9 @@ Synchronization models fundamentally affect convergence behavior. The staleness 
 
 The convergence behavior differs across these models in ways that directly affect training cost and solution quality.
 
-In Bulk Synchronous Parallel (BSP, $\tau = 0$), all workers compute gradients on the same parameter version, then synchronize via barrier before updating. This guarantees mathematical equivalence to single-device training with larger batch size, an optimal convergence rate of $O(1/\sqrt{NbT})$, and no hyperparameter adjustment beyond batch size scaling.
+In Bulk Synchronous Parallel (BSP, $\tau_{\text{stale}} = 0$), all workers compute gradients on the same parameter version, then synchronize via barrier before updating. This guarantees mathematical equivalence to single-device training with larger batch size, an optimal convergence rate of $O(1/\sqrt{NbT})$, and no hyperparameter adjustment beyond batch size scaling.
 
-Stale Synchronous Parallel (SSP, $\tau \leq s$) relaxes the barrier by allowing workers to proceed up to $s$ iterations ahead of the slowest worker. The convergence rate degrades to:
+Stale Synchronous Parallel (SSP, $\tau_{\text{stale}} \leq s$) relaxes the barrier by allowing workers to proceed up to $s$ iterations ahead of the slowest worker. The convergence rate degrades to:
 
 $$
 \mathbb{E}[\mathcal{L}(\theta_T)] - \mathcal{L}^{\star} \leq O\left(\frac{1}{\sqrt{NbT}}\right) + O\left(\frac{s^2 \eta^2 L_s^2}{Nb}\right)
@@ -1104,25 +1105,25 @@ $$
 
 The second term represents the **staleness penalty**. For bounded staleness $s$, this penalty can be controlled by reducing the learning rate: $\eta' = \eta / \sqrt{1 + s}$. Typical production systems use $s \in \{2, 4, 8\}$, accepting 5--15 percent convergence degradation for 20--40 percent throughput improvement on heterogeneous clusters.
 
-Asynchronous SGD (ASP, $\tau = \infty$) eliminates waiting entirely: workers update parameters immediately. While this maximizes throughput, convergence degrades:
+Asynchronous SGD (ASP, $\tau_{\text{stale}} = \infty$) eliminates waiting entirely: workers update parameters immediately. While this maximizes throughput, convergence degrades:
 
 $$
-\mathbb{E}[\mathcal{L}(\theta_T)] - \mathcal{L}^{\star} \leq O\left(\frac{1}{\sqrt{T}}\right) + O\left(\bar{\tau}^2 \eta^2 L_s^2\right)
+\mathbb{E}[\mathcal{L}(\theta_T)] - \mathcal{L}^{\star} \leq O\left(\frac{1}{\sqrt{T}}\right) + O\left(\bar{\tau}_{\text{stale}}^2 \eta^2 L_s^2\right)
 $$
 
-where $\bar{\tau}$ is the average staleness. The staleness penalty now scales with the square of average delay, and critically, the variance reduction from $N$ workers disappears in the dominant term. Compensation techniques include:
+where $\bar{\tau}_{\text{stale}}$ is the average staleness. The staleness penalty now scales with the square of average delay, and critically, the variance reduction from $N$ workers disappears in the dominant term. Compensation techniques include:
 
-- **Learning rate decay**: $\eta' = \eta / \sqrt{1 + \bar{\tau}}$ reduces the staleness penalty but slows convergence
+- **Learning rate decay**: $\eta' = \eta / \sqrt{1 + \bar{\tau}_{\text{stale}}}$ reduces the staleness penalty but slows convergence
 - **Momentum correction**: Adjust momentum to account for delayed updates
 - **Gradient clipping**: Prevent stale gradients with large magnitudes from destabilizing training
 
 @tbl-convergence-comparison summarizes the convergence properties of each synchronization model.
 
-| **Model** | **Staleness**   |                          **Convergence Rate** | **Variance Reduction** | **Best For**                          |
-|:----------|:----------------|----------------------------------------------:|:-----------------------|:--------------------------------------|
-| **BSP**   | $\tau = 0$      |                             $O(1/\sqrt{NbT})$ | Full ($1/N$)           | Final training, reproducibility       |
-| **SSP**   | $\tau \leq s$   |     $O(1/\sqrt{NbT}) + O(s^2\eta^2 L_s^2/Nb)$ | Partial                | Heterogeneous clusters                |
-| **ASP**   | $\tau = \infty$ | $O(1/\sqrt{T}) + O(\bar{\tau}^2\eta^2 L_s^2)$ | None                   | Maximum throughput, early exploration |
+| **Model** | **Staleness**                  |                                         **Convergence Rate** | **Variance Reduction** | **Best For**                          |
+|:----------|:-------------------------------|-------------------------------------------------------------:|:-----------------------|:--------------------------------------|
+| **BSP**   | $\tau_{\text{stale}} = 0$      |                                            $O(1/\sqrt{NbT})$ | Full ($1/N$)           | Final training, reproducibility       |
+| **SSP**   | $\tau_{\text{stale}} \leq s$   |                    $O(1/\sqrt{NbT}) + O(s^2\eta^2 L_s^2/Nb)$ | Partial                | Heterogeneous clusters                |
+| **ASP**   | $\tau_{\text{stale}} = \infty$ | $O(1/\sqrt{T}) + O(\bar{\tau}_{\text{stale}}^2\eta^2 L_s^2)$ | None                   | Maximum throughput, early exploration |
 
 : **Convergence Properties by Synchronization Model**: BSP provides optimal convergence guarantees at the cost of synchronization overhead. SSP offers a tunable trade-off between throughput and convergence. ASP maximizes throughput but loses the variance reduction benefit of parallelism. {#tbl-convergence-comparison}
 
