@@ -929,15 +929,15 @@ The cluster topology is a living organism, not a fixed schematic. Hardware failu
 
 Migration is not free; it requires a coordinated checkpoint, a job kill, a rescheduling event on healthy nodes, and a warmup phase. This process typically consumes 5 to 15 minutes of idle time. However, for a multi-week training run, the math often favors migration. If the network degradation creates a 20 percent throughput penalty, the break-even point for a 10-minute migration is less than an hour of training. Sophisticated orchestrators continuously monitor effective bandwidth metrics reported by the collective communication library. When the delta between the assigned topology score and the realized throughput exceeds a threshold, the scheduler triggers a drain-and-migrate workflow, treating network degradation with the same severity as a GPU hardware fault.
 
-::: {#ws-fleet-orchestration-silent-switch-failure .callout-war-story title="The silent switch failure"}
+::: {#exmp-fleet-orchestration-limping-switch .callout-example title="The limping switch"}
 
-**The context**: A major research lab spent a week debugging a 30 percent performance regression in their flagship foundation model training run. The GPUs were healthy, the code was unchanged, and the job was placed on a "prime" pod with full bisection bandwidth.
+**Scenario**: A foundation-model training job shows a large throughput regression. The GPUs are healthy, the code is unchanged, and the static topology map says the job has full bisection bandwidth.
 
-**The failure**: The culprit was a single top-of-rack switch with a corrupted transceiver. The switch was technically "up" and passing standard health checks (ping, link status), but it was silently dropping 50 percent of packets due to CRC errors, forcing massive TCP retransmissions.
+**Failure mode**: A single switch or transceiver can remain technically "up" while producing high CRC error rates, packet drops, or retransmissions. Binary health checks report green; collective communication performance reports red.
 
-**The consequence**: Because the scheduler relied on a static topology map, it continued to schedule the most communication-intensive jobs on the degraded rack, assuming full 800 Gb/s connectivity.
+**Consequence**: If the scheduler relies on a static topology map, it continues to schedule communication-intensive jobs onto a degraded rack, assuming full bandwidth that no longer exists.
 
-**The systems lesson**: The fix required shifting from binary health checks (up/down) to **performance-aware topology monitoring**\index{Performance-Aware Topology Monitoring}, where the scheduler integrates real-time bandwidth counters from the switch fabric. Nodes connected to a "limping" switch are now dynamically **tainted**\index{Tainted}, forcing the scheduler to route high-bandwidth jobs elsewhere until the hardware is replaced.
+**Systems lesson**: Binary health checks (up/down) are insufficient. Schedulers need **performance-aware topology monitoring**\index{Performance-Aware Topology Monitoring} that incorporates switch counters, retransmission rates, and collective bandwidth tests. Nodes connected to a "limping" switch should be dynamically **tainted**\index{Tainted} until the hardware is repaired.
 
 :::
 
@@ -1302,15 +1302,15 @@ Checkpoint frequency optimization for spot instances differs from the standard r
 
 The same need for contingency planning becomes acute when spot interruptions are correlated rather than isolated.
 
-::: {#ws-fleet-orchestration-spot-market-crash .callout-war-story title="The spot market crash"}
+::: {#psp-fleet-orchestration-correlated-spot-risk .callout-perspective title="Correlated spot risk"}
 
-**The context**: A major AI lab configured their entire research fleet to use spot instances in a single cloud region to save costs. Two days before a top-tier conference deadline, a massive wave of last-minute experiments from thousands of researchers worldwide hit the same region.
+**Context**: Spot capacity is cheap because it is reclaimable. That risk is not independent across instances: cloud regions, instance types, product launches, and deadline cycles can create correlated demand.
 
-**The failure**: The spot market "crashed": prices spiked to equal on-demand rates, and the provider reclaimed 90 percent of the lab's spot instances within a 15-minute window.
+**Failure mode**: A fleet that concentrates all interruptible training in one region and one instance type can lose a large fraction of workers at once, even if each individual worker appears restartable.
 
-**The consequence**: Dozens of paper-critical training runs died simultaneously. The lab had no fallback strategy to shift to on-demand capacity or other regions.
+**Consequence**: Checkpointing handles isolated interruptions; it does not solve fleet-wide preemption when every retry targets the same exhausted pool.
 
-**The systems lesson**: Spot capacity is correlated with global research deadlines. A robust scheduler must have a "break glass" capability to flee to on-demand capacity when the spot market becomes toxic.
+**Systems lesson**: A robust scheduler must diversify across regions and instance types, monitor interruption risk, and maintain a "break glass" path to on-demand capacity when the spot market becomes toxic.
 
 :::
 
@@ -1504,17 +1504,17 @@ Consider our 175B-parameter model training run. A pure implementation of Pollux 
 
 The build-vs.-buy decision for a custom scheduler is a substantial capital investment. Developing a robust, fault-tolerant scheduler that outperforms the default bin-packing behavior of Kubernetes requires a specialized team of 3 to 5 systems engineers working for 6 to 12 months. The ROI math is what justifies the effort: if the team can improve overall cluster utilization by 10 percent on a fleet of 10,000 H100 GPUs (approximately \$25,000 per hour in capital depreciation and power), the savings amount to roughly \$22 million per year. This stark return on investment drives the development of internal scheduling platforms at every major AI lab, transforming the scheduler from a mere utility into a primary lever for operational efficiency.
 
-The risk is not only implementation cost; a scheduler can also optimize a metric that conflicts with the organization's real objective.
+The risk is not only implementation cost; scheduler behavior can also fail to match the execution semantics of distributed training.
 
-::: {#ws-fleet-orchestration-scheduler-that-optimized-wrong-metric .callout-war-story title="The scheduler that optimized the wrong metric"}
+::: {#ws-fleet-orchestration-openai-gang-scheduling .callout-war-story title="OpenAI's gang-scheduling deadlock"}
 
-**The context**: A platform team at a major autonomous vehicle company deployed a custom scheduler designed to minimize average job completion time (JCT), a standard academic metric. The logic was sound: by prioritizing shorter jobs, the queue clears faster, and developer velocity increases.
+**Context**: OpenAI scaled Kubernetes clusters to 7,500 nodes for workloads including GPT-3, CLIP, and DALL-E. Their large training jobs used MPI-style execution, where all workers in a group had to be scheduled simultaneously before training could make progress [@sigler2021openai_kubernetes].
 
-**The failure**: The scheduler correctly identified that their massive Transformer pretraining jobs would take weeks to complete. To minimize average JCT, it continuously preempted these long-running jobs to squeeze in thousands of short, minute-long debugging and visualization tasks submitted by other teams.
+**Failure**: Default Kubernetes scheduling did not guarantee that all of one job's workers would be placed before scheduling started filling another job. If two experiments each requested the whole cluster, Kubernetes could schedule half of each job instead of all of one job, leaving both jobs unable to run.
 
-**The consequence**: While the *average wait time* dropped by 40 percent, the *P99 wait time* for critical-path training jobs exploded from 4 hours to 9 days. The core product, the autonomous driving model, effectively stopped learning for two weeks.
+**Consequence**: The cluster could appear busy while no experiment made useful training progress: a classic gang-scheduling deadlock caused by partial allocation.
 
-**The systems lesson**: Optimizing for an aggregate metric without distinct Quality of Service (QoS) tiers for different workload classes (interactive vs. batch vs. production) is a recipe for organizational paralysis.
+**Systems lesson**: Distributed ML scheduling must encode the job's execution semantics. For MPI-style training, "some pods scheduled" is not partial progress; it is wasted allocation. Production schedulers need gang scheduling, quota controls, and workload-aware policies rather than generic pod placement alone.
 
 :::
 
@@ -2004,17 +2004,17 @@ class QuotaHoardingCost:
     hoarding_cost_str = fmt(cost, precision=0)
 ```
 
-A concrete quota incident shows how quickly idle reservations become expensive.
+A concrete quota scenario shows how quickly idle reservations become expensive.
 
-::: {#ws-fleet-orchestration-quota-hoarding-incident .callout-war-story title="The quota hoarding incident"}
+::: {#exmp-fleet-orchestration-quota-hoarding .callout-example title="Quota hoarding"}
 
-**The context**: A computer vision team at a major logistics company reserved a block of 500 GPUs for a "critical" urgent model refresh.
+**Scenario**: A team reserves a block of 500 GPUs for a "critical" urgent model refresh.
 
-**The failure**: Due to upstream data delays, the training jobs were postponed, but the team retained the reservation to ensure availability "when the data arrives."
+**Failure mode**: Upstream data delays postpone the training jobs, but the team retains the reservation to ensure availability "when the data arrives."
 
-**The consequence**: The GPUs sat idle for three weeks, a capital waste of roughly \$`{python} QuotaHoardingCost.hoarding_cost_str`, while the NLP team's queues overflowed, delaying a chatbot release by a month.
+**Consequence**: The GPUs sit idle for three weeks, a capital waste of roughly \$`{python} QuotaHoardingCost.hoarding_cost_str`, while other teams' queues grow.
 
-**The systems lesson**: The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
+**Systems lesson**: The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
 
 :::
 

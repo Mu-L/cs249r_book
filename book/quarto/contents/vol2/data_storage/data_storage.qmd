@@ -1434,15 +1434,15 @@ plt.close()
 
 The pipeline equation also reveals a scaling challenge that worsens with cluster size. As $N_{\text{GPUs}}$ increases, the required bandwidth $\text{BW}_{\text{required}}$ increases linearly, but the storage system's aggregate bandwidth does not automatically scale to match. Adding more compute nodes to a cluster that shares a parallel file system increases the demand on a fixed storage resource. Eventually, the storage system saturates and every additional GPU beyond the saturation point contributes zero additional training throughput while increasing cost. This saturation point is the practical upper limit on cluster scaling for a given storage configuration, and identifying it quantitatively requires applying @eq-pipeline-throughput to the specific storage system's measured bandwidth.
 
-::: {#ws-data-storage-invisible-tax .callout-war-story title="The invisible tax"}
+::: {#exmp-data-storage-metadata-tax .callout-example title="The metadata tax"}
 
-**The context**: A major cloud provider invested heavily in a 4,096-GPU cluster for a flagship large language model (LLM) training service. Despite top-tier hardware, the team struggled to exceed 68 percent Model FLOPS Utilization (MFU), far below their target of 85 percent.
+**Scenario**: A large GPU training cluster has enough raw storage bandwidth on paper, but measured Model FLOPS Utilization (MFU) remains far below target.
 
-**The failure**: Profiling revealed the GPUs were frequently idle, but network and storage I/O metrics looked healthy. The root cause was insidious: the default data loader behavior issued a `stat()` system call for each file before opening it, a defensive check inherited from a database-era storage library.
+**Failure mode**: Profiling reveals that GPUs are frequently idle even though network and storage bandwidth metrics look healthy. A common root cause is metadata amplification: the data loader issues a `stat()` system call for each file before opening it, multiplying metadata-server load across thousands of workers.
 
-**The consequence**: Across thousands of workers, this generated millions of metadata requests per minute, overwhelming the parallel file system's metadata server. The GPUs were stalling on file-open operations, a delay invisible to standard I/O bandwidth counters.
+**Consequence**: Across thousands of workers, per-file metadata checks can generate millions of metadata requests per minute, overwhelming the parallel file system's metadata server. GPUs then stall on file-open operations, a delay invisible to standard I/O bandwidth counters.
 
-**The systems lesson**: The fix was to precompute a file manifest at job start and have loaders read it once, eliminating the per-file `stat()` calls. MFU immediately rose to 83 percent, recovering an estimated \$2.4 million per month in wasted compute.
+**Systems lesson**: Precompute a file manifest at job start and have loaders read it once, eliminating per-file metadata checks on the hot path. Storage bottlenecks are often metadata bottlenecks, not byte-throughput bottlenecks.
 
 :::
 
@@ -2021,6 +2021,18 @@ The total storage consumed by checkpoints over the life of a training run is sub
 Incremental checkpointing offers a further optimization for reducing $T_{\text{write}}$. Rather than saving the entire model state every checkpoint, an incremental checkpoint saves only the parameters that changed since the last full checkpoint. For models where a large fraction of parameters are frozen (such as fine-tuning scenarios where only the last few layers are updated), incremental checkpoints can be orders of magnitude smaller than full checkpoints. The trade-off is recovery complexity: restoring from an incremental checkpoint requires applying a chain of incremental updates to a base checkpoint, which extends recovery time. Most production systems use a hybrid approach, saving incremental checkpoints frequently and full checkpoints periodically (every 10th to 100th increment).
 
 The checkpoint storage challenge interacts directly with the fault tolerance strategy examined in @sec-fault-tolerance-reliability. From the storage perspective, the design goal is to minimize $T_{\text{write}}$ (the time the training pipeline pauses) while ensuring that at least one durable copy of the checkpoint exists before the next failure window opens. The Young-Daly formula (@sec-fault-tolerance-young-daly) formalizes this trade-off by deriving the optimal checkpoint interval from the cluster's mean time between failures and the checkpoint write time. The storage engineer's contribution to this equation is reducing $T_{\text{write}}$ through tiered staging.
+
+::: {#ws-data-storage-gitlab-database-incident .callout-war-story title="The backup that had not been restored"}
+**Context**: On January 31, 2017, around 17:20 UTC, a GitLab.com site reliability engineer working a database replication incident wiped what they believed was the secondary PostgreSQL data directory but had switched terminals to the production primary [@gitlab2017postmortem].
+
+**Failure**: GitLab.com depended on five layered recovery paths: pg_dump backups to S3, LVM snapshots, Azure disk snapshots, PostgreSQL replication, and WAL archiving. All five failed or were absent. The S3 dumps were silently empty due to a PostgreSQL 9.2/9.6 version mismatch; Azure snapshots were not enabled for database servers; replication was the very procedure that had broken; LVM snapshots existed but were six hours stale; WAL archiving had never been implemented.
+
+**Consequence**: Roughly six hours of recent commits and database state were unrecoverable. GitLab livestreamed the recovery on YouTube to about five thousand concurrent viewers and published a public Google document tracking progress, restoring service after about eighteen hours from a stale staging-environment snapshot.
+
+**Systems lesson**: Storage reliability is a restore property, not a backup property. A checkpoint, replica, or dump only counts if the team regularly proves that it can be located, validated, and restored under incident conditions.
+:::
+
+That incident turns checkpoint storage from a capacity question into a restore-design question.
 
 ::: {#chk-data-storage-checkpoint-storage-design .callout-checkpoint title="Checkpoint storage design"}
 
