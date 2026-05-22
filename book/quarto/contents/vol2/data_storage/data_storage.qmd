@@ -782,7 +782,8 @@ The gap between host DRAM bandwidth and HBM bandwidth is the first major cliff i
 # │
 # │ Goal:    Quantify raw image bandwidth, HDD IOPS shortfall, and per-node
 # │          checkpoint write times to NVMe vs PFS.
-# │ Show:    150 MB/s raw image BW; 10x HDD slowdown; 0.3s NVMe / 1.0s PFS
+# │ Show:    150 MB/s raw image BW; 10x HDD slowdown; 10% HDD ceiling;
+# │          0.3s NVMe / 1.0s PFS
 # │          checkpoint write for a 175B model shard.
 # │ How:     BW = images/s × size; HDD ratio = images/s/IOPS; ckpt time =
 # │          shard_GB/drive_BW.
@@ -790,7 +791,7 @@ The gap between host DRAM bandwidth and HBM bandwidth is the first major cliff i
 # │ Imports: mlsysim.core.constants (NVME_SEQUENTIAL_BW, GB, second, BILLION, THOUSAND,
 # │          MILLION)
 # │ Exports: NVMeTierCalcs.raw_bw_str, .hdd_slowdown_factor_str,
-# │          .ckpt_nvme_s_str, .ckpt_pfs_s_str
+# │          .hdd_util_ceiling_pct_str, .ckpt_nvme_s_str, .ckpt_pfs_s_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import NVME_SEQUENTIAL_BW, GB, second, BILLION, THOUSAND, MILLION
 from mlsysim.fmt import check, fmt
@@ -810,6 +811,7 @@ class NVMeTierCalcs:
     # ┌── 2. EXECUTE ──────────────────────────────────────
     raw_bw_val       = (images_per_sec * img_size) / MILLION
     hdd_slowdown_val = images_per_sec/hdd_iops
+    hdd_util_ceiling_pct_val = hdd_iops / images_per_sec * 100
     node_shard_gb    = ckpt_total_gb_val/n_nodes
     ckpt_nvme_s_val  = node_shard_gb / (4 * nvme_bw_raw.m_as(GB/second))
     ckpt_pfs_s_val   = node_shard_gb/pfs_node_bw.m_as(GB/second)
@@ -821,6 +823,7 @@ class NVMeTierCalcs:
     # ┌── 4. OUTPUT ───────────────────────────────────────
     raw_bw_str             = fmt(raw_bw_val, precision=0, commas=False)
     hdd_slowdown_factor_str = fmt(hdd_slowdown_val, precision=0, commas=False)
+    hdd_util_ceiling_pct_str = fmt(hdd_util_ceiling_pct_val, precision=0, commas=False)
     ckpt_nvme_s_str        = fmt(ckpt_nvme_s_val, precision=1, commas=False)
     ckpt_pfs_s_str         = fmt(ckpt_pfs_s_val, precision=1, commas=False)
 ```
@@ -861,7 +864,7 @@ A standard ImageNet training pipeline makes the cost of the wrong format visible
 
 1.  **Raw Bandwidth**\index{Bandwidth!raw}: 1,000 images/s$\times$ 150 KB/image = **`{python} NVMeTierCalcs.raw_bw_str` MB/s**.
 2.  **HDD Reality**\index{HDD Reality}: A 7200 RPM hard disk drive (HDD) delivers 100 random IOPS. Sustaining 1,000 images/s requires **`{python} NVMeTierCalcs.hdd_slowdown_factor_str`$\times$ more IOPS** than the disk provides.
-3.  **Result**: Shuffling individual files on an HDD will starve the GPU, reducing utilization to <5 percent.
+3.  **Result**: Shuffling individual files on an HDD will starve the GPU, capping utilization at about `{python} NVMeTierCalcs.hdd_util_ceiling_pct_str` percent before decode, seek, and file-system overheads.
 
 **Systems insight**: The pipeline must either use NVMe (sub-10 μs random access) or convert the dataset to a sequential format (TFRecord/WebDataset) to achieve sequential throughput.
 
@@ -1526,9 +1529,45 @@ Feature store architectures address point-in-time correctness[^fn-point-in-time]
 
 ### Data versioning and pipeline orchestration at scale {#sec-storage-data-versioning-orchestration}
 
+```{python}
+#| label: hash-validation-cost
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ HASH VALIDATION COST (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: SHA-256 validation footnote in §Data versioning.
+# │ Goal: Make the 100 TB / 1,500 core-hour integrity-check estimate reproducible.
+# │ How: Dataset MB / effective per-core throughput / seconds per hour.
+# │ Exports: HashValidationCost.dataset_tb_str,
+# │          HashValidationCost.throughput_mb_s_str,
+# │          HashValidationCost.core_hours_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check, fmt
+
+class HashValidationCost:
+    """Pipeline-level SHA-256 validation cost assumption."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    dataset_tb = 100
+    throughput_mb_s_per_core = 18.5
+    seconds_per_hour = 3600
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    dataset_mb = dataset_tb * 1_000_000
+    core_hours = dataset_mb / throughput_mb_s_per_core / seconds_per_hour
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(1450 < core_hours < 1550, "100 TB at 18.5 MB/s/core should be about 1,500 core-hours")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    dataset_tb_str = fmt(dataset_tb, precision=0, commas=False)
+    throughput_mb_s_str = fmt(throughput_mb_s_per_core, precision=1, commas=False)
+    core_hours_str = fmt(core_hours, precision=0)
+```
+
 At the 10,000-GPU scale, the dataset is no longer a *static collection of files* but a *dynamic stream* that must be captured with absolute precision. Foundation-model runs can last weeks or months; in our 30-day running example, the data seen near the end of the run must be identical in composition and order to the data seen on day 1. Otherwise, we cannot distinguish between a model regression and a silent change in the input distribution. Dataset versioning\index{Dataset Versioning} provides the necessary "Git for data" capability by snapshotting the cryptographic hashes[^fn-hash-cost] of every data shard, the exact preprocessing code used for tokenization, and the random seeds governing the global shuffle.
 
-[^fn-hash-cost]: **Hash Cost (SHA-256)**: Verifying the integrity of a 100 TB dataset using SHA-256 consumes approximately 1,500 CPU-core hours. For a 30-day foundation model training run, this metadata validation step must be pipelined or performed during ingestion to avoid stalling the fleet's startup phase. \index{Cryptographic Hash!validation cost}
+[^fn-hash-cost]: **Hash Cost (SHA-256)**: Verifying the integrity of a `{python} HashValidationCost.dataset_tb_str` TB dataset using SHA-256 consumes approximately `{python} HashValidationCost.core_hours_str` CPU-core hours under a pipeline-level throughput assumption of `{python} HashValidationCost.throughput_mb_s_str` MB/s per core. For a 30-day foundation model training run, this metadata validation step must be pipelined or performed during ingestion to avoid stalling the fleet's startup phase. \index{Cryptographic Hash!validation cost}
 
 This level of rigor is essential for audit trails and for debugging the subtle "loss spikes" that characterize large-scale training, where we must be able to replay the exact batch that caused a divergence to determine if the cause was a corrupted data sample or a numerical instability in the optimizer.
 
@@ -1546,12 +1585,15 @@ Beyond pipeline orchestration, a hardware optimization eliminates one of the mos
 # │
 # │ Goal:    Quantify the per-transfer latency reduction from GDS and the
 # │          resulting CPU core savings.
-# │ Show:    120 μs traditional vs 30 μs GDS; 4x speedup.
+# │ Show:    120 μs traditional vs 30 μs GDS; 4x speedup; 75% latency reduction.
 # │ How:     Ratio of traditional to bypass latency per transfer.
 # │
 # │ Imports: (none—uses representative latency constants)
 # │ Exports: GDSLatency.gds_trad_us_str, .gds_bypass_us_str,
-# │          .gds_speedup_str
+# │          .gds_speedup_str, .gds_latency_reduction_pct_str,
+# │          .gds_total_images_per_s_str, .gds_trad_cpu_seconds_str,
+# │          .gds_trad_cpu_cores_str, .gds_bypass_cpu_seconds_str,
+# │          .gds_freed_cpu_cores_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import check, fmt
 
@@ -1559,17 +1601,29 @@ class GDSLatency:
     # ┌── 1. LOAD ─────────────────────────────────────────
     gds_trad_us   = 120
     gds_bypass_us = 30
+    total_images_per_s = 64_000
 
     # ┌── 2. EXECUTE ──────────────────────────────────────
     gds_speedup_val = gds_trad_us/gds_bypass_us
+    gds_latency_reduction_pct_val = (1 - gds_bypass_us/gds_trad_us) * 100
+    gds_trad_cpu_seconds_val = total_images_per_s * gds_trad_us / 1_000_000
+    gds_bypass_cpu_seconds_val = total_images_per_s * gds_bypass_us / 1_000_000
+    gds_freed_cpu_cores_val = gds_trad_cpu_seconds_val - gds_bypass_cpu_seconds_val
 
     # ┌── 3. GUARD ────────────────────────────────────────
     check(gds_speedup_val == 4.0, "GDS speedup should be 4x")
+    check(gds_latency_reduction_pct_val == 75, "GDS latency reduction should be 75%")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
     gds_trad_us_str   = fmt(gds_trad_us, precision=0, commas=False)
     gds_bypass_us_str = fmt(gds_bypass_us, precision=0, commas=False)
     gds_speedup_str   = fmt(gds_speedup_val, precision=0, commas=False)
+    gds_latency_reduction_pct_str = fmt(gds_latency_reduction_pct_val, precision=0, commas=False)
+    gds_total_images_per_s_str = fmt(total_images_per_s, precision=0)
+    gds_trad_cpu_seconds_str = fmt(gds_trad_cpu_seconds_val, precision=2, commas=False)
+    gds_trad_cpu_cores_str = fmt(round(gds_trad_cpu_seconds_val), precision=0, commas=False)
+    gds_bypass_cpu_seconds_str = fmt(gds_bypass_cpu_seconds_val, precision=2, commas=False)
+    gds_freed_cpu_cores_str = fmt(round(gds_freed_cpu_cores_val), precision=0, commas=False)
 ```
 
 ## GPU Direct Storage and the CPU Bypass {#sec-storage-gds}
@@ -1584,7 +1638,7 @@ The traditional data path for loading training data follows three hops: storage 
 
 ***GPU Direct Storage (GDS)***\index{GPU Direct Storage!definition} is a technology that enables a direct DMA path between NVMe storage devices and GPU memory, bypassing the host CPU and system DRAM.
 
-1.  **Significance (quantitative)**: It eliminates the "Bounce Buffer" through system memory, reducing data loading latency $(L_{\text{lat}})$ and doubling the effective bandwidth $(\text{BW})$ for I/O-intensive workloads. It allows the GPU to saturate the NVMe link speed (for example, 7 GB/s) while reducing CPU utilization for I/O by up to 90 percent.
+1.  **Significance (quantitative)**: It eliminates the "Bounce Buffer" through system memory. In the small-transfer model below, this reduces per-transfer latency by `{python} GDSLatency.gds_latency_reduction_pct_str` percent and makes the local transfer path `{python} GDSLatency.gds_speedup_str`$\times$ faster. It allows the GPU to saturate the NVMe link speed (for example, 7 GB/s) while reducing CPU utilization for I/O.
 2.  **Distinction (durable)**: Unlike **Traditional I/O**\index{Traditional I/O}, where every byte must be processed by the CPU and stored in kernel buffers, GDS provides **Direct Memory Access** between the storage controller and the accelerator.
 3.  **Common pitfall**: A frequent misconception is that GDS makes all storage "faster." In reality, it only accelerates **Local or RDMA-attached NVMe**; it does not eliminate the physical latency of network-attached file systems or object storage.
 
@@ -1606,11 +1660,11 @@ As @fig-gds-path illustrates, the throughput improvement from GDS is most pronou
 
 ::: {#nbk-data-storage-cpu-bypass-dividend .callout-notebook title="The CPU bypass dividend"}
 
-**Problem**\index{GPU Direct Storage!CPU bypass}: A training node with 8 GPUs loads 150 KB images at 8,000 images/second per GPU (64,000 images/second total). Compare the CPU load under traditional I/O vs. GDS.
+**Problem**\index{GPU Direct Storage!CPU bypass}: A training node with 8 GPUs loads 150 KB images at 8,000 images/second per GPU (`{python} GDSLatency.gds_total_images_per_s_str` images/second total). Compare the CPU load under traditional I/O vs. GDS.
 
-**Traditional path**\index{Traditional Path}: Each image requires a DMA from NVMe to DRAM, a `memcpy` from kernel to user space, and a PCIe transfer to GPU. At 64,000 images/second with `{python} GDSLatency.gds_trad_us_str` μs of CPU time per image, the CPU spends 7.68 seconds of CPU time per wall-clock second, consuming roughly 8 cores worth of processing just for data movement.
+**Traditional path**\index{Traditional Path}: Each image requires a DMA from NVMe to DRAM, a `memcpy` from kernel to user space, and a PCIe transfer to GPU. At `{python} GDSLatency.gds_total_images_per_s_str` images/second with `{python} GDSLatency.gds_trad_us_str` μs of CPU time per image, the CPU spends `{python} GDSLatency.gds_trad_cpu_seconds_str` seconds of CPU time per wall-clock second, consuming roughly `{python} GDSLatency.gds_trad_cpu_cores_str` cores worth of processing just for data movement.
 
-**GDS path**\index{GDS Path}: Each image is DMA'd directly from NVMe to GPU. At `{python} GDSLatency.gds_bypass_us_str` μs of CPU time per image (for initiating the DMA), the CPU spends 1.92 seconds of CPU time per wall-clock second, freeing 6 cores for data augmentation.
+**GDS path**\index{GDS Path}: Each image is DMA'd directly from NVMe to GPU. At `{python} GDSLatency.gds_bypass_us_str` μs of CPU time per image (for initiating the DMA), the CPU spends `{python} GDSLatency.gds_bypass_cpu_seconds_str` seconds of CPU time per wall-clock second, freeing roughly `{python} GDSLatency.gds_freed_cpu_cores_str` cores for data augmentation.
 
 **Systems insight**: GDS reduces latency and, more importantly, shifts CPU utilization from data copying (which adds no value) to data augmentation (which improves model quality).
 
@@ -1829,9 +1883,64 @@ A `{python} StorageHierarchyAnalysis.gpt3_params_b_str`B parameter model with Ad
 
 ::: {#dfn-data-storage-checkpoint-storm .callout-definition title="Checkpoint storm"}
 
+```{python}
+#| label: checkpoint-storm-definition-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ CHECKPOINT STORM DEFINITION CALCULATION (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Quantitative significance bullet in the Checkpoint Storm definition.
+# │ Goal: Make the 70B naive-vs-sharded checkpoint arithmetic explicit.
+# │ How: Compute FP16 weights/gradients, FP32 master weights, Adam moments, and
+# │      fabric write time at 100 GB/s.
+# │ Exports: CheckpointStormDefinition.*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import check, fmt
+
+class CheckpointStormDefinition:
+    """Checkpoint-storm arithmetic for the definition callout."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    params_b = 70
+    nodes = 1_000
+    bytes_fp16 = 2
+    bytes_fp32 = 4
+    fabric_bw_gbs = 100
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    weights_gb = params_b * bytes_fp16
+    gradients_gb = params_b * bytes_fp16
+    master_weights_gb = params_b * bytes_fp32
+    adam_moments_gb = params_b * 2 * bytes_fp32
+    optimizer_state_gb = master_weights_gb + adam_moments_gb
+    zero3_total_gb = weights_gb + gradients_gb + optimizer_state_gb
+    zero3_total_tb = zero3_total_gb / 1000
+    zero3_write_s = zero3_total_gb / fabric_bw_gbs
+    naive_total_tb = weights_gb * nodes / 1000
+    naive_write_s = naive_total_tb * 1000 / fabric_bw_gbs
+    naive_write_min = naive_write_s / 60
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(zero3_total_gb == 1120, "70B sharded training-state total should be 1,120 GB with master weights")
+    check(1390 < naive_write_s < 1410, "Naive 140 TB write at 100 GB/s should be about 1,400 s")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
+    gradients_gb_str = fmt(gradients_gb, precision=0, commas=False)
+    master_weights_gb_str = fmt(master_weights_gb, precision=0, commas=False)
+    adam_moments_gb_str = fmt(adam_moments_gb, precision=0, commas=False)
+    optimizer_state_gb_str = fmt(optimizer_state_gb, precision=0, commas=False)
+    zero3_total_tb_str = fmt(zero3_total_tb, precision=2, commas=False)
+    zero3_write_s_str = fmt(zero3_write_s, precision=1, commas=False)
+    naive_total_tb_str = fmt(naive_total_tb, precision=0, commas=False)
+    naive_write_s_str = fmt(naive_write_s, precision=0)
+    naive_write_min_str = fmt(naive_write_min, precision=0, commas=False)
+```
+
 ***Checkpoint Storm***\index{Checkpoint Storm!definition} is a burst of synchronized network and storage traffic that occurs when all nodes in a training fleet save model state simultaneously.
 
-1.  **Significance (quantitative)**: The storm magnitude scales as $T_{\text{write}} = N \times \text{per-node-shard} / \text{BW}_{\text{fabric}}$. For a 70B-parameter model in FP16 (140 GB of weights) trained across 1,000 nodes with vanilla data parallelism (every node holding its own complete copy), a naive checkpoint generates 140 TB of simultaneous writes; at 100 GB/s fabric bandwidth, $T_{\text{write}} \approx 1{,}400$ seconds, over 23 minutes of training stall per checkpoint event. ZeRO-3 sharding collapses this to roughly 1.1 TB total (140 GB weights + 140 GB gradients + 840 GB optimizer state, split across 1,000 nodes), bringing $T_{\text{write}}$ down to roughly 11 seconds. This stall adds directly to the $L_{\text{lat}}$ term and can dwarf the compute time between checkpoints when the sharding optimization is omitted.
+1.  **Significance (quantitative)**: The storm magnitude scales as $T_{\text{write}} = N \times \text{per-node-shard} / \text{BW}_{\text{fabric}}$. For a `{python} CheckpointStormDefinition.params_b_str`B-parameter model in FP16 (`{python} CheckpointStormDefinition.weights_gb_str` GB of weights) trained across 1,000 nodes with vanilla data parallelism (every node holding its own complete copy), a naive checkpoint generates `{python} CheckpointStormDefinition.naive_total_tb_str` TB of simultaneous writes; at 100 GB/s fabric bandwidth, $T_{\text{write}} \approx$ `{python} CheckpointStormDefinition.naive_write_s_str` seconds, over `{python} CheckpointStormDefinition.naive_write_min_str` minutes of training stall per checkpoint event. ZeRO-3 sharding collapses this to roughly `{python} CheckpointStormDefinition.zero3_total_tb_str` TB total (`{python} CheckpointStormDefinition.weights_gb_str` GB weights + `{python} CheckpointStormDefinition.gradients_gb_str` GB gradients + `{python} CheckpointStormDefinition.master_weights_gb_str` GB FP32 master weights + `{python} CheckpointStormDefinition.adam_moments_gb_str` GB Adam moments, split across 1,000 nodes), bringing $T_{\text{write}}$ down to roughly `{python} CheckpointStormDefinition.zero3_write_s_str` seconds. This stall adds directly to the $L_{\text{lat}}$ term and can dwarf the compute time between checkpoints when the sharding optimization is omitted.
 2.  **Distinction (durable)**: Unlike general I/O contention (which is stochastic and unpredictable), a Checkpoint Storm is synchronous and periodic: every node writes at the same moment because the training orchestrator triggers checkpoint after a fixed step count. Its predictability makes it both more damaging (all nodes compete simultaneously) and more tractable (it can be prevented by design through staggered scheduling or asynchronous serialization).
 3.  **Common pitfall**: A frequent misconception is that checkpointing every 100 steps is "low overhead." At 70B scale, this assumption is catastrophically wrong: if each training step takes 10 seconds and a checkpoint storm takes 1,400 seconds, checkpointing every 100 steps means spending $1400/(100 \times 10) = 140\%$ of compute time on checkpointing—more time saving state than doing useful training.
 

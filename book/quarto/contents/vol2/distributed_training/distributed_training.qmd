@@ -102,6 +102,7 @@ from mlsysim.core.constants import (
     SEC_PER_HOUR, SEC_PER_DAY, MILLION, TRILLION, BITS_PER_BYTE, TB
 )
 from mlsysim.fmt import fmt_percent, fmt, fmt_sci, check, MarkdownStr
+import math
 
 class DistTrainConstants:
     # ┌── 1. LOAD (Constants) ──────────────────────────────
@@ -111,10 +112,15 @@ class DistTrainConstants:
     nvlink_h100_gbs = NVLINK_H100_BW.m_as(GB/second)
     ib_hdr_gbs = INFINIBAND_HDR_BW.m_as(GB/second)  # 200 Gbps -> 25 GB/s per port
     ib_ndr_gbs = INFINIBAND_NDR_BW.m_as(GB/second)  # 400 Gbps -> 50 GB/s per port
+    reliability_node_count = 100
+    node_hourly_survival = 0.999
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────
     nvlink_hdr_ratio_low = nvlink_a100_gbs / ib_hdr_gbs
     nvlink_hdr_ratio_high = nvlink_h100_gbs / ib_hdr_gbs
+    cluster_hourly_survival = node_hourly_survival ** reliability_node_count
+    cluster_hourly_failure_prob = 1 - cluster_hourly_survival
+    cluster_mtbf_hours = 1 / (reliability_node_count * -math.log(node_hourly_survival))
 
     # ┌── 3. GUARD (Invariants) ────────────────────────────
     check(a100_mem_gb > 0, "A100 memory must be positive")
@@ -123,6 +129,7 @@ class DistTrainConstants:
     check(ib_ndr_gbs < nvlink_h100_gbs, "InfiniBand NDR slower than H100 NVLink")
     check(20 < nvlink_hdr_ratio_low < 30, "A100 NVLink/HDR ratio should be about 24x")
     check(30 < nvlink_hdr_ratio_high < 40, "H100 NVLink/HDR ratio should be about 36x")
+    check(9 < cluster_mtbf_hours < 11, "100 nodes at 99.9% hourly survival should fail about every 10 hours")
 
     # ┌── 4. OUTPUT (Formatting) ───────────────────────────
     a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False)
@@ -133,6 +140,10 @@ class DistTrainConstants:
     ib_ndr_str = fmt(ib_ndr_gbs, precision=0, commas=False)
     nvlink_hdr_ratio_low_str = fmt(nvlink_hdr_ratio_low, precision=0, commas=False)
     nvlink_hdr_ratio_high_str = fmt(nvlink_hdr_ratio_high, precision=0, commas=False)
+    reliability_node_count_str = fmt(reliability_node_count, precision=0, commas=False)
+    node_hourly_survival_pct_str = fmt(node_hourly_survival * 100, precision=1, commas=False)
+    cluster_failure_prob_pct_str = fmt(cluster_hourly_failure_prob * 100, precision=1, commas=False)
+    cluster_mtbf_hours_str = fmt(cluster_mtbf_hours, precision=1, commas=False)
     gpt4_mem_tb_str = fmt((GPT4_EST_PARAMS.m_as('param') * 2 / 1e12), precision=1, commas=False)
     # Plain-string literal → MarkdownStr per recipe Rule 1
     dlrm_mem_tb_str = MarkdownStr("10")
@@ -174,7 +185,7 @@ Third, **dataset scale** exceeds single-machine storage when training data reach
 Distributed training introduces three primary complexity dimensions not present in single-machine scenarios:
 
 1.  **Communication Overhead**\index{Communication Overhead}: The cost of synchronizing gradients. For a model with $P$ parameters distributed across $N_{\text{dev}}$ devices, all-reduce operations must transfer approximately $2P(N_{\text{dev}}-1)/N_{\text{dev}}$ gradient values per step, multiplied by the bytes per gradient element. On commodity networks, this can dominate computation time.
-2.  **Fault Tolerance**\index{Fault Tolerance}: The expected number of failures per unit time grows linearly with cluster size, while the probability that the entire cluster survives an interval without any failure decays exponentially. A 100-node cluster with 99.9 percent per-node reliability experiences failures every few hours.
+2.  **Fault Tolerance**\index{Fault Tolerance}: The expected number of failures per unit time grows linearly with cluster size, while the probability that the entire cluster survives an interval without any failure decays exponentially. If a `{python} DistTrainConstants.reliability_node_count_str`-node cluster has `{python} DistTrainConstants.node_hourly_survival_pct_str` percent per-node hourly survival, the cluster-level failure probability is `{python} DistTrainConstants.cluster_failure_prob_pct_str` percent per hour, corresponding to an MTBF of about `{python} DistTrainConstants.cluster_mtbf_hours_str` hours.
 3.  **Algorithmic Stability**\index{Algorithmic Stability}: Large batch sizes from data parallelism affect convergence behavior, requiring learning rate scaling and warmup strategies that single-machine training does not require [@goyal2017accurate].
 
 ### Single-machine to distributed transition {#sec-distributed-training-systems-systems-singlemachine-distributed-transition-1ee4}
@@ -600,11 +611,13 @@ class Scaling8GPU:
     params_b = GPT2_PARAMS.m_as(Bparam)  # GPT-2
     nvlink_bw = NVLINK_H100_BW.m_as(GB/second)
     gpus_per_node = GPUS_PER_HOST
+    fp16_gradient_bytes = 2
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Ring All-Reduce: 2*(N-1)/N * Params * 2 bytes (FP16)
-    # For large N, ~2 * Params * 2 = 4 * Params.
-    sync_size_gb = (params_b * BILLION * 4) / BILLION
+    ring_factor = 2 * (gpus_per_node - 1) / gpus_per_node
+    gradient_tensor_gb = (params_b * BILLION * fp16_gradient_bytes) / BILLION
+    sync_size_gb = gradient_tensor_gb * ring_factor
     comm_8gpu_ms_val = (sync_size_gb/nvlink_bw) * 1000
 
     total_8gpu_ms_val = compute_8gpu_ms + comm_8gpu_ms_val
@@ -617,6 +630,7 @@ class Scaling8GPU:
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(efficiency_8gpu_val > 95, f"Intra-node efficiency ({efficiency_8gpu_val:.1f}%) should be high")
+    check(5.2 <= sync_size_gb <= 5.3, "8-GPU ring AllReduce traffic should be about 5.25 GB")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     total_8gpu_str = fmt(total_8gpu_ms_val, precision=0, commas=False)
@@ -669,9 +683,13 @@ class Scaling32GPU:
     net_bw = 1.25 # 10 Gbps = 1.25 GB/s (Commodity network)
     intra_node_ms = Scaling8GPU.comm_8gpu_ms_val
     training_hours_1gpu = 25
+    gpus = 32
+    fp16_gradient_bytes = 2
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    sync_size_gb = (params_b * BILLION * 4) / BILLION
+    ring_factor = 2 * (gpus - 1) / gpus
+    gradient_tensor_gb = (params_b * BILLION * fp16_gradient_bytes) / BILLION
+    sync_size_gb = gradient_tensor_gb * ring_factor
     inter_node_ms_val = (sync_size_gb/net_bw) * 1000
 
     comm_32gpu_ms_val = inter_node_ms_val + intra_node_ms
@@ -696,6 +714,7 @@ class Scaling32GPU:
     speedup_32gpu_str = fmt(speedup_32gpu_val, precision=1, commas=False)
     efficiency_32gpu_str = fmt(efficiency_32gpu_val, precision=0, commas=False)
     training_32gpu_str = fmt(training_32gpu_hours_val, precision=1, commas=False)
+    gpt2_sync_size_gb_str = fmt(sync_size_gb, precision=1, commas=False)
     inter_node_ms_str = fmt(inter_node_ms_val, precision=0, commas=False)
     ib_hdr_str = fmt(net_bw, precision=2, commas=False)
     # compute_32gpu_ms int "1800" — preserve original (no commas) via MarkdownStr
@@ -783,7 +802,7 @@ Configuration:
 
 - Per-GPU batch: 16, global batch: 512
 - Intra-node communication: `{python} Scaling8GPU.comm_8gpu_ms_str` ms (NVLink)
-- Inter-node communication: `{python} Scaling8GPU.gpt2_sync_size_gb_str` GB @ `{python} Scaling32GPU.ib_hdr_str` GB/s (10GbE) $\approx$ `{python} Scaling32GPU.inter_node_ms_str` ms
+- Inter-node communication: `{python} Scaling32GPU.gpt2_sync_size_gb_str` GB @ `{python} Scaling32GPU.ib_hdr_str` GB/s (10GbE) $\approx$ `{python} Scaling32GPU.inter_node_ms_str` ms
 
 Performance results:
 
@@ -1326,7 +1345,7 @@ class ScalingWorkers:
 | **64 GPU BSP**       |          1,720 |                45% |           40.1$\times$ |                   91% |
 | **64 GPU SSP**       |          2,100 |                25% |           38.1$\times$ |                   74% |
 
-: **Scaling SGD Across Cluster Sizes**: Iteration count, communication overhead, wall-clock speedup, and sample efficiency for the same training job at 1, 8, and 64 GPUs. BSP scales linearly until communication dominates at 64 GPUs; SSP wins on wall-clock time at the cost of sample efficiency. {#tbl-scaling-bsp-ssp}
+: **Scaling SGD Across Cluster Sizes**: Iteration count, communication overhead, wall-clock speedup, and sample efficiency for the same training job at 1, 8, and 64 GPUs. BSP remains slightly faster in this worked example; SSP reduces communication overhead but pays for staleness through lower sample efficiency and more iterations. {#tbl-scaling-bsp-ssp}
 
 The 64-GPU BSP configuration achieves 40$\times$ speedup despite only 91 percent sample efficiency because the communication overhead (45 percent) is offset by the massive parallelism. SSP provides comparable wall-clock time with lower communication overhead but requires more total samples.
 

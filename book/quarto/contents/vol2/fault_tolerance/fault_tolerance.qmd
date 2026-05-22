@@ -285,7 +285,7 @@ class NinesReliability:
     # ┌── 4. OUTPUT ────────────────────────────────────────
     n_gpus_str = fmt(n_gpus, precision=0)
     availability_str = fmt(availability_pct, precision=2, commas=False)
-    downtime_min_str = fmt(int(downtime_min_year), precision=0, commas=False)
+    downtime_min_str = fmt(downtime_min_year, precision=1, commas=False)
     survival_str = fmt(single_gpu_success, precision=5, commas=False)
     cluster_prob_str = fmt(cluster_prob, precision=2, commas=False)
     cluster_pct_str = fmt(int(round(cluster_prob * 100)), precision=0, commas=False)
@@ -946,7 +946,7 @@ Memory subsystems are the most vulnerability-prone components, and fault toleran
 | **Memory Technology** | **Base Bandwidth** **(GB/s)** | **ECC Overhead** **(%)** | **Effective** **Bandwidth (GB/s)** |
 |:----------------------|------------------------------:|-------------------------:|-----------------------------------:|
 | **DDR4-3200**         |                          51.2 |             12.5 percent |                               44.8 |
-| **HBM2**              |                           900 |             12.5 percent |                                787 |
+| **HBM2**              |                           900 |             12.5 percent |                              787.5 |
 | **HBM3**              |                         1,600 |             12.5 percent |                              1,400 |
 | **GDDR6X**            |                           760 |           Typically none |                                760 |
 
@@ -2176,7 +2176,7 @@ The Young-Daly formula provides valuable intuition but rests on assumptions that
 4. **Single failure mode**\index{Single Failure Mode}: Assumes one failure at a time. Correlated failures (power, cooling, shared switch) violate this assumption.
 5. **Infinite timeline**\index{Infinite Timeline}: Optimal for long training runs. Short runs (where total time is comparable to MTBF) require different analysis.
 
-When assumptions are violated, the optimal interval may shift significantly. As a rule of thumb, if restart overhead significantly exceeds checkpoint time, use $\sqrt{2 \times (T_{\text{write}} + T_{\text{restart}}) \times \text{MTBF}}$ instead.
+When assumptions are violated, the optimal interval may shift significantly, but restart overhead should not be treated as if it were paid at every checkpoint. In the first-order lost-time model, restart time adds a per-failure recovery term to total expected waste; it does not replace $T_{\text{write}}$ inside $\sqrt{2 \cdot T_{\text{write}} \cdot \text{MTBF}}$ unless a recovery-aware Daly-style model is explicitly derived and calibrated.
 
 :::
 
@@ -2188,7 +2188,7 @@ When assumptions are violated, the optimal interval may shift significantly. As 
 
 :::
 
-The timeline in @fig-checkpoint-recovery-timeline reveals why $T_{\text{restart}}$ matters as much as $T_{\text{write}}$: the total failure cost is the sum of lost work (bounded by $\tau_{\text{opt}}$) and recovery time, which includes job scheduling, checkpoint loading, and pipeline warmup. Production systems where $T_{\text{restart}}$ exceeds $T_{\text{write}}$ by 3--5$\times$ should use the modified formula that accounts for both terms.
+The timeline in @fig-checkpoint-recovery-timeline reveals why $T_{\text{restart}}$ matters as much as $T_{\text{write}}$: the total failure cost is the sum of lost work (bounded by $\tau_{\text{opt}}$) and recovery time, which includes job scheduling, checkpoint loading, and pipeline warmup. Production systems where $T_{\text{restart}}$ exceeds $T_{\text{write}}$ by 3--5$\times$ should include recovery time in their total-waste and SLO budgets, and should use a cited recovery-aware checkpoint model rather than folding restart time into the per-checkpoint write term.
 
 #### Checkpoint overhead analysis {#sec-fault-tolerance-reliability-reliability-checkpoint-overhead-analysis-f5df}
 
@@ -2216,16 +2216,16 @@ If checkpoints occur hourly, the system wastes **\$24,000 per day** waiting for 
 
 @tbl-checkpoint-overhead-by-model reveals how checkpoint characteristics vary dramatically by model architecture: larger models require longer write times but also benefit from correspondingly longer optimal intervals.
 
-| **Model Type**                   | **Checkpoint Size** | **Write Time (100 GB/s)** | **Optimal Interval (5hr GPU-only MTBF)** | **Overhead** |
-|:---------------------------------|--------------------:|--------------------------:|-----------------------------------------:|-------------:|
-| **Archetype A (175B dense LLM)** |              2.1 TB |                      21 s |                                 14.5 min |  2.4 percent |
-| **GPT-3.5 (20B)**                |              240 GB |                     2.4 s |                                  4.6 min |  0.9 percent |
-| **BERT-Large**                   |              1.3 GB |                   0.013 s |                                     22 s | 0.06 percent |
-| **Archetype B (DLRM at Scale)**  |                4 TB |                      40 s |                                   20 min |  3.3 percent |
-| **ResNet-50**\index{ResNet-50}   |              100 MB |                   0.001 s |                                      6 s | 0.02 percent |
-| **ViT-Large**                    |              1.2 GB |                   0.012 s |                                     21 s | 0.06 percent |
+| **Model Type**                   | **Checkpoint Size** | **Write Time (100 GB/s)** | **Optimal Interval (5hr GPU-only MTBF)** | **Save Overhead** |
+|:---------------------------------|--------------------:|--------------------------:|-----------------------------------------:|------------------:|
+| **Archetype A (175B dense LLM)** |              2.1 TB |                      21 s |                                 14.5 min |       2.4 percent |
+| **GPT-3.5 (20B)**                |              240 GB |                     2.4 s |                                  4.6 min |       0.9 percent |
+| **BERT-Large**                   |              1.3 GB |                   0.013 s |                                     22 s |      0.06 percent |
+| **Archetype B (DLRM at Scale)**  |                4 TB |                      40 s |                                   20 min |       3.3 percent |
+| **ResNet-50**\index{ResNet-50}   |              100 MB |                   0.001 s |                                      6 s |      0.02 percent |
+| **ViT-Large**                    |              1.2 GB |                   0.012 s |                                     21 s |      0.06 percent |
 
-: **Checkpoint Overhead by Model Type**: Larger models with correspondingly larger checkpoints require longer save times but also benefit from longer optimal checkpoint intervals. The percentage overhead remains manageable (under 5 percent) for most configurations. {#tbl-checkpoint-overhead-by-model}
+: **Checkpoint Overhead by Model Type**: Larger models with correspondingly larger checkpoints require longer save times but also benefit from longer optimal checkpoint intervals. The percentage column reports save-only checkpoint write tax, not total Young-Daly waste; at the optimum, expected rework adds a comparable term. {#tbl-checkpoint-overhead-by-model}
 
 While the theoretical overhead of checkpointing appears manageable for individual models, writing these massive state files introduces a new bottleneck. When thousands of GPUs simultaneously attempt to write gigabytes of data to a shared file system, the resulting I/O congestion threatens to bring the entire cluster to a halt. The scale of that I/O burst is easiest to see by expanding the example from one model to thousands of simultaneous writers.
 
@@ -2273,6 +2273,7 @@ class CheckpointDebug:
     model_params_b = LLAMA2_70B_PARAMS.m_as(Bparam)
     bytes_per_param = BYTES_FP16.m_as(byte)  # BF16
     nfs_gbps = 10
+    pcie_gbs = 32
     n_nodes = 64
     overhead_pct = 30
     base_weeks = 2
@@ -2291,12 +2292,15 @@ class CheckpointDebug:
     per_node_mbs_val = per_node_gbs_val * 1000
     per_node_shard_gb_val = total_ckpt_gb_val / n_nodes
     per_node_write_min_val = (per_node_shard_gb_val/per_node_gbs_val) / 60
+    gpu_cpu_single_path_s_val = total_ckpt_gb_val/pcie_gbs
+    gpu_cpu_parallel_s_val = per_node_shard_gb_val/pcie_gbs
 
     extended_weeks_val = base_weeks * (1 + overhead_pct / 100)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(total_ckpt_gb_val == 700, f"Expected 700 GB checkpoint, got {total_ckpt_gb_val}")
     check(9 < per_node_write_min_val < 10, "Per-node shard write should match aggregate bandwidth floor")
+    check(0.3 < gpu_cpu_parallel_s_val < 0.4, "Parallel GPU-to-CPU staging should be sub-second per node")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     weights_gb_str = fmt(weights_gb, precision=0, commas=False)
@@ -2308,6 +2312,8 @@ class CheckpointDebug:
     per_node_mbs_str = fmt(per_node_mbs_val, precision=0, commas=False)
     per_node_shard_gb_str = fmt(per_node_shard_gb_val, precision=1, commas=False)
     per_node_write_min_str = fmt(per_node_write_min_val, precision=1, commas=False)
+    gpu_cpu_single_path_s_str = fmt(gpu_cpu_single_path_s_val, precision=1, commas=False)
+    gpu_cpu_parallel_s_str = fmt(gpu_cpu_parallel_s_val, precision=2, commas=False)
     extended_weeks_str = fmt(extended_weeks_val, precision=1, commas=False)
     extra_cost_k_str = fmt(extra_cost_k, precision=0, commas=False)
 ```
@@ -2358,7 +2364,7 @@ Understanding all three layers enables a targeted solution:
    - Phase 1: GPU $\rightarrow$ CPU memory copy (fast, 32 GB/s PCIe)
    - Phase 2: CPU $\rightarrow$ local NVMe (3.5 GB/s, training resumes)
    - Phase 3: Background NVMe $\rightarrow$ NFS copy (overlapped with training)
-3. **Validation**\index{Validation}: New checkpoint overhead drops to 12 seconds (GPU-to-CPU copy), reducing training impact from 30 percent to under 1 percent
+3. **Validation**\index{Validation}: The critical-path data copy drops to approximately `{python} CheckpointDebug.gpu_cpu_parallel_s_str` seconds if GPU-to-CPU staging proceeds in parallel across 64 nodes (or `{python} CheckpointDebug.gpu_cpu_single_path_s_str` seconds if serialized through one 32 GB/s path), reducing training impact from 30 percent to under 1 percent once background NVMe and NFS copies are overlapped
 
 This example illustrates the fleet stack principle: diagnosing distributed systems failures requires examining all layers. A purely algorithmic fix (Distribution Layer) would fail because the physical bandwidth was insufficient. A purely hardware fix (infrastructure layer) would be wasteful without understanding the coordination pattern. The solution required changes at multiple layers working in concert.
 
@@ -2874,7 +2880,7 @@ This calculation assumes independent failures. Correlated failures reduce actual
 
 In **active-active replication**\index{Replication!active-active replication} (@fig-serving-redundancy, left), all replicas actively serve requests.
 
-::: {#fig-serving-redundancy fig-env="figure" fig-pos="htb" fig-cap="**Serving Redundancy Strategies**: Comparison of Active-Active vs. Active-Passive replication. Active-Active (left) distributes load across all replicas, maximizing utilization but requiring capacity headroom to absorb failures. Active-Passive (right) keeps a standby replica idle and synchronized via heartbeat, simplifying failover logic at the cost of idle resource utilization." fig-alt="Two diagrams comparing replication strategies. Left: active-active with load balancer sending 50 percent to each of two green replicas. Right: active-passive with load balancer sending 100 percent to primary while dashed standby receives heartbeat sync."}
+::: {#fig-serving-redundancy fig-env="figure" fig-pos="htb" fig-cap="**Serving Redundancy Strategies**: Comparison of Active-Active vs. Active-Passive replication. Active-Active (left) distributes load across three active replicas, each receiving roughly one-third of traffic, maximizing utilization but requiring capacity headroom to absorb failures. Active-Passive (right) keeps standby replicas idle and synchronized via heartbeat, simplifying failover logic at the cost of idle resource utilization." fig-alt="Two diagrams comparing replication strategies. Left: active-active with load balancer sending roughly 33 percent to each of three green replicas. Right: active-passive with load balancer sending 100 percent to primary while dashed standby replicas receive heartbeat sync."}
 
 ![](images/svg/serving-redundancy.svg)
 
@@ -3242,7 +3248,7 @@ Trace: user-request-12345
 │   ├── Span: model-inference (40 ms)
 │   └── Span: postprocessing (2 ms)
 └── Span: response-formatting (1 ms)
-Total: 68 ms
+Total: 66 ms
 ```
 
 OpenTelemetry provides a standard API for distributed tracing\index{Distributed Tracing}. Backend systems like Jaeger, Zipkin, or cloud tracing services store and visualize traces.
@@ -3446,7 +3452,7 @@ The Young-Daly formula accounts for checkpoint save time, but practitioners ofte
 
 4. **Communication re-establishment**: NCCL ring topology reconstruction
 
-Total restart time can be 3--5$\times$ checkpoint save time. A 5-minute checkpoint save followed by 20-minute restart means effective failure cost is 25 minutes, not 5 minutes. The modified Young-Daly formula should use $T_{\text{write}} + T_{\text{restart}}$ for the overhead term, significantly increasing optimal checkpoint intervals.
+Total restart time can be 3--5$\times$ checkpoint save time. A 5-minute checkpoint save followed by a 20-minute restart means each failure costs 25 minutes before accounting for lost work since the last checkpoint. That recovery term should be included in the expected waste and recovery-SLO budget; it should not be added to $T_{\text{write}}$ as though it were paid at every checkpoint unless a specific recovery-aware checkpoint model derives that dependency.
 
 **Pitfall**: *Treating all failures as restarts.*
 

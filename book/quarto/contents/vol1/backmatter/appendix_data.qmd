@@ -32,8 +32,9 @@ Conventions used here follow the book-wide notation (for example, we reserve $B$
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: @tbl-data-gravity—why we ship compute to data
 # │
-# │ Goal:    Compute transfer times for 1 TB / 100 TB / 1 PB at three bandwidths.
-# │ Show:    Human-readable durations (Minutes, Hours, Days, Months).
+# │ Goal:    Compute transfer times for 1 TB / 100 TB / 1 PB at three bandwidths
+# │          and an illustrative truck-transfer elapsed time.
+# │ Show:    Human-readable durations (Seconds, Minutes, Hours, Days, Months).
 # │ How:     T = Volume/Bandwidth, formatted via helper.
 # │
 # │ Imports: mlsysim.core.constants (TB, PB, Gbps, byte, BITS_PER_BYTE, time constants)
@@ -53,6 +54,9 @@ class DataGravity:
     bw_1g = (1 * Gbps).m_as('bit/second')
     bw_10g = (10 * Gbps).m_as('bit/second')
     bw_100g = (100 * Gbps).m_as('bit/second')
+    truck_load_hours = 8
+    truck_transit_hours = 32
+    truck_unload_hours = 8
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────
     @staticmethod
@@ -61,20 +65,37 @@ class DataGravity:
 
     @staticmethod
     def _fmt_time(s):
-        if s < SECONDS_PER_MINUTE:    return f"{s:.0f} Seconds"
-        if s < SEC_PER_HOUR:          return f"{s/SECONDS_PER_MINUTE:.0f} Minutes"
-        if s < SEC_PER_DAY:           return f"{s/SEC_PER_HOUR:.1f} Hours"
-        if s < SEC_PER_DAY * DAYS_PER_MONTH: return f"{s/SEC_PER_DAY:.0f} Days"
-        return f"{s / (SEC_PER_DAY * DAYS_PER_MONTH):.0f} Months"
+        if s < 2 * SECONDS_PER_MINUTE:
+            value = round(s)
+            unit = "Second" if value == 1 else "Seconds"
+            return f"{value:.0f} {unit}"
+        if s < SEC_PER_HOUR:
+            value = s / SECONDS_PER_MINUTE
+            unit = "Minute" if abs(value - 1) < 0.05 else "Minutes"
+            return f"{value:.1f} {unit}"
+        if s < SEC_PER_DAY:
+            value = s / SEC_PER_HOUR
+            unit = "Hour" if abs(value - 1) < 0.05 else "Hours"
+            return f"{value:.1f} {unit}"
+        if s < SEC_PER_DAY * DAYS_PER_MONTH:
+            value = round(s / SEC_PER_DAY)
+            unit = "Day" if value == 1 else "Days"
+            return f"{value:.0f} {unit}"
+        value = round(s / (SEC_PER_DAY * DAYS_PER_MONTH))
+        unit = "Month" if value == 1 else "Months"
+        return f"{value:.0f} {unit}"
 
     _x = _xfer.__func__
     _f = _fmt_time.__func__
+    truck_total_hours = truck_load_hours + truck_transit_hours + truck_unload_hours
+    truck_total_seconds = truck_total_hours * SEC_PER_HOUR
 
     # ┌── 3. GUARD (Invariants) ────────────────────────────
     check(_x(tb_bytes, bw_1g) > 0, "Transfer time must be positive")
+    check(truck_total_hours == 48, "Truck transfer example should total two days")
 
     # ┌── 4. OUTPUT (Formatting) ───────────────────────────
-    # Custom unit suffix ("Minutes"/"Hours"/"Days"/"Months") → MarkdownStr per recipe Rule 1 escape-hatch
+    # Custom unit suffix ("Seconds"/"Minutes"/"Hours"/"Days"/"Months") → MarkdownStr per recipe Rule 1 escape-hatch
     t_1tb_1g_str    = MarkdownStr(_f(_x(tb_bytes, bw_1g)))
     t_1tb_10g_str   = MarkdownStr(_f(_x(tb_bytes, bw_10g)))
     t_1tb_100g_str  = MarkdownStr(_f(_x(tb_bytes, bw_100g)))
@@ -84,6 +105,7 @@ class DataGravity:
     t_1pb_1g_str    = MarkdownStr(_f(_x(pb_bytes, bw_1g)))
     t_1pb_10g_str   = MarkdownStr(_f(_x(pb_bytes, bw_10g)))
     t_1pb_100g_str  = MarkdownStr(_f(_x(pb_bytes, bw_100g)))
+    truck_1pb_str    = MarkdownStr(_f(truck_total_seconds))
 ```
 
 With those reference points in place, the appendix begins with the physical constraints of data engineering and then moves to the statistical monitoring that keeps ML systems healthy. From storage formats that determine I/O throughput to drift metrics that detect silent failures, these foundations connect directly to the data pipelines in @sec-data-engineering and the operational monitoring in @sec-ml-operations.
@@ -100,13 +122,13 @@ Data gravity[^fn-data-gravity] is not a metaphor; it is a calculation of transfe
 
 The transfer time for moving a dataset is simply $T = \text{Data Volume} / \text{Bandwidth}$ (for the large volumes here, latency is negligible; the full equation appears in @sec-machine-foundations-bandwidth-vs-latency-5320). @tbl-data-gravity illustrates the sobering reality:
 
-| **Data Volume** |        **1 Gbps (Standard WAN)**        |        **10 Gbps (High-End WAN)**        |      **100 Gbps (Direct Connect)**      | **Snowmobile (Truck)** |
-|:----------------|:---------------------------------------:|:----------------------------------------:|:---------------------------------------:|:----------------------:|
-| **1 TB**        |   `{python} DataGravity.t_1tb_1g_str`   |   `{python} DataGravity.t_1tb_10g_str`   |  `{python} DataGravity.t_1tb_100g_str`  |          N/A           |
-| **100 TB**      |  `{python} DataGravity.t_100tb_1g_str`  |  `{python} DataGravity.t_100tb_10g_str`  | `{python} DataGravity.t_100tb_100g_str` |          N/A           |
-| **1 PB**        | **`{python} DataGravity.t_1pb_1g_str`** | **`{python} DataGravity.t_1pb_10g_str`** |  `{python} DataGravity.t_1pb_100g_str`  |       **2 Days**       |
+| **Data Volume** |        **1 Gbps (Standard WAN)**        |        **10 Gbps (High-End WAN)**        |      **100 Gbps (Direct Connect)**      |         **Truck (Illustrative)**         |
+|:----------------|:---------------------------------------:|:----------------------------------------:|:---------------------------------------:|:----------------------------------------:|
+| **1 TB**        |   `{python} DataGravity.t_1tb_1g_str`   |   `{python} DataGravity.t_1tb_10g_str`   |  `{python} DataGravity.t_1tb_100g_str`  |                   N/A                    |
+| **100 TB**      |  `{python} DataGravity.t_100tb_1g_str`  |  `{python} DataGravity.t_100tb_10g_str`  | `{python} DataGravity.t_100tb_100g_str` |                   N/A                    |
+| **1 PB**        | **`{python} DataGravity.t_1pb_1g_str`** | **`{python} DataGravity.t_1pb_10g_str`** |  `{python} DataGravity.t_1pb_100g_str`  | **`{python} DataGravity.truck_1pb_str`** |
 
-: **The Cost of Inertia**: Why we "ship compute to data" rather than "ship data to compute." At 1 PB, the network is often not a viable option. {#tbl-data-gravity tbl-colwidths="[23,20,20,20,17]"}
+: **The Cost of Inertia**: Why we "ship compute to data" rather than "ship data to compute." The truck entry is an illustrative elapsed-time model for 1 PB: 8 hours to load, 32 hours in transit, and 8 hours to unload, excluding scheduling and provisioning overhead. At 1 PB, the network is often not a viable option. {#tbl-data-gravity tbl-colwidths="[23,20,20,20,17]"}
 
 ### The cost of serialization {#sec-data-foundations-cost-serialization-b921}
 
@@ -163,7 +185,7 @@ Even after data arrives at the machine, we face one final hurdle: the serializat
 | **Protobuf**      |   `{python} SerializationCost.proto_speed_str` MB/s |   `{python} SerializationCost.proto_cycles_str` | RPC/Messages        |
 | **Parquet/Arrow** | `{python} SerializationCost.parquet_speed_str` MB/s | `{python} SerializationCost.parquet_cycles_str` | High-Scale Training |
 
-: **Serialization Overhead**: Zero-copy formats like Arrow are 10--100$\times$ faster than row-based text formats because they align directly with internal memory structures. {#tbl-serialization-cost tbl-colwidths="[25,25,25,25]"}
+: **Serialization Overhead**: Zero-copy formats like Arrow are at least 10$\times$ faster than row-based text formats in this representative comparison because they align directly with internal memory structures. {#tbl-serialization-cost tbl-colwidths="[25,25,25,25]"}
 
 ### Row vs. columnar formats {#sec-data-foundations-row-vs-columnar-formats-bca2}
 
@@ -789,7 +811,7 @@ Transfer time is only the beginning. Data gravity encompasses not just transfer 
 
 **Pitfall**: *Ignoring data serialization cost.*
 
-Engineers meticulously optimize accelerator kernels while leaving data loading as JSON or CSV. As @tbl-serialization-cost shows, text-based formats can be 10--100$\times$ slower to decode than columnar binary formats, making the CPU—not the accelerator—the bottleneck (@sec-data-foundations-data-engineering-foundations-0c20).
+Engineers meticulously optimize accelerator kernels while leaving data loading as JSON or CSV. As @tbl-serialization-cost shows, text-based formats can be at least 10$\times$ slower to decode than columnar binary formats in this representative comparison, making the CPU—not the accelerator—the bottleneck (@sec-data-foundations-data-engineering-foundations-0c20).
 
 **Fallacy**: *Average latency is a good summary of system performance.*
 
@@ -806,8 +828,8 @@ These pitfalls share a common root: treating data as a solved problem rather tha
 ::: {.callout-takeaways title="Data as a physical constraint"}
 
 * **Data has physical inertia**: Transfer time scales linearly with volume and inversely with bandwidth, making petabyte-scale datasets effectively immovable. Design pipelines around data locality rather than data movement.
-* **Serialization format is a first-order decision**: Columnar binary formats (Parquet, Arrow) can be 10--100$\times$ faster to decode than text formats (CSV, JSON), directly determining whether accelerators starve or stay fed.
-* **Algebraic primitives shape I/O cost**: Selection, projection, and join have radically different I/O costs. Joins in particular can amplify network traffic by orders of magnitude; choosing between shuffle and broadcast joins depends on relative table sizes.
+* **Serialization format is a first-order decision**: Columnar binary formats (Parquet, Arrow) can be at least 10$\times$ faster to decode than text formats (CSV, JSON) in representative comparisons, directly determining whether accelerators starve or stay fed.
+* **Algebraic primitives shape I/O cost**: Selection, projection, and join have radically different I/O costs. Joins in particular can require moving both input tables across the network; choosing between shuffle and broadcast joins depends on relative table sizes.
 * **Average metrics hide tails**: Long-tailed distributions mean that the P99 latency becomes the typical user experience at scale, and monitoring only the mean creates dangerous blind spots.
 * **Drift detection compares distributions**: KL divergence and the symmetric PSI/Jeffreys divergence provide principled measures of distribution shift that catch problems before accuracy metrics react.
 * **Numerical stability is mandatory**: The log-sum-exp trick and log-space computation prevent overflow in softmax and loss calculations, making them essential building blocks of any training or inference pipeline.

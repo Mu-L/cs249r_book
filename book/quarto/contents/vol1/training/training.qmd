@@ -2749,7 +2749,8 @@ class TrainingDimensions:
     wave_batch_65 = 65
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    layer_ops_m = layer_dim_h * layer_dim_w * layer_batch / MILLION
+    layer_macs_m = layer_dim_h * layer_dim_w * layer_batch / MILLION
+    layer_flops_m = 2 * layer_macs_m
     conv_spatial = conv_h - conv_k + 1
     conv_ops_per_pos = conv_k * conv_k * conv_c
 
@@ -2770,7 +2771,8 @@ class TrainingDimensions:
     layer_dim_h_str     = fmt(layer_dim_h, precision=0, commas=False)
     layer_dim_w_str     = fmt(layer_dim_w, precision=0, commas=False)
     layer_batch_str     = fmt(layer_batch, precision=0, commas=False)
-    layer_ops_m_str     = fmt(layer_ops_m, precision=0, commas=False)
+    layer_macs_m_str    = fmt(layer_macs_m, precision=0, commas=False)
+    layer_flops_m_str   = fmt(layer_flops_m, precision=0, commas=False)
     conv_batch_str      = fmt(conv_batch, precision=0, commas=False)
     conv_h_str          = fmt(conv_h, precision=0, commas=False)
     conv_w_str          = fmt(conv_w, precision=0, commas=False)
@@ -2808,7 +2810,7 @@ class TrainingDimensions:
 
 #### Compute operations {#sec-model-training-compute-operations-83ee}
 
-The forward pass orchestrates the computational patterns introduced in @sec-model-training-matrix-operations-1f21, optimizing them for specific neural network operations. Building on the matrix multiplication\index{Matrix Multiplication!dense operations} foundations, the system must efficiently execute the $N \times M \times B$ floating-point operations required for each layer, where typical layers with dimensions of `{python} TrainingDimensions.layer_dims_math` processing batches of `{python} TrainingDimensions.layer_batch_str` samples execute over `{python} TrainingDimensions.layer_ops_m_str` million operations.
+The forward pass orchestrates the computational patterns introduced in @sec-model-training-matrix-operations-1f21, optimizing them for specific neural network operations. Building on the matrix multiplication\index{Matrix Multiplication!dense operations} foundations, the system must efficiently execute the $N \times M \times B$ multiply-accumulate operations required for each layer, where typical layers with dimensions of `{python} TrainingDimensions.layer_dims_math` processing batches of `{python} TrainingDimensions.layer_batch_str` samples execute over `{python} TrainingDimensions.layer_macs_m_str` million MACs, or about `{python} TrainingDimensions.layer_flops_m_str` million FLOPs under the two-FLOPs-per-MAC convention.
 
 \index{Convolution!computational cost}
 Modern neural architectures extend beyond these basic matrix operations to include specialized computational patterns. Convolutional networks, for instance, perform systematic kernel operations across input tensors. Consider a typical input tensor of dimensions `{python} TrainingDimensions.conv_input_dims_math` (batch size $\times$ height $\times$ width $\times$ channels) processed by `{python} TrainingDimensions.conv_kernel_dims_math` kernels. Each position requires `{python} TrainingDimensions.conv_ops_per_pos_str` multiply-accumulate operations, and with `{python} TrainingDimensions.conv_filters_str` filters operating across `{python} TrainingDimensions.conv_spatial_dims_math` spatial dimensions, the computational demands become substantial.
@@ -5263,9 +5265,16 @@ With Accumulation (actual GPT-2 approach):
 - True batch 512 without accumulation: Perplexity 18.2
 - Difference: 0.5 percent (within noise margin)
 
-**Why this works**: Gradient accumulation is mathematically equivalent to larger batches because gradients are additive:
+**Why this works**: Gradient accumulation is mathematically equivalent to larger batches because gradients are additive. Each accelerator first accumulates a local gradient over its `{python} GradientAccumulation.batch_per_gpu_str` examples:
 $$
-\nabla \mathcal{L}_{\text{batch}} = \frac{1}{N}\sum_{i=1}^N \nabla \mathcal{L}(x_i) = \frac{1}{`{python} GradientAccumulation.accum_steps_str`}\sum_{j=1}^{`{python} GradientAccumulation.accum_steps_str`} \left[\frac{1}{`{python} GradientAccumulation.micro_batch_str`}\sum_{k=1}^{`{python} GradientAccumulation.micro_batch_str`} \nabla \mathcal{L}(x_{jk})\right]
+\nabla \mathcal{L}_{\text{local}} =
+\frac{1}{`{python} GradientAccumulation.accum_steps_str`}\sum_{j=1}^{`{python} GradientAccumulation.accum_steps_str`} \left[\frac{1}{`{python} GradientAccumulation.micro_batch_str`}\sum_{k=1}^{`{python} GradientAccumulation.micro_batch_str`} \nabla \mathcal{L}(x_{jk})\right]
+$$
+AllReduce then averages those local gradients across `{python} GradientAccumulation.gpus_accum_str` accelerators, producing the global effective batch:
+$$
+\nabla \mathcal{L}_{\text{global}} =
+\frac{1}{`{python} GradientAccumulation.gpus_accum_str`}\sum_{g=1}^{`{python} GradientAccumulation.gpus_accum_str`} \nabla \mathcal{L}_{\text{local}}^{(g)}, \qquad
+N_{\text{global}} = `{python} GradientAccumulation.gpus_accum_str` \times `{python} GradientAccumulation.batch_per_gpu_str` = `{python} GradientAccumulation.effective_batch_str`
 $$
 
 **Systems insight**: For memory-bound models like GPT-2, gradient accumulation + moderate GPU count is more cost-effective than scaling to many GPUs with small batches.
@@ -5588,12 +5597,12 @@ class OptimizationSummaryCalc:
     """Headline improvement ratios from GPT-2 optimization walkthrough."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    naive_mem_gb = 89.0
-    optimized_mem_gb = 32.0
+    naive_mem_gb = GPT2SummaryCalc.b_total_mem
+    optimized_mem_gb = GPT2SummaryCalc.o_total_mem
     naive_energy_kwh = GPT2SummaryCalc.b_energy
     optimized_energy_kwh = GPT2SummaryCalc.o_energy
-    naive_days = 14
-    optimized_days = 8.4
+    naive_days = GPT2SummaryCalc.b_time
+    optimized_days = GPT2SummaryCalc.o_time
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     mem_reduction = naive_mem_gb/optimized_mem_gb

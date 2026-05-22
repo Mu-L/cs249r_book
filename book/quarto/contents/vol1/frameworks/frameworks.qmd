@@ -1960,12 +1960,12 @@ class CompilationBenchmark:
 
 @tbl-training-benchmark provides representative throughput data across execution modes and model architectures:
 
-| **Model**        | **Eager** **(img/sec)** | **torch.compile** **(img/sec)** | **TensorRT** **(img/sec)** | **Compile Time** **(seconds)** |
-|:-----------------|:-----------------------:|:-------------------------------:|:--------------------------:|:------------------------------:|
-| **ResNet-50**    |          1,450          |              2,150              |           3,800            |             15--30             |
-| **BERT-Base**    |           380           |               520               |            890             |             30--60             |
-| **ViT-B/16**     |           620           |               950               |           1,650            |             25--45             |
-| **GPT-2 (124M)** |           180           |               260               |            420             |             45--90             |
+| **Model**        | **Eager** **(examples/sec)** | **torch.compile** **(examples/sec)** | **TensorRT** **(examples/sec)** | **Compile Time** **(seconds)** |
+|:-----------------|:----------------------------:|:------------------------------------:|:-------------------------------:|:------------------------------:|
+| **ResNet-50**    |            1,450             |                2,150                 |              3,800              |             15--30             |
+| **BERT-Base**    |             380              |                 520                  |               890               |             30--60             |
+| **ViT-B/16**     |             620              |                 950                  |              1,650              |             25--45             |
+| **GPT-2 (124M)** |             180              |                 260                  |               420               |             45--90             |
 
 : **Training and Inference Throughput**: Representative throughput comparison across execution modes for common model architectures on NVIDIA A100 GPU with batch size 32. The table values imply torch.compile speedups of `{python} CompilationBenchmark.torch_compile_speedup_min_str`--`{python} CompilationBenchmark.torch_compile_speedup_max_str`$\times$ over eager mode, while TensorRT implies `{python} CompilationBenchmark.tensorrt_speedup_min_str`--`{python} CompilationBenchmark.tensorrt_speedup_max_str`$\times$ speedups but requires longer compilation and is inference only. Compile times vary based on model complexity and optimization level. {#tbl-training-benchmark}
 
@@ -2431,7 +2431,7 @@ dc/dx = (2 * x * dc/da) + (cos(x) * dc/db)
 
 Translating this mathematical elegance into a working system requires solving a concrete engineering problem: the backward pass needs values computed during the forward pass, so the framework must decide what to store, when to store it, and when to free it. Modern frameworks accomplish this through computational graphs and automatic gradient accumulation[^fn-gradient-accumulation-batch].
 
-[^fn-gradient-accumulation-batch]: **Gradient Accumulation**: A direct answer to the "when to free it" question: the framework breaks a large logical batch into smaller mini-batches processed sequentially, freeing activation memory after each mini-batch's backward pass and accumulating only the small gradient tensors. This lets a system simulate a batch size of 4,096 using the memory footprint of a 64-sample batch, trading sequential compute time for a 60$\times$ reduction in peak activation memory. Without this technique, many production training configurations would exceed accelerator memory on the first batch. \index{Gradient Accumulation!memory trade-off}
+[^fn-gradient-accumulation-batch]: **Gradient Accumulation**: A direct answer to the "when to free it" question: the framework breaks a large logical batch into smaller mini-batches processed sequentially, freeing activation memory after each mini-batch's backward pass and accumulating only the small gradient tensors. This lets a system simulate a batch size of 4,096 using the memory footprint of a 64-sample batch, trading sequential compute time for a 64$\times$ reduction in peak activation memory. Without this technique, many production training configurations would exceed accelerator memory on the first batch. \index{Gradient Accumulation!memory trade-off}
 
 @lst-reverse_simple_nn illustrates this with a two-layer network, showing both the forward computation that stores intermediate values and the backward pass that consumes them to produce gradients for every parameter simultaneously.
 
@@ -2612,7 +2612,8 @@ Every activation saved for the backward pass persists in memory until consumed b
 # │ Imports: mlsysim.core.constants (BYTES_FP32, BYTES_ADAM_STATE, MB, Mparam),
 # │          mlsysim.book (fmt, check)
 # │ Exports: resnet_params_m_str, resnet_fp32_mb_str, resnet_adam_mb_str,
-# │          resnet_training_min_gb_str, resnet_training_max_gb_str, resnet_training_ratio_str
+# │          resnet_training_min_gb_str, resnet_training_max_gb_str,
+# │          resnet_training_ratio_min_str, resnet_training_ratio_max_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Models
 from mlsysim.core.constants import BYTES_FP32, BYTES_ADAM_STATE, MB, Mparam
@@ -2637,7 +2638,8 @@ class ResNetMemory:
     adam_mb = model.size_in_bytes(BYTES_ADAM_STATE).m_as(MB)
 
     # Decimal GB → MB is ×1000 (book-prose §1: decimal units in prose).
-    training_ratio = (training_min_gb * 1000) / fp32_mb
+    training_ratio_min = (training_min_gb * 1000) / fp32_mb
+    training_ratio_max = (training_max_gb * 1000) / fp32_mb
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     resnet_params_m_str = fmt(params_m, precision=1, commas=False)
@@ -2646,14 +2648,15 @@ class ResNetMemory:
 
     resnet_training_min_gb_str = fmt(training_min_gb, precision=0, commas=False)
     resnet_training_max_gb_str = fmt(training_max_gb, precision=0, commas=False)
-    resnet_training_ratio_str = fmt(training_ratio, precision=0, commas=False)
+    resnet_training_ratio_min_str = fmt(training_ratio_min, precision=0, commas=False)
+    resnet_training_ratio_max_str = fmt(training_ratio_max, precision=0, commas=False)
 
 # Note: Use ResNetMemory.resnet_params_m_str directly.
 ```
 
 For a network with $N_L$ layers, the system must save approximately $N_L$ activation tensors, one per layer, for the entire batch. Consider a concrete example: ResNet-50 has `{python} ResNetMemory.resnet_params_m_str` M parameters (~`{python} ResNetMemory.resnet_fp32_mb_str` MB in FP32) and processes batch size 64 with $224{\times}224$ images. The memory breakdown reveals the scale of this trade-off. Forward activations alone consume approximately 8--12 GB (varying by implementation and checkpointing strategy). Parameter gradients add another ~`{python} ResNetMemory.resnet_fp32_mb_str` MB (the same size as the parameters themselves), and Adaptive Moment Estimation (Adam) optimizer state contributes ~`{python} ResNetMemory.resnet_adam_mb_str` MB for its two momentum buffers per parameter. The total training footprint reaches `{python} ResNetMemory.resnet_training_min_gb_str`--`{python} ResNetMemory.resnet_training_max_gb_str` GB, compared to just ~`{python} ResNetMemory.resnet_fp32_mb_str` MB for inference alone.
 
-This `{python} ResNetMemory.resnet_training_ratio_str`$\times$ ratio between training and inference memory quantifies why the Data Movement $(D_{\text{vol}})$ term dominates training latency in the iron law. During training, the framework must write all activations to memory during the forward pass and read them back during the backward pass, doubling the memory traffic compared to inference alone. For a complete derivation of the four-component training memory equation ($M_{\text{total}} = M_{\text{weights}} + M_{\text{gradients}} + M_{\text{optimizer}} + M_{\text{activations}}$) and worked examples at larger model scales, see @sec-algorithm-foundations-true-cost-training-memory-e54e.
+This `{python} ResNetMemory.resnet_training_ratio_min_str`--`{python} ResNetMemory.resnet_training_ratio_max_str`$\times$ ratio between training and inference memory quantifies why the Data Movement $(D_{\text{vol}})$ term dominates training latency in the iron law. During training, the framework must write all activations to memory during the forward pass and read them back during the backward pass, doubling the memory traffic compared to inference alone. For a complete derivation of the four-component training memory equation ($M_{\text{total}} = M_{\text{weights}} + M_{\text{gradients}} + M_{\text{optimizer}} + M_{\text{activations}}$) and worked examples at larger model scales, see @sec-algorithm-foundations-true-cost-training-memory-e54e.
 
 Frameworks provide two primary mechanisms to manage this trade-off. Gradient checkpointing\index{Gradient Checkpointing!recomputation strategy} [@chen2016training] trades recomputation for memory: instead of saving all activations, the framework saves only a subset and recomputes the rest during the backward pass. This typically reduces activation memory by 50--90 percent at the cost of 20--33 percent additional compute (with optimal $\sqrt{n}$ checkpoint placement). In iron law terms, checkpointing increases the $O$ term (recomputation) to reduce the $D_{\text{vol}}$ term (memory traffic). **Tensor detachment** provides a complementary mechanism: calling `.detach()` on a tensor removes it from the computation graph entirely, preventing the framework from saving activations through that path. This is essential for transfer learning, where pretrained layers should not accumulate gradients, and reduces the $D_{\text{vol}}$ term by eliminating unnecessary activation storage.
 
@@ -3230,7 +3233,7 @@ class AdminTax:
 
 ::: {#nbk-frameworks-administrative-tax .callout-notebook title="The administrative tax"}
 
-The memory breakdown for ResNet-50 in @sec-ml-frameworks-principle-2-memorycompute-tradeoff-19f2 showed a concrete ~`{python} ResNetMemory.resnet_training_ratio_str`$\times$ ratio between training and inference memory. Here we generalize that analysis to reveal the full administrative overhead at billion-parameter scale.
+The memory breakdown for ResNet-50 in @sec-ml-frameworks-principle-2-memorycompute-tradeoff-19f2 showed a concrete ~`{python} ResNetMemory.resnet_training_ratio_min_str`--`{python} ResNetMemory.resnet_training_ratio_max_str`$\times$ ratio between training and inference memory. Here we generalize that analysis to reveal the full administrative overhead at billion-parameter scale.
 
 **Problem**: Why does GPU utilization drop when training small models?
 
@@ -3463,6 +3466,7 @@ class DeviceBandwidthHierarchy:
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     pcie4_gbs = PCIE_GEN4_BW.m_as(GB/second)
     nvlink_a100_gbs = NVLINK_A100_BW.m_as(GB/second)
+    nvlink_a100_per_direction_gbs = nvlink_a100_gbs / 2
     a100_bw_gbs = A100_MEM_BW.m_as(GB/second)
     a100_bw_tbs = A100_MEM_BW.m_as(TB/second)
     a100_mem = A100_MEM_CAPACITY.m_as(GiB)
@@ -3470,7 +3474,7 @@ class DeviceBandwidthHierarchy:
 
     # Transfer times for 4 MB tensor
     pcie4_4mb_ms = (tensor_4mb/PCIE_GEN4_BW.m_as(byte/second)) * THOUSAND
-    nvlink_4mb_ms = (tensor_4mb/NVLINK_A100_BW.m_as(byte/second)) * THOUSAND
+    nvlink_4mb_ms = (tensor_4mb/(NVLINK_A100_BW.m_as(byte/second) / 2)) * THOUSAND
     hbm_4mb_ms = (tensor_4mb/A100_MEM_BW.m_as(byte/second)) * THOUSAND
 
     # 1 GB transfer cost analysis
@@ -3489,6 +3493,7 @@ class DeviceBandwidthHierarchy:
     pcie4_gbs_str = fmt(pcie4_gbs, precision=0, commas=False)
     pcie4_bidir_gbs_str = fmt(pcie4_gbs * 2, precision=0, commas=False)
     nvlink_a100_gbs_str = fmt(nvlink_a100_gbs, precision=0, commas=False)
+    nvlink_a100_per_direction_gbs_str = fmt(nvlink_a100_per_direction_gbs, precision=0, commas=False)
     a100_bw_gbs_str = fmt(a100_bw_gbs, precision=0, commas=False)
     a100_bw_tbs_str = fmt(a100_bw_tbs, precision=2, commas=False)
     a100_tflops_fp16_str = fmt(a100_tflops_fp16, precision=0, commas=False)
@@ -3523,12 +3528,12 @@ The cost of moving data between devices varies by orders of magnitude depending 
 
 [^fn-nvlink-bandwidth-hierarchy]: **NVLink**: NVIDIA's high-bandwidth GPU-to-GPU interconnect (see @sec-hardware-acceleration), providing `{python} DeviceBandwidthHierarchy.nvlink_a100_gbs_str` GB/s bidirectional bandwidth (NVLink 3.0 on A100) compared to `{python} DeviceBandwidthHierarchy.pcie4_bidir_gbs_str` GB/s for PCIe 4.0 x16. This ~10$\times$ bandwidth advantage determines whether tensor parallelism is practical for a given model size: splitting a model across GPUs connected by PCIe can make the $D_{\text{vol}}/\text{BW}$ communication term dominate total training time, erasing the benefit of additional compute. \index{NVLink!bandwidth hierarchy}
 
-| **Interconnect** |                               **Bandwidth**                                |                    **Transfer Time**                     | **Relative to Compute**            |
-|:-----------------|:--------------------------------------------------------------------------:|:--------------------------------------------------------:|:-----------------------------------|
-| **PCIe 3.0 x16** |                                  16 GB/s                                   |                         0.25 ms                          | 10$\times$ slower than GPU compute |
-| **PCIe 4.0 x16** |           `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s           | `{python} DeviceBandwidthHierarchy.pcie4_4mb_ms_str` ms  | 5$\times$ slower than GPU compute  |
-| **NVLink 3.0**   | `{python} DeviceBandwidthHierarchy.nvlink_a100_gbs_str` GB/s bidirectional | `{python} DeviceBandwidthHierarchy.nvlink_4mb_ms_str` ms | Comparable to GPU compute          |
-| **GPU Memory**   |          `{python} DeviceBandwidthHierarchy.a100_bw_gbs_str` GB/s          |  `{python} DeviceBandwidthHierarchy.hbm_4mb_ms_str` ms   | Optimal                            |
+| **Interconnect** |                                                                             **Bandwidth**                                                                             |                    **Transfer Time**                     | **Relative to Compute**            |
+|:-----------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------:|:-----------------------------------|
+| **PCIe 3.0 x16** |                                                                                16 GB/s                                                                                |                         0.25 ms                          | 10$\times$ slower than GPU compute |
+| **PCIe 4.0 x16** |                                                         `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s                                                        | `{python} DeviceBandwidthHierarchy.pcie4_4mb_ms_str` ms  | 5$\times$ slower than GPU compute  |
+| **NVLink 3.0**   | `{python} DeviceBandwidthHierarchy.nvlink_a100_per_direction_gbs_str` GB/s per direction (`{python} DeviceBandwidthHierarchy.nvlink_a100_gbs_str` GB/s bidirectional) | `{python} DeviceBandwidthHierarchy.nvlink_4mb_ms_str` ms | Comparable to GPU compute          |
+| **GPU Memory**   |                                                        `{python} DeviceBandwidthHierarchy.a100_bw_gbs_str` GB/s                                                       |  `{python} DeviceBandwidthHierarchy.hbm_4mb_ms_str` ms   | Optimal                            |
 
 : **Device Transfer Overhead**: Transfer time for a 4 MB tensor across different interconnects. PCIe bandwidth shown is unidirectional (typical for GPU transfers), with full-duplex operation providing 2$\times$ total bandwidth. NVLink bandwidth is bidirectional (300 GB/s per direction). Transfer times dominate for small operations, making device placement critical for performance. {#tbl-device-transfer-overhead tbl-colwidths="[25,25,20,30]"}
 
@@ -3712,7 +3717,7 @@ class DataloaderThroughput:
 ```
 
 \index{Data Pipeline!throughput optimization}
-Streams and events address the second question---*where does data live, and how does it move?*---by overlapping transfers with computation so that the GPU rarely stalls on a single tensor. Scheduling alone, however, cannot help if data arrives too slowly in the first place. The third question concerns *how data arrives fast enough* to sustain throughput. The core systems principle is straightforward: the data pipeline must sustain the accelerator's consumption rate. A GPU processing 1,000 images per second at `{python} DataloaderThroughput.img_res_str` by `{python} DataloaderThroughput.img_res_str` resolution requires approximately `{python} DataloaderThroughput.dataloader_mbs_str` MB/s of sustained data throughput. If the pipeline cannot maintain this rate, the accelerator idles and the effective utilization term in the iron law drops below 1.
+Streams and events address the second question---*where does data live, and how does it move?*---by overlapping transfers with computation so that the GPU rarely stalls on a single tensor. Scheduling alone, however, cannot help if data arrives too slowly in the first place. The third question concerns *how data arrives fast enough* to sustain throughput. The core systems principle is straightforward: the data pipeline must sustain the accelerator's consumption rate. A GPU processing 1,000 images per second at `{python} DataloaderThroughput.img_res_str` by `{python} DataloaderThroughput.img_res_str` resolution requires approximately `{python} DataloaderThroughput.dataloader_mbs_str` MB/s of sustained raw uint8 image throughput. If the pipeline cannot maintain this rate, the accelerator idles and the effective utilization term in the iron law drops below 1.
 
 Frameworks address this throughput requirement through three mechanisms. The first is *parallel worker processes*: the DataLoader\index{DataLoader!throughput optimization} spawns multiple CPU processes, each independently loading and preprocessing samples. Because data loading involves disk I/O and CPU-bound transformations (decoding, augmentation, normalization), a single process cannot saturate a modern GPU. Multiple workers overlap I/O wait times with preprocessing computation, collectively sustaining throughput that no single process could achieve. When `num_workers > 0`, the DataLoader distributes sample indices across workers through a shared queue, and workers push completed samples to a data queue that the main process assembles into batches.
 
@@ -4749,9 +4754,9 @@ The three core problems have so far appeared in isolation: execution, differenti
 \index{Training!step, anatomy}
 \index{Forward Pass!kernel dispatch}
 \index{Backward Pass!gradient computation}
-The concepts developed throughout this chapter---eager vs. graph execution, reverse-mode autodiff, tensor abstractions, kernel dispatch---remain abstract until we see them interact inside a real execution. To solidify understanding, we trace a single training step through the PyTorch stack, revealing how eight lines of Python trigger the execution, differentiation, and abstraction machinery simultaneously.
+The concepts developed throughout this chapter---eager vs. graph execution, reverse-mode autodiff, tensor abstractions, kernel dispatch---remain abstract until we see them interact inside a real execution. To solidify understanding, we trace a single training step through the PyTorch stack, revealing how seven executable Python statements trigger the execution, differentiation, and abstraction machinery simultaneously.
 
-@lst-training-step-anatomy presents a minimal training iteration for a two-layer multilayer perceptron. Though only eight lines of Python, this code exercises the entire framework stack: tensor allocation, kernel dispatch, autograd recording, gradient computation, and parameter updates. Tracing each phase reveals the three problems in action and connects the quantitative principles developed earlier to concrete execution.
+@lst-training-step-anatomy presents a minimal training iteration for a two-layer multilayer perceptron. Though only seven executable statements, this code exercises the entire framework stack: tensor allocation, kernel dispatch, autograd recording, gradient computation, and parameter updates. Tracing each phase reveals the three problems in action and connects the quantitative principles developed earlier to concrete execution.
 
 ::: {#lst-training-step-anatomy lst-cap="**Training Step Anatomy**: A minimal training iteration for a two-layer MLP, exercising tensor allocation, kernel dispatch, autograd recording, gradient computation, and parameter updates."}
 

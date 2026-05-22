@@ -1057,11 +1057,11 @@ Options from design space:
 | **Inference**         | Local, 8-bit quantized   | Memory-constrained                                        |
 | **Augmentation**      | Heavy synthetic          | 10$\times$ cost efficiency                                |
 
-: **KWS Final Configuration**: Budget-optimized data engineering choices that satisfy the four-pillar constraints derived in @tbl-kws-design-space, trading higher sampling and synthetic augmentation against fixed memory and labeling budgets to reach the 97--99 percent accuracy target. {#tbl-data-engineering-kws-configuration}
+: **KWS Final Configuration**: Budget-optimized data engineering choices that satisfy the four-pillar constraints derived in @tbl-kws-design-space, trading higher sampling and synthetic augmentation against fixed memory and labeling budgets to reach an estimated 97--99 percent accuracy range around the `{python} DataEngineeringSetup.kws_accuracy_target_str` percent target. {#tbl-data-engineering-kws-configuration}
 
 :::
 
-**Projected Outcome**: 97–99 percent estimated accuracy (meeting target), within the \$`{python} DataEngineeringSetup.kws_budget_str` budget, and a model footprint under the `{python} DataEngineeringSetup.kws_memory_limit_design_kb_str` KB limit.
+**Projected Outcome**: 97–99 percent estimated accuracy, straddling the `{python} DataEngineeringSetup.kws_accuracy_target_str` percent target, within the \$`{python} DataEngineeringSetup.kws_budget_str` budget, and a model footprint under the `{python} DataEngineeringSetup.kws_memory_limit_design_kb_str` KB limit.
 
 **Engineering lesson**: Systematic design space analysis transformed intuition ("we need more data") into quantified decisions ("750K real + 2M synthetic maximizes accuracy per dollar given memory constraints").
 
@@ -1101,6 +1101,44 @@ Just as systems engineers memorize latency numbers, ML engineers should internal
 
 @tbl-data-engineering-time-constants extends the picture with characteristic durations for labeling, training, and serving operations:
 
+```{python}
+#| label: data-engineering-time-constants-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ DATA ENGINEERING TIME CONSTANTS SPAN
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-data-engineering-time-constants caption
+# │
+# │ Goal: Compute the order-of-magnitude span shown in the table.
+# │ Show: Labeling weeks vs. feature-lookup milliseconds spans about 9 orders.
+# │ How: Compare the slowest listed labeling bound with the fastest lookup bound.
+# │
+# │ Imports: math.log10, mlsysim.book (fmt, check)
+# │ Exports: DataEngineeringTimeConstants.span_orders_str
+# └─────────────────────────────────────────────────────────────────────────────
+from math import log10
+from mlsysim.fmt import fmt, check
+
+class DataEngineeringTimeConstants:
+    """Order-of-magnitude span for data-engineering operation durations."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    fastest_lookup_s = 0.001
+    slowest_labeling_weeks = 4
+    seconds_per_week = 7 * 24 * 60 * 60
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    slowest_labeling_s = slowest_labeling_weeks * seconds_per_week
+    span_ratio = slowest_labeling_s / fastest_lookup_s
+    span_orders = log10(span_ratio)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(span_orders > 9, f"Time constants should span more than 9 orders, got {span_orders:.2f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    span_orders_str = fmt(span_orders, precision=1, commas=False)
+```
+
 ::: {tbl-colwidths="[40,34,36]"}
 
 | **Operation**                      | **Duration** | **Bottleneck**                      |
@@ -1109,7 +1147,7 @@ Just as systems engineers memorize latency numbers, ML engineers should internal
 | **Train ResNet-50 on ImageNet**    |  4–6 hours   | Compute (8$\times$ A100, optimized) |
 | **Feature store lookup**           |   1–10 ms    | Network + cache                     |
 
-: **Data Engineering Time Constants**: Characteristic durations for labeling, training, and serving operations span eight orders of magnitude. Human labeling sets the wall-clock floor for new datasets, making it the dominant scheduling constraint in production ML systems. {#tbl-data-engineering-time-constants}
+: **Data Engineering Time Constants**: Characteristic durations for labeling, training, and serving operations span about `{python} DataEngineeringTimeConstants.span_orders_str` orders of magnitude. Human labeling sets the wall-clock floor for new datasets, making it the dominant scheduling constraint in production ML systems. {#tbl-data-engineering-time-constants}
 
 :::
 
@@ -2139,13 +2177,47 @@ Understanding the three core types of drift enables targeted detection and respo
 
 **Concept drift**\index{Concept Drift!definition} represents the most challenging case: the relationship between features and labels changes, meaning $P(Y|X)$ evolves over time [@gama2014]. Medical treatment protocols change, altering disease outcomes for given symptoms. User preferences shift as social trends evolve, changing what product features drive purchases. Fraud patterns evolve as attackers adapt to detection systems. Concept drift requires ground truth labels for detection since we must monitor whether the feature-to-label relationship has changed, making it inherently more difficult and delayed than detecting covariate or label shift.
 
+```{python}
+#| label: cohens-kappa-chance-calc
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ COHEN'S KAPPA CHANCE AGREEMENT
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Cohen's kappa footnote in the label-quality drift section
+# │
+# │ Goal: Compute chance agreement for a 90/10 binary label distribution.
+# │ Show: Majority-class agreement alone is 81%, but total chance agreement is 82%.
+# │ How: p_e = p(not spam)^2 + p(spam)^2.
+# │
+# │ Imports: mlsysim.book (fmt, check)
+# │ Exports: CohensKappaChance.chance_agreement_pct_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, check
+
+class CohensKappaChance:
+    """Chance agreement for Cohen's kappa under a 90/10 binary marginal."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    majority_probability = 0.90
+    minority_probability = 0.10
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    chance_agreement = majority_probability**2 + minority_probability**2
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(abs(chance_agreement - 0.82) < 1e-12, f"Expected 82% chance agreement, got {chance_agreement:.2f}.")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    chance_agreement_pct_str = fmt(chance_agreement * 100, precision=0, commas=False)
+```
+
 #### Label quality drift {#sec-data-engineering-label-quality-drift-1ce7}
 
 Label quality drift\index{Label Quality Drift!detection}[^fn-label-drift-invisible] represents a meta-level shift distinct from the three preceding distribution shifts: the reliability of ground truth labels degrades over time even when the underlying data distributions remain stable. This drift type proves particularly insidious because standard feature distribution monitoring fails to detect it. Crowdsourced labels may degrade as annotator pools change, training materials become outdated, or labeling guidelines evolve without corresponding model updates. Automated labeling systems accumulate errors as the models powering them drift from their original operating conditions. A recommendation system using click feedback as implicit labels may see label quality degrade as user behavior becomes more exploratory, as bot traffic patterns change, or as interface modifications alter how users interact with content.
 
 Detection requires monitoring annotation consistency rather than feature distributions. Inter-annotator agreement metrics like Cohen's kappa[^fn-cohens-kappa-label-quality] $(\kappa)$ provide quantitative assessment. Let $p_o$ represent observed agreement between annotators and $p_e$ represent agreement expected by chance. @eq-cohens-kappa defines the statistic:
 
-[^fn-cohens-kappa-label-quality]: **Cohen's Kappa ($\kappa$)**: Introduced by @cohen1960 to measure inter-rater agreement while correcting for chance agreement, which raw percentage agreement ignores. The correction matters: two annotators labeling 90 percent of images as "not spam" will agree 81 percent of the time by pure chance, making raw agreement a dangerously misleading quality metric. For ML label quality monitoring, $\kappa$ below 0.4 signals unreliable training data whose noise the model will inherit. \index{Cohen's Kappa!label quality}
+[^fn-cohens-kappa-label-quality]: **Cohen's Kappa ($\kappa$)**: Introduced by @cohen1960 to measure inter-rater agreement while correcting for chance agreement, which raw percentage agreement ignores. The correction matters: two annotators labeling 90 percent of images as "not spam" in a binary task will agree `{python} CohensKappaChance.chance_agreement_pct_str` percent of the time by pure chance, making raw agreement a dangerously misleading quality metric. For ML label quality monitoring, $\kappa$ below 0.4 signals unreliable training data whose noise the model will inherit. \index{Cohen's Kappa!label quality}
 
 $$
 \kappa = \frac{p_o - p_e}{1 - p_e}
@@ -2978,6 +3050,7 @@ class KWSScalabilityTargets:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     dataset_size_m = 23.4
     memory_limit_edge_kb = 16
+    model_size_limit_kb = DataEngineeringSetup.kws_memory_limit_design_kb
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     total_examples = dataset_size_m * MILLION
@@ -2985,13 +3058,16 @@ class KWSScalabilityTargets:
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(total_examples > 20 * MILLION, f"KWS corpus unexpectedly small: {total_examples:.0f}.")
     check(memory_limit_edge_kb <= 16, f"Edge memory target should remain tiny, got {memory_limit_edge_kb} KB.")
+    check(memory_limit_edge_kb < model_size_limit_kb,
+          "Edge preprocessing-state budget should be stricter than the model-size design limit.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     dataset_size_m_round_str = fmt(int(round(dataset_size_m)), precision=0)
     memory_limit_edge_kb_str = fmt(memory_limit_edge_kb, precision=0, commas=False)
+    model_size_limit_kb_str = fmt(model_size_limit_kb, precision=0, commas=False)
 ```
 
-Scalability in the KWS pipeline manifests at multiple stages. Development uses single-machine processing on sample datasets to iterate rapidly. Training at scale requires distributed processing when dataset size (`{python} KWSScalabilityTargets.dataset_size_m_round_str` million examples) exceeds single-machine capacity or when multiple experiments run concurrently. The processing pipeline parallelizes naturally: audio files are independent, so transforming them requires no coordination between workers. Each worker reads its assigned audio files from distributed storage, computes features, and writes results back—a trivially parallel pattern achieving near-linear scalability. Production deployment requires real-time processing on edge devices with severe resource constraints (our `{python} KWSScalabilityTargets.memory_limit_edge_kb_str` kilobyte memory limit), necessitating careful optimization and quantization to fit processing within device capabilities.
+Scalability in the KWS pipeline manifests at multiple stages. Development uses single-machine processing on sample datasets to iterate rapidly. Training at scale requires distributed processing when dataset size (`{python} KWSScalabilityTargets.dataset_size_m_round_str` million examples) exceeds single-machine capacity or when multiple experiments run concurrently. The processing pipeline parallelizes naturally: audio files are independent, so transforming them requires no coordination between workers. Each worker reads its assigned audio files from distributed storage, computes features, and writes results back—a trivially parallel pattern achieving near-linear scalability. Production deployment adds a stricter `{python} KWSScalabilityTargets.memory_limit_edge_kb_str` KB preprocessing-state budget alongside the `{python} KWSScalabilityTargets.model_size_limit_kb_str` KB model-size limit, necessitating careful optimization and quantization to fit processing within device capabilities.
 
 ### Transformation lineage {#sec-data-engineering-tracking-data-transformation-lineage-3b09}
 
@@ -3453,9 +3529,9 @@ Beyond the functional differences between storage systems, cost and performance 
 # │
 # │ Goal: Quantify the storage-cost trade-off where the KWS dataset is discussed.
 # │ Show: Object storage is cheaper, while NVMe buys a 50× loading advantage.
-# │ How: Convert 736 GB to TB-month costs and compare effective bandwidth.
+# │ How: Compute rounded KWS raw-audio size, then compare storage costs and bandwidth.
 # │
-# │ Imports: mlsysim.core.constants (STORAGE_COST_*, GB, TB, USD, ureg),
+# │ Imports: mlsysim.core.constants (STORAGE_COST_*, GB, TB, USD, ureg, byte, MILLION),
 # │          mlsysim.book (fmt, check)
 # │ Exports: KWSStorageEconomics.dataset_size_gb_str,
 # │          KWSStorageEconomics.storage_s3_cost_str,
@@ -3465,16 +3541,33 @@ Beyond the functional differences between storage systems, cost and performance 
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import (
     STORAGE_COST_S3_STD, STORAGE_COST_NVME_LOW, STORAGE_COST_NVME_HIGH,
-    GB, TB, USD, ureg
+    GB, TB, USD, ureg, byte, MILLION
 )
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
+class KWSRawAudioStorage:
+    """Raw-audio storage size for the rounded KWS corpus scale used in storage examples."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    rounded_sample_count_m = 23
+    sample_duration_s = 1
+    sample_rate_hz = 16_000
+    bytes_per_sample = 2
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    sample_count = rounded_sample_count_m * MILLION
+    dataset_size_bytes = sample_count * sample_duration_s * sample_rate_hz * bytes_per_sample
+    dataset_size_gb = (dataset_size_bytes * byte).m_as(GB)
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(abs(dataset_size_gb - 736) < 1e-9, f"Rounded KWS storage example should be 736 GB, got {dataset_size_gb:.1f} GB.")
+
 class KWSStorageEconomics:
     """Storage-cost recap for the KWS training dataset."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    dataset_size_gb = 736
+    dataset_size_gb = KWSRawAudioStorage.dataset_size_gb
     storage_cost_s3 = STORAGE_COST_S3_STD.m_as(USD/TB/ureg.month)
     storage_cost_nvme_low = STORAGE_COST_NVME_LOW.m_as(USD/TB/ureg.month)
     storage_cost_nvme_high = STORAGE_COST_NVME_HIGH.m_as(USD/TB/ureg.month)
@@ -3524,7 +3617,7 @@ class KWSStorageEconomics:
 # │
 # │ Goal: Contrast dataset loading times across storage tiers.
 # │ Show: The 50× speedup available when moving from object storage to NVMe.
-# │ How: Calculate total load time for a 736 GB dataset.
+# │ How: Calculate total load time for the computed rounded KWS dataset.
 # │
 # │ Imports: mlsysim.book (fmt, check)
 # │ Exports: StorageLoading.nvme_load_str, StorageLoading.obj_load_str,
@@ -3537,7 +3630,7 @@ class StorageLoading:
     """KWS dataset load time comparison: NVMe vs. object storage."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    kws_dataset_gb = 736
+    kws_dataset_gb = KWSStorageEconomics.dataset_size_gb
     nvme_bw_gbs = 5    # effective NVMe throughput
     obj_bw_gbs = 0.1   # typical object storage throughput
 
@@ -4411,7 +4504,7 @@ class DataEngineeringSummaryRecap:
     gpu_hour_cost_low = 2.0
     gpu_hour_cost_high = CLOUD_GPU_TRAINING_PER_HOUR.m_as(USD/hour)
     kws_dataset_size_m = 23.4
-    kws_dataset_size_gb = 736
+    kws_dataset_size_gb = KWSStorageEconomics.dataset_size_gb
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     train_cost_low = a100_count * train_hours_low * gpu_hour_cost_low
