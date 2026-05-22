@@ -4679,11 +4679,11 @@ The memory bottleneck emerges from materializing the $S{\times}S$ intermediate m
 
 \index{HBM!memory bandwidth}\index{SRAM!on-chip memory}Modern GPU memory hierarchy exacerbates this bottleneck. HBM provides 40–80 GB capacity with 1–2 TB/s bandwidth, while SRAM provides only 20–40 MB capacity but delivers 20+ TB/s bandwidth (10$\times$ faster). Standard attention stores these large matrices in slow HBM and repeatedly loads them during the backward pass. For GPT-2 scale models processing 2048-token sequences, attention operations spend 70--80 percent of execution time waiting for memory transfers rather than computing, leaving expensive tensor cores underutilized.
 
-The backward pass compounds this problem. Computing $\frac{\partial \mathcal{L}}{\partial \mathbf{Q}}$, $\frac{\partial \mathcal{L}}{\partial \mathbf{K}}$, and $\frac{\partial \mathcal{L}}{\partial \mathbf{V}}$ requires access to the attention probability matrix $\mathbf{A}_{\text{attn}} = \text{softmax}(\mathbf{S}_{\text{attn}})$ and the raw scores $\mathbf{S}_{\text{attn}} = \mathbf{Q}\mathbf{K}^T/\sqrt{d_k}$ from the forward pass. Differentiating through softmax couples every element of $\mathbf{A}_{\text{attn}}$ to every element of $\mathbf{S}_{\text{attn}}$, so the full $S{\times}S$ matrices must be stored:
+The backward pass compounds this problem. Computing $\frac{\partial \mathcal{L}}{\partial \mathbf{Q}}$, $\frac{\partial \mathcal{L}}{\partial \mathbf{K}}$, and $\frac{\partial \mathcal{L}}{\partial \mathbf{V}}$ requires access to the attention probability matrix $\mathbf{A}_{\text{attn}} = \text{softmax}(\mathbf{Z}_{\text{attn}})$ and the raw scores $\mathbf{Z}_{\text{attn}} = \mathbf{Q}\mathbf{K}^T/\sqrt{d_k}$ from the forward pass. Differentiating through softmax couples every element of $\mathbf{A}_{\text{attn}}$ to every element of $\mathbf{Z}_{\text{attn}}$, so the full $S{\times}S$ matrices must be stored:
 $$
 \frac{\partial \mathcal{L}}{\partial \mathbf{Q}} = \frac{1}{\sqrt{d_k}} \cdot \text{dsoftmax}\!\left(\frac{\partial \mathcal{L}}{\partial \mathbf{A}_{\text{attn}}},\, \mathbf{A}_{\text{attn}}\right) \cdot \mathbf{K}
 $$
-where $\text{dsoftmax}$ denotes the Jacobian-vector product of softmax, which itself depends on the stored $\mathbf{A}_{\text{attn}}$ matrix. Analogous expressions for $\frac{\partial \mathcal{L}}{\partial \mathbf{K}}$ and $\frac{\partial \mathcal{L}}{\partial \mathbf{V}}$ also require $\mathbf{A}_{\text{attn}}$ and $\mathbf{S}_{\text{attn}}$. Storing both for all layers in HBM during the forward pass doubles memory requirements and creates multiple round-trips between HBM and compute units during backpropagation.
+where $\text{dsoftmax}$ denotes the Jacobian-vector product of softmax, which itself depends on the stored $\mathbf{A}_{\text{attn}}$ matrix. Analogous expressions for $\frac{\partial \mathcal{L}}{\partial \mathbf{K}}$ and $\frac{\partial \mathcal{L}}{\partial \mathbf{V}}$ also require $\mathbf{A}_{\text{attn}}$ and $\mathbf{Z}_{\text{attn}}$. Storing both for all layers in HBM during the forward pass doubles memory requirements and creates multiple round-trips between HBM and compute units during backpropagation.
 
 #### IO-aware attention through tiling {#sec-model-training-ioaware-attention-tiling-f02f}
 
@@ -4700,10 +4700,10 @@ Flash Attention decomposes this computation by partitioning queries into tiles a
 1. Initialize output block $Y_i = \mathbf{0}$ and normalizer $l_i = \mathbf{0}$ in SRAM
 2. For each key-value block $(K_j, V_j)$:
    - Load $Q_i$, $K_j$, $V_j$ into SRAM
-   - Compute attention scores: $S_{ij} = Q_i K_j^T / \sqrt{d_k}$ (size $b{\times}b$, fits in SRAM)
-   - Update the running row-wise maximum $m_i$ and normalizer $l_i$ from $S_{ij}$ (online softmax statistics across all key blocks)
-   - Accumulate: Rescale the previous $Y_i$ by the corrected normalizer and add the contribution from $\exp(S_{ij} - m_i) V_j$
-   - Discard $S_{ij}$ and the per-tile exponentials (no HBM storage)
+   - Compute attention scores: $Z_{ij} = Q_i K_j^T / \sqrt{d_k}$ (size $b{\times}b$, fits in SRAM)
+   - Update the running row-wise maximum $m_i$ and normalizer $l_i$ from $Z_{ij}$ (online softmax statistics across all key blocks)
+   - Accumulate: Rescale the previous $Y_i$ by the corrected normalizer and add the contribution from $\exp(Z_{ij} - m_i) V_j$
+   - Discard $Z_{ij}$ and the per-tile exponentials (no HBM storage)
 3. Write final $Y_i$ to HBM
 
 No $S{\times}S$ matrix ever exists in HBM. The largest intermediate tensor is $b{\times}b$ (typically $b = 128$), requiring only 64 KB for a $128{\times}128$ FP32 matrix compared to 64 MB for the full $4096{\times}4096$ matrix.
@@ -4716,7 +4716,7 @@ Flash Attention achieves asymptotic improvements in both memory footprint and me
 
 ##### Memory complexity {#sec-model-training-memory-complexity-ad72}
 
-- **Standard Attention**: $\mathcal{O}(n^2)$ memory for storing score matrices $S$ and attention-probability matrices $A_{\text{attn}}$ across all sequence positions
+- **Standard Attention**: $\mathcal{O}(n^2)$ memory for storing score matrices $\mathbf{Z}_{\text{attn}}$ and attention-probability matrices $A_{\text{attn}}$ across all sequence positions
 - **Flash Attention**: $\mathcal{O}(n)$ memory, storing only input/output tensors $(Q, K, V, Y)$ plus a small constant SRAM buffer
 
 ```{python}
