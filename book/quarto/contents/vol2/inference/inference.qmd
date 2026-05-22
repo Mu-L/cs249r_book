@@ -1211,7 +1211,7 @@ class LittlesLawVerify:
 
 2. **Batch size 8 achieves stability**\index{Batch Size!8 achieves stability}: At `{python} GPT3ServingResults.b8_util_pct_str` percent utilization, the system is stable but queuing delays contribute significantly to latency (`{python} GPT3ServingResults.b8_wait_ms_str` ms), as @fig-queuing-hockey-stick illustrates.
 
-::: {#fig-queuing-hockey-stick fig-env="figure" fig-pos="htb" fig-cap="**The Queuing Hockey Stick**: Relationship between system utilization $\rho$ and queue length (M/M/1: $N_{\text{queue}} = \rho/(1-\rho)$). Three zones are shaded: a Safe Zone ($\rho < 0.7$), a Caution band (0.7--0.85), and a Danger Zone ($\rho > 0.85$) where queue depth grows unboundedly. Production systems typically target $\rho \leq 0.7$ to maintain latency headroom." fig-alt="Plot of Queue Length (requests) vs. Utilization rho from 0 to 1. The curve is flat until rho around 0.7, bends upward through a caution band (0.7 to 0.85), then rises sharply in a Danger Zone toward saturation at rho=1."}
+::: {#fig-queuing-hockey-stick fig-env="figure" fig-pos="htb" fig-cap="**The Queuing Hockey Stick**: Relationship between system utilization $\rho$ and queue length (M/M/1 queue length $\rho/(1-\rho)$). Three zones are shaded: a Safe Zone ($\rho < 0.7$), a Caution band (0.7--0.85), and a Danger Zone ($\rho > 0.85$) where queue depth grows unboundedly. Production systems typically target $\rho \leq 0.7$ to maintain latency headroom." fig-alt="Plot of Queue Length (requests) vs. Utilization rho from 0 to 1. The curve is flat until rho around 0.7, bends upward through a caution band (0.7 to 0.85), then rises sharply in a Danger Zone toward saturation at rho=1."}
 ![](images/svg/queuing-hockey-stick.svg)
 :::
 
@@ -1509,17 +1509,17 @@ The performance gap between traditional and continuous batching becomes quantifi
 
 #### The waste function for traditional batching {#sec-inference-scale-waste-function-traditional-batching-1fb8}
 
-Traditional batching (also called static batching) processes all requests in a batch through all decode iterations until the longest sequence completes. For a batch of $n$ sequences with output lengths $\{S_1, S_2, ..., S_n\}$, the total compute performed is:
+Traditional batching (also called static batching) processes all requests in a batch through all decode iterations until the longest sequence completes. For batch size $B$ with output lengths $\{S_1, S_2, ..., S_B\}$, the total compute performed is:
 
-$$C_{\text{traditional}} = n \times S_{\text{max}} \times c_{\text{decode}}$$
+$$C_{\text{traditional}} = B \times S_{\text{max}} \times c_{\text{decode}}$$
 
 where $S_{\text{max}} = \max_i(S_i)$ and $c_{\text{decode}}$ is the compute cost per decode iteration per sequence. However, the useful compute is only:
 
-$$C_{\text{useful}} = \sum_{i=1}^{n} S_i \times c_{\text{decode}}$$
+$$C_{\text{useful}} = \sum_{i=1}^{B} S_i \times c_{\text{decode}}$$
 
 The **waste ratio** quantifies the inefficiency:
 
-$$W = 1 - \frac{C_{\text{useful}}}{C_{\text{traditional}}} = 1 - \frac{\sum_{i=1}^{n} S_i}{n \times S_{\text{max}}} = 1 - \frac{\bar{S}}{S_{\text{max}}}$$ {#eq-waste-ratio}
+$$W = 1 - \frac{C_{\text{useful}}}{C_{\text{traditional}}} = 1 - \frac{\sum_{i=1}^{B} S_i}{B \times S_{\text{max}}} = 1 - \frac{\bar{S}}{S_{\text{max}}}$$ {#eq-waste-ratio}
 
 where $\bar{S}$ is the mean output sequence length. This reveals that waste depends entirely on the ratio of mean to maximum output length within the batch. For uniform output lengths $(\bar{S} = S_{\text{max}})$, waste is zero. For highly variable lengths, waste can exceed 50 percent.
 
@@ -1814,7 +1814,7 @@ Continuous batching's performance benefits come with implementation complexity t
 
 Memory management complexity increases substantially. Traditional batching allocates a fixed KV cache region per sequence at batch formation, deallocating only when the entire batch completes. Continuous batching requires dynamic allocation as sequences grow and immediate deallocation upon completion, necessitating sophisticated memory management akin to operating system virtual memory.
 
-Scheduler complexity rises correspondingly. Traditional batching uses simple FIFO scheduling: collect requests until the batch is full or the timeout expires, then execute. Continuous batching requires per-iteration decision-making about which sequences to admit, which to preempt if memory pressure exists, and how to handle priority classes. This increases scheduler overhead from $\mathcal{O}(1)$ per batch to $\mathcal{O}(n)$ per iteration.
+Scheduler complexity rises correspondingly. Traditional batching uses simple FIFO scheduling: collect requests until the batch is full or the timeout expires, then execute. Continuous batching requires per-iteration decision-making about which sequences to admit, which to preempt if memory pressure exists, and how to handle priority classes. This increases scheduler overhead from $\mathcal{O}(1)$ per batch to $\mathcal{O}(B)$ per iteration.
 
 Kernel design must also adapt. Batched GPU kernels traditionally assume fixed batch composition. Continuous batching requires kernels that handle variable-length sequences efficiently, often through techniques like packing multiple short sequences into shared attention masks or using specialized memory layouts that support dynamic batch membership.
 
@@ -3990,13 +3990,13 @@ The practical speedup from sharding depends critically on communication efficien
 
 $$T_{\text{allreduce}} \approx 2(N-1)\alpha + \frac{2(N-1)}{N} \times \frac{M}{\beta}$$ {#eq-allreduce-time}
 
-where $N$ is the number of devices, $M$ is the message size, $\alpha$ is startup latency, and $\beta$ is the interconnect bandwidth. The factor of 2 accounts for the reduce-scatter and all-gather phases.
+where $N$ is the number of devices, $M$ is the collective payload size, $\alpha$ is startup latency, and $\beta$ is the interconnect bandwidth. The factor of 2 accounts for the reduce-scatter and all-gather phases.
 
 @eq-p2p-time expresses the simpler point-to-point communication for pipeline parallelism, where data flows from one device to the next.
 
-$$T_{\text{p2p}} = \alpha + \frac{M}{\beta}$$ {#eq-p2p-time}
+$$T_{\text{p2p}}(n) = \alpha + \frac{n}{\beta}$$ {#eq-p2p-time}
 
-where $\alpha$ is the network latency and $M/\beta$ is the transfer time.
+where $n$ is the point-to-point payload size, $\alpha$ is the network latency, and $n/\beta$ is the transfer time.
 
 @eq-alltoall-time captures the more complex AllToAll communication\index{AllToAll!alltoall communication} for expert parallelism, where each device exchanges distinct data with every other device.
 
@@ -4147,23 +4147,23 @@ For homogeneous servers with identical service times, both achieve near-optimal 
 
 Under these realistic conditions, uninformed strategies perform poorly. The maximum queue length under random assignment follows @eq-random-max-queue:
 
-$$E[\text{max queue}] = \Theta\left(\frac{\log n}{\log \log n}\right)$$ {#eq-random-max-queue}
+$$E[\text{max queue}] = \Theta\left(\frac{\log R}{\log \log R}\right)$$ {#eq-random-max-queue}
 
-where $n$ is the number of servers. For 1,000 servers, this is approximately 4-5 requests. This seems small, but the unlucky requests in long queues experience significantly higher latency.
+where $R$ is the number of servers or replicas. For 1,000 servers, this is approximately 4-5 requests. This seems small, but the unlucky requests in long queues experience significantly higher latency.
 
-The power of two choices (Principle \ref{pri-power-two-choices}) provides the theoretical foundation: querying just two random replicas and selecting the least-loaded one exponentially reduces tail latency from $\mathcal{O}(\log n / \log \log n)$ to $\mathcal{O}(\log \log n)$.
+The power of two choices (Principle \ref{pri-power-two-choices}) provides the theoretical foundation: querying just two random replicas and selecting the least-loaded one exponentially reduces tail latency from $\mathcal{O}(\log R / \log \log R)$ to $\mathcal{O}(\log \log R)$.
 
 ### The power of two choices {#sec-inference-scale-power-two-choices-ffdd}
 
 A foundational result in load balancing theory [@mitzenmacher2001] shows that querying just two random servers before making a routing decision provides exponentially better load distribution than random assignment.[^fn-balls-bins-routing]
 
-[^fn-balls-bins-routing]: **Balls-into-Bins (Power of Two Choices)**: With random placement, maximum bin load is $\Theta(\log n / \log \log n)$; with two random choices and greedy selection, it drops to $\Theta(\log \log n)$. For a 1,000-server inference fleet, this reduces worst-case queue depth from roughly 5 to roughly 2, cutting P99 tail latency by nearly half while adding only the overhead of a single extra queue-length probe per request. \index{Power of Two Choices!routing}
+[^fn-balls-bins-routing]: **Balls-into-Bins (Power of Two Choices)**: With random placement, maximum bin load is $\Theta(\log R / \log \log R)$; with two random choices and greedy selection, it drops to $\Theta(\log \log R)$. For a 1,000-server inference fleet, this reduces worst-case queue depth from roughly 5 to roughly 2, cutting P99 tail latency by nearly half while adding only the overhead of a single extra queue-length probe per request. \index{Power of Two Choices!routing}
 
 The power-of-two-choices algorithm operates as follows. Select two servers uniformly at random. Query both for their current queue length. Route the request to the server with the shorter queue.
 
-@eq-two-choices-max-queue formalizes this exponential improvement, reducing maximum queue length from $\mathcal{O}(\log n / \log \log n)$ to $\mathcal{O}(\log \log n)$:
+@eq-two-choices-max-queue formalizes this exponential improvement, reducing maximum queue length from $\mathcal{O}(\log R / \log \log R)$ to $\mathcal{O}(\log \log R)$:
 
-$$E[\text{max queue}]_{\text{two choices}} = \Theta(\log \log n)$$ {#eq-two-choices-max-queue}
+$$E[\text{max queue}]_{\text{two choices}} = \Theta(\log \log R)$$ {#eq-two-choices-max-queue}
 
 For 1,000 servers:
 
@@ -4174,11 +4174,11 @@ The improvement is exponential: two choices with 1,000 servers achieves better b
 
 ::: {.callout-important title="Exponential gain from one change"}
 
-The power-of-two-choices result is one of the most impactful findings in distributed systems theory. By examining just one additional server, maximum queue length improves from $\mathcal{O}(\log n / \log \log n)$ to $\mathcal{O}(\log \log n)$, an exponential improvement.
+The power-of-two-choices result is one of the most impactful findings in distributed systems theory. By examining just one additional server, maximum queue length improves from $\mathcal{O}(\log R / \log \log R)$ to $\mathcal{O}(\log \log R)$, an exponential improvement.
 
 The practical implications are substantial:
 
-- Near-optimal load balancing with minimal overhead (2 probes vs. n probes)
+- Near-optimal load balancing with minimal overhead (2 probes vs. $R$ probes)
 - Scalable: improvement increases with system size
 - Robust: works with heterogeneous servers and variable request sizes
 - Simple: easy to implement in any load balancer
@@ -4189,7 +4189,7 @@ Production systems at Google, Meta, and AWS all use variants of power-of-two-cho
 
 The mechanism is intuitive: random assignment occasionally makes poor choices (routing to an already-busy server), and these mistakes compound. With two choices, the algorithm almost never makes the worst choice, avoiding the tail behavior that creates long queues.
 
-Mathematically, the key insight is that with random assignment, when $m$ servers have queue length $k$, the probability of queue length $k+1$ growing is proportional to $m/n$. With two choices, this probability drops to $(m/n)^2$, creating a super-exponential decay in queue length distribution.
+Mathematically, the key insight is that with random assignment, when $m$ servers have queue length $k$, the probability of queue length $k+1$ growing is proportional to $m/R$. With two choices, this probability drops to $(m/R)^2$, creating a super-exponential decay in queue length distribution.
 
 ### Weighted and adaptive load balancing {#sec-inference-scale-weighted-adaptive-load-balancing-1c03}
 
@@ -6236,7 +6236,7 @@ Queuing theory establishes that systems provisioned for average load violate SLO
 
 **Fallacy**: *Load balancing does not matter much for inference.*
 
-Simple load balancing strategies like round-robin seem adequate until examined quantitatively. As shown in @sec-inference-scale-load-balancing-request-routing-4997, random assignment produces maximum queue lengths of $\mathcal{O}(\log n / \log \log n)$ across $n$ servers. Power-of-two-choices reduces this to $\mathcal{O}(\log \log n)$, an exponential improvement. For a 1,000-server cluster, this translates from ~4-5 requests maximum queue to ~2 requests. At the tail latencies that determine SLO compliance, this difference is substantial. The choice of load balancing algorithm has first-order impact on system performance.
+Simple load balancing strategies like round-robin seem adequate until examined quantitatively. As shown in @sec-inference-scale-load-balancing-request-routing-4997, random assignment produces maximum queue lengths of $\mathcal{O}(\log R / \log \log R)$ across $R$ servers. Power-of-two-choices reduces this to $\mathcal{O}(\log \log R)$, an exponential improvement. For a 1,000-server cluster, this translates from ~4-5 requests maximum queue to ~2 requests. At the tail latencies that determine SLO compliance, this difference is substantial. The choice of load balancing algorithm has first-order impact on system performance.
 
 **Pitfall**: *Ignoring the serving tax in latency budgets.*
 
@@ -6299,7 +6299,7 @@ To distill the most important lessons from this chapter, focus on the patterns t
 
 1. **Serving cost dominates training cost over a model's lifetime.** For high-volume applications, serving cost exceeds training cost by 100$\times$ or more. Every percentage point of serving efficiency improvement yields ongoing cost reduction. Optimize serving ruthlessly.
 2. **Different model types require different batching strategies.** Static batching for vision, continuous batching for LLMs, feature-parallel batching for recommendation systems. There is no universal optimal strategy. Match technique to workload.
-3. **Power-of-two-choices provides exponential load balancing improvement.** Maximum queue length improves from $\mathcal{O}(\log n / \log \log n)$ to $\mathcal{O}(\log \log n)$ with minimal overhead (two probes per request). This simple technique should be standard for any distributed inference deployment.
+3. **Power-of-two-choices provides exponential load balancing improvement.** Maximum queue length improves from $\mathcal{O}(\log R / \log \log R)$ to $\mathcal{O}(\log \log R)$ with minimal overhead (two probes per request). This simple technique should be standard for any distributed inference deployment.
 
 :::
 
@@ -6316,7 +6316,7 @@ We analyzed why different model architectures require distinct batching strategi
 * **The inference wall**: Serving cost often dominates training cost by 100$\times$ or more over a model's lifetime, making inference efficiency the primary driver of ML economics.
 * **Prefill vs. decode**: LLM serving\index{Inference!prefill vs. decode} is split into two regimes: compute-bound prefill (input processing) and memory-bandwidth-bound decode (token generation). Optimizing for the "Decode" phase requires high-bandwidth memory (HBM3) or specialized storage-as-memory (HBF).
 * **Batching is not universal**: There is no "optimal" batch size for all models. Vision models scale with batch size; recommendation models scale with feature-parallel shards; LLMs scale via continuous, iteration-level management.
-* **Power of two choices**: Simple, randomized load balancing achieves exponentially better queue balance ($\mathcal{O}(\log \log n)$) with minimal overhead, a must-have for any large-scale deployment.
+* **Power of two choices**: Simple, randomized load balancing achieves exponentially better queue balance ($\mathcal{O}(\log \log R)$) with minimal overhead, a must-have for any large-scale deployment.
 * **Statefulness is the challenge**: Unlike stateless vision models, LLM serving\index{Inference!stateful serving} is inherently stateful due to the KV cache. This requires sticky routing, prefix caching, and sophisticated memory paging (PagedAttention) to prevent fragmentation.
 * **Distribution is a tax**: Every step of distribution\index{Inference!distribution tax} (network round-trips, serialization, and coordination) adds a "serving tax" that must be explicitly budgeted within the milliseconds allowed for a user response.
 
