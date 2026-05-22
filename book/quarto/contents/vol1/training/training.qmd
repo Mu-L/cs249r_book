@@ -166,7 +166,7 @@ A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios
 
 1.  **Significance (quantitative)**: Training memory cost is `{python} TrainingScenarios.adam_training_memory_multiplier_str`$\times$ the inference memory cost per parameter when using the Adaptive Moment Estimation (Adam) optimizer: a `{python} TrainingScenarios.adam_example_params_b_str`-billion-parameter model requires `{python} TrainingScenarios.adam_inference_gb_str` GB (FP16 weights) + `{python} TrainingScenarios.adam_grad_gb_str` GB (FP16 gradients) + `{python} TrainingScenarios.adam_moments_gb_str` GB (Adam first and second moments in FP32) = `{python} TrainingScenarios.adam_training_state_gb_str` GB minimum, before accounting for activation storage. This multiplier is the primary reason a model that runs inference on one GPU requires multiple GPUs for training.
 2.  **Distinction (durable)**: Unlike inference systems, which execute a single forward pass and discard intermediate activations, training systems must retain all intermediate activations from the forward pass for use during the backward pass, creating a memory footprint that grows linearly with model depth and batch size.
-3.  **Common pitfall**: A frequent misconception is that training failures are compute problems. The most common training failure is out-of-memory (OOM) error, which is a memory management problem: the activation tensors from all $N_{\text{layers}}$ layers accumulate during the forward pass and must coexist in GPU memory simultaneously, causing OOM before the first gradient is computed.
+3.  **Common pitfall**: A frequent misconception is that training failures are compute problems. The most common training failure is out-of-memory (OOM) error, which is a memory management problem: the activation tensors from all $N_L$ layers accumulate during the forward pass and must coexist in GPU memory simultaneously, causing OOM before the first gradient is computed.
 
 :::
 
@@ -186,7 +186,7 @@ A training system is not a single loop; it is a **staged system pipeline**\index
 
 Any mismatch in the throughput of these stages creates **accelerator bubbles**\index{Accelerator!bubbles, pipeline idleness}—intervals of idle silicon where the "Machine" axis of the AI Triad sits at 0 percent utilization while waiting for the "Data" axis to catch up. A systems engineer's primary task during training is to eliminate these bubbles through asynchronous prefetching and pipeline overlapping, ensuring that the next batch is ready on the PCIe bus before the current backward pass completes. We develop the quantitative tools for measuring and fixing these bubbles in @sec-model-training-identifying-bottlenecks-f57f.
 
-[^fn-checkpointing-training]: **Gradient Checkpointing (Activation Checkpointing)**: The memory pressure described here arises because backpropagation requires every layer's activations from the forward pass. Checkpointing breaks this requirement by saving activations at only $\sqrt{N_{\text{layers}}}$ strategic layers and recomputing the rest during the backward pass, trading roughly 33 percent additional compute for about `{python} TrainingScenarios.ckpt_memory_savings_pct_str` percent activation-memory savings in the simplified $\sqrt{N_{\text{layers}}}$ model. For GPT-2's `{python} TrainingScenarios.ckpt_layers_str` layers, this means about `{python} TrainingScenarios.ckpt_count_str` checkpoints and a peak of roughly `{python} TrainingScenarios.ckpt_memory_units_str` activation units per unit $A$, rather than `{python} TrainingScenarios.ckpt_layers_str` full-layer units. \index{Activation Checkpointing!compute-memory trade-off}
+[^fn-checkpointing-training]: **Gradient Checkpointing (Activation Checkpointing)**: The memory pressure described here arises because backpropagation requires every layer's activations from the forward pass. Checkpointing breaks this requirement by saving activations at only $\sqrt{N_L}$ strategic layers and recomputing the rest during the backward pass, trading roughly 33 percent additional compute for about `{python} TrainingScenarios.ckpt_memory_savings_pct_str` percent activation-memory savings in the simplified $\sqrt{N_L}$ model. For GPT-2's `{python} TrainingScenarios.ckpt_layers_str` layers, this means about `{python} TrainingScenarios.ckpt_count_str` checkpoints and a peak of roughly `{python} TrainingScenarios.ckpt_memory_units_str` activation units per unit $A$, rather than `{python} TrainingScenarios.ckpt_layers_str` full-layer units. \index{Activation Checkpointing!compute-memory trade-off}
 
 [^fn-mixed-precision-training]: **Mixed-Precision Training**: Uses half-precision (FP16 or BF16) for computation while maintaining FP32 "master weights" for accumulation, where rounding errors would otherwise compound. A loss scaling trick prevents gradient underflow in FP16's limited dynamic range, yielding nearly 2$\times$ memory savings and 2--8$\times$ throughput gains on Tensor Cores. BF16 ("Brain Floating Point," from Google Brain [@google_bfloat16]) later eliminated loss scaling by matching FP32's 8-bit exponent range, simplifying the dominant failure mode of half-precision training. \index{Mixed-Precision Training!trade-off}
 
@@ -5107,18 +5107,18 @@ The synergy between gradient accumulation and checkpointing enables training of 
 
 #### Optimal checkpoint placement strategy {#sec-model-training-optimal-checkpoint-placement-strategy-4a0d}
 
-\index{Activation Checkpointing!sqrt(L) strategy}
-For a network with $N_{\text{layers}}$ layers, each storing $A$ bytes of activations, @tbl-checkpoint-tradeoffs quantifies how the number and placement of checkpoints determines the memory-compute trade-off.
+\index{Activation Checkpointing!sqrt layer-count strategy}
+For a network with $N_L$ layers, each storing $A$ bytes of activations, @tbl-checkpoint-tradeoffs quantifies how the number and placement of checkpoints determines the memory-compute trade-off.
 
-Sub-linear checkpointing strategies can reduce memory consumption from $\mathcal{O}(N_{\text{layers}})$ to $\mathcal{O}(\sqrt{N_{\text{layers}}})$ with only a fractional increase in total compute time, enabling the training of much deeper models on existing hardware.
+Sub-linear checkpointing strategies can reduce memory consumption from $\mathcal{O}(N_L)$ to $\mathcal{O}(\sqrt{N_L})$ with only a fractional increase in total compute time, enabling the training of much deeper models on existing hardware.
 
-Setting the derivative of total memory cost $(k \times A + (N_{\text{layers}}/k) \times A)$ to zero yields $k_{\text{optimal}} = \sqrt{N_{\text{layers}}}$. In the common $\sqrt{N_{\text{layers}}}$ checkpointing scheme, this gives roughly one-third extra forward compute in exchange for the minimum memory footprint under this simplified model. For GPT-2 with forty-eight transformer layers, the contrast is stark: without checkpointing, memory equals $48 \times A$ (full activation storage). Optimal checkpointing ($\sqrt{48}$ approximately equals seven checkpoints) requires memory of $7 \times A + (48/7) \times A$ approximately equals $14 \times A$, achieving 71 percent memory savings with approximately 33 percent compute overhead.
+Setting the derivative of total memory cost $(k \times A + (N_L/k) \times A)$ to zero yields $k_{\text{optimal}} = \sqrt{N_L}$. In the common $\sqrt{N_L}$ checkpointing scheme, this gives roughly one-third extra forward compute in exchange for the minimum memory footprint under this simplified model. For GPT-2 with forty-eight transformer layers, the contrast is stark: without checkpointing, memory equals $48 \times A$ (full activation storage). Optimal checkpointing ($\sqrt{48}$ approximately equals seven checkpoints) requires memory of $7 \times A + (48/7) \times A$ approximately equals $14 \times A$, achieving 71 percent memory savings with approximately 33 percent compute overhead.
 
-| **Strategy**               | **Memory Cost**                             | **Recompute Cost**                  |
-|:---------------------------|:--------------------------------------------|:------------------------------------|
-| **No checkpointing**       | $N_{\text{layers}} \times A$                | 0 forward ops                       |
-| **Checkpoint every layer** | $A$                                         | $(N_{\text{layers}}-1)$ forward ops |
-| **k checkpoints**          | $k\times A + (N_{\text{layers}}/k)\times A$ | $(N_{\text{layers}}-k)$ forward ops |
+| **Strategy**               | **Memory Cost**               | **Recompute Cost**    |
+|:---------------------------|:------------------------------|:----------------------|
+| **No checkpointing**       | $N_L \times A$                | 0 forward ops         |
+| **Checkpoint every layer** | $A$                           | $(N_L-1)$ forward ops |
+| **k checkpoints**          | $k\times A + (N_L/k)\times A$ | $(N_L-k)$ forward ops |
 
 : **Checkpointing Memory-Compute Trade-Offs**: Different checkpoint strategies trade memory savings against recomputation overhead. The optimal number of checkpoints balances these factors. {#tbl-checkpoint-tradeoffs}
 
