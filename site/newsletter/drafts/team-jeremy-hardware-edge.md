@@ -107,4 +107,4 @@ I offer the piece as a data point from the edge, not a model to transplant: one 
 **Jeremy Ellis**
 High School Robotics and Machine Learning Educator, MSS, Mission SD75, BC, Canada
 Co-Chair, EdgeAI4D Show & Tell
-Course GitHub: [The XIAO ML Kit Course](TBD) (or use the QR code in the email)
+Course GitHub: _The XIAO ML Kit Course_ (URL TBD — or use the QR code in the email)

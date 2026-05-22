@@ -1,6 +1,6 @@
 ---
 quiz: model_serving_quizzes.json
-concepts: serving_concepts.yml
+concepts: model_serving_concepts.yml
 glossary: serving_glossary.json
 engine: jupyter
 ---
@@ -1556,7 +1556,7 @@ Understanding *where* time goes requires instrumenting each phase independently.
 # │          p_transfer_str, p_inf_str, p_post_str
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.fmt import MarkdownStr
+from mlsysim.fmt import MarkdownStr, fmt
 class LatencyTableCalc:
     """Decomposes the ResNet-50 request lifecycle into processing phases with percentages."""
 
@@ -2529,7 +2529,7 @@ class ColdStartCalc:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     cs_local_total_value = cs_ssd_value + cs_cuda_value + cs_warmup_value + cs_runtime_overhead_value
-    cs_cloud_total_value = cs_s3_value + cs_cuda_value + cs_compile_value + cs_warmup_value
+    cs_cloud_total_value = cs_s3_value + cs_cuda_value + cs_compile_value + cs_warmup_value + cs_runtime_overhead_value
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     cs_local_str = fmt(cs_local_total_value, precision=1, commas=False, prefix="~", suffix=" s")
@@ -2539,6 +2539,7 @@ class ColdStartCalc:
     cs_cuda_str = MarkdownStr("0.3-0.5 s")                                                 # range for CUDA
     cs_compile_str = MarkdownStr("15-30 s")                                                # range for TensorRT
     cs_warmup_str = fmt(cs_warmup_value, precision=1, commas=False, suffix=" s")
+    cs_runtime_overhead_str = fmt(cs_runtime_overhead_value, precision=1, commas=False, suffix=" s")
 ```
 
 ::: {#nbk-model-serving-resnet-50-cold-start-timeline .callout-notebook title="ResNet-50: Cold start timeline"}
@@ -2547,15 +2548,16 @@ class ColdStartCalc:
 
 ::: {tbl-colwidths="[30,12,48]"}
 
-| **Phase**                       |                **Duration**               | **Notes**                                        |
-|:--------------------------------|:-----------------------------------------:|:-------------------------------------------------|
-| **Weight loading (SSD)**        |    `{python} ColdStartCalc.cs_ssd_str`    | 98 MB FP32 weights from local storage            |
-| **Weight loading (S3)**         |     `{python} ColdStartCalc.cs_s3_str`    | Network latency dominates for cloud storage      |
-| **CUDA context**                |    `{python} ColdStartCalc.cs_cuda_str`   | GPU driver initialization and memory setup       |
-| **TensorRT compilation**        |  `{python} ColdStartCalc.cs_compile_str`  | Converts PyTorch model to optimized engine       |
-| **Warmup (10 inferences)**      |   `{python} ColdStartCalc.cs_warmup_str`  | Triggers remaining lazy initialization           |
-| **Total (local, optimized)**    | **`{python} ColdStartCalc.cs_local_str`** | With precompiled TensorRT engine, warm container |
-| **Total (cloud, first deploy)** | **`{python} ColdStartCalc.cs_cloud_str`** | Including compilation from cold state            |
+| **Phase**                       |                   **Duration**                   | **Notes**                                           |
+|:--------------------------------|:------------------------------------------------:|:----------------------------------------------------|
+| **Weight loading (SSD)**        |       `{python} ColdStartCalc.cs_ssd_str`        | 98 MB FP32 weights from local storage               |
+| **Weight loading (S3)**         |        `{python} ColdStartCalc.cs_s3_str`        | Network latency dominates for cloud storage         |
+| **CUDA context**                |       `{python} ColdStartCalc.cs_cuda_str`       | GPU driver initialization and memory setup          |
+| **TensorRT compilation**        |     `{python} ColdStartCalc.cs_compile_str`      | Converts PyTorch model to optimized engine          |
+| **Warmup (10 inferences)**      |      `{python} ColdStartCalc.cs_warmup_str`      | Triggers remaining lazy initialization              |
+| **Runtime overhead**            | `{python} ColdStartCalc.cs_runtime_overhead_str` | Process startup, framework hooks, and runtime setup |
+| **Total (local, optimized)**    |    **`{python} ColdStartCalc.cs_local_str`**     | With precompiled TensorRT engine, warm container    |
+| **Total (cloud, first deploy)** |    **`{python} ColdStartCalc.cs_cloud_str`**     | Including compilation from cold state               |
 
 : **ResNet-50 Cold Start Timeline**: Per-phase durations for weight loading, CUDA context creation, TensorRT compilation, and warmup, with totals for the optimized local case and the first-deploy cloud case showing where the dominant cost lives. {#tbl-model-serving-resnet-coldstart}
 
@@ -3337,10 +3339,11 @@ For ResNet-50 with 50 ms SLO and 500 QPS traffic:
 # │          pc_max_window_ms_str, pc_expected_batch_str,
 # │          pc_mem_limit_batch_str, pc_config_window_ms_str,
 # │          pc_config_batch_str, pc_predicted_p99_ms_str,
-# │          pc_predicted_throughput_str
+# │          pc_predicted_throughput_str, pc_p99_batch_str
 # └─────────────────────────────────────────────────────────────────────────────
+import math
 from mlsysim.core.constants import ms, second
-from mlsysim.fmt import fmt
+from mlsysim.fmt import fmt, check
 
 class PracticalConfigCalc:
     """Derives a production batching config: 30% SLO budget yields a 12 ms window for 500 QPS."""
@@ -3352,13 +3355,34 @@ class PracticalConfigCalc:
     pc_mem_limit_batch_value = 32
     pc_config_window_ms_value = 12       # tuned value
     pc_config_batch_value = 32
-    pc_predicted_p99_ms_value = 43
-    pc_predicted_throughput_value = 1180
+    pc_base_service_ms_value = 5.0
+    pc_per_image_ms_value = 0.6
+    pc_throughput_efficiency_value = 0.89
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     pc_batch_budget_ms_value = pc_slo_ms_value * pc_budget_pct_value
     pc_max_window_ms_value = pc_batch_budget_ms_value
-    pc_expected_batch_value = pc_qps_value * (pc_config_window_ms_value * ms).m_as(second)
+    pc_window_seconds_value = (pc_config_window_ms_value * ms).m_as(second)
+    pc_expected_batch_value = pc_qps_value * pc_window_seconds_value
+
+    poisson_term = math.exp(-pc_expected_batch_value)
+    poisson_cdf = poisson_term
+    pc_p99_batch_value = 0
+    while poisson_cdf < 0.99:
+        pc_p99_batch_value += 1
+        poisson_term *= pc_expected_batch_value / pc_p99_batch_value
+        poisson_cdf += poisson_term
+
+    pc_p99_batch_value = min(pc_p99_batch_value, pc_config_batch_value)
+    pc_p99_service_ms_value = pc_base_service_ms_value + pc_per_image_ms_value * pc_p99_batch_value
+    pc_predicted_p99_ms_value = pc_config_window_ms_value + pc_p99_service_ms_value
+
+    pc_peak_service_ms_value = pc_base_service_ms_value + pc_per_image_ms_value * pc_config_batch_value
+    pc_predicted_throughput_value = (
+        pc_config_batch_value / (pc_peak_service_ms_value * ms).m_as(second) * pc_throughput_efficiency_value
+    )
+
+    check(pc_predicted_p99_ms_value < pc_slo_ms_value, "Predicted p99 should stay within the serving SLO.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     pc_slo_ms_str = fmt(pc_slo_ms_value, precision=0, commas=False)
@@ -3369,6 +3393,7 @@ class PracticalConfigCalc:
     pc_mem_limit_batch_str = fmt(pc_mem_limit_batch_value, precision=0, commas=False)
     pc_config_window_ms_str = fmt(pc_config_window_ms_value, precision=0, commas=False)
     pc_config_batch_str = fmt(pc_config_batch_value, precision=0, commas=False)
+    pc_p99_batch_str = fmt(pc_p99_batch_value, precision=0, commas=False)
     pc_predicted_p99_ms_str = fmt(pc_predicted_p99_ms_value, precision=0, commas=False)
     pc_predicted_throughput_str = fmt(pc_predicted_throughput_value, precision=0)
 ```
@@ -3376,6 +3401,7 @@ class PracticalConfigCalc:
 - Latency budget for batching: `{python} PracticalConfigCalc.pc_batch_budget_ms_str` ms
 - Maximum window: `{python} PracticalConfigCalc.pc_max_window_ms_str` ms
 - Expected batch size: `{python} PracticalConfigCalc.pc_expected_batch_str`
+- p99 batch size under Poisson arrivals: `{python} PracticalConfigCalc.pc_p99_batch_str`
 - Maximum batch size: `{python} PracticalConfigCalc.pc_mem_limit_batch_str` (memory limit)
 - Configuration: $T$ = `{python} PracticalConfigCalc.pc_config_window_ms_str` ms, $b_{\text{max}}$ = `{python} PracticalConfigCalc.pc_config_batch_str`
 - Predicted p99 latency: `{python} PracticalConfigCalc.pc_predicted_p99_ms_str` ms (within SLO)
@@ -3482,7 +3508,7 @@ Consider a vehicle with six cameras capturing at 30 FPS, requiring spatial fusio
 | $T = 25$ ms | Inference complete                |
 | $T = 32$ ms | Result ready for planning module  |
 
-: **Multi-Camera Frame Timeline**: Event-by-event timeline for one synchronized frame set across six cameras at 30 FPS, illustrating the synchronization budget (12 ms of the 33 ms hard deadline) consumed by sensor jitter before batch inference can begin. {#tbl-model-serving-multicamera-timeline}
+: **Multi-Camera Frame Timeline**: Event-by-event timeline for one synchronized frame set across six cameras at 30 FPS. The example shows a 7 ms arrival spread between the first and last camera frame, while the system reserves 12 ms of the 33 ms hard deadline as jitter tolerance before batch inference must begin. {#tbl-model-serving-multicamera-timeline}
 
 ```{=latex}
 \endgroup
@@ -3982,7 +4008,8 @@ In practice, GPU compute pipelines and Tensor Core alignment effects limit achie
 # │          pt_fp16_ms_str, pt_fp16_mem_mb_str, pt_fp16_acc_str,
 # │          pt_fp16_util_str, pt_int8_ms_str, pt_int8_mem_mb_str,
 # │          pt_int8_ptq_acc_str, pt_int8_qat_acc_str, pt_int8_util_str,
-# │          pt_int8_speedup_str, pt_fp16_speedup_str, pt_int8_acc_loss_str
+# │          pt_int8_speedup_str, pt_fp16_speedup_str,
+# │          pt_int8_vs_fp16_speedup_str, pt_int8_acc_loss_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt
 
@@ -4006,6 +4033,7 @@ class PrecisionTradeoffCalc:
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     pt_int8_speedup_value = pt_fp32_ms_value/pt_int8_ms_value
     pt_fp16_speedup_value = pt_fp32_ms_value/pt_fp16_ms_value
+    pt_int8_vs_fp16_speedup_value = pt_fp16_ms_value/pt_int8_ms_value
     pt_int8_acc_loss_value = pt_fp32_acc_value - pt_int8_ptq_acc_value
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
@@ -4023,6 +4051,7 @@ class PrecisionTradeoffCalc:
     pt_int8_util_str = fmt(pt_int8_util_value, precision=0, commas=False)
     pt_int8_speedup_str = fmt(pt_int8_speedup_value, precision=1, commas=False)
     pt_fp16_speedup_str = fmt(pt_fp16_speedup_value, precision=0, commas=False)
+    pt_int8_vs_fp16_speedup_str = fmt(pt_int8_vs_fp16_speedup_value, precision=1, commas=False)
     pt_int8_acc_loss_str = fmt(pt_int8_acc_loss_value, precision=2, commas=False)
 ```
 
@@ -4044,7 +4073,7 @@ class PrecisionTradeoffCalc:
 | **INT8 (PTQ)** | `{python} PrecisionTradeoffCalc.pt_int8_ms_str` ms | `{python} PrecisionTradeoffCalc.pt_int8_mem_mb_str` MB | `{python} PrecisionTradeoffCalc.pt_int8_ptq_acc_str`% | `{python} PrecisionTradeoffCalc.pt_int8_util_str`% | 1,000 samples   |
 | **INT8 (QAT)** | `{python} PrecisionTradeoffCalc.pt_int8_ms_str` ms | `{python} PrecisionTradeoffCalc.pt_int8_mem_mb_str` MB | `{python} PrecisionTradeoffCalc.pt_int8_qat_acc_str`% | `{python} PrecisionTradeoffCalc.pt_int8_util_str`% | Full retraining |
 
-: **Precision Trade-offs on V100**: Latency, memory footprint, accuracy, and Tensor Core utilization for ResNet-50 in FP32, FP16, and INT8 (PTQ and QAT). FP16 is a near-free 2$\times$ speedup, while INT8 buys an additional 3$\times$ at the cost of calibration data and a fraction of a percentage point in accuracy. {#tbl-model-serving-precision-tradeoffs}
+: **Precision Trade-offs on V100**: Latency, memory footprint, accuracy, and Tensor Core utilization for ResNet-50 in FP32, FP16, and INT8 (PTQ and QAT). FP16 is a near-free `{python} PrecisionTradeoffCalc.pt_fp16_speedup_str`$\times$ speedup over FP32, while INT8 reaches `{python} PrecisionTradeoffCalc.pt_int8_speedup_str`$\times$ over FP32 (`{python} PrecisionTradeoffCalc.pt_int8_vs_fp16_speedup_str`$\times$ beyond FP16) at the cost of calibration data and a fraction of a percentage point in accuracy. {#tbl-model-serving-precision-tradeoffs}
 
 :::
 
