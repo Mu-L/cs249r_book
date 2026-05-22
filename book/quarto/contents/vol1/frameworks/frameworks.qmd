@@ -250,7 +250,7 @@ Consider two engineers writing the same neural network. The first debugs interac
 # │          opening paragraph of "Why Execution Strategy Matters: The Memory Wall"
 # │
 # │ Goal: Quantify the compute-vs-bandwidth gap on the A100 (312 TFLOP/s vs 2.04 TB/s
-# │       = 153 ops/byte ridge point) to show why element-wise ops hit <1% utilization.
+# │       = 153 FLOP/byte ridge point) to show why element-wise ops hit <1% utilization.
 # │ Show: "312 TFLOP/s … 2.04 TB/s"—inline in Memory Wall opening paragraph;
 # │       a100_bw_tbs_str also reused in Device Bandwidth Hierarchy (line ~2615).
 # │ How: Hardware.Cloud.A100 attributes → m_as(TFLOPs/second) and m_as(TB/second);
@@ -280,7 +280,7 @@ class MemoryWallSpecs:
     bw_tbs = gpu.memory_bw.m_as(TB/second)
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # Step 1: Arithmetic Intensity "Ridge Point" (FLOP/Byte)
+    # Step 1: Arithmetic Intensity "Ridge Point" (FLOP/byte)
     ridge_point = gpu.ridge_point().m_as(flop/byte)
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
@@ -1298,7 +1298,7 @@ The cost of this performance is reduced flexibility. Standard Python control flo
 \index{JIT Compilation!fidelity vs. generality}
 JIT compilation pursues both eager debugging and graph optimization at once by capturing computation at runtime. The core trade-off is *fidelity vs. generality*. Tracing captures the exact execution path taken during a sample run, producing high fidelity to that specific input but missing branches not taken. Source-level compilation (scripting) analyzes the full program structure, preserving all control flow branches but requiring a restricted language subset. Both approaches produce an intermediate representation (IR)[^fn-ir-compilation] that enables the same ahead-of-time optimizations available to static graphs: operator fusion, constant folding, dead code elimination, and buffer reuse.
 
-[^fn-ir-compilation]: **Intermediate Representation (IR)**: The "intermediate" captures this format's architectural role: a language-independent layer that decouples the frontend (Python capture) from the backend (hardware code generation), exactly as LLVM IR decouples C/Rust/Swift frontends from x86/ARM backends. ML frameworks adopted this compiler pattern because it reduces the $O(M \times N)$ cost of supporting $M$ frontends and $N$ backends to $O(M + N)$: a single graph capture mechanism (TorchDynamo, tf2xla) can target multiple hardware backends without rewriting the capture logic. \index{Intermediate Representation!compiler pattern}
+[^fn-ir-compilation]: **Intermediate Representation (IR)**: The "intermediate" captures this format's architectural role: a language-independent layer that decouples the frontend (Python capture) from the backend (hardware code generation), exactly as LLVM IR decouples C/Rust/Swift frontends from x86/ARM backends. ML frameworks adopted this compiler pattern because it reduces the $\mathcal{O}(M \times N)$ cost of supporting $M$ frontends and $N$ backends to $\mathcal{O}(M + N)$: a single graph capture mechanism (TorchDynamo, tf2xla) can target multiple hardware backends without rewriting the capture logic. \index{Intermediate Representation!compiler pattern}
 
 The eager-vs.-compiled trade-off has a direct iron law consequence. JIT compilation amortizes the $L_{\text{lat}}$ (dispatch overhead) across the compiled region. Longer compiled regions mean more overhead amortized per operation, which explains why graph breaks\index{Graph Break!causes and detection} are performance-critical: each break forces a return to eager dispatch, resetting the amortization.
 
@@ -2291,11 +2291,11 @@ The **differentiation problem**\index{Differentiation Problem!definition} is the
 
 [^fn-gradient-descent-memory]: **Automatic Differentiation (AD)**: The "automatically" in the triggering sentence is the key word: AD mechanizes the chain rule as a graph traversal, eliminating the manual derivative computation that made scaling beyond toy networks impractical. The systems trade-off that makes this feasible is the choice of reverse mode, which exploits the many-to-one topology of training (many parameters, one scalar loss) to compute all gradients in a single backward pass. Forward mode would require one pass *per parameter*, making billion-parameter training computationally impossible. \index{Gradient!memory cost}
 
-[^fn-autodiff-reverse-mode]: **Reverse-Mode AD**: The $O(1)$-vs.-$O(N)$ asymmetry mentioned earlier has a concrete price: reverse mode must store every intermediate value from the forward pass for use during the backward traversal. For a billion-parameter transformer, these stored activations can consume 3--4$\times$ more memory than the weights themselves. This memory cost is the reason frameworks provide activation checkpointing and gradient accumulation, techniques that trade recomputation time for the memory that reverse-mode AD demands. \index{Automatic Differentiation!reverse mode}
+[^fn-autodiff-reverse-mode]: **Reverse-Mode AD**: The $\mathcal{O}(1)$-vs.-$\mathcal{O}(N)$ asymmetry mentioned earlier has a concrete price: reverse mode must store every intermediate value from the forward pass for use during the backward traversal. For a billion-parameter transformer, these stored activations can consume 3--4$\times$ more memory than the weights themselves. This memory cost is the reason frameworks provide activation checkpointing and gradient accumulation, techniques that trade recomputation time for the memory that reverse-mode AD demands. \index{Automatic Differentiation!reverse mode}
 
 Building on the backpropagation algorithm introduced in @sec-neural-computation (where we established that gradients flow backward through the computation graph via the chain rule), this section shifts focus from the mathematics to the systems engineering of differentiation: how frameworks represent computation graphs, manage memory for intermediate values, and orchestrate the backward pass efficiently across accelerators. The framework's role is not to perform calculus but to manage the bookkeeping at scale, which is required for the training algorithms detailed in @sec-model-training. @lst-auto_diff_intro illustrates the core idea with a simple three-operation function:
 
-::: {#lst-auto_diff_intro lst-cap="**Automatic Differentiation**: AD decomposes complex functions into elementary operations with known derivatives, enabling gradient computation through arbitrarily deep compositions in $O(n)$ time where $n$ is the number of operations."}
+::: {#lst-auto_diff_intro lst-cap="**Automatic Differentiation**: AD decomposes complex functions into elementary operations with known derivatives, enabling gradient computation through arbitrarily deep compositions in $\mathcal{O}(n)$ time where $n$ is the number of operations."}
 
 ```{.python}
 def f(x):
@@ -2321,7 +2321,7 @@ Neural network training universally uses reverse mode (covered next), but forwar
 \index{Dual Numbers!forward mode AD}
 Forward mode automatic differentiation computes derivatives alongside the original computation, tracking how changes propagate from input to output. This approach mirrors manual derivative computation, making it intuitive to understand and implement.
 
-Forward mode's memory requirements are its strength: the method stores only the original value, a single derivative value, and temporary results. Memory usage stays constant regardless of computation depth, making forward mode particularly suitable for embedded systems, real-time applications, and memory-bandwidth-limited systems. However, this comes with a computational cost. Forward mode doubles the Ops term (in iron law terms) for each input parameter whose derivative is requested. For a model with $N$ parameters, forward mode multiplies total computation by $N$, because each parameter requires a separate forward pass. Reverse mode, by contrast, adds a constant factor of approximately 2--3$\times$ regardless of $N$. This asymmetry explains why forward mode is never used for training neural networks, where $N$ ranges from millions to hundreds of billions. This combination of computational scaling with input count but constant memory creates a specific niche: forward mode excels in scenarios with *few inputs* but *many outputs*, such as sensitivity analysis, feature importance computation, and online learning with single-example updates.
+Forward mode's memory requirements are its strength: the method stores only the original value, a single derivative value, and temporary results. Memory usage stays constant regardless of computation depth, making forward mode particularly suitable for embedded systems, real-time applications, and memory-bandwidth-limited systems. However, this comes with a computational cost. Forward mode doubles the operation-count term $O$ (in iron law terms) for each input parameter whose derivative is requested. For a model with $N$ parameters, forward mode multiplies total computation by $N$, because each parameter requires a separate forward pass. Reverse mode, by contrast, adds a constant factor of approximately 2--3$\times$ regardless of $N$. This asymmetry explains why forward mode is never used for training neural networks, where $N$ ranges from millions to hundreds of billions. This combination of computational scaling with input count but constant memory creates a specific niche: forward mode excels in scenarios with *few inputs* but *many outputs*, such as sensitivity analysis, feature importance computation, and online learning with single-example updates.
 
 To see the mechanism concretely, consider computing both the value and derivative of $f(x) = x^2 \sin(x)$. @lst-forward_mode_ad shows how forward mode propagates derivative computations alongside every operation, applying the chain rule and product rule at each step:
 
@@ -2373,9 +2373,9 @@ dresult = (
 
 :::
 
-Forward mode's strength in single-input analysis becomes its fatal weakness for training. A neural network has one scalar loss but millions of parameters, and forward mode would require a separate pass for each one---an intractable $O(N)$ cost that explains why no production framework uses forward mode for training. Forward mode remains useful for targeted analyses such as sensitivity analysis (measuring how a single pixel change affects the prediction) and feature importance (ranking which input dimensions most influence the output), where the number of inputs of interest is small.
+Forward mode's strength in single-input analysis becomes its fatal weakness for training. A neural network has one scalar loss but millions of parameters, and forward mode would require a separate pass for each one---an intractable $\mathcal{O}(N)$ cost that explains why no production framework uses forward mode for training. Forward mode remains useful for targeted analyses such as sensitivity analysis (measuring how a single pixel change affects the prediction) and feature importance (ranking which input dimensions most influence the output), where the number of inputs of interest is small.
 
-Given forward mode's $O(N)$ scaling with parameter count, we need an entirely different approach for training. Reverse mode provides exactly this: by propagating gradients backward from output to input, it computes all $N$ parameter gradients in a single pass.
+Given forward mode's $\mathcal{O}(N)$ scaling with parameter count, we need an entirely different approach for training. Reverse mode provides exactly this: by propagating gradients backward from output to input, it computes all $N$ parameter gradients in a single pass.
 
 #### Reverse mode {#sec-ml-frameworks-reverse-mode-d328}
 
@@ -2400,7 +2400,7 @@ def f(x):
 
 :::
 
-The critical observation is that this single backward pass computed $dc/dx$ regardless of how many paths connect $x$ to $c$. In a neural network, each weight can affect the loss through thousands of paths across layers, and reverse mode handles them all in one traversal. This is why training a `{python} GPT3Context.gpt3_params_b_str`-billion-parameter model like GPT-3 is feasible at all: reverse mode's $O(1)$ backward passes (relative to parameter count) keeps gradient computation tractable.
+The critical observation is that this single backward pass computed $dc/dx$ regardless of how many paths connect $x$ to $c$. In a neural network, each weight can affect the loss through thousands of paths across layers, and reverse mode handles them all in one traversal. This is why training a `{python} GPT3Context.gpt3_params_b_str`-billion-parameter model like GPT-3 is feasible at all: reverse mode's $\mathcal{O}(1)$ backward passes (relative to parameter count) keeps gradient computation tractable.
 
 ::: {#lst-reverse_forward lst-cap="**Forward and Backward Pass**: The forward pass stores intermediate values; the backward pass propagates gradients from output to input, accumulating contributions from all paths."}
 
@@ -2556,11 +2556,11 @@ The autograd system is the framework component that solves the differentiation p
 
 \index{Autograd!reverse-linked graph}
 \index{Gradient Function Nodes!computation graph}
-During the forward pass, the autograd system constructs a reverse-linked graph of `Function` nodes. Each node records the operation performed and stores references to the tensors it needs for gradient computation. This graph is the data structure that makes reverse-mode automatic differentiation possible: regardless of how many parameters a model has, a single backward pass through this graph computes all gradients. For a model with $N$ parameters, reverse-mode AD requires $O(1)$ backward passes (compared to $O(N)$ for forward-mode), which is why every major framework implements this approach.
+During the forward pass, the autograd system constructs a reverse-linked graph of `Function` nodes. Each node records the operation performed and stores references to the tensors it needs for gradient computation. This graph is the data structure that makes reverse-mode automatic differentiation possible: regardless of how many parameters a model has, a single backward pass through this graph computes all gradients. For a model with $N$ parameters, reverse-mode AD requires $\mathcal{O}(1)$ backward passes (compared to $\mathcal{O}(N)$ for forward-mode), which is why every major framework implements this approach.
 
 Concretely, every tensor produced by a differentiable operation stores a `grad_fn` attribute pointing to the `Function` that created it. Each `Function` links to its inputs through `next_functions`, forming a chain from the loss back to the leaf parameters. @lst-grad-fn-chain illustrates this structure for a simple computation:
 
-::: {#lst-grad-fn-chain lst-cap="**Reverse-Linked Graph Structure**: Each tensor's `grad_fn` links to the `Function` that created it, forming a reverse chain from output to leaf parameters that enables $O(1)$ backward passes."}
+::: {#lst-grad-fn-chain lst-cap="**Reverse-Linked Graph Structure**: Each tensor's `grad_fn` links to the `Function` that created it, forming a reverse chain from output to leaf parameters that enables $\mathcal{O}(1)$ backward passes."}
 
 ```{.python}
 import torch
@@ -5098,7 +5098,7 @@ Engineers assume the most popular framework works for any project. In reality, d
 
 **Fallacy**: *"Framework abstractions eliminate the need for systems knowledge."*
 
-Engineers assume high-level APIs handle all optimization automatically. The Roofline Model\index{Roofline Model!compute vs. memory bound} (@sec-machine-foundations-roofline-model-2529) proves otherwise: element-wise operations like ReLU achieve arithmetic intensity of 0.125 FLOPs/byte, using under 0.1 percent of an A100's peak compute regardless of framework sophistication. @sec-ml-frameworks-execution-strategy-matters-memory-wall-1ce8 explains why: memory bandwidth, not compute, is the bottleneck for most operations. Engineers who lack this understanding leave 80--90 percent of hardware capacity unused, directly translating to 5--10$\times$ higher inference costs at production scale.
+Engineers assume high-level APIs handle all optimization automatically. The Roofline Model\index{Roofline Model!compute vs. memory bound} (@sec-machine-foundations-roofline-model-2529) proves otherwise: element-wise operations like ReLU achieve arithmetic intensity of 0.125 FLOP/byte, using under 0.1 percent of an A100's peak compute regardless of framework sophistication. @sec-ml-frameworks-execution-strategy-matters-memory-wall-1ce8 explains why: memory bandwidth, not compute, is the bottleneck for most operations. Engineers who lack this understanding leave 80--90 percent of hardware capacity unused, directly translating to 5--10$\times$ higher inference costs at production scale.
 
 **Pitfall**: *Ignoring vendor lock-in from framework-specific formats.*
 
@@ -5148,7 +5148,7 @@ class Model7BMemory:
 
 **Fallacy**: *"Increasing batch size is a free throughput optimization within framework memory limits."*
 
-Engineers assume that if memory is available, larger batches always improve throughput. The mini-batch processing discussion in @sec-model-training-minibatch-processing-4eb0 explains the throughput target, but activation memory can reverse the benefit. A 7-billion-parameter model in FP16 consumes `{python} Model7BMemory.model_7b_fp16_gb_str` GB, leaving `{python} Model7BMemory.a100_remaining_7b_gb_str` GB on an A100-`{python} Model7BMemory.a100_mem_str` GB GPU. Increasing batch size from 8 to 32 quadruples the batch-dependent activation footprint; transformer attention adds a large $O(S^2)$ term in sequence length that makes each sample expensive. The resulting memory pressure can trigger recomputation strategies that reduce throughput by 20--30 percent despite the larger batch. Teams that blindly maximize batch size often achieve lower throughput than smaller batches that avoid these memory management pathways.
+Engineers assume that if memory is available, larger batches always improve throughput. The mini-batch processing discussion in @sec-model-training-minibatch-processing-4eb0 explains the throughput target, but activation memory can reverse the benefit. A 7-billion-parameter model in FP16 consumes `{python} Model7BMemory.model_7b_fp16_gb_str` GB, leaving `{python} Model7BMemory.a100_remaining_7b_gb_str` GB on an A100-`{python} Model7BMemory.a100_mem_str` GB GPU. Increasing batch size from 8 to 32 quadruples the batch-dependent activation footprint; transformer attention adds a large $\mathcal{O}(S^2)$ term in sequence length that makes each sample expensive. The resulting memory pressure can trigger recomputation strategies that reduce throughput by 20--30 percent despite the larger batch. Teams that blindly maximize batch size often achieve lower throughput than smaller batches that avoid these memory management pathways.
 
 **Pitfall**: *Treating compilation overhead as negligible.*
 

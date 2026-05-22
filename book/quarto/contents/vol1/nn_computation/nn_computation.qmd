@@ -897,7 +897,7 @@ The shift toward parallelism creates new bottlenecks that differ qualitatively f
 
 [^fn-memory-wall-nn]: **Memory Wall**: Fast on-chip storage responds in nanoseconds, while larger off-chip memory is orders of magnitude farther away in latency and energy. Neural network weights rarely fit in the smallest caches (even our MNIST model is hundreds of KB in FP32), forcing repeated memory fetches that can leave compute units idle. This bandwidth bottleneck, not arithmetic capacity alone, is why accelerators invest die area in HBM and on-chip SRAM. \index{Memory Wall!neural network impact}
 
-[^fn-memory-bound-nn]: **Memory-Bound Operations**: Matrix multiplication's arithmetic intensity (FLOPs per byte loaded) determines whether a layer is compute bound or memory bound. Layers that fall below the hardware's roofline crossover point finish their arithmetic before the next tile of weights arrives from memory. The result: effective hardware utilization can drop sharply, and adding more compute units yields little speedup until memory bandwidth or data reuse improves. \index{Memory-Bound!arithmetic intensity}
+[^fn-memory-bound-nn]: **Memory-Bound Operations**: Matrix multiplication's arithmetic intensity (FLOP/byte loaded) determines whether a layer is compute bound or memory bound. Layers that fall below the hardware's roofline crossover point finish their arithmetic before the next tile of weights arrives from memory. The result: effective hardware utilization can drop sharply, and adding more compute units yields little speedup until memory bandwidth or data reuse improves. \index{Memory-Bound!arithmetic intensity}
 
 \index{Data Movement!energy dominance}
 The deeper constraint is energy, not speed. Moving data from main memory to processing units consumes more energy than the actual mathematical operations. This energy hierarchy explains why neural network accelerators focus on maximizing data reuse\index{Data Reuse!energy efficiency}: keeping frequently accessed weights in fast local storage and carefully scheduling operations to minimize data movement. GPUs address this through both higher memory bandwidth and massive parallelism, but the underlying physics remains unchanged: data movement dominates computation cost, driving the adoption of specialized hardware architectures from data center GPUs to TinyML accelerators.
@@ -4012,12 +4012,12 @@ This composition reveals that forward propagation is, at its core, a chain of ma
 
 ::: {tbl-colwidths="[25,19,18,22,16]"}
 
-| **Operation**                 | **Complexity (Ops)** | **Data Movement (IO)** | **Intensity (FLOPs/byte)** | **Hardware Fit** |
-|:------------------------------|:--------------------:|:----------------------:|:--------------------------:|:----------------:|
-| **Matrix Mul $(N{\times}N)$** |        $2N^3$        |     $3N^2s$ bytes      |  $\approx 2N/(3s)$ (High)  |   **GPU/TPU**    |
-| **Element-wise (ReLU)**       |        $N^2$         |     $2N^2s$ bytes      |       $1/(2s)$ (Low)       |  **CPU/Vector**  |
+| **Operation**                 | **Operation Count ($O$)** | **Data Movement (I/O)** | **Intensity (FLOP/byte)** | **Hardware Fit** |
+|:------------------------------|:-------------------------:|:-----------------------:|:-------------------------:|:----------------:|
+| **Matrix Mul $(N{\times}N)$** |           $2N^3$          |      $3N^2s$ bytes      |  $\approx 2N/(3s)$ (High) |   **GPU/TPU**    |
+| **Element-wise (ReLU)**       |           $N^2$           |      $2N^2s$ bytes      |       $1/(2s)$ (Low)      |  **CPU/Vector**  |
 
-: **Arithmetic Intensity of Matrix Multiply vs. Element-Wise ReLU**: Dense $N{\times}N$ matrix multiplication performs $2N^3$ operations while moving about $3N^2s$ bytes for $s$ bytes per value, yielding intensity that grows linearly with $N$ and saturates GPU/TPU compute. Element-wise activations stay at $1/(2s)$ FLOPs/byte regardless of size (0.125 FLOPs/byte for FP32), leaving accelerators starved for arithmetic and explaining why GEMM-heavy layers dominate modern architectures. {#tbl-nn-computation-arith-intensity-gap}
+: **Arithmetic Intensity of Matrix Multiply vs. Element-Wise ReLU**: Dense $N{\times}N$ matrix multiplication performs $2N^3$ operations while moving about $3N^2s$ bytes for $s$ bytes per value, yielding intensity that grows linearly with $N$ and saturates GPU/TPU compute. Element-wise activations stay at $1/(2s)$ FLOP/byte regardless of size (0.125 FLOP/byte for FP32), leaving accelerators starved for arithmetic and explaining why GEMM-heavy layers dominate modern architectures. {#tbl-nn-computation-arith-intensity-gap}
 
 :::
 
@@ -4082,7 +4082,7 @@ For each image in the batch, this produces a probability distribution over the p
 # │
 # │ Goal: Count FLOPs per layer for the canonical 784→128→64→10 MLP at batch=32,
 # │       then show that doubling hidden widths (→256→128) causes ~4× FLOP growth.
-# │ Show: That dense FC layers scale as O(width²), so a 2× width increase costs
+# │ Show: That dense FC layers scale quadratically with width, so a 2× width increase costs
 # │       ~4×, making architecture decisions a dominant systems variable.
 # │ How: Apply the formula 2×Batch×M×N for each matmul layer plus 2×Batch×N for
 # │      bias+activation; compare original vs. doubled-width totals.
@@ -4171,8 +4171,8 @@ class MnistFlopsCalc:
     double_ratio_value = double_total_mops_value/total_mops_value
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(round(total_mops_value, 1) == 7.0, f"Expected ~7.0 MOps, got {total_mops_value:.1f}")
-    check(round(per_image_kops) == 219, f"Expected ~219 KOps per image, got {per_image_kops:.1f}")
+    check(round(total_mops_value, 1) == 7.0, f"Expected ~7.0 MFLOPs, got {total_mops_value:.1f}")
+    check(round(per_image_kops) == 219, f"Expected ~219 KFLOPs per image, got {per_image_kops:.1f}")
     check(inf_act_elements == 986, f"Expected 986 inference activation values, got {inf_act_elements}")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
@@ -4197,7 +4197,7 @@ class MnistFlopsCalc:
     double_ratio_exact_str = fmt(double_ratio_value, precision=2, commas=False)
 ```
 
-::: {#exmp-nn-computation-counting-ops-forward-pass .callout-example title="Counting ops in forward pass"}
+::: {#exmp-nn-computation-counting-ops-forward-pass .callout-example title="Counting FLOPs in forward pass"}
 
 **Problem**: What is the total arithmetic operation count (**$O$**) for one forward pass through the MNIST network (784 → 128 → 64 → 10) with batch size 32?
 
@@ -4207,7 +4207,7 @@ class MnistFlopsCalc:
 
 ::: {tbl-colwidths="[14,20,28,40]"}
 
-| **Layer**   | **Operation**  |                **Dimensions**                |                                   **Ops**                                   |
+| **Layer**   | **Operation**  |                **Dimensions**                |                                  **FLOPs**                                  |
 |:------------|:---------------|:--------------------------------------------:|:---------------------------------------------------------------------------:|
 | **Layer 1** | MatMul         | ($32{\times}784$)$\times$ ($784{\times}128$) | 2$\times$ 32$\times$ $784{\times}128$ = `{python} MnistFlopsCalc.l1_mm_str` |
 | **Layer 1** | Bias + ReLU    |               $32{\times}128$                |           $2{\times}4,096$ = `{python} MnistFlopsCalc.l1_bias_str`          |
@@ -4215,19 +4215,19 @@ class MnistFlopsCalc:
 | **Layer 2** | Bias + ReLU    |                $32{\times}64$                |           $2{\times}2,048$ = `{python} MnistFlopsCalc.l2_bias_str`          |
 | **Layer 3** | MatMul         |  ($32{\times}64$)$\times$ ($64{\times}10$)   |  2$\times$ 32$\times$ $64{\times}10$ = `{python} MnistFlopsCalc.l3_mm_str`  |
 | **Layer 3** | Bias + Softmax |                $32{\times}10$                |             ~`{python} MnistFlopsCalc.l3_bias_str` (simplified)             |
-| **Total**   |                |                                              |              **~`{python} MnistFlopsCalc.total_mops_str` MOps**             |
+| **Total**   |                |                                              |             **~`{python} MnistFlopsCalc.total_mops_str` MFLOPs**            |
 
 : **MNIST Forward Pass Operation Count by Layer**: FLOP breakdown for a single forward pass through the 784-128-64-10 network at batch size 32. Layer 1's matrix multiply dominates because it multiplies the 784-dimensional input against the widest weight matrix; bias and activation operations contribute under one percent of the total. {#tbl-nn-computation-mnist-flops}
 
 :::
 
-**Per-image cost**: `{python} MnistFlopsCalc.total_mops_str` $\text{MOps} / 32$ = **~`{python} MnistFlopsCalc.per_image_kops_str` KOps per image**
+**Per-image cost**: `{python} MnistFlopsCalc.total_mops_str` $\text{MFLOPs} / 32$ = **~`{python} MnistFlopsCalc.per_image_kops_str` KFLOPs per image**
 
 **Key insights**:
 
 1. **Layer 1 dominates**: The first layer accounts for `{python} MnistFlopsCalc.layer1_pct_str` percent of all operations because it processes the largest input (784 dimensions). This is why dimensionality reduction in early layers is so impactful.
-2. **Compute vs. Memory**: At `{python} MnistFlopsCalc.per_image_kops_str` KOps per image and ~`{python} MNISTMemory.inference_kb_str` KB memory, this network has an arithmetic intensity of ~`{python} MnistFlopsCalc.arith_intensity_str` FLOPs/byte—firmly in the memory-bound regime for most hardware (see the Roofline Model in @sec-machine-foundations-roofline-model-2529 for how arithmetic intensity determines whether a workload is memory bound or compute bound). A modern GPU achieving ten TFLOP/s would process each image in ~22 nanoseconds of pure compute, but memory latency typically dominates actual inference time.
-3. **Scaling intuition**: Doubling the hidden layer widths (784 → 256 → 128 → 10) increases $O$ by ~`{python} MnistFlopsCalc.double_ratio_str`$\times$ to ~`{python} MnistFlopsCalc.double_total_mops_str` MOps. This comes from recomputing each layer: L1 and L3 double, L2 quadruples, so the total grows by about `{python} MnistFlopsCalc.double_ratio_exact_str`$\times$ rather than 4$\times$.
+2. **Compute vs. Memory**: At `{python} MnistFlopsCalc.per_image_kops_str` KFLOPs per image and ~`{python} MNISTMemory.inference_kb_str` KB memory, this network has an arithmetic intensity of ~`{python} MnistFlopsCalc.arith_intensity_str` FLOP/byte—firmly in the memory-bound regime for most hardware (see the Roofline Model in @sec-machine-foundations-roofline-model-2529 for how arithmetic intensity determines whether a workload is memory bound or compute bound). A modern GPU achieving ten TFLOP/s would process each image in ~22 nanoseconds of pure compute, but memory latency typically dominates actual inference time.
+3. **Scaling intuition**: Doubling the hidden layer widths (784 → 256 → 128 → 10) increases $O$ by ~`{python} MnistFlopsCalc.double_ratio_str`$\times$ to ~`{python} MnistFlopsCalc.double_total_mops_str` MFLOPs. This comes from recomputing each layer: L1 and L3 double, L2 quadruples, so the total grows by about `{python} MnistFlopsCalc.double_ratio_exact_str`$\times$ rather than 4$\times$.
 
 :::
 
@@ -4836,7 +4836,7 @@ The transition from training to inference introduces a constraint on model adapt
 # │ Goal: Ground training-GPU power, mobile-power, edge-accelerator, and roofline
 # │       threshold claims in executable arithmetic.
 # │ Show: A100 provides 80 GB HBM2e at 400 W; H100 consumes up to 700 W; A100/H100
-# │       ridge points sit in the hundreds of FLOPs/byte.
+# │       ridge points sit in the hundreds of FLOP/byte.
 # │ How: Read mlsysim hardware constants where available; keep edge-tier examples
 # │      as explicit local specs; compute ratios and formatted strings.
 # │
@@ -4888,7 +4888,7 @@ class GpuSpecsFootnote:
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(training_mobile_ratio >= 100, f"Training GPU should be >=100x mobile power, got {training_mobile_ratio:.1f}x")
     check(edge_throughput_ratio > 60, f"Jetson Orin should be >60x Edge TPU throughput, got {edge_throughput_ratio:.1f}x")
-    check(a100_ridge > 100 and h100_ridge > a100_ridge, "GPU ridge points should be in the hundreds of FLOPs/byte.")
+    check(a100_ridge > 100 and h100_ridge > a100_ridge, "GPU ridge points should be in the hundreds of FLOP/byte.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     a100_mem_gb_str = fmt(a100_mem_gb_value, precision=0, commas=False)  # e.g. "80"
@@ -5920,8 +5920,8 @@ class FallacyQuantExamples:
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(pipeline_total_ms > latency_budget_ms, "Pipeline example should miss the latency SLO.")
     check(imbalance_majority_acc == 99, f"Expected 99% majority baseline, got {imbalance_majority_acc}")
-    check(mnist_arith_intensity < 1, f"MNIST should be memory-bound, got {mnist_arith_intensity:.1f} FLOPs/byte")
-    check(a100_ridge > 100 and h100_ridge > a100_ridge, "GPU ridge points should be in the hundreds of FLOPs/byte.")
+    check(mnist_arith_intensity < 1, f"MNIST should be memory-bound, got {mnist_arith_intensity:.1f} FLOP/byte")
+    check(a100_ridge > 100 and h100_ridge > a100_ridge, "GPU ridge points should be in the hundreds of FLOP/byte.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     model_latency_ms_str = fmt(model_latency_ms, precision=0, commas=False)
@@ -5969,7 +5969,7 @@ Data scientists develop models with unlimited time budgets, assuming deployment 
 \index{Arithmetic Intensity!GPU utilization}
 **Pitfall**: *Assuming more compute automatically means faster training.*
 
-Teams purchase expensive GPUs expecting proportional speedups, then discover workloads are memory bound. Arithmetic intensity determines which resource constrains performance. The MNIST forward-pass analysis in @tbl-nn-computation-mnist-flops and the roofline model in @sec-machine-foundations-roofline-model-2529 show why small networks like MNIST (784 to 128 to 64 to 10) have arithmetic intensity of approximately `{python} FallacyQuantExamples.mnist_arith_intensity_str` FLOPs/byte, far below the A100 and H100 dense-FP16 ridge points of about `{python} FallacyQuantExamples.a100_ridge_str` and `{python} FallacyQuantExamples.h100_ridge_str` FLOPs/byte. For memory-bound workloads, a commodity CPU can match an expensive accelerator; for compute-bound GPT-scale models, accelerators provide the large speedups they were built for. This mismatch explains why teams report widely varying utilization depending on model architecture.
+Teams purchase expensive GPUs expecting proportional speedups, then discover workloads are memory bound. Arithmetic intensity determines which resource constrains performance. The MNIST forward-pass analysis in @tbl-nn-computation-mnist-flops and the roofline model in @sec-machine-foundations-roofline-model-2529 show why small networks like MNIST (784 to 128 to 64 to 10) have arithmetic intensity of approximately `{python} FallacyQuantExamples.mnist_arith_intensity_str` FLOP/byte, far below the A100 and H100 dense-FP16 ridge points of about `{python} FallacyQuantExamples.a100_ridge_str` and `{python} FallacyQuantExamples.h100_ridge_str` FLOP/byte. For memory-bound workloads, a commodity CPU can match an expensive accelerator; for compute-bound GPT-scale models, accelerators provide the large speedups they were built for. This mismatch explains why teams report widely varying utilization depending on model architecture.
 
 **Pitfall**: *Extrapolating accuracy improvements without considering diminishing returns.*
 

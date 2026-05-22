@@ -58,18 +58,18 @@ The gap between that assumption and reality reveals a fundamental asymmetry in *
 ***Gradient Synchronization***\index{Gradient Synchronization!definition} is the collective communication protocol executed at each training step in which every worker transmits its locally computed gradient tensor to all other workers, receives their gradients, and computes an aggregate update that all workers apply identically to their model copies.
 
 1.  **Significance (quantitative)**: A 70B-parameter model in BF16 generates 140 GB of gradient data per worker per step. Synchronizing across 1,000 GPUs via ring AllReduce at 50 GB/s per link requires approximately $2 \times 140/50 \approx 5.6$ seconds of communication per step, dominating the bandwidth (data-movement) term in the iron law and consuming 40--70 percent of total training time before overlap techniques are applied.
-2.  **Distinction (durable)**: Unlike parameter-server approaches (where all workers send gradients to a centralized aggregator whose bandwidth scales as $O(N)$), ring AllReduce distributes the communication across all workers so that each worker's per-step communication cost stays constant at $2 \times (N-1)/N \times M$ regardless of cluster size.
+2.  **Distinction (durable)**: Unlike parameter-server approaches (where all workers send gradients to a centralized aggregator whose bandwidth scales as $\mathcal{O}(N)$), ring AllReduce distributes the communication across all workers so that each worker's per-step communication cost stays constant at $2 \times (N-1)/N \times M$ regardless of cluster size.
 3.  **Common pitfall**: A frequent misconception is that gradient synchronization overhead scales with the number of GPUs. In ring AllReduce, per-node communication volume is constant as the cluster grows—the bottleneck is the gradient volume per step (proportional to model size), not the number of participants.
 
 :::
 
 The requirement for gradient synchronization is not a design choice; it is a mathematical necessity for convergence. If different GPUs apply different gradient updates to their local copies of the model, the copies diverge. After enough steps, the models on different GPUs represent entirely different functions, and the training process no longer approximates stochastic gradient descent on the global loss. Synchronization ensures that all copies remain identical (within floating-point precision) at every step, preserving the theoretical convergence guarantees of the optimization algorithm via the AllReduce[^fn-allreduce-etymology] primitive.[^fn-ps-bottleneck]
 
-[^fn-ps-bottleneck]: **Parameter Server (PS)**: Google's DistBelief (2012) used a star topology where all workers sent gradients to a central server whose bandwidth had to match the aggregate bandwidth of all workers. As clusters scaled from 10 to 1,000 nodes, the central server's NIC saturated, making per-step communication cost grow as $O(N)$ and forcing the transition to peer-to-peer collectives where per-node cost is constant. \index{Parameter Server!bottleneck}
+[^fn-ps-bottleneck]: **Parameter Server (PS)**: Google's DistBelief (2012) used a star topology where all workers sent gradients to a central server whose bandwidth had to match the aggregate bandwidth of all workers. As clusters scaled from 10 to 1,000 nodes, the central server's NIC saturated, making per-step communication cost grow as $\mathcal{O}(N)$ and forcing the transition to peer-to-peer collectives where per-node cost is constant. \index{Parameter Server!bottleneck}
 
 The volume of data that must be synchronized is proportional to the model size. A model with $P$ parameters stored in BF16 (2 bytes per parameter) generates $2P$ bytes of gradient data per training step per GPU. For a 70 billion parameter model, this is 140 GB of gradients that every GPU must send and receive.[^fn-ring-allreduce-origin]
 
-[^fn-ring-allreduce-origin]: **Ring AllReduce**: The algorithm dates to the 1990s HPC community (Patarasuk and Yuan formalized it in 2009), but Baidu's Andrew Gibiansky popularized it for ML in February 2017, demonstrating 31$\times$ speedup scaling to 40 GPUs. Uber's Horovod library (2017) and NVIDIA's NCCL subsequently made it the default for distributed training, because its $O(1)$-per-node bandwidth cost broke the $O(N)$ bottleneck of parameter servers. \index{Ring AllReduce!origin}
+[^fn-ring-allreduce-origin]: **Ring AllReduce**: The algorithm dates to the 1990s HPC community (Patarasuk and Yuan formalized it in 2009), but Baidu's Andrew Gibiansky popularized it for ML in February 2017, demonstrating 31$\times$ speedup scaling to 40 GPUs. Uber's Horovod library (2017) and NVIDIA's NCCL subsequently made it the default for distributed training, because its $\mathcal{O}(1)$-per-node bandwidth cost broke the $\mathcal{O}(N)$ bottleneck of parameter servers. \index{Ring AllReduce!origin}
 
 At frontier scale (hundreds of billions of parameters across thousands of GPUs), gradient synchronization dominates the training step time, consuming 30--70 percent of wall-clock time unless aggressive optimization techniques are applied. The remainder of this chapter develops those techniques systematically.
 
@@ -636,9 +636,9 @@ If a GPU simply opens a socket and sends a massive gradient to another GPU, the 
 
 ***Collective Operation***\index{Collective Operation!definition} is a distributed communication pattern in which all processes in a group participate simultaneously to aggregate, broadcast, or redistribute data, with the correctness guarantee that each participant receives the result prescribed by the collective's semantics regardless of message ordering or arrival time.
 
-1.  **Significance (quantitative)**: The right collective algorithm determines whether communication scales with cluster size or remains constant. Ring AllReduce achieves bandwidth-optimal $2(N-1)/N \times n / \beta$ per node (constant in $N$), while a naive reduce-then-broadcast approach costs $O(N \times n / \beta)$, making it 500$\times$ worse for $N=1024$. Algorithm selection thus directly determines whether the $\text{BW}$ term in the iron law is the training bottleneck.
+1.  **Significance (quantitative)**: The right collective algorithm determines whether communication scales with cluster size or remains constant. Ring AllReduce achieves bandwidth-optimal $2(N-1)/N \times n / \beta$ per node (constant in $N$), while a naive reduce-then-broadcast approach costs $\mathcal{O}(N \times n / \beta)$, making it 500$\times$ worse for $N=1024$. Algorithm selection thus directly determines whether the $\text{BW}$ term in the iron law is the training bottleneck.
 2.  **Distinction (durable)**: Unlike point-to-point communication (where one sender and one receiver exchange data independently), a collective operation coordinates the entire process group—every participant must invoke the collective before any can complete it, and the library guarantees a consistent result even when different processes contribute different data.
-3.  **Common pitfall**: A frequent misconception is that one collective algorithm suits all message sizes. Ring AllReduce achieves near-optimal bandwidth for large gradient tensors but has $O(N)$ latency—for small messages like MoE routing decisions (~4 KB), a tree-based algorithm reduces latency to $O(\log N)$ steps at the cost of suboptimal bandwidth utilization (the bandwidth-optimal recursive halving-doubling alternative is covered in @sec-communication-butterfly), requiring workload-specific algorithm selection rather than a single default.
+3.  **Common pitfall**: A frequent misconception is that one collective algorithm suits all message sizes. Ring AllReduce achieves near-optimal bandwidth for large gradient tensors but has $\mathcal{O}(N)$ latency—for small messages like MoE routing decisions (~4 KB), a tree-based algorithm reduces latency to $\mathcal{O}(\log N)$ steps at the cost of suboptimal bandwidth utilization (the bandwidth-optimal recursive halving-doubling alternative is covered in @sec-communication-butterfly), requiring workload-specific algorithm selection rather than a single default.
 
 :::
 
@@ -652,16 +652,16 @@ Different model architectures stress different operations, and selecting the wro
 
 1.  **Broadcast**\index{Broadcast}: One sender transmits data to all receivers.
     *   Use case: Distributing initial model weights from rank 0 to all workers at startup. Used across **all parallelism strategies** during initialization.
-    *   Complexity: $O(\log N)$ latency with tree algorithms; bandwidth cost $O(M)$ as data traverses tree levels.
+    *   Complexity: $\mathcal{O}(\log N)$ latency with tree algorithms; bandwidth cost $\mathcal{O}(M)$ as data traverses tree levels.
 
 2.  **Reduce**\index{Reduce}: Data from all workers is aggregated (sum, min, max) to a single root worker.
     *   Use case: Aggregating validation metrics (loss, accuracy) to a logging process. Common in **monitoring and checkpointing** across all training strategies.
-    *   Complexity: $O(\log N)$ latency with tree algorithms; bandwidth cost $O(M)$ total.
+    *   Complexity: $\mathcal{O}(\log N)$ latency with tree algorithms; bandwidth cost $\mathcal{O}(M)$ total.
 
 3.  **AllReduce**: Data from all workers is aggregated, and the result is distributed to all workers.
     *   Use case: Data Parallelism. In the data-parallel training strategy from @sec-distributed-training-systems-systems-data-parallelism-6132, AllReduce synchronizes gradients so every GPU computes the same weight update.
     *   Semantics: $y_i = \sum_{j=0}^{N-1} x_j$ for all $i$.
-    *   Complexity: Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but $O(N)$ latency; Tree achieves $O(\log N)$ latency but suboptimal bandwidth.
+    *   Complexity: Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but $\mathcal{O}(N)$ latency; Tree achieves $\mathcal{O}(\log N)$ latency but suboptimal bandwidth.
 
 4.  **AllGather**: Every worker sends its data to every other worker. The result is a concatenation of all inputs.
     *   Use case: Sharded Data Parallelism (FSDP[^fn-fsdp-memory]/ZeRO). Collecting sharded parameters before a forward/backward pass.
@@ -678,11 +678,11 @@ A key insight is that AllReduce can be decomposed into ReduceScatter followed by
 6.  **AllToAll**: The most general pattern. Worker $i$ sends a distinct chunk of data to worker $j$. This is effectively a matrix transpose of distributed data.
     *   Use case: Mixture of Experts (MoE) routing tokens to experts; DLRM[^fn-dlrm-embedding] exchanging embedding lookups across workers.
     *   Semantics: Worker $i$ sends $x_{i \to j}$ to worker $j$ and receives $x_{j \to i}$ from worker $j$, for all $j$.
-    *   Complexity: $O(N^2)$ logical connections create potential for network congestion; bandwidth cost is $\frac{N-1}{N}M$ per worker, but contention makes this the hardest primitive to scale.
+    *   Complexity: $\mathcal{O}(N^2)$ logical connections create potential for network congestion; bandwidth cost is $\frac{N-1}{N}M$ per worker, but contention makes this the hardest primitive to scale.
 
 [^fn-fsdp-memory]: **FSDP (Fully Sharded Data Parallel)**: PyTorch's implementation of ZeRO-3, which shards parameters, gradients, and optimizer states across $N$ accelerators, reducing per-GPU memory from $16P$ bytes under FP32 Adaptive Moment Estimation (Adam) to $16P/N$ bytes. The trade-off is communication frequency: FSDP issues $2N_{\text{layers}}$ collective operations per step (AllGather + ReduceScatter per layer) instead of data parallelism's single AllReduce, making it more sensitive to the $\alpha$ overhead. \index{FSDP!memory trade-off}
 
-[^fn-dlrm-embedding]: **DLRM (Deep Learning Recommendation Model)**: Meta's 2019 architecture for click-through rate prediction, where embedding tables can exceed 100 GB and must be sharded across workers. Each forward pass triggers AllToAll to exchange sparse embedding lookups, creating a communication pattern where message sizes are small (hundreds of KB) but fan-out is $O(N)$, making DLRM one of the most latency-sensitive distributed workloads in production. \index{DLRM!AllToAll}
+[^fn-dlrm-embedding]: **DLRM (Deep Learning Recommendation Model)**: Meta's 2019 architecture for click-through rate prediction, where embedding tables can exceed 100 GB and must be sharded across workers. Each forward pass triggers AllToAll to exchange sparse embedding lookups, creating a communication pattern where message sizes are small (hundreds of KB) but fan-out is $\mathcal{O}(N)$, making DLRM one of the most latency-sensitive distributed workloads in production. \index{DLRM!AllToAll}
 
 The contrast between AllToAll and AllReduce highlights a fundamental difference in how collective operations scale with cluster size.
 
@@ -690,7 +690,7 @@ The contrast between AllToAll and AllReduce highlights a fundamental difference 
 
 While AllReduce scales efficiently because it can be pipelined in a ring (where each node only talks to its neighbor), AllToAll is fundamentally harder to scale.
 
-In an AllToAll, every process has a unique piece of data for every other process. This creates $O(N^2)$ logical connections. At the hardware level, this leads to **network contention**\index{Network Contention}: if 1024 GPUs all try to send data to different targets simultaneously, the "Fat-Tree" or "Spine" switches in the data center become the bottleneck.
+In an AllToAll, every process has a unique piece of data for every other process. This creates $\mathcal{O}(N^2)$ logical connections. At the hardware level, this leads to **network contention**\index{Network Contention}: if 1024 GPUs all try to send data to different targets simultaneously, the "Fat-Tree" or "Spine" switches in the data center become the bottleneck.
 
 This is why **Expert Parallelism (MoE)** and large-scale **Recommendation Systems**\index{Recommendation Systems} often hit a "communication wall" much earlier than standard data-parallel models. The algorithm choice (AllReduce vs. AllToAll) determines the scaling ceiling.
 
@@ -816,7 +816,7 @@ Consider a naive implementation using a Parameter Server (Star topology). All $N
 
 This naive approach was historically common in early distributed ML frameworks, where a dedicated parameter server process received all gradients, performed the aggregation, and broadcast the result. For small clusters (4--8 GPUs), the bottleneck at rank 0 was tolerable. At moderate scale (32--64 GPUs), practitioners mitigated the bottleneck by sharding parameters across multiple parameter servers, so that each server handled only a subset of the gradient tensor. This sharded parameter server approach reduces the per-server traffic from $N \times M$ to $N \times M/S$ (where $S$ is the number of servers), but it still scales linearly with $N$ on each shard and introduces additional complexity in parameter partitioning and consistency management.
 
-The fundamental limitation is that any star-topology approach concentrates traffic at a central point. Regardless of how many servers participate, the aggregate traffic through the central tier scales as $O(N \times M)$. To achieve true scalability, we need algorithms where the communication volume per node is **constant**\index{Constant}, regardless of $N$. This property, known as **bandwidth optimality**\index{Bandwidth!optimality}, is the design target for all modern collective algorithms.
+The fundamental limitation is that any star-topology approach concentrates traffic at a central point. Regardless of how many servers participate, the aggregate traffic through the central tier scales as $\mathcal{O}(N \times M)$. To achieve true scalability, we need algorithms where the communication volume per node is **constant**\index{Constant}, regardless of $N$. This property, known as **bandwidth optimality**\index{Bandwidth!optimality}, is the design target for all modern collective algorithms.
 
 ### The bandwidth-optimal lower bound {#sec-communication-bandwidth-lower-bound}
 
@@ -952,10 +952,10 @@ Tree AllReduce has worse bandwidth efficiency because of link underutilization. 
 
 The result: while Ring achieves near-100 percent link utilization for large messages on a balanced ring, a simple tree can leave many links idle and concentrate traffic near the root or interior links.
 
-The resulting time complexity depends on the specific tree variant. A simple reduce-then-broadcast tree has logarithmic latency but nonuniform traffic and root/interior bottlenecks; recursive-doubling-style variants can incur $O(\log N)$ full-message bandwidth per rank. The simplified model below captures the latency advantage and the potential bandwidth penalty of tree-like collectives:
+The resulting time complexity depends on the specific tree variant. A simple reduce-then-broadcast tree has logarithmic latency but nonuniform traffic and root/interior bottlenecks; recursive-doubling-style variants can incur $\mathcal{O}(\log N)$ full-message bandwidth per rank. The simplified model below captures the latency advantage and the potential bandwidth penalty of tree-like collectives:
 $$ T_{\text{tree-like}} \approx \underbrace{2\log_2 N \cdot \alpha}_{\text{Latency}} + \underbrace{2 \log_2 N \frac{M}{\beta}}_{\text{Bandwidth penalty in full-message exchange variants}} $$
 
-*   **Latency**: Logarithmic ($O(\log N)$). For 1024 nodes, Ring needs 2046 steps while Tree needs only 20. This 100$\times$ reduction in steps makes Tree the preferred algorithm for latency-sensitive collectives such as tensor parallelism's per-layer AllReduce, where message sizes are small but frequency is high.
+*   **Latency**: Logarithmic ($\mathcal{O}(\log N)$). For 1024 nodes, Ring needs 2046 steps while Tree needs only 20. This 100$\times$ reduction in steps makes Tree the preferred algorithm for latency-sensitive collectives such as tensor parallelism's per-layer AllReduce, where message sizes are small but frequency is high.
 *   **Bandwidth**: Tree-like algorithms can underutilize links or concentrate traffic on interior links, and recursive-doubling-style full-message exchanges add a $\log_2 N$ bandwidth factor. These penalties make naive tree variants a poor choice for data parallelism's large gradient AllReduce, where bandwidth efficiency determines whether the network is saturated or partially idle.
 
 This bandwidth penalty is catastrophic for large-scale data parallelism when the implementation repeatedly exchanges full messages or creates root/interior bottlenecks. For our 175B parameter model's 350 GB gradient AllReduce across 1,000 GPUs, a bandwidth-inefficient tree-like variant can erase the latency advantage that motivated it. Optimized double-tree algorithms exist precisely to keep logarithmic latency without imposing that naive bandwidth penalty.
@@ -971,7 +971,7 @@ In the ReduceScatter phase (first $\log_2 N$ rounds), GPU $i$ partners with GPU 
 The performance of Recursive Halving-Doubling is:
 $$ T_{\text{butterfly}} = 2\log_2 N \cdot \alpha + 2\frac{N-1}{N} \cdot \frac{M}{\beta} $$
 
-This achieves the best of both worlds: logarithmic latency ($O(\log N)$, like Tree) and bandwidth-optimal data movement ($2(N-1)/N \cdot M/\beta$, like Ring). The catch is that it requires nonneighbor communication (GPU $i$ must communicate with GPU $i \oplus 2^k$, which may be physically distant), and it requires $N$ to be a power of two. For clusters where $N$ is not a power of two, additional complexity is needed to handle the irregular cases.
+This achieves the best of both worlds: logarithmic latency ($\mathcal{O}(\log N)$, like Tree) and bandwidth-optimal data movement ($2(N-1)/N \cdot M/\beta$, like Ring). The catch is that it requires nonneighbor communication (GPU $i$ must communicate with GPU $i \oplus 2^k$, which may be physically distant), and it requires $N$ to be a power of two. For clusters where $N$ is not a power of two, additional complexity is needed to handle the irregular cases.
 
 Recursive halving-doubling is used in MPI-style collective implementations and is useful as a theoretical point in the latency-bandwidth trade-off. NCCL's documented algorithm choices instead include Ring, Tree/double-tree-derived variants, CollNet, NVLS/NVLSTree, and PAT depending on version and topology. For clusters with thousands of GPUs, nonlocal communication patterns can create contention on shared network links that erodes theoretical advantages.
 
@@ -983,7 +983,7 @@ The problem with this pattern becomes clear on real hardware. The round $k=2$ pa
 
 NCCL's default algorithm for many message sizes is a **Double Binary Tree**\index{Double Binary Tree}, which addresses the bandwidth inefficiency of a standard binary tree without requiring the nonlocal communication of Butterfly. The idea is to construct two independent binary trees that together cover all links, then run both trees simultaneously, each carrying half the data.
 
-In a standard binary tree, at each level only half the links are active (the other half are idle because those nodes are receiving, not sending). By constructing a second, complementary tree (rooted at a different node, with edges that cover the links unused by the first tree), both trees can operate in parallel. Each tree carries $M/2$ bytes, and since their link utilization is complementary, the aggregate link utilization approaches 100 percent, matching Ring's bandwidth efficiency while retaining Tree's $O(\log N)$ latency.
+In a standard binary tree, at each level only half the links are active (the other half are idle because those nodes are receiving, not sending). By constructing a second, complementary tree (rooted at a different node, with edges that cover the links unused by the first tree), both trees can operate in parallel. Each tree carries $M/2$ bytes, and since their link utilization is complementary, the aggregate link utilization approaches 100 percent, matching Ring's bandwidth efficiency while retaining Tree's $\mathcal{O}(\log N)$ latency.
 
 The combined performance is approximately:
 $$ T_{\text{double-tree}} \approx 2\log_2 N \cdot \alpha + \frac{2M}{\beta} $$
@@ -992,12 +992,12 @@ In practice, the bandwidth term approaches $2M/\beta$ (optimal) while maintainin
 
 @tbl-allreduce-comparison summarizes the four algorithms and their performance characteristics. As @fig-allreduce-crossover illustrates, the choice between algorithms depends on message size: Tree dominates for small messages while Ring wins for large ones.
 
-| **Algorithm**   | **Latency**       | **Bandwidth**                   | **Bandwidth Optimal?** | **Constraint**                  |
-|:----------------|:------------------|:--------------------------------|:----------------------:|:--------------------------------|
-| **Ring**        | $O(N)\alpha$      | $2\frac{N-1}{N}\frac{M}{\beta}$ |          Yes           | None                            |
-| **Tree**        | $O(\log N)\alpha$ | $O(\log N)\frac{M}{\beta}$      |           No           | None                            |
-| **Butterfly**   | $O(\log N)\alpha$ | $2\frac{N-1}{N}\frac{M}{\beta}$ |          Yes           | $N = 2^k$                       |
-| **Double Tree** | $O(\log N)\alpha$ | $\approx\frac{2M}{\beta}$       |      Near-optimal      | Complementary tree construction |
+| **Algorithm**   | **Latency**                 | **Bandwidth**                        | **Bandwidth Optimal?** | **Constraint**                  |
+|:----------------|:----------------------------|:-------------------------------------|:----------------------:|:--------------------------------|
+| **Ring**        | $\mathcal{O}(N)\alpha$      | $2\frac{N-1}{N}\frac{M}{\beta}$      |          Yes           | None                            |
+| **Tree**        | $\mathcal{O}(\log N)\alpha$ | $\mathcal{O}(\log N)\frac{M}{\beta}$ |           No           | None                            |
+| **Butterfly**   | $\mathcal{O}(\log N)\alpha$ | $2\frac{N-1}{N}\frac{M}{\beta}$      |          Yes           | $N = 2^k$                       |
+| **Double Tree** | $\mathcal{O}(\log N)\alpha$ | $\approx\frac{2M}{\beta}$            |      Near-optimal      | Complementary tree construction |
 
 : **AllReduce Algorithm Comparison**\index{AllReduce!algorithm comparison}: Each algorithm occupies a different point in the latency-bandwidth trade-off space. Ring and Butterfly achieve bandwidth optimality with different latency characteristics, while Double Binary Tree provides the best practical compromise. {#tbl-allreduce-comparison}
 
@@ -1208,14 +1208,14 @@ The crossover analysis demonstrates that algorithm selection is not a static cho
 
 Verify your understanding of Ring vs. Tree AllReduce trade-offs:
 
-- [ ] Can you explain why Ring AllReduce achieves bandwidth-optimal communication (approaching $2M/\beta$) while Tree AllReduce incurs $O(\log N)$ bandwidth overhead?
+- [ ] Can you explain why Ring AllReduce achieves bandwidth-optimal communication (approaching $2M/\beta$) while Tree AllReduce incurs $\mathcal{O}(\log N)$ bandwidth overhead?
 - [ ] Given a 256-GPU cluster with $\alpha = 5\ \mu\text{s}$ and $\beta = 50\ \text{GB/s}$, can you calculate $M_{\text{crossover}}$ and determine whether a 10 MB gradient buffer should use Ring or Tree?
 - [ ] Can you trace through the Scatter-Reduce phase of Ring AllReduce for 3 GPUs with a 3-element vector and verify that each GPU ends with the correct partial sum?
-- [ ] Can you explain why Ring AllReduce's $O(N)$ latency makes it impractical for tensor parallelism (where message sizes are small and latency dominates)?
+- [ ] Can you explain why Ring AllReduce's $\mathcal{O}(N)$ latency makes it impractical for tensor parallelism (where message sizes are small and latency dominates)?
 
 :::
 
-[^fn-moe-sparsity]: **Mixture of Experts (MoE)**: An architecture where each token activates only a subset of specialized subnetworks (experts), reducing per-token FLOPs while maintaining total model capacity. The systems trade-off is stark: MoE replaces the bandwidth-bound AllReduce of dense models with latency-bound AllToAll, shifting the communication bottleneck from $\beta$ to $\alpha$ and creating $O(N^2)$ contention that limits practical cluster size. \index{Mixture of Experts!communication}
+[^fn-moe-sparsity]: **Mixture of Experts (MoE)**: An architecture where each token activates only a subset of specialized subnetworks (experts), reducing per-token FLOPs while maintaining total model capacity. The systems trade-off is stark: MoE replaces the bandwidth-bound AllReduce of dense models with latency-bound AllToAll, shifting the communication bottleneck from $\beta$ to $\alpha$ and creating $\mathcal{O}(N^2)$ contention that limits practical cluster size. \index{Mixture of Experts!communication}
 
 ## Hierarchical Communication {#sec-communication-collective-operations-collective-operations-mapping-collectives-topology-3214}
 
@@ -2076,11 +2076,11 @@ For small messages (pipeline parallelism activations, MoE tokens), latency ($\al
 
 **Pitfall**: *Assuming AllReduce works for everything.*
 
-AllReduce creates a global barrier and assumes all participants contribute identical data shapes. In Expert Parallelism (MoE) and Recommendation Systems, where each worker needs to send distinct data to every other worker, AllReduce is fundamentally wrong. These workloads require AllToAll, which has $O(N^2)$ logical connections and hits network contention limits at much smaller cluster sizes.
+AllReduce creates a global barrier and assumes all participants contribute identical data shapes. In Expert Parallelism (MoE) and Recommendation Systems, where each worker needs to send distinct data to every other worker, AllReduce is fundamentally wrong. These workloads require AllToAll, which has $\mathcal{O}(N^2)$ logical connections and hits network contention limits at much smaller cluster sizes.
 
 **Fallacy**: *Ring AllReduce is always optimal.*
 
-Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but pays $O(N)$ latency. For a 1 MB gradient across 64 GPUs with $\alpha = 10\ \mu\text{s}$, Tree AllReduce wins because Ring's 1,260 μs latency penalty exceeds Tree's 1,000 μs bandwidth penalty. The log-aware crossover estimate $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N$ determines when to switch algorithms; $N\alpha\beta$ is only a coarse upper-scale heuristic.
+Ring achieves bandwidth-optimal $2\frac{N-1}{N}\frac{M}{\beta}$ but pays $\mathcal{O}(N)$ latency. For a 1 MB gradient across 64 GPUs with $\alpha = 10\ \mu\text{s}$, Tree AllReduce wins because Ring's 1,260 μs latency penalty exceeds Tree's 1,000 μs bandwidth penalty. The log-aware crossover estimate $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N$ determines when to switch algorithms; $N\alpha\beta$ is only a coarse upper-scale heuristic.
 
 **Pitfall**: *Compressing gradients without error feedback.*
 
@@ -2115,9 +2115,9 @@ When even the fastest wires are not enough, gradient compression provides the fi
 ::: {.callout-takeaways title="Every byte has a travel cost"}
 
 * **The $\alpha$-$\beta$ model reveals the bottleneck**: The critical message size $n^* = \alpha \cdot \beta$ determines whether to optimize software latency (small messages) or hardware bandwidth (large payloads). In practice, NCCL's effective $\alpha$ is 5--10$\times$ higher than wire-level latency.
-* **Algorithm choice is scale-dependent**: Ring AllReduce is bandwidth-optimal but pays $O(N)$ latency; Tree AllReduce is latency-optimal ($O(\log N)$) but bandwidth-inefficient. Use the log-aware crossover estimate $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N$ to reason about the switch point, and treat $N\alpha\beta$ only as a coarse upper-scale heuristic.
+* **Algorithm choice is scale-dependent**: Ring AllReduce is bandwidth-optimal but pays $\mathcal{O}(N)$ latency; Tree AllReduce is latency-optimal ($\mathcal{O}(\log N)$) but bandwidth-inefficient. Use the log-aware crossover estimate $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N$ to reason about the switch point, and treat $N\alpha\beta$ only as a coarse upper-scale heuristic.
 * **Hierarchical algorithms multiply bandwidth**: By performing local reductions over fast NVLink before crossing the slow InfiniBand bridge, hierarchical collectives effectively multiply inter-node bandwidth by the number of GPUs per node.
-* **AllToAll is the contention king**: Unlike AllReduce, AllToAll creates $O(N^2)$ logical connections. This makes Expert Parallelism (MoE) and Recommendation Systems fundamentally harder to scale than dense LLMs.
+* **AllToAll is the contention king**: Unlike AllReduce, AllToAll creates $\mathcal{O}(N^2)$ logical connections. This makes Expert Parallelism (MoE) and Recommendation Systems fundamentally harder to scale than dense LLMs.
 * **Error feedback makes lossy compression safe**: Sparsification can discard 99 percent of gradients, provided the "error" is accumulated locally and added to the next step. This turns biased estimators into unbiased ones over time.
 * **Overlap is the final multiplier**: Communication-computation pipelining through gradient hooks and bucket fusion can hide 90--95 percent of communication time behind backward pass computation for deep models.
 * **Topology discovery is not optional**: Modern libraries like NCCL dynamically map logical rings to physical wires to avoid "hot spots" and maximize bisection bandwidth. Misaligned rank-to-GPU mapping can degrade performance by 2--4$\times$.
