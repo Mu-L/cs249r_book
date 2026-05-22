@@ -983,15 +983,15 @@ Queuing theory, developed by Agner Krarup Erlang in 1909 for telephone network a
 
 For a batched inference system with batch size $B$, service time becomes a function of batch size. Let $S(B)$ denote the time to process a batch of $B$ requests. From the physics of batching (@sec-inference-scale-batching-strategies-scale-6733), we model this as:
 
-$$S(B) = \alpha_{\text{svc}} + \beta_{\text{svc}} \cdot B$$ {#eq-service-time-batch}
+$$S(B) = T_{\text{fixed}} + t_{\text{req}} \cdot B$$ {#eq-service-time-batch}
 
-where $\alpha_{\text{svc}}$ represents fixed service overhead (kernel launch, weight loading from HBM) and $\beta_{\text{svc}}$ represents marginal per-request computation time. This linear model captures the first-order behavior observed in production systems, though actual service times may exhibit slight sublinearity due to memory bandwidth saturation at large batch sizes.
+where $T_{\text{fixed}}$ represents fixed service overhead (kernel launch, weight loading from HBM) and $t_{\text{req}}$ represents marginal per-request computation time. This linear model captures the first-order behavior observed in production systems, though actual service times may exhibit slight sublinearity due to memory bandwidth saturation at large batch sizes.
 
 The **effective service rate** for batched processing is:
 
-$$\mu_{\text{eff}}(B) = \frac{B}{S(B)} = \frac{B}{\alpha_{\text{svc}} + \beta_{\text{svc}} \cdot B}$$
+$$\mu_{\text{eff}}(B) = \frac{B}{S(B)} = \frac{B}{T_{\text{fixed}} + t_{\text{req}} \cdot B}$$
 
-The effective rate increases with batch size, approaching the asymptotic limit $1/\beta_{\text{svc}}$ as $B \to \infty$.
+The effective rate increases with batch size, approaching the asymptotic limit $1/t_{\text{req}}$ as $B \to \infty$.
 
 #### Response time analysis {#sec-inference-scale-response-time-analysis-ffc3}
 
@@ -1040,21 +1040,21 @@ For our linear service time model with deterministic service (variance zero with
 
 $$E[W(B)] = \frac{\lambda \cdot S(B)^2}{2B(1 - \lambda \cdot S(B)/B)}$$
 
-For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $S(B)=\alpha_{\text{svc}}+\beta_{\text{svc}} B$, the constraint $\rho=\lambda S(B)/B \leq \rho_{\text{target}}$ gives:
+For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $S(B)=T_{\text{fixed}}+t_{\text{req}} B$, the constraint $\rho=\lambda S(B)/B \leq \rho_{\text{target}}$ gives:
 
-$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda\alpha_{\text{svc}}}{\rho_{\text{target}} - \lambda\beta_{\text{svc}}}$$ {#eq-optimal-batch-approx}
+$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda T_{\text{fixed}}}{\rho_{\text{target}} - \lambda t_{\text{req}}}$$ {#eq-optimal-batch-approx}
 
-where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda\beta_{\text{svc}}$.
+where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda t_{\text{req}}$.
 
 ::: {.callout-important title="Target-utilization batch sizing"}
 
 @eq-optimal-batch-approx reveals a fundamental insight: **minimum stable batch size grows with fixed overhead and arrival rate**. This means:
 
 1. **Higher traffic** $(\lambda)$: Required batch size increases
-2. **Higher fixed overhead** $(\alpha_{\text{svc}})$: Required batch size increases to amortize overhead
+2. **Higher fixed overhead** $(T_{\text{fixed}})$: Required batch size increases to amortize overhead
 3. **Higher target utilization** $(\rho_{\text{target}})$: Required batch size decreases, but with less latency headroom
 
-This utilization-constrained sizing explains why LLMs (high $\alpha_{\text{svc}}$ from weight loading) benefit from larger batches than vision models (low $\alpha_{\text{svc}}$), even at the same arrival rate.
+This utilization-constrained sizing explains why LLMs (high $T_{\text{fixed}}$ from weight loading) benefit from larger batches than vision models (low $T_{\text{fixed}}$), even at the same arrival rate.
 
 :::
 
@@ -1099,8 +1099,8 @@ Consider serving a GPT-3 class model (`{python} Gpt3Scenario.gpt3_params_b_str`B
 
 - Arrival rate: $\lambda = 100$ requests/second
 - Hardware: 8$\times$ A100 GPUs with tensor parallelism
-- Weight loading overhead: $\alpha_{\text{svc}} = 50$ ms (time to load attention matrices per forward pass)
-- Per-token compute: $\beta_{\text{svc}} = 0.5$ ms per request (amortized across batch)
+- Weight loading overhead: $T_{\text{fixed}} = 50$ ms (time to load attention matrices per forward pass)
+- Per-token compute: $t_{\text{req}} = 0.5$ ms per request (amortized across batch)
 - Average output length: 100 tokens per request
 - Target utilization: $\rho_{\text{target}} = 0.75$
 
@@ -1244,13 +1244,13 @@ Production systems must select batch size to meet Service Level Objectives (SLOs
 
 #### Step 1: Characterize service time {.unnumbered}
 
-Measure $\alpha_{\text{svc}}$ and $\beta_{\text{svc}}$ empirically by profiling inference at batch sizes 1, 8, and 32. Fit the linear model $S(B) = \alpha_{\text{svc}} + \beta_{\text{svc}} B$.
+Measure $T_{\text{fixed}}$ and $t_{\text{req}}$ empirically by profiling inference at batch sizes 1, 8, and 32. Fit the linear model $S(B) = T_{\text{fixed}} + t_{\text{req}} B$.
 
 #### Step 2: Compute stability threshold {.unnumbered}
 
 Find minimum batch size $B_{\text{min}}$ such that $\mu_{\text{eff}}(B_{\text{min}}) > \lambda$:
 
-$$B_{\text{min}} = \frac{\alpha_{\text{svc}} \lambda}{1 - \beta_{\text{svc}} \lambda}$$
+$$B_{\text{min}} = \frac{T_{\text{fixed}} \lambda}{1 - t_{\text{req}} \lambda}$$
 
 Any batch size below $B_{\text{min}}$ results in an unstable system.
 

@@ -153,7 +153,7 @@ Just as Jeff Dean's "Latency Numbers Every Programmer Should Know"[^fn-jeff-dean
 ::: {.callout-takeaways title="Three numbers that matter most"}
 
 * **~600$\times$ energy ratio**: DRAM access costs ~`{python} NumbersToKnow.dram_vs_compute_str`$\times$ more energy than an FP16 FLOP. This is why arithmetic intensity is everything.
-* **16 bytes/parameter for training**: Model weights (2B FP16) + gradients (2B FP16) + master weights (4B FP32) + optimizer states for Adaptive Moment Estimation (Adam) at 8B. That totals 16 bytes per parameter, so a 7B model needs 112 GB just to start training.
+* **16 bytes/parameter for training**: Model weights (2 bytes FP16) + gradients (2 bytes FP16) + master weights (4 bytes FP32) + optimizer states for Adaptive Moment Estimation (Adam) at 8 bytes. That totals 16 bytes per parameter, so a 7B model needs 112 GB just to start training.
 * **~200 km/ms speed of light in fiber**: Cross-country latency is ~40 ms. No optimization can reduce this—it is physics.
 
 :::
@@ -218,7 +218,7 @@ These relationships are governed by physics or arithmetic—they will still be t
 | Training FLOPs                |          ~6$\times$ parameters$\times$ tokens         | 7B on 1T tokens → $4 \times 10^{22}$ FLOPs |
 | Data center vs. edge compute  | ~`{python} NumbersToKnow.dc_mobile_ratio_str`$\times$ |   Compute per watt$\times$ power budget    |
 
-: **Scaling Rules**: These are arithmetic, not hardware-specific. Training memory includes FP16 weights (2B), FP16 gradients (2B), FP32 master weights (4B), and Adam optimizer states (8B for momentum + variance). {#tbl-scaling-rules-ref tbl-colwidths="[33,33,33]"}
+: **Scaling Rules**: These are arithmetic, not hardware-specific. Training memory includes FP16 weights (2 bytes), FP16 gradients (2 bytes), FP32 master weights (4 bytes), and Adam optimizer states (8 bytes for momentum + variance). {#tbl-scaling-rules-ref tbl-colwidths="[33,33,33]"}
 
 [^fn-training-memory]: **Training memory (Adam)**: The 16 bytes/parameter rule assumes mixed-precision training with Adam. ZeRO optimization can reduce per-accelerator memory by sharding optimizer states across accelerators, but the total memory across all accelerators remains ~16$\times$ parameters.
 
@@ -334,10 +334,10 @@ $$ \text{Ridge Point} = \frac{\text{Peak FLOP/s}}{\text{Memory Bandwidth}} $$
 
 ::: {.callout-tip title="Batch size controls arithmetic intensity"}
 
-For matrix multiplications, arithmetic intensity scales with the batch dimension. When you compute $Y = XW$ where $X$ is $(B\times D_{\text{in}})$ and $W$ is $(D_{\text{in}}\times D_{\text{out}})$:
+For matrix multiplications, arithmetic intensity scales with the batch dimension. When you compute $Y = XW$ where $X$ is $(B\times d_{\text{in}})$ and $W$ is $(d_{\text{in}}\times d_{\text{out}})$:
 
-- **FLOPs**: $2 \times B \times D_{\text{in}} \times D_{\text{out}}$ (multiply-adds)
-- **Bytes**: Weights are loaded once: $D_{\text{in}} \times D_{\text{out}} \times \text{bytes}_{\text{precision}}$
+- **FLOPs**: $2 \times B \times d_{\text{in}} \times d_{\text{out}}$ (multiply-adds)
+- **Bytes**: Weights are loaded once: $d_{\text{in}} \times d_{\text{out}} \times \text{bytes}_{\text{precision}}$
 
 Doubling the batch size $B$ doubles FLOPs while keeping weight loads constant—directly increasing arithmetic intensity. This is why inference serving batches requests: batch size 1 is almost always memory bound, while batch size 64+ can approach the compute ceiling.
 
@@ -834,8 +834,8 @@ Before moving from scaling laws to queueing, pause on the consequences of these 
 
 ### Little's Law {#sec-machine-foundations-littles-law-21a3}
 
-For capacity planning in inference systems, **Little's Law** [@little1961] relates concurrency ($N_{\text{req}}$), arrival rate ($\lambda$), and latency ($T_{\text{lat}}$):[^fn-little]
-$$ N_{\text{req}} = \lambda \times T_{\text{lat}} $$
+For capacity planning in inference systems, **Little's Law** [@little1961] relates concurrency ($N_{\text{req}}$), arrival rate ($\lambda$), and latency ($L_{\text{lat}}$):[^fn-little]
+$$ N_{\text{req}} = \lambda \times L_{\text{lat}} $$
 
 [^fn-little]: **John Little**: An Institute Professor at MIT and a pioneer in the field of operations research. His law, proved in 1961, is fundamental to queuing theory and is used across fields from manufacturing to computer network analysis.
 
@@ -885,7 +885,7 @@ class LittlesLawExample:
     mem_per_req_gb_str = fmt(mem_per_req_gb_value, precision=0, commas=False)
     gpu_mem_gb_str = fmt(gpu_mem_gb_value, precision=0, commas=False)
     max_concurrent_str = fmt(max_concurrent_value, precision=0, commas=False)
-    max_throughput_eq = fmt_math(f"L/W = {max_concurrent_value} / {w_latency_s_value} = {int(max_throughput_value)} \\text{{ QPS}}")
+    max_throughput_eq = fmt_math(f"N_{{\\text{{max}}}}/L_{{\\text{{lat}}}} = {max_concurrent_value} / {w_latency_s_value} = {int(max_throughput_value)} \\text{{ QPS}}")
 ```
 
 To see this in practice, consider sustaining `{python} LittlesLawExample.lambda_qps_str` queries per second (QPS) with `{python} LittlesLawExample.w_latency_ms_str` ms average latency. The law tells us the system must support `{python} LittlesLawExample.lambda_qps_raw_str` $\times$ `{python} LittlesLawExample.w_latency_s_str` = `{python} LittlesLawExample.L_concurrent_str` concurrent requests.
@@ -1249,7 +1249,7 @@ With the common misconceptions addressed, use the reference numbers and models i
 * **Energy dominates**: Moving data costs ~600$\times$ more energy than computing on it. Arithmetic intensity—the ratio of compute to data movement—is the single most important metric for ML workload performance.
 * **The Roofline Model**: The Roofline Model reveals whether a workload is compute bound or memory bound. Most inference workloads fall below the ridge point and are memory bound; batch size is the primary lever to shift toward compute-bound operation.
 * **Amdahl's Law**: Amdahl's Law caps strong-scaling speedup at $1/s$ (where $s$ is the serial fraction). **Gustafson's Law** shows that scaling the problem alongside hardware yields near-linear throughput gains—the paradigm that makes large-scale training feasible.
-* **Little's Law**: The relationship $N_{\text{req}} = \lambda T_{\text{lat}}$ directly sizes inference infrastructure: concurrency, memory, and maximum throughput are all linked by this simple identity.
+* **Little's Law**: The relationship $N_{\text{req}} = \lambda L_{\text{lat}}$ directly sizes inference infrastructure: concurrency, memory, and maximum throughput are all linked by this simple identity.
 * **Memory hierarchy**: The memory hierarchy spans five orders of magnitude in latency (register at ~0.3 ns to SSD at ~100,000 ns). Keeping data close to compute is not an optimization—it is the optimization.
 * **Numerical precision**: Numerical precision is a systems lever, not just a modeling choice. BF16 matches FP32's dynamic range at half the memory cost; INT8 quantization can deliver 2--4$\times$ inference speedup with careful calibration.
 * **Physics is nonnegotiable**: Speed of light sets latency floors, energy ratios set efficiency ceilings, and no amount of software optimization can violate these constraints.
