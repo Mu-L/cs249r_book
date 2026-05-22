@@ -2170,7 +2170,62 @@ A well-managed fleet tracks the error rates of each component and preemptively m
 
 Node-level health monitoring is therefore a critical operational practice. Modern fleet management systems continuously collect telemetry from each GPU (temperature, power draw, ECC error counts, NVLink error rates) and from the host BMC (baseboard management controller). Automated health checkers run short diagnostic workloads on idle nodes to verify that all GPUs, NVLinks, and InfiniBand connections are functioning correctly before the job scheduler assigns training work to that node. Without this proactive monitoring, a silently degraded node can corrupt training gradients (if the error is in the arithmetic path) or slow the entire job (if the error causes NVLink retraining, which temporarily reduces bandwidth). @sec-fault-tolerance-reliability discusses fleet-level fault tolerance strategies in detail.
 
-For our `{python} InfraSetup.frontier_params_b_str`B model training across 128 nodes, the probability of at least one node experiencing a hardware issue during a two-week training run is substantial. If each node has an MTBF of 1,000 hours (a reasonable estimate for a DGX H100 under sustained load), the expected number of node failures during a 336-hour training run across 128 nodes is $128 \times 336/1{,}000 \approx 43$ failures. This means the training run will experience, on average, roughly three node failures per day. Each failure requires detecting the degraded node, draining its workload, substituting a spare node, and resuming from the last checkpoint -- a process that takes 10--30 minutes with automated tooling. With automated recovery, the direct restart overhead is roughly 2--6 percent of the run; without spare nodes and automated recovery, multi-hour interventions can push overhead into the 20--30 percent range, consuming millions of dollars in wasted GPU-hours.
+```{python}
+#| label: node-reliability-scenario
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ NODE RELIABILITY SCENARIO (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-compute-infrastructure-node-health-reliability-56a6
+# │ Goal: Compute expected node failures and restart overhead for a two-week run.
+# │ How: Expected failures = nodes * run_hours / composite_node_mtbf_hours.
+# │ Exports: NodeReliabilityScenario.*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import GPUS_PER_HOST
+from mlsysim.fmt import fmt, check
+
+class NodeReliabilityScenario:
+    """Composite node-level reliability for the 128-node running example."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    nodes = 128
+    run_days = 14
+    hours_per_day = 24
+    composite_node_mtbf_hours = 1_000
+    canonical_gpu_mttf_hours = 50_000
+    gpus_per_node = GPUS_PER_HOST
+    recovery_low_min = 10
+    recovery_high_min = 30
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    run_hours = run_days * hours_per_day
+    expected_failures = nodes * run_hours / composite_node_mtbf_hours
+    failures_per_day = expected_failures / run_days
+    gpu_only_node_mtbf_hours = canonical_gpu_mttf_hours / gpus_per_node
+    gpu_only_expected_outages = nodes * run_hours / gpu_only_node_mtbf_hours
+    restart_overhead_low_pct = expected_failures * recovery_low_min / 60 / run_hours * 100
+    restart_overhead_high_pct = expected_failures * recovery_high_min / 60 / run_hours * 100
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(expected_failures > gpu_only_expected_outages, "Composite node MTBF should exceed GPU-only outage rate")
+    check(2 <= restart_overhead_low_pct <= 3, "Low restart overhead should be about 2 percent")
+    check(6 <= restart_overhead_high_pct <= 7, "High restart overhead should be about 6 percent")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    nodes_str = fmt(nodes, precision=0, commas=False)
+    run_hours_str = fmt(run_hours, precision=0, commas=False)
+    node_mtbf_str = fmt(composite_node_mtbf_hours, precision=0)
+    expected_failures_str = fmt(expected_failures, precision=0, commas=False)
+    failures_per_day_str = fmt(failures_per_day, precision=1, commas=False)
+    gpu_mttf_str = fmt(canonical_gpu_mttf_hours, precision=0)
+    gpu_only_outages_str = fmt(gpu_only_expected_outages, precision=1, commas=False)
+    recovery_low_str = fmt(recovery_low_min, precision=0, commas=False)
+    recovery_high_str = fmt(recovery_high_min, precision=0, commas=False)
+    restart_overhead_low_str = fmt(restart_overhead_low_pct, precision=0, commas=False)
+    restart_overhead_high_str = fmt(restart_overhead_high_pct, precision=0, commas=False)
+```
+
+For our `{python} InfraSetup.frontier_params_b_str`B model training across `{python} NodeReliabilityScenario.nodes_str` nodes, the probability of at least one node experiencing a hardware issue during a two-week training run is substantial. Under a composite node-level MTBF assumption of `{python} NodeReliabilityScenario.node_mtbf_str` hours, which includes GPUs, host components, power, cooling, and network links, the expected number of node failures during a `{python} NodeReliabilityScenario.run_hours_str`-hour run is approximately `{python} NodeReliabilityScenario.expected_failures_str`. This means the training run will experience, on average, roughly `{python} NodeReliabilityScenario.failures_per_day_str` node failures per day. A GPU-only lower bound from the canonical `{python} NodeReliabilityScenario.gpu_mttf_str`-hour per-GPU MTTF would predict only `{python} NodeReliabilityScenario.gpu_only_outages_str` GPU-driven node outages over the same run, before adding host, power, cooling, and network failure terms. Each failure requires detecting the degraded node, draining its workload, substituting a spare node, and resuming from the last checkpoint -- a process that takes `{python} NodeReliabilityScenario.recovery_low_str`--`{python} NodeReliabilityScenario.recovery_high_str` minutes with automated tooling. With automated recovery, the direct restart overhead is roughly `{python} NodeReliabilityScenario.restart_overhead_low_str`--`{python} NodeReliabilityScenario.restart_overhead_high_str` percent of the run; without spare nodes and automated recovery, multi-hour interventions can push overhead into the 20--30 percent range, consuming millions of dollars in wasted GPU-hours.
 
 ### Node memory partitioning {#sec-compute-node-memory}
 
@@ -3255,7 +3310,55 @@ Dojo's efficiency for its target workload is exceptional, but the system cannot 
 
 The choice between fat-tree, torus, and rail-optimized topologies has quantitative implications for training throughput that can alter AllReduce time by 2--3$\times$ for the same cluster size. The key insight for infrastructure planning is that topology choice is not separable from workload selection: Transformer training with its regular AllReduce patterns favors different topologies than Mixture-of-Experts models with their AllToAll communication. The network fabric cost (10--15 percent of total system cost) is easily justified if it improves scaling efficiency by even a few percentage points, because poor scaling wastes the other 85--90 percent of the investment.
 
-The cost structure of the network fabric itself warrants quantitative examination. An InfiniBand NDR switch with 64 ports of 400 Gbps costs \$15,000--30,000, with specialized active optical cables adding \$500--1,000 per link. A two-tier fat-tree for 1,024 GPUs (128 nodes) requires approximately 64 leaf switches and 32 spine switches, plus roughly 4,000 cables, bringing the total fabric cost to \$5--15 million depending on the oversubscription ratio. Ethernet\index{Ethernet}-based alternatives using RoCE (RDMA over Converged Ethernet) reduce the per-port cost by 30--50 percent, but introduce a latency and reliability penalty. Ethernet is inherently lossy: when switch buffers overflow under the bursty, synchronized traffic patterns of distributed training, packets are dropped and must be retransmitted. For our `{python} InfraSetup.frontier_params_b_str`B model training on 1,024 GPUs, even a 1 percent packet retransmission rate on a RoCE fabric can degrade effective AllReduce throughput by 10--20 percent, because thousands of GPUs wait for the slowest participant. The cost-performance frontier analysis asks whether the \$3--5 million savings of Ethernet justifies the potential 10--20 percent throughput loss. For frontier model training where time-to-market is paramount and the GPU fleet represents a \$35+ million investment, the InfiniBand premium pays for itself by ensuring the network never becomes the bottleneck.
+```{python}
+#| label: fabric-sizing-scenario
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ FAT-TREE FABRIC SIZING (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-compute-infrastructure-site-selection-physical-constraints-fba0
+# │ Goal: Size a dual-link two-tier Clos fabric for the 1,024-GPU example.
+# │ How: endpoint_links = GPUs * links_per_gpu; leaves use 32 downlinks and
+# │      32 uplinks on 64-port switches; one uplink per spine.
+# │ Exports: FabricSizingScenario.*_str
+# └─────────────────────────────────────────────────────────────────────────────
+import math
+from mlsysim.fmt import fmt, check
+
+class FabricSizingScenario:
+    """Two-tier InfiniBand fabric sizing for the 1,024-GPU planning example."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    gpus = 1_024
+    nodes = 128
+    switch_ports = 64
+    downlink_ports_per_leaf = 32
+    uplink_ports_per_leaf = 32
+    endpoint_links_per_gpu = 2
+    spine_switches = 32
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    endpoint_links = gpus * endpoint_links_per_gpu
+    leaf_switches = math.ceil(endpoint_links / downlink_ports_per_leaf)
+    leaf_spine_links = leaf_switches * uplink_ports_per_leaf
+    fabric_links = endpoint_links + leaf_spine_links
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(leaf_switches == 64, "Dual-link 1,024-GPU fabric should require 64 leaf switches")
+    check(spine_switches == uplink_ports_per_leaf, "One uplink per spine switch in this Clos model")
+    check(fabric_links == 4096, "Fabric link count should be 4,096")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    gpus_str = fmt(gpus, precision=0)
+    nodes_str = fmt(nodes, precision=0, commas=False)
+    switch_ports_str = fmt(switch_ports, precision=0, commas=False)
+    endpoint_links_per_gpu_str = fmt(endpoint_links_per_gpu, precision=0, commas=False)
+    leaf_switches_str = fmt(leaf_switches, precision=0, commas=False)
+    spine_switches_str = fmt(spine_switches, precision=0, commas=False)
+    fabric_links_str = fmt(fabric_links, precision=0)
+```
+
+The cost structure of the network fabric itself warrants quantitative examination. An InfiniBand NDR switch with `{python} FabricSizingScenario.switch_ports_str` ports of 400 Gbps costs \$15,000--30,000, with specialized active optical cables adding \$500--1,000 per link. Under a dual-link endpoint model for `{python} FabricSizingScenario.gpus_str` GPUs (`{python} FabricSizingScenario.nodes_str` nodes), a two-tier fat-tree requires approximately `{python} FabricSizingScenario.leaf_switches_str` leaf switches and `{python} FabricSizingScenario.spine_switches_str` spine switches, plus `{python} FabricSizingScenario.fabric_links_str` fabric links, bringing the total fabric cost to \$5--15 million depending on the oversubscription ratio and optical mix. Ethernet\index{Ethernet}-based alternatives using RoCE (RDMA over Converged Ethernet) reduce the per-port cost by 30--50 percent, but introduce a latency and reliability penalty. Ethernet is inherently lossy: when switch buffers overflow under the bursty, synchronized traffic patterns of distributed training, packets are dropped and must be retransmitted. For our `{python} InfraSetup.frontier_params_b_str`B model training on `{python} FabricSizingScenario.gpus_str` GPUs, even a 1 percent packet retransmission rate on a RoCE fabric can degrade effective AllReduce throughput by 10--20 percent, because thousands of GPUs wait for the slowest participant. The cost-performance frontier analysis asks whether the \$3--5 million savings of Ethernet justifies the potential 10--20 percent throughput loss. For frontier model training where time-to-market is paramount and the GPU fleet represents a \$35+ million investment, the InfiniBand premium pays for itself by ensuring the network never becomes the bottleneck.
 
 #### Site selection and physical constraints {#sec-compute-infrastructure-site-selection-physical-constraints-fba0}
 
@@ -3317,9 +3420,65 @@ For our `{python} InfraSetup.frontier_params_b_str`B model, a minimum viable tra
 
 The most consequential infrastructure decision is whether to build an on-premises cluster or rent capacity from a cloud provider. This decision depends primarily on one variable: sustained utilization, as @fig-tco-build-vs-buy makes visible by plotting cumulative cost over time for both options at varying utilization rates.
 
-::: {#fig-tco-build-vs-buy fig-env="figure" fig-pos="htb" fig-cap="**TCO: Build vs. Buy**: Cumulative cost over 30 months at 80 percent sustained utilization. The figure plots a 1,000-GPU H100 reference cluster (125 nodes at 8 GPUs/node) using \\$4/GPU-hr cloud pricing, with the on-prem CapEx step and OpEx slope drawn explicitly. Under the adjacent full-cluster assumptions (\\$58.75M upfront and about \\$1.5M/year OpEx), on-premises breaks even against cloud on-demand around month 27, and cloud grows linearly with no upfront cost." fig-alt="Cumulative cost vs. months plot for a 1,000-GPU reference cluster. The cloud line rises linearly to about 70 million dollars after 30 months. The on-premises line starts with a 58.75 million dollar CapEx jump and has a shallow OpEx slope. The lines cross near month 27."}
+```{python}
+#| label: build-vs-buy-figure-scenario
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ BUILD-VS-BUY FIGURE SCENARIO (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @fig-tco-build-vs-buy
+# │ Goal: Compute the numeric assumptions drawn in the build-vs-buy figure.
+# │ How: upfront = nodes*node_price + network + facility; cloud monthly =
+# │      GPUs * rate * utilization * hours/year / 12.
+# │ Exports: BuildVsBuyFigureScenario.*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import HOURS_PER_YEAR
+from mlsysim.fmt import fmt, check
+
+class BuildVsBuyFigureScenario:
+    """Cluster-level assumptions for the build-vs-buy figure."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    gpus = 1_000
+    gpus_per_node = 8
+    node_price_usd = 350_000
+    network_capex_usd = 5_000_000
+    facility_capex_usd = 10_000_000
+    annual_opex_usd = 1_500_000
+    cloud_gpu_hour_usd = 4.00
+    utilization = 0.80
+    horizon_months = 30
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    nodes = gpus // gpus_per_node
+    upfront_capex_usd = nodes * node_price_usd + network_capex_usd + facility_capex_usd
+    monthly_opex_usd = annual_opex_usd / 12
+    cloud_monthly_usd = gpus * cloud_gpu_hour_usd * utilization * HOURS_PER_YEAR / 12
+    cloud_horizon_usd = cloud_monthly_usd * horizon_months
+    breakeven_month = upfront_capex_usd / (cloud_monthly_usd - monthly_opex_usd)
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(nodes == 125, "1,000 GPUs at 8 GPUs/node should require 125 nodes")
+    check(26 <= breakeven_month <= 27, "Build-vs-buy break-even should be near month 27")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    gpus_str = fmt(gpus, precision=0)
+    nodes_str = fmt(nodes, precision=0, commas=False)
+    util_pct_str = fmt(utilization * 100, precision=0, commas=False)
+    horizon_months_str = fmt(horizon_months, precision=0, commas=False)
+    upfront_capex_str = fmt(upfront_capex_usd / 1e6, precision=2, prefix="$", suffix="M")
+    annual_opex_str = fmt(annual_opex_usd / 1e6, precision=1, prefix="$", suffix="M")
+    monthly_opex_str = fmt(monthly_opex_usd / 1e6, precision=3, prefix="$", suffix="M")
+    cloud_monthly_str = fmt(cloud_monthly_usd / 1e6, precision=2, prefix="$", suffix="M")
+    cloud_horizon_str = fmt(cloud_horizon_usd / 1e6, precision=1, prefix="$", suffix="M")
+    breakeven_month_str = fmt(breakeven_month, precision=0, commas=False)
+```
+
+::: {#fig-tco-build-vs-buy fig-env="figure" fig-pos="htb" fig-cap="**TCO: Build vs. Buy**: Cumulative cost over a 30-month horizon for a high-utilization H100 reference cluster. The plotted curves compare an upfront on-premises CapEx step plus monthly OpEx against linear cloud rental cost." fig-alt="Cumulative cost vs. months plot for an H100 reference cluster. The cloud line rises linearly with no upfront cost. The on-premises line starts with a large CapEx jump and has a shallow OpEx slope. The lines cross late in the 30-month horizon."}
 ![](images/svg/tco-build-vs-buy.svg)
 :::
+
+The plotted reference uses `{python} BuildVsBuyFigureScenario.gpus_str` H100 GPUs across `{python} BuildVsBuyFigureScenario.nodes_str` nodes at `{python} BuildVsBuyFigureScenario.util_pct_str` percent sustained utilization. The on-premises curve starts at `{python} BuildVsBuyFigureScenario.upfront_capex_str` in upfront CapEx and adds about `{python} BuildVsBuyFigureScenario.annual_opex_str` per year, while cloud rental at \$4/GPU-hour grows by about `{python} BuildVsBuyFigureScenario.cloud_monthly_str` per month. Over `{python} BuildVsBuyFigureScenario.horizon_months_str` months, the cloud line reaches `{python} BuildVsBuyFigureScenario.cloud_horizon_str`, and the on-premises line crosses it around month `{python} BuildVsBuyFigureScenario.breakeven_month_str`.
 
 ```{python}
 #| label: tco-scenario
@@ -3640,7 +3799,54 @@ With the workload characterized, the planning follows a **bottom-up sizing** app
 - **TCO analysis**: Compute the 3-year total cost of ownership, including hardware CapEx, facility CapEx, electricity OpEx, and staffing OpEx. Compare against cloud alternatives at the expected utilization rate.
 - **Timeline and risk assessment**: Map the procurement, construction, and deployment timelines to the project schedule. Identify the longest-lead items (typically electrical infrastructure and GPU procurement) and start those procurement processes first.
 
-To illustrate this methodology concretely, consider planning the infrastructure for training our `{python} InfraSetup.frontier_params_b_str`B model. The training workload at large batch sizes is compute-bound, so the design optimizes for TFLOPS per dollar and selects the H100 as the highest available TFLOPS at reasonable cost. The 2.2 TB training state requires tensor parallelism within each node plus optimizer sharding, activation checkpointing, and offload across the wider data-parallel group, yielding a DGX H100 configuration. Sizing the cluster follows from the compute budget: at $6 \times 175 \times 10^9 \times 300 \times 10^9 = 3.15 \times 10^{23}$ FLOPs total and 45 percent MFU on H100s, each GPU delivers $989 \times 10^{12} \times 0.45 \approx 445$ TFLOPS sustained; with 1,024 GPUs the cluster reaches roughly 456 PFLOPS sustained, completing the run in about a week of idealized compute time, or 2--4 weeks with operational overhead. The TP-8, PP-4, DP-32 configuration generates structured AllReduce traffic suited to a rail-optimized InfiniBand fabric. The 128 nodes draw `{python} RackPowerScenario.rack_power_str` kW per 4-node rack across 32 racks at approximately 1.1 MW of facility-relevant load, necessitating liquid cooling. The 3-year TCO comes to approximately \$63M on-premises; renting the six-runs-per-year workload in the cloud is roughly \$24--48M depending on whether each run lasts 2 or 4 weeks, while continuous cloud use is more expensive. The break-even depends on sustained utilization beyond the initial training run. GPU procurement (6--12 months) and facility preparation must begin immediately, with phased deployment targeting initial capacity within 3 months.
+```{python}
+#| label: planning-throughput-scenario
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ INFRASTRUCTURE PLANNING THROUGHPUT (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-compute-planning
+# │ Goal: Compute the conservative BF16/FP16 throughput basis for the 175B plan.
+# │ How: total_flops = 6 * params * tokens; sustained = peak * MFU * GPUs.
+# │ Exports: PlanningThroughputScenario.*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import H100_FLOPS_FP16_TENSOR, TFLOPs, PFLOPs, second, SEC_PER_DAY
+from mlsysim.fmt import fmt, fmt_sci, check
+
+class PlanningThroughputScenario:
+    """Conservative BF16/FP16 planning basis for the 175B training run."""
+
+    # ┌── 1. LOAD ──────────────────────────────────────────────────────────
+    params = 175e9
+    tokens = 300e9
+    training_flops_per_token_param = 6
+    mfu = 0.45
+    gpus = 1_024
+    h100_peak_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs / second)
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
+    total_flops = training_flops_per_token_param * params * tokens
+    per_gpu_sustained_tflops = h100_peak_tflops * mfu
+    cluster_sustained_pflops = (per_gpu_sustained_tflops * gpus) / 1_000
+    ideal_seconds = total_flops / (cluster_sustained_pflops * 1e15)
+    ideal_days = ideal_seconds / SEC_PER_DAY
+
+    # ┌── 3. GUARD ─────────────────────────────────────────────────────────
+    check(3.14e23 < total_flops < 3.16e23, "175B x 300B x 6 should be 3.15e23 FLOPs")
+    check(450 <= cluster_sustained_pflops <= 460, "Cluster sustained throughput should be about 456 PFLOP/s")
+    check(7.5 <= ideal_days <= 8.5, "Ideal training time should be about 8 days")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
+    total_flops_str = fmt_sci(total_flops, precision=2)
+    mfu_pct_str = fmt(mfu * 100, precision=0, commas=False)
+    h100_peak_tflops_str = fmt(h100_peak_tflops, precision=0, commas=False)
+    per_gpu_sustained_tflops_str = fmt(per_gpu_sustained_tflops, precision=0, commas=False)
+    gpus_str = fmt(gpus, precision=0)
+    cluster_sustained_pflops_str = fmt(cluster_sustained_pflops, precision=0, commas=False)
+    ideal_days_str = fmt(ideal_days, precision=1, commas=False)
+```
+
+To illustrate this methodology concretely, consider planning the infrastructure for training our `{python} InfraSetup.frontier_params_b_str`B model. The training workload at large batch sizes is compute-bound, so the design optimizes for TFLOPS per dollar and selects the H100 as the highest available TFLOPS at reasonable cost. The 2.2 TB training state requires tensor parallelism within each node plus optimizer sharding, activation checkpointing, and offload across the wider data-parallel group, yielding a DGX H100 configuration. Sizing the cluster follows from the compute budget: at 6 FLOPs per parameter-token over 175 billion parameters and 300 billion tokens, the run requires `{python} PlanningThroughputScenario.total_flops_str` FLOPs. Using a conservative BF16/FP16 planning basis rather than the FP8 headline peak, each H100 delivers `{python} PlanningThroughputScenario.h100_peak_tflops_str` TFLOPS peak and `{python} PlanningThroughputScenario.per_gpu_sustained_tflops_str` TFLOPS sustained at `{python} PlanningThroughputScenario.mfu_pct_str` percent MFU; with `{python} PlanningThroughputScenario.gpus_str` GPUs, the cluster reaches roughly `{python} PlanningThroughputScenario.cluster_sustained_pflops_str` PFLOP/s sustained and completes the run in about `{python} PlanningThroughputScenario.ideal_days_str` days of idealized compute time, or 2--4 weeks with operational overhead. The TP-8, PP-4, DP-32 configuration generates structured AllReduce traffic suited to a rail-optimized InfiniBand fabric. The 128 nodes draw `{python} RackPowerScenario.rack_power_str` kW per 4-node rack across 32 racks at approximately 1.1 MW of facility-relevant load, necessitating liquid cooling. The 3-year TCO comes to approximately \$63M on-premises; renting the six-runs-per-year workload in the cloud is roughly \$24--48M depending on whether each run lasts 2 or 4 weeks, while continuous cloud use is more expensive. The break-even depends on sustained utilization beyond the initial training run. GPU procurement (6--12 months) and facility preparation must begin immediately, with phased deployment targeting initial capacity within 3 months.
 
 ::: {#chk-compute-infrastructure-infrastructure-planning-exercise .callout-checkpoint title="Infrastructure planning exercise"}
 
