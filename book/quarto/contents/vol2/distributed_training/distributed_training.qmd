@@ -192,13 +192,13 @@ Distributed training introduces three primary complexity dimensions not present 
 
 The systematic optimization methodology established for single-machine training extends to distributed environments with important adaptations. Profiling must now capture inter-device communication patterns and synchronization overhead in addition to computation and memory metrics. The solution space expands to include data parallelism, model parallelism, pipeline parallelism, and hybrid approaches. @fig-3d-parallelism-cube visualizes this three-dimensional configuration space.
 
-::: {#fig-3d-parallelism-cube fig-env="figure" fig-pos="htb" fig-cap="**The 3D Parallelism Cube**: A conceptual visualization of the three orthogonal scaling axes: Data Parallelism (replicating the model), Tensor Parallelism (splitting layers), and Pipeline Parallelism (splitting depth). Production training for models like GPT-4 occupies a specific point $(d, t, p)$ within this cube to balance memory usage, compute efficiency, and communication overhead." fig-alt="3D coordinate system with three axes: Data Parallelism (replica count d), Pipeline Parallelism (depth p), and Tensor Parallelism (width t). Dashed cube marks a configuration point with Total Accelerators equals d times p times t."}
+::: {#fig-3d-parallelism-cube fig-env="figure" fig-pos="htb" fig-cap="**The 3D Parallelism Cube**: A conceptual visualization of the three orthogonal scaling axes: Data Parallelism (replicating the model), Pipeline Parallelism (splitting depth), and Tensor Parallelism (splitting layers). Production training for models like GPT-4 occupies a specific point $(d, p, t)$ within this cube to balance memory usage, compute efficiency, and communication overhead." fig-alt="3D coordinate system with three axes: Data Parallelism (replica count d), Pipeline Parallelism (depth p), and Tensor Parallelism (width t). Dashed cube marks a configuration point with Total Accelerators equals d times p times t."}
 
 ![](images/svg/3d-parallelism-cube.svg)
 
 :::
 
-The key insight from @fig-3d-parallelism-cube is that the total accelerator count equals $d \times t \times p$: each axis is independent, and production systems select a specific coordinate in this cube based on the memory, compute, and bandwidth constraints of the target model and cluster.
+The key insight from @fig-3d-parallelism-cube is that the total accelerator count is $N_{\text{total}} = d \times p \times t$: each axis is independent, and production systems select a specific coordinate in this cube based on the memory, compute, and bandwidth constraints of the target model and cluster.
 
 ### Engineering trade-offs: Selecting a parallelism strategy {#sec-distributed-training-systems-systems-engineering-tradeoffs-selecting-parallelism-strategy-b344}
 
@@ -206,11 +206,11 @@ Choosing the right parallelism strategy is *not a matter of preference*; it is a
 
 | **Strategy**               | **Communication Pattern** | **Comm. Volume**                              | **Hardware Constraint**         |
 |:---------------------------|:--------------------------|:----------------------------------------------|:--------------------------------|
-| **Data Parallel (DP)**     | AllReduce Gradients       | $\propto M$ (Model Size)                      | Requires high bisection BW      |
+| **Data Parallel (DP)**     | AllReduce Gradients       | $\propto M_{\text{grad}}$ (gradient bytes)    | Requires high bisection BW      |
 | **Tensor Parallel (TP)**   | AllReduce Activations     | $\propto B \times N_{\text{layers}}$ (Layers) | Critical: Needs NVLink          |
-| **Pipeline Parallel (PP)** | Point-to-Point (P2P)      | $\propto B \times d$ (Hidden)                 | Low BW (Ethernet is sufficient) |
+| **Pipeline Parallel (PP)** | Point-to-Point (P2P)      | $\propto B \times d_{\text{model}}$ (Hidden)  | Low BW (Ethernet is sufficient) |
 
-: **Parallelism Communication Costs**\index{Parallelism Communication Costs}: Tensor Parallelism has the highest communication frequency (per layer), confining it to intra-node (NVLink) usage. Pipeline Parallelism has the lowest communication volume (boundary activations only), making it suitable for inter-node (Ethernet/InfiniBand) scaling. Data Parallelism sits in the middle but scales poorly as $M$ grows, necessitating ZeRO optimizations. {#tbl-parallelism-tradeoffs}
+: **Parallelism Communication Costs**\index{Parallelism Communication Costs}: Tensor Parallelism has the highest communication frequency (per layer), confining it to intra-node (NVLink) usage. Pipeline Parallelism has the lowest communication volume (boundary activations only), making it suitable for inter-node (Ethernet/InfiniBand) scaling. Data Parallelism sits in the middle but scales poorly as communicated gradient bytes $M_{\text{grad}}$ grow, necessitating ZeRO optimizations. {#tbl-parallelism-tradeoffs}
 
 The bandwidth requirements impose a hard constraint on hardware placement: each parallelism strategy must be matched to the interconnect available between the GPUs that need to communicate, or the design fails before it leaves the whiteboard.
 
@@ -859,7 +859,7 @@ Per-Parameter Memory Cost:
 - **Total**: 16 bytes/parameter
 
 Total Memory for 7B Model:
-$$ M_{\text{total}} = 7 \times 10^9 \times 16 \text{ bytes} \approx \mathbf{112 \text{ GB}} $$
+$$ C_{\text{state,total}} = 7 \times 10^9 \times 16 \text{ bytes} \approx \mathbf{112 \text{ GB}} $$
 **Baseline outcome**: **OOM** on A100-`{python} DistTrainConstants.a100_mem_str` GB.
 
 **Optimization: ZeRO-3 (Fully Sharded)**
@@ -871,7 +871,7 @@ With $N=64$ GPUs, state is partitioned:
 - **Total**: $16/64 = 0.25$ bytes/parameter effective storage!
 
 Per-GPU Memory:
-$$ M_{\text{ZeRO3}} = \frac{112 \text{ GB}}{64} \approx \mathbf{1.75 \text{ GB}} $$
+$$ C_{\text{state,ZeRO3}} = \frac{112 \text{ GB}}{64} \approx \mathbf{1.75 \text{ GB}} $$
 **Result**: Fits easily, leaving ~78 GB for activations (batch size).
 
 :::
@@ -900,12 +900,12 @@ ZeRO-3 and FSDP shard parameters themselves. Each GPU stores only $1/N$ of the m
 
 FSDP introduces communication on the critical path that DDP avoids:
 
-- **Forward pass**: AllGather to reconstruct parameters ($M$ bytes for each layer)
-- **Backward pass**: If parameters are resharded after the forward pass, a second AllGather reconstructs them for backward computation ($M$ bytes), followed by ReduceScatter for gradients ($M$ bytes).
+- **Forward pass**: AllGather to reconstruct parameters ($M_{\text{layer}}$ bytes for each layer)
+- **Backward pass**: If parameters are resharded after the forward pass, a second AllGather reconstructs them for backward computation ($M_{\text{layer}}$ bytes), followed by ReduceScatter for gradients ($M_{\text{layer}}$ bytes).
 
 For a model with $N_{\text{layers}}$ layers, full-shard FSDP with resharding performs about $3 N_{\text{layers}}$ collective operations per training step vs. 1 AllReduce for DDP. However, FSDP enables overlapping: while layer $i$ computes, layer $i+1$ can prefetch parameters.
 
-Total FSDP communication volume: approximately $3M$ bytes (vs. $2M$ for DDP AllReduce), but spread across more operations with overlap opportunities.
+Total FSDP communication volume: approximately $3M_{\text{state}}$ bytes (vs. $2M_{\text{state}}$ for DDP AllReduce), but spread across more operations with overlap opportunities.
 
 :::
 
@@ -1029,7 +1029,7 @@ $$ T_{\text{step}}(N) = \underbrace{\frac{T_{\text{compute}}}{N}}_{\text{FLOPS T
 Where:
 
 *   **FLOPS Term** $(T_{\text{compute}})$: The total computation required for the batch. In an ideal world, this scales perfectly with $N$.
-*   **Bandwidth Term** $(T_{\text{comm}})$: The time spent moving data. This is governed by the iron law: $\text{Time} = \frac{\text{Data}}{\text{Bandwidth}}$. For Ring AllReduce, this term is $\frac{2(N-1)}{N} \times \frac{M}{\text{BW}_{\text{net}}}$, where $M$ is model size and $\text{BW}_{\text{net}}$ is network bandwidth.
+*   **Bandwidth Term** $(T_{\text{comm}})$: The time spent moving data. This is governed by the iron law's data-movement term, $D_{\text{vol}}/\text{BW}$. For Ring AllReduce, this term is $\frac{2(N-1)}{N} \times \frac{M}{\text{BW}_{\text{net}}}$, where $M$ is the communicated gradient or model-state bytes and $\text{BW}_{\text{net}}$ is network bandwidth.
 *   **Overlap** $(T_{\text{overlap}})$: The portion of communication hidden behind computation.
 
 The distributed step time equation leads to the scaling efficiency metric for fixed global work, where $T_{\text{compute}}$ is the single-device compute time for that work:
@@ -1164,6 +1164,8 @@ $$
 \eta_l = \eta_{\text{global}} \cdot \frac{\|w_l\|}{\|g_l\| + \lambda\|w_l\|}
 $$
 
+Here $\lambda$ is the optimizer's weight-decay coefficient in the LARS/LAMB update, not the failure-rate parameter used in reliability analysis.
+
 Layer-wise scaling prevents layers with small weights from receiving disproportionately large updates. LAMB enabled BERT training with batch sizes up to 64K while maintaining convergence quality.
 
 ### Critical batch size and diminishing returns {#sec-distributed-training-systems-systems-critical-batch-size-parallelism-hurt-4961}
@@ -1175,7 +1177,7 @@ A fundamental property of distributed training is that adding more workers stops
 ***Critical Batch Size***\index{Critical Batch Size!definition} $(B^{*})$ is the batch size at which the **Gradient Noise Scale** equals the **Gradient Signal Scale**.
 
 1.  **Significance (quantitative)**: It marks the transition point for parallel scaling efficiency. Below $B^{*}$, increasing the batch size linearly improves the convergence per step. Above $B^{*}$, larger batches yield diminishing returns, requiring proportionally more samples $(D)$ to reach the same loss.
-2.  **Distinction (durable)**: Unlike the memory-limited batch size (determined by $\text{BW}$ and capacity), the critical batch size is an algorithmic property of the model and dataset.
+2.  **Distinction (durable)**: Unlike the memory-limited batch size (determined by memory capacity and activation footprint), the critical batch size is an algorithmic property of the model and dataset.
 3.  **Common pitfall**: A frequent misconception is that training can be sped up indefinitely by adding GPUs. In reality, $B^{*}$ defines the **Physical Ceiling for Data Parallelism**: adding workers beyond this point wastes energy and compute $(O)$ without reducing total training time $(T)$.
 
 :::
@@ -1371,7 +1373,7 @@ Several techniques occupy different positions on this trade-off curve:
 
 Gradient compression\index{Gradient Compression!bandwidth reduction} reduces communication volume by 10--100$\times$ through quantization or sparsification, with 2--5 percent convergence degradation [@bernstein2018signsgd; @lin2018deep; @vogels2020powersgd]. Techniques like QSGD [@alistarh2017qsgd] and Top-k sparsification [@aji2017] maintain convergence guarantees with bounded compression error.
 
-Local SGD\index{Local SGD!communication frequency} takes a different approach: workers perform $H$ local updates before synchronizing, reducing communication frequency by factor $H$. Convergence analysis shows that for smooth, strongly convex objectives, Local SGD achieves the same asymptotic rate as synchronous SGD with appropriately tuned learning rates [@stich2019local].
+Local SGD\index{Local SGD!communication frequency} takes a different approach: workers perform $H_{\text{local}}$ local updates before synchronizing, reducing communication frequency by factor $H_{\text{local}}$. Convergence analysis shows that for smooth, strongly convex objectives, Local SGD achieves the same asymptotic rate as synchronous SGD with appropriately tuned learning rates [@stich2019local].
 
 Decentralized SGD restricts workers to communicating only with neighbors in a communication graph rather than performing global AllReduce. This reduces bandwidth requirements at the cost of slower mixing, making it suitable for geo-distributed training where global synchronization is expensive.
 
@@ -1628,7 +1630,7 @@ Sequential processing introduces device idle time, as each device must wait for 
 
 #### Pipeline parallelism {#sec-distributed-training-systems-systems-pipeline-parallelism-8748}
 
-Pipeline parallelism extends layer-wise partitioning by introducing microbatching to minimize device idle time. Instead of waiting for an entire batch to sequentially pass through all devices, the computation is divided into smaller segments called microbatches, with overlapping execution across pipeline stages. @fig-pipeline-parallelism shows how this overlapping works: while device 1 processes microbatch $N+1$, device 2 computes microbatch $N$, device 3 handles $N-1$, and device 4 executes $N-2$, creating a continuous flow that keeps all devices active simultaneously.
+Pipeline parallelism extends layer-wise partitioning by introducing microbatching to minimize device idle time. Instead of waiting for an entire batch to sequentially pass through all devices, the computation is divided into smaller segments called microbatches, with overlapping execution across pipeline stages. @fig-pipeline-parallelism shows how this overlapping works: while device 1 processes microbatch $i+1$, device 2 computes microbatch $i$, device 3 handles $i-1$, and device 4 executes $i-2$, creating a continuous flow that keeps all devices active simultaneously.
 
 As @fig-pipeline-parallelism shows, each device, as represented by the rows in the drawing, processes its assigned model layers for different microbatches simultaneously. The forward pass involves devices passing activations to the next stage, such as $F_{0,0}$ to $F_{1,0}$. The backward pass transfers gradients back through the pipeline, such as $B_{3,3}$ to $B_{2,3}$. This overlapping computation reduces idle time and increases throughput while maintaining the logical sequence of operations across devices.
 
@@ -1705,7 +1707,7 @@ GPipe[^fn-gpipe] [@huang2019gpipe] introduced synchronous pipeline parallelism w
 
 [^fn-gpipe]: **GPipe**: Published by Google in 2019, GPipe introduced synchronous micro-batch pipelining that trained a 557M-parameter AmoebaNet across 8 Tensor Processing Units (TPUs) with near-linear scaling. The key trade-off GPipe exposed: the pipeline bubble fraction $(p-1)/(m+p-1)$ means that with $p=4$ stages and $m=4$ micro-batches, 43 percent of compute is wasted in idle time -- driving the field toward 1F1B schedules that interleave forward and backward passes to shrink this overhead below 15 percent. \index{GPipe!pipeline parallelism}
 
-In a transformer model distributed across four devices, device 1 would process blocks 1-6 for microbatch $N+1$ while device 2 computes blocks 7-12 for microbatch $N$. Simultaneously, device 3 executes blocks 13-18 for microbatch $N-1$, and device 4 processes blocks 19-24 for microbatch $N-2$. Each device maintains its assigned transformer blocks but operates on a different microbatch, creating a continuous flow of computation.
+In a transformer model distributed across four devices, device 1 would process blocks 1-6 for microbatch $i+1$ while device 2 computes blocks 7-12 for microbatch $i$. Simultaneously, device 3 executes blocks 13-18 for microbatch $i-1$, and device 4 processes blocks 19-24 for microbatch $i-2$. Each device maintains its assigned transformer blocks but operates on a different microbatch, creating a continuous flow of computation.
 
 The transfer of hidden states between devices occurs continuously rather than in distinct phases. When device 1 completes processing a microbatch, it immediately transfers the output tensor of shape [microbatch_size, sequence_length, hidden_dimension] to device 2 and begins processing the next microbatch. This overlapping computation pattern maintains full hardware utilization while preserving the model's mathematical properties.
 
@@ -1781,10 +1783,10 @@ In transformer architectures, Megatron applies this pattern:
 
 The design places AllReduce operations strategically: one after attention, one after FFN, totaling 2 AllReduce operations per transformer layer.
 
-Communication volume per transformer layer depends on sequence length $S$, hidden dimension $d$, tensor-parallel degree $t$, and batch size $B$. The activation payload is:
-$$M_{\text{act}} = B \times S \times d \times \text{sizeof(dtype)}$$
+Communication volume per transformer layer depends on sequence length $S$, hidden dimension $d_{\text{model}}$, tensor-parallel degree $t$, and batch size $B$. The activation payload is:
+$$M_{\text{act}} = B \times S \times d_{\text{model}} \times \text{sizeof(dtype)}$$
 
-A ring AllReduce transfers approximately $2(t-1)/t \times M_{\text{act}}$ bytes per GPU, which is close to $2M_{\text{act}}$ for large $t$. With $S=2048$, $d=4096$, $B=4$, and FP16, the activation payload is $4 \times 2048 \times 4096 \times 2 \approx 67$ MB. Applying the ring factor gives roughly 134 MB per AllReduce. For a 96-layer model with two AllReduce operations per layer, this totals approximately 25.7 GB per forward pass; including the symmetric backward AllReduces brings per-training-step communication to roughly 51 GB, requiring NVLink bandwidth to avoid becoming the bottleneck.
+A ring AllReduce transfers approximately $2(t-1)/t \times M_{\text{act}}$ bytes per GPU, which is close to $2M_{\text{act}}$ for large $t$. With $S=2048$, $d_{\text{model}}=4096$, $B=4$, and FP16, the activation payload is $4 \times 2048 \times 4096 \times 2 \approx 67$ MB. Applying the ring factor gives roughly 134 MB per AllReduce. For a 96-layer model with two AllReduce operations per layer, this totals approximately 25.7 GB per forward pass; including the symmetric backward AllReduces brings per-training-step communication to roughly 51 GB, requiring NVLink bandwidth to avoid becoming the bottleneck.
 
 Tensor parallelism scaling degrades rapidly beyond 8-way parallelism because:
 
@@ -1864,7 +1866,7 @@ The **Sparse Pull/Sparse Push** pattern avoids the bandwidth bottleneck of dense
 
 ### Expert parallelism (mixture of experts) {#sec-distributed-training-systems-systems-expert-parallelism-mixture-experts-bc45}
 
-While tensor parallelism splits dense layers across devices, **Expert Parallelism**\index{Expert Parallelism!definition} enables scaling model capacity (parameters) without increasing compute cost (FLOPs) by using conditional computation. In a Mixture-of-Experts (MoE\index{MoE!routing}) architecture [@shazeer2017outrageously], the feed-forward network (FFN) of each transformer block is replaced by a set of $N$ "experts" (independent FFNs). For each token, a gating network selects a small subset (typically top-1 or top-2) of experts to process it.
+While tensor parallelism splits dense layers across devices, **Expert Parallelism**\index{Expert Parallelism!definition} enables scaling model capacity (parameters) without increasing compute cost (FLOPs) by using conditional computation. In a Mixture-of-Experts (MoE\index{MoE!routing}) architecture [@shazeer2017outrageously], the feed-forward network (FFN) of each transformer block is replaced by a set of $E$ "experts" (independent FFNs). For each token, a gating network selects a small subset (typically top-1 or top-2) of experts to process it.
 
 In a distributed setting, experts are partitioned across workers. If we have 8 GPUs and 8 experts, each GPU hosts one expert. The training process introduces a distinct communication pattern, as @fig-moe-all-to-all-routing illustrates:
 
@@ -1879,7 +1881,7 @@ In a distributed setting, experts are partitioned across workers. If we have 8 G
 
 The primary advantage is decoupling model size from compute budget. A trillion-parameter MoE model might use only 10B parameters per token, enabling training on feasible hardware budgets. The constraint is the **All-to-All**\index{All-to-All!expert parallelism} communication, which is bandwidth-intensive and sensitive to load imbalance.
 
-At the heart of expert parallelism lies the All-to-All communication primitive, which shuffles tokens across the cluster based on dynamic routing decisions. Consider a configuration with $E=64$ experts distributed across 64 GPUs, processing a batch of $B=4$ sequences at length $S=2048$ with hidden dimension $d=4096$. For every MoE layer, the system must dispatch $B \times S$ tokens to their assigned experts. In FP16, this moves $B \cdot S \cdot d \cdot 2$ bytes—approximately 67 MB—in a single direction. Since the processed embeddings must return to their original device for the residual connection, the total network overhead is roughly 134 MB per transformer block. While manageable in isolation, this latency accumulates rapidly in deep, sparse architectures like the Switch Transformer [@fedus2022switch] (up to 2,048 experts) or GShard [@lepikhin2021gshard].
+At the heart of expert parallelism lies the All-to-All communication primitive, which shuffles tokens across the cluster based on dynamic routing decisions. Consider a configuration with $E=64$ experts distributed across 64 GPUs, processing a batch of $B=4$ sequences at length $S=2048$ with hidden dimension $d_{\text{model}}=4096$. For every MoE layer, the system must dispatch $B \times S$ tokens to their assigned experts. In FP16, this moves $B \cdot S \cdot d_{\text{model}} \cdot 2$ bytes—approximately 67 MB—in a single direction. Since the processed embeddings must return to their original device for the residual connection, the total network overhead is roughly 134 MB per transformer block. While manageable in isolation, this latency accumulates rapidly in deep, sparse architectures like the Switch Transformer [@fedus2022switch] (up to 2,048 experts) or GShard [@lepikhin2021gshard].
 
 Network efficiency relies on the assumption of uniform token distribution, but natural language is inherently skewed: specific experts handling common syntax or connector words may receive 3--5$\times$ their fair share of traffic. To prevent memory overflows on these "hot" experts, systems enforce a hard limit defined by the **capacity factor**\index{Capacity Factor!mixture of experts} $C$, typically set between 1.25 and 1.5. This parameter caps the maximum number of tokens an expert processes at roughly $C \cdot (B \times S)/E$ for the routing group. If the routing gate assigns more tokens than this buffer allows, the excess tokens are dropped, passing through the layer unprocessed via the residual connection. To mitigate this data loss, training objectives include an **auxiliary load balancing loss**, weighted at 0.01–0.1 relative to the main cross-entropy loss, that penalizes the router for favoring specific experts. Modern implementations like Mixtral 8x7B use top-2 routing across 8 experts, achieving a favorable balance between capacity scaling and routing stability.
 
@@ -1954,7 +1956,7 @@ Only by combining all three can we train Archetype A systems efficiently.
 
 Training a `{python} FrontierTrainingContext.frontier_params_b_str`B parameter model requires orchestrating computation across thousands of devices through **3D Parallelism**[^fn-3d-parallelism]. This approach does not merely sum the benefits of individual parallelism strategies; it composes them geometrically to match the physical topology of the hardware.
 
-[^fn-3d-parallelism]: **3D Parallelism**: Named after the three orthogonal axes of decomposition: (1) Data Parallelism (batch), (2) Tensor Parallelism (layer width), and (3) Pipeline Parallelism (depth). Organizations visualize their training fleets as a 3D grid $(d, t, p)$, where the product $d \times t \times p$ equals the total GPU count. This geometric perspective is essential for balancing the tiered bandwidth constraints of modern clusters. \index{3D Parallelism!etymology}
+[^fn-3d-parallelism]: **3D Parallelism**: Named after the three orthogonal axes of decomposition: (1) Data Parallelism (batch), (2) Pipeline Parallelism (depth), and (3) Tensor Parallelism (layer width). Organizations visualize their training fleets as a 3D grid $(d, p, t)$, where the product $N_{\text{total}} = d \times p \times t$ equals the total GPU count. This geometric perspective is essential for balancing the tiered bandwidth constraints of modern clusters. \index{3D Parallelism!etymology}
 
 ```{python}
 #| label: tensor-parallel-3d-traffic
@@ -2695,15 +2697,15 @@ from mlsysim.core.constants import GPU_MTTF_HOURS
 class YoungDaly:
     """
     Namespace for Young-Daly Checkpoint Optimization.
-    Scenario: 1024-GPU cluster at canonical per-GPU MTTF (50,000 hr) with a
+    Scenario: 1024-GPU cluster at canonical per-GPU MTBF (50,000 hr) with a
     5-minute checkpoint time.
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    t_save_min = 5.0
+    t_write_min = 5.0
     num_gpus = 1024
     gpu_cost_hr = 2.0
-    # Cluster MTBF derived from canonical per-GPU MTTF: MTBF_cluster = MTTF/N.
+    # Cluster MTBF derived from canonical per-GPU MTBF: MTBF_cluster = MTBF_GPU/N.
     cluster_mtbf_hr = GPU_MTTF_HOURS / num_gpus  # ~48.8 hours
     # "Safe" (over-frequent) and "sparse" (under-frequent) comparison intervals.
     safe_interval_min = 15
@@ -2712,7 +2714,7 @@ class YoungDaly:
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # T_opt = sqrt(2 * C * MTBF)
     # Convert all to minutes
-    c_min = t_save_min
+    c_min = t_write_min
     mtbf_min = cluster_mtbf_hr * 60
 
     t_opt_min_val = math.sqrt(2 * c_min * mtbf_min)
@@ -2746,7 +2748,7 @@ class YoungDaly:
     sparse_interval_hr_str = fmt(sparse_interval_hr_val, precision=0)
 ```
 
-The Young-Daly formula establishes the optimal checkpoint interval as $\tau_{\text{opt}} = \sqrt{2 \cdot T_{\text{write}} \cdot \text{MTBF}}$, where $T_{\text{write}}$ is checkpoint write time and $\text{MTBF}$ is mean time between failures. For a 1024-GPU cluster at the canonical 50,000-hour per-GPU MTTF, the cluster-level MTBF is `{python} YoungDaly.cluster_mtbf_hr_str` hours ($\text{MTTF}_{\text{GPU}}/N$); with a 5-minute checkpoint time, the optimal interval is approximately **`{python} YoungDaly.t_opt_min_str` minutes** (~`{python} YoungDaly.t_opt_hr_str` hours), with an unavoidable checkpoint-plus-rework tax of `{python} YoungDaly.opt_overhead_pct_str` percent. Checkpointing every 15 minutes "to be safe" raises the total tax to `{python} YoungDaly.safe_loss_pct_str` percent, while checkpointing every `{python} YoungDaly.sparse_interval_hr_str` hours risks losing significant work on failure. For larger models where checkpoint time increases to 15 minutes due to model size and storage bandwidth, the optimal interval shifts significantly. The cost of suboptimal checkpointing scales with cluster size: a 1024-GPU cluster loses approximately **USD `{python} YoungDaly.daily_savings_str` per day** to excessive checkpointing when using a 15-minute interval instead of the Young-Daly optimum.
+The Young-Daly formula establishes the optimal checkpoint interval as $\tau_{\text{opt}} = \sqrt{2 \cdot T_{\text{write}} \cdot \text{MTBF}_{\text{system}}}$, where $T_{\text{write}}$ is checkpoint write time and $\text{MTBF}_{\text{system}}$ is mean time between system failures. For a 1024-GPU cluster at the canonical 50,000-hour per-GPU MTBF, the cluster-level $\text{MTBF}_{\text{system}}$ is `{python} YoungDaly.cluster_mtbf_hr_str` hours ($\text{MTBF}_{\text{GPU}}/N$); with a 5-minute checkpoint time, the optimal interval is approximately **`{python} YoungDaly.t_opt_min_str` minutes** (~`{python} YoungDaly.t_opt_hr_str` hours), with an unavoidable checkpoint-plus-rework tax of `{python} YoungDaly.opt_overhead_pct_str` percent. Checkpointing every 15 minutes "to be safe" raises the total tax to `{python} YoungDaly.safe_loss_pct_str` percent, while checkpointing every `{python} YoungDaly.sparse_interval_hr_str` hours risks losing significant work on failure. For larger models where checkpoint time increases to 15 minutes due to model size and storage bandwidth, the optimal interval shifts significantly. The cost of suboptimal checkpointing scales with cluster size: a 1024-GPU cluster loses approximately **USD `{python} YoungDaly.daily_savings_str` per day** to excessive checkpointing when using a 15-minute interval instead of the Young-Daly optimum.
 
 ## Summary {#sec-distributed-training-systems-summary}
 
@@ -2754,7 +2756,7 @@ The chapter opened with a "scaling wall": the point where adding more GPUs event
 
 We explored the 3D Parallelism Cube (@fig-3d-parallelism-cube-summary), the foundational framework for scaling frontier models. Data parallelism unrolls the outer loop of training to scale throughput; tensor parallelism vectorizes the inner loops of matrix multiplication to fit memory; and pipeline parallelism stages sequential layers to reduce communication frequency. Together, these strategies allow us to map models larger than any single memory bank onto a fleet of accelerators with finite bandwidth.
 
-::: {#fig-3d-parallelism-cube-summary fig-env="figure" fig-pos="htb" fig-cap="**3D Parallelism Strategy Space**: Concrete 8-GPU configuration filling out a 3D-parallel coordinate grid. Each GPU is placed at a $(d, t, p)$ coordinate combining Data Parallelism ($d$ — replicate models across workers), Tensor Parallelism ($t$ — split individual operations horizontally within a layer), and Pipeline Parallelism ($p$ — partition layers vertically across stages). A single training step coordinates $d \times t \times p$ GPUs, with tensor-parallel communication within layers, pipeline communication at microbatch stage boundaries, and data-parallel synchronization once per optimizer step." fig-alt="Flat 8-GPU coordinate-grid layout with each GPU labeled by its (d, t, p) coordinate showing how the three parallelism axes combine in a concrete configuration."}
+::: {#fig-3d-parallelism-cube-summary fig-env="figure" fig-pos="htb" fig-cap="**3D Parallelism Strategy Space**: Concrete 8-GPU configuration filling out a 3D-parallel coordinate grid. Each GPU is placed at a $(d, p, t)$ coordinate combining Data Parallelism ($d$ — replicate models across workers), Pipeline Parallelism ($p$ — partition layers vertically across stages), and Tensor Parallelism ($t$ — split individual operations horizontally within a layer). A single training step coordinates $d \times p \times t$ GPUs, with tensor-parallel communication within layers, pipeline communication at microbatch stage boundaries, and data-parallel synchronization once per optimizer step." fig-alt="Flat 8-GPU coordinate-grid layout with each GPU labeled by its (d, p, t) coordinate showing how the three parallelism axes combine in a concrete configuration."}
 
 ![](images/svg/3d-parallelism.svg)
 

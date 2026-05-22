@@ -924,7 +924,7 @@ class LittlesLawExample:
     replicas_needed = int(target_throughput/replica_throughput)
     total_concurrency = replicas_needed * batch_size
     # ┌── 3. GUARD ─────────────────────────────────────────
-    check(required_concurrency == 100, "L should be 100")
+    check(required_concurrency == 100, "required concurrency should be 100")
     check(replicas_needed == 10, "Should need 10 replicas")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     required_concurrency_str = fmt(required_concurrency, precision=0, commas=False)
@@ -983,15 +983,15 @@ Queuing theory, developed by Agner Krarup Erlang in 1909 for telephone network a
 
 For a batched inference system with batch size $B$, service time becomes a function of batch size. Let $S(B)$ denote the time to process a batch of $B$ requests. From the physics of batching (@sec-inference-scale-batching-strategies-scale-6733), we model this as:
 
-$$S(B) = \alpha + \beta \cdot B$$ {#eq-service-time-batch}
+$$S(B) = \alpha_{\text{svc}} + \beta_{\text{svc}} \cdot B$$ {#eq-service-time-batch}
 
-where $\alpha$ represents fixed overhead (kernel launch, weight loading from HBM) and $\beta$ represents marginal per-request computation time. This linear model captures the first-order behavior observed in production systems, though actual service times may exhibit slight sublinearity due to memory bandwidth saturation at large batch sizes.
+where $\alpha_{\text{svc}}$ represents fixed service overhead (kernel launch, weight loading from HBM) and $\beta_{\text{svc}}$ represents marginal per-request computation time. This linear model captures the first-order behavior observed in production systems, though actual service times may exhibit slight sublinearity due to memory bandwidth saturation at large batch sizes.
 
 The **effective service rate** for batched processing is:
 
-$$\mu_{\text{eff}}(B) = \frac{B}{S(B)} = \frac{B}{\alpha + \beta \cdot B}$$
+$$\mu_{\text{eff}}(B) = \frac{B}{S(B)} = \frac{B}{\alpha_{\text{svc}} + \beta_{\text{svc}} \cdot B}$$
 
-The effective rate increases with batch size, approaching the asymptotic limit $1/\beta$ as $B \to \infty$.
+The effective rate increases with batch size, approaching the asymptotic limit $1/\beta_{\text{svc}}$ as $B \to \infty$.
 
 #### Response time analysis {#sec-inference-scale-response-time-analysis-ffc3}
 
@@ -1040,21 +1040,21 @@ For our linear service time model with deterministic service (variance zero with
 
 $$E[W(B)] = \frac{\lambda \cdot S(B)^2}{2B(1 - \lambda \cdot S(B)/B)}$$
 
-For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $S(B)=\alpha+\beta B$, the constraint $\rho=\lambda S(B)/B \leq \rho_{\text{target}}$ gives:
+For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $S(B)=\alpha_{\text{svc}}+\beta_{\text{svc}} B$, the constraint $\rho=\lambda S(B)/B \leq \rho_{\text{target}}$ gives:
 
-$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda\alpha}{\rho_{\text{target}} - \lambda\beta}$$ {#eq-optimal-batch-approx}
+$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda\alpha_{\text{svc}}}{\rho_{\text{target}} - \lambda\beta_{\text{svc}}}$$ {#eq-optimal-batch-approx}
 
-where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda\beta$.
+where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda\beta_{\text{svc}}$.
 
 ::: {.callout-important title="Target-utilization batch sizing"}
 
 @eq-optimal-batch-approx reveals a fundamental insight: **minimum stable batch size grows with fixed overhead and arrival rate**. This means:
 
 1. **Higher traffic** $(\lambda)$: Required batch size increases
-2. **Higher fixed overhead** $(\alpha)$: Required batch size increases to amortize overhead
+2. **Higher fixed overhead** $(\alpha_{\text{svc}})$: Required batch size increases to amortize overhead
 3. **Higher target utilization** $(\rho_{\text{target}})$: Required batch size decreases, but with less latency headroom
 
-This utilization-constrained sizing explains why LLMs (high $\alpha$ from weight loading) benefit from larger batches than vision models (low $\alpha$), even at the same arrival rate.
+This utilization-constrained sizing explains why LLMs (high $\alpha_{\text{svc}}$ from weight loading) benefit from larger batches than vision models (low $\alpha_{\text{svc}}$), even at the same arrival rate.
 
 :::
 
@@ -1099,8 +1099,8 @@ Consider serving a GPT-3 class model (`{python} Gpt3Scenario.gpt3_params_b_str`B
 
 - Arrival rate: $\lambda = 100$ requests/second
 - Hardware: 8$\times$ A100 GPUs with tensor parallelism
-- Weight loading overhead: $\alpha = 50$ ms (time to load attention matrices per forward pass)
-- Per-token compute: $\beta = 0.5$ ms per request (amortized across batch)
+- Weight loading overhead: $\alpha_{\text{svc}} = 50$ ms (time to load attention matrices per forward pass)
+- Per-token compute: $\beta_{\text{svc}} = 0.5$ ms per request (amortized across batch)
 - Average output length: 100 tokens per request
 - Target utilization: $\rho_{\text{target}} = 0.75$
 
@@ -1139,14 +1139,14 @@ Rounding up gives $B=8$ as the smallest batch size that meets the target utiliza
 # │ Goal: Summarize serving performance and verify consistency via Little's Law.
 # │ Show: Throughput, utilization, and queue lengths for various batch sizes.
 # │ How: Load precomputed results into GPT3ServingResults class;
-# │      apply L = lambda * W to verify requests in system.
+# │      apply N_req = lambda * W to verify requests in system.
 # │
 # │ Imports: mlsysim.book (check)
 # │ Exports: GPT3ServingResults.b8_util_pct_str, GPT3ServingResults.b8_wait_ms_str,
 # │          GPT3ServingResults.b16_service_ms_str, GPT3ServingResults.b16_wait_ms_str,
 # │          GPT3ServingResults.b8_service_ms_str, GPT3ServingResults.b16_util_pct_str,
 # │          LittlesLawVerify.expected_total_str,
-# │          LittlesLawVerify.l_str, LittlesLawVerify.in_service_str,
+# │          LittlesLawVerify.n_req_str, LittlesLawVerify.in_service_str,
 # │          LittlesLawVerify.in_queue_str, LittlesLawVerify.batch_size_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import ms, second
@@ -1190,17 +1190,17 @@ class LittlesLawVerify:
     utilization = GPT3ServingResults.b16_util_pct / 100
     # ┌── 2. EXECUTE ───────────────────────────────────────
     expected_total_s = (expected_total_ms * ms).m_as(second)
-    L = arrival_rate * expected_total_s
+    n_req = arrival_rate * expected_total_s
     in_service = batch_size * utilization
-    in_queue = L - in_service
+    in_queue = n_req - in_service
     # ┌── 3. GUARD ─────────────────────────────────────────
-    check(15 < L < 16, f"L should be ~15.5, got {L:.2f}")
+    check(15 < n_req < 16, f"N_req should be ~15.5, got {n_req:.2f}")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     batch_size_str = fmt(batch_size, precision=0, commas=False)
     expected_total_str = fmt(expected_total_ms, precision=1, commas=False)
     expected_total_s_str = fmt(expected_total_s, precision=3, commas=False)
     utilization_str = fmt(utilization, precision=3, commas=False)
-    l_str = fmt(L, precision=2, commas=False)
+    n_req_str = fmt(n_req, precision=2, commas=False)
     in_service_str = fmt(in_service, precision=1, commas=False)
     in_queue_str = fmt(in_queue, precision=2, commas=False)
 ```
@@ -1227,12 +1227,12 @@ We can confirm these results by applying Little's Law as an internal consistency
 
 At $B=16$ with $\lambda = 100$ req/s and $E[T] =$ `{python} LittlesLawVerify.expected_total_str` ms:
 
-$L = 100 \times$ `{python} LittlesLawVerify.expected_total_s_str` $=$ `{python} LittlesLawVerify.l_str` requests in system
+$N_{\text{req}} = 100 \times$ `{python} LittlesLawVerify.expected_total_s_str` $=$ `{python} LittlesLawVerify.n_req_str` requests in system
 
 With batch size `{python} LittlesLawVerify.batch_size_str` and utilization `{python} GPT3ServingResults.b16_util_pct_str` percent:
 
 - Expected requests in service: `{python} LittlesLawVerify.batch_size_str` $\times$ `{python} LittlesLawVerify.utilization_str` = `{python} LittlesLawVerify.in_service_str`
-- Expected requests in queue: `{python} LittlesLawVerify.l_str` - `{python} LittlesLawVerify.in_service_str` = `{python} LittlesLawVerify.in_queue_str`
+- Expected requests in queue: `{python} LittlesLawVerify.n_req_str` - `{python} LittlesLawVerify.in_service_str` = `{python} LittlesLawVerify.in_queue_str`
 
 This matches the response-time decomposition: roughly 6 requests are in service and roughly 10 are waiting or accumulating into batches on average.
 
@@ -1244,13 +1244,13 @@ Production systems must select batch size to meet Service Level Objectives (SLOs
 
 #### Step 1: Characterize service time {.unnumbered}
 
-Measure $\alpha$ and $\beta$ empirically by profiling inference at batch sizes 1, 8, and 32. Fit the linear model $S(B) = \alpha + \beta B$.
+Measure $\alpha_{\text{svc}}$ and $\beta_{\text{svc}}$ empirically by profiling inference at batch sizes 1, 8, and 32. Fit the linear model $S(B) = \alpha_{\text{svc}} + \beta_{\text{svc}} B$.
 
 #### Step 2: Compute stability threshold {.unnumbered}
 
 Find minimum batch size $B_{\text{min}}$ such that $\mu_{\text{eff}}(B_{\text{min}}) > \lambda$:
 
-$$B_{\text{min}} = \frac{\alpha \lambda}{1 - \beta \lambda}$$
+$$B_{\text{min}} = \frac{\alpha_{\text{svc}} \lambda}{1 - \beta_{\text{svc}} \lambda}$$
 
 Any batch size below $B_{\text{min}}$ results in an unstable system.
 
@@ -1509,19 +1509,19 @@ The performance gap between traditional and continuous batching becomes quantifi
 
 #### The waste function for traditional batching {#sec-inference-scale-waste-function-traditional-batching-1fb8}
 
-Traditional batching (also called static batching) processes all requests in a batch through all decode iterations until the longest sequence completes. For a batch of $n$ sequences with output lengths $\{L_1, L_2, ..., L_n\}$, the total compute performed is:
+Traditional batching (also called static batching) processes all requests in a batch through all decode iterations until the longest sequence completes. For a batch of $n$ sequences with output lengths $\{S_1, S_2, ..., S_n\}$, the total compute performed is:
 
-$$C_{\text{traditional}} = n \times L_{\text{max}} \times c_{\text{decode}}$$
+$$C_{\text{traditional}} = n \times S_{\text{max}} \times c_{\text{decode}}$$
 
-where $L_{\text{max}} = \max_i(L_i)$ and $c_{\text{decode}}$ is the compute cost per decode iteration per sequence. However, the useful compute is only:
+where $S_{\text{max}} = \max_i(S_i)$ and $c_{\text{decode}}$ is the compute cost per decode iteration per sequence. However, the useful compute is only:
 
-$$C_{\text{useful}} = \sum_{i=1}^{n} L_i \times c_{\text{decode}}$$
+$$C_{\text{useful}} = \sum_{i=1}^{n} S_i \times c_{\text{decode}}$$
 
 The **waste ratio** quantifies the inefficiency:
 
-$$W = 1 - \frac{C_{\text{useful}}}{C_{\text{traditional}}} = 1 - \frac{\sum_{i=1}^{n} L_i}{n \times L_{\text{max}}} = 1 - \frac{\bar{L}}{L_{\text{max}}}$$ {#eq-waste-ratio}
+$$W = 1 - \frac{C_{\text{useful}}}{C_{\text{traditional}}} = 1 - \frac{\sum_{i=1}^{n} S_i}{n \times S_{\text{max}}} = 1 - \frac{\bar{S}}{S_{\text{max}}}$$ {#eq-waste-ratio}
 
-where $\bar{L}$ is the mean output length. This reveals that waste depends entirely on the ratio of mean to maximum output length within the batch. For uniform output lengths $(\bar{L} = L_{\text{max}})$, waste is zero. For highly variable lengths, waste can exceed 50 percent.
+where $\bar{S}$ is the mean output sequence length. This reveals that waste depends entirely on the ratio of mean to maximum output length within the batch. For uniform output lengths $(\bar{S} = S_{\text{max}})$, waste is zero. For highly variable lengths, waste can exceed 50 percent.
 
 #### Worked example: LLM serving with variable-length outputs {#sec-inference-scale-worked-example-llm-serving-variablelength-outputs-5e38}
 
@@ -1683,7 +1683,7 @@ The analysis above reveals that continuous batching's benefit scales with output
 
 Let $\text{CV} = \sigma / \mu$ be the coefficient of variation of output lengths. If the longest request in a batch is roughly $k$ standard deviations above the mean, then:
 
-$$\text{Improvement} \approx \frac{L_{\text{max}}}{\bar{L}} = \frac{\mu + k\sigma}{\mu} = 1 + k \cdot \text{CV}$$
+$$\text{Improvement} \approx \frac{S_{\text{max}}}{\bar{S}} = \frac{\mu + k\sigma}{\mu} = 1 + k \cdot \text{CV}$$
 
 where $k$ is the number of standard deviations the maximum output exceeds the mean. Real systems realize less than this upper bound because scheduler overhead, KV-cache pressure, and refill gaps consume part of the theoretical gain. The table therefore reports effective waste and speedup, where $\text{speedup} \approx 1/(1 - W_{\text{effective}})$.
 
@@ -2118,7 +2118,7 @@ The choice of batching strategy depends on model characteristics, traffic patter
 Verify your understanding of different batching mechanics:
 
 - [ ] A vision service has highly uniform input sizes and predictable traffic. Which is more appropriate: **static batching** or **continuous batching**?
-- [ ] For an LLM serving chat requests, why does the "Waste Ratio" ($1 - \bar{L}/L_{\text{max}}$) collapse to zero when moving from static to continuous batching?
+- [ ] For an LLM serving chat requests, why does the "Waste Ratio" ($1 - \bar{S}/S_{\text{max}}$) collapse to zero when moving from static to continuous batching?
 - [ ] Explain why **adaptive batching** (shrinking the window when traffic is high) reduces P99 latency without sacrificing throughput.
 - [ ] In **feature-parallel batching** for RecSys, which component of the fleet stack acts as the primary bottleneck: the GPU's Tensor Cores or the distributed Embedding Store's memory bandwidth?
 
@@ -2206,11 +2206,11 @@ Autoregressive generation without caching requires $O(t^2)$ computation per toke
 
 The cache size grows with context as calculated by @eq-kv-cache-size:
 
-$$\text{KV cache size} = 2 \times n_{\text{layers}} \times d \times S \times B \times s_{\text{elem}}$$ {#eq-kv-cache-size}
+$$\text{KV cache size} = 2 \times N_{\text{layers}} \times d \times S \times B \times s_{\text{elem}}$$ {#eq-kv-cache-size}
 
 where:
 
-- $n_{\text{layers}}$ = number of layers
+- $N_{\text{layers}}$ = number of layers
 - $d$ = hidden dimension
 - $S$ = sequence length
 - $B$ = batch size
@@ -2389,12 +2389,12 @@ class KVCacheCapacityEstimator:
 **Problem**: A deployment serves Llama-3-70B (FP16 weights $\approx 140$ GB) on an 8$\times$ H100 node (640 GB total HBM). The goal is to determine the maximum batch size for a context length of 128K tokens.
 
 **Formula**\index{Formula}:
-$$ M_{\text{KV}} = 2 \times n_{\text{layers}} \times n_{\text{heads}} \times d_{\text{head}} \times s_{\text{elem}} $$
+$$ M_{\text{KV}} = 2 \times N_{\text{layers}} \times N_{\text{KV heads}} \times d_{\text{head}} \times s_{\text{elem}} $$
 $$ \text{Total Memory} = M_{\text{weights}} + (\text{Batch} \times \text{Context} \times M_{\text{KV}}) $$
 
 **Parameters**\index{Parameter}:
 
-*   $n_{\text{layers}} = 80$, $n_{\text{KV heads}} = 8$ for Llama-3-70B GQA, $d_{\text{head}} = 128$.
+*   $N_{\text{layers}} = 80$, $N_{\text{KV heads}} = 8$ for Llama-3-70B GQA, $d_{\text{head}} = 128$.
 *   $s_{\text{elem}} = 2$ bytes (FP16).
 *   Context $= 131,072$ tokens.
 
@@ -2972,7 +2972,7 @@ The mathematical guarantee is crucial: speculative decoding is **provably lossle
 
 #### Speedup analysis {#sec-inference-scale-speculative-speedup}
 
-The speedup depends on the **acceptance rate** $\alpha$ (probability that the draft token matches the target model's distribution) and the **draft length** $K$. The expected number of emitted tokens per round, including the target model's correction token, is approximately $\sum_{i=0}^{K} \alpha^i = \frac{1 - \alpha^{K+1}}{1 - \alpha}$.
+The speedup depends on the **acceptance rate** $\alpha_{\text{acc}}$ (probability that the draft token matches the target model's distribution) and the **draft length** $K$. The expected number of emitted tokens per round, including the target model's correction token, is approximately $\sum_{i=0}^{K} \alpha_{\text{acc}}^i = \frac{1 - \alpha_{\text{acc}}^{K+1}}{1 - \alpha_{\text{acc}}}$.
 
 ```{python}
 #| echo: false
@@ -2984,9 +2984,9 @@ The speedup depends on the **acceptance rate** $\alpha$ (probability that the dr
 # │
 # │ Goal: Compute expected latency speedup from speculative decoding at K=5 draft
 # │       tokens with a 20x-faster draft model, across three acceptance rates
-# │       (α=0.9 high, 0.7 medium, 0.5 low), to show the α-sensitivity of the gain.
-# │ Show: ~3.5x (α=0.9), ~2.2x (α=0.7), ~1.4x (α=0.5)—inline speedup bullets.
-# │ How: E[accepted tokens] = Σ αⁱ for i in 0..K (geometric sum); speedup =
+# │       (alpha_acc=0.9 high, 0.7 medium, 0.5 low), to show acceptance sensitivity.
+# │ Show: ~3.5x (alpha_acc=0.9), ~2.2x (alpha_acc=0.7), ~1.4x (alpha_acc=0.5).
+# │ How: E[accepted tokens] = sum alpha_acc^i for i in 0..K; speedup =
 # │       (E[tokens] * t_target) / (t_draft_total + t_target).
 # │
 # │ Imports: mlsysim.book (check)
@@ -3047,11 +3047,11 @@ class SpeculativeSpeedup:
 
 For $K = 5$ draft tokens and a draft model that is 20$\times$ faster than the target:
 
-- **High acceptance** $(\alpha = 0.9)$: Expected `{python} SpeculativeSpeedup.et_high_str` tokens per round, speedup of `{python} SpeculativeSpeedup.sp_high_str`$\times$.
-- **Medium acceptance** $(\alpha = 0.7)$: Expected `{python} SpeculativeSpeedup.et_med_str` tokens per round, speedup of `{python} SpeculativeSpeedup.sp_med_str`$\times$.
-- **Low acceptance** $(\alpha = 0.5)$: Expected `{python} SpeculativeSpeedup.et_low_str` tokens per round, speedup of `{python} SpeculativeSpeedup.sp_low_str`$\times$.
+- **High acceptance** $(\alpha_{\text{acc}} = 0.9)$: Expected `{python} SpeculativeSpeedup.et_high_str` tokens per round, speedup of `{python} SpeculativeSpeedup.sp_high_str`$\times$.
+- **Medium acceptance** $(\alpha_{\text{acc}} = 0.7)$: Expected `{python} SpeculativeSpeedup.et_med_str` tokens per round, speedup of `{python} SpeculativeSpeedup.sp_med_str`$\times$.
+- **Low acceptance** $(\alpha_{\text{acc}} = 0.5)$: Expected `{python} SpeculativeSpeedup.et_low_str` tokens per round, speedup of `{python} SpeculativeSpeedup.sp_low_str`$\times$.
 
-The acceptance rate varies dramatically by context. Predictable text achieves $\alpha > 0.9$, while creative reasoning or code generation may see $\alpha < 0.5$. In practice, well-aligned model pairs (sharing training data and architecture) commonly achieve average acceptance rates of 0.6--0.8, yielding 1.5--3$\times$ latency improvements.
+The acceptance rate varies dramatically by context. Predictable text achieves $\alpha_{\text{acc}} > 0.9$, while creative reasoning or code generation may see $\alpha_{\text{acc}} < 0.5$. In practice, well-aligned model pairs (sharing training data and architecture) commonly achieve average acceptance rates of 0.6--0.8, yielding 1.5--3$\times$ latency improvements.
 
 #### System design and hardware cost {#sec-inference-scale-speculative-hardware}
 
@@ -3303,9 +3303,9 @@ where $N$ is the number of devices in the sharding group and $T_{\text{communica
 
 Tensor parallelism [@shoeybi2019megatron] distributes individual layers across multiple devices, enabling parallel computation within each layer. The column-row partitioning scheme introduced for training in @sec-distributed-training-systems applies here: splitting the first linear layer by columns and the second by rows requires only one AllReduce per transformer block. For transformer models, the primary target is the attention mechanism and feed-forward layers, which contain the majority of computation.
 
-The multi-head attention computation naturally partitions across attention heads. For a model with $n_{\text{heads}}$ attention heads distributed across tensor-parallel degree $t$, each device computes $n_{\text{heads}}/t$ heads:
+The multi-head attention computation naturally partitions across attention heads. For a model with $N_{\text{heads}}$ attention heads distributed across tensor-parallel degree $t$, each device computes $N_{\text{heads}}/t$ heads:
 
-$$\text{Attention}_i = \text{softmax}\left(\frac{Q_i K_i^T}{\sqrt{d_k}}\right) V_i \text{ for heads } i \in \{1, ..., n_{\text{heads}}/t\}$$
+$$\text{Attention}_i = \text{softmax}\left(\frac{Q_i K_i^T}{\sqrt{d_k}}\right) V_i \text{ for heads } i \in \{1, ..., N_{\text{heads}}/t\}$$
 
 After computing local attention, an AllReduce operation (covered in @sec-collective-communication) combines results across devices, adding communication overhead proportional to the activation size divided by the interconnect bandwidth.
 
@@ -3777,13 +3777,13 @@ Recommendation systems typically contain embedding tables that dwarf model weigh
 
 Row-wise sharding partitions embedding tables by row (entity ID):
 
-$$\text{Shard}_i = \{e_j : \text{hash}(j) \bmod n_{\text{shard}} = i\}$$
+$$\text{Shard}_i = \{e_j : \text{hash}(j) \bmod N_{\text{shards}} = i\}$$
 
-Each shard contains approximately $n_{\text{entity}}/n_{\text{shard}}$ embeddings, where $n_{\text{entity}}$ is the total number of entities and $n_{\text{shard}}$ is the shard count.
+Each shard contains approximately $N_{\text{entities}}/N_{\text{shards}}$ embeddings, where $N_{\text{entities}}$ is the total number of entities and $N_{\text{shards}}$ is the shard count.
 
 Column-wise sharding partitions each embedding vector across devices:
 
-$$e_j = [e_j^{(0)}, e_j^{(1)}, ..., e_j^{(n_{\text{shard}}-1)}]$$
+$$e_j = [e_j^{(0)}, e_j^{(1)}, ..., e_j^{(N_{\text{shards}}-1)}]$$
 
 Each device stores a slice of every embedding.
 
@@ -3812,7 +3812,7 @@ The choice of embedding sharding strategy depends on lookup patterns and communi
   \node[anchor=west, font=\bfseries\usefont{T1}{phv}{b}{n}] at (0, 4.5) {A. Row-Wise Sharding};
 
   \draw[fill=TableColor] (0, 2.5) rectangle (1, 4);
-  \node[rotate=90] at (-0.3, 3.25) {Users 0..N};
+  \node[rotate=90] at (-0.3, 3.25) {Users 0..U};
 
   \draw[->, thick] (1.2, 3.25) -- (2.2, 3.25);
 
@@ -3822,7 +3822,7 @@ The choice of embedding sharding strategy depends on lookup patterns and communi
 
   % Server 2
   \draw[fill=ShardColor] (2.5, 2.5) rectangle (3.5, 3.0);
-  \node[right, font=\scriptsize\usefont{T1}{phv}{m}{n}] at (3.5, 2.75) {Svr 2: Users K..N};
+  \node[right, font=\scriptsize\usefont{T1}{phv}{m}{n}] at (3.5, 2.75) {Svr 2: Users K..U};
 
   \node[font=\scriptsize\usefont{T1}{phv}{m}{n}, align=center] at (1.7, 2.0) {Partition by ID\\(Network Gather)};
 
@@ -4393,7 +4393,7 @@ For these workloads, routing the same user or session to the same server improve
 
 **Consistent hashing**[^fn-consistent-hashing-kv] [@karger1997] maps requests to servers based on a hash of the routing key (user ID, session ID):
 
-[^fn-consistent-hashing-kv]: **Consistent Hashing**: A ring-based load distribution algorithm originally deployed at Akamai for CDN routing. Servers are mapped onto a virtual ring so that adding or removing a node remaps only $K/N$ keys on average. For LLM serving, this minimal-disruption property preserves KV cache locality during autoscaling events: without it, every scale-up would invalidate cached conversation state across the fleet, forcing expensive recomputation. \index{Consistent Hashing!KV cache}
+[^fn-consistent-hashing-kv]: **Consistent Hashing**: A ring-based load distribution algorithm originally deployed at Akamai for CDN routing. Servers are mapped onto a virtual ring so that adding or removing a node remaps only $K/N_{\text{servers}}$ keys on average. For LLM serving, this minimal-disruption property preserves KV cache locality during autoscaling events: without it, every scale-up would invalidate cached conversation state across the fleet, forcing expensive recomputation. \index{Consistent Hashing!KV cache}
 
 $$\text{server}(request) = \operatorname{arg\,min}_{s \in S} \text{distance}(\text{hash}(key), \text{hash}(s))$$
 
@@ -4402,7 +4402,7 @@ where servers and keys are mapped onto a ring, and each request routes to the ne
 Key properties:
 
 - **Deterministic**\index{Deterministic}: Same key always routes to same server
-- **Minimal disruption**\index{Minimal Disruption}: Adding/removing servers only remaps $K/N$ keys on average
+- **Minimal disruption**\index{Minimal Disruption}: Adding/removing servers only remaps $K/N_{\text{servers}}$ keys on average
 - **Load balancing**: With virtual nodes, load distributes evenly
 
 For LLM serving, the most direct payoff is avoiding unnecessary KV-cache rebuilds across conversation turns.
@@ -4442,7 +4442,7 @@ Nearest server clockwise: Server A (at 0.09)
 
 **Handling server failures**\index{Handling Server Failures}:
 
-When Server A fails, its 100 virtual nodes are removed from the ring. Requests that would have routed to Server A now route to the next server clockwise. Only ~$1/N$ of requests are affected, where $N$ is the number of servers.
+When Server A fails, its 100 virtual nodes are removed from the ring. Requests that would have routed to Server A now route to the next server clockwise. Only ~$1/N_{\text{servers}}$ of requests are affected, where $N_{\text{servers}}$ is the number of servers.
 
 :::
 
@@ -5566,9 +5566,9 @@ The AWQ algorithm proceeds in four steps:
 
 For weight matrix $W$ and activation statistics $s$ (per-channel activation magnitudes), the scaling rule is:
 
-$$W' = W \cdot \text{diag}(s^\alpha)$$
+$$W' = W \cdot \text{diag}(s^{\alpha_{\text{awq}}})$$
 
-where $\alpha \in [0.5, 1.0]$ controls scaling aggressiveness. This preserves salient channels while allowing aggressive quantization of less important weights.
+where $\alpha_{\text{awq}} \in [0.5, 1.0]$ controls scaling aggressiveness. This preserves salient channels while allowing aggressive quantization of less important weights.
 
 @tbl-awq-vs-gptq summarizes how AWQ compares to GPTQ across error compensation, calibration cost, quality, speed, and hardware compatibility.
 
@@ -5594,13 +5594,13 @@ $$Y = X W = (X \cdot \text{diag}(s)^{-1}) \cdot (\text{diag}(s) \cdot W) = \hat{
 
 The transformation is mathematically equivalent but produces smoother activation distributions.
 
-Migration strength $\alpha$ controls the trade-off:
+Migration strength $\alpha_{\text{sq}}$ controls the trade-off:
 
-$$s_j = \max(|X_j|)^\alpha / \max(|W_j|)^{1-\alpha}$$
+$$s_j = \max(|X_j|)^{\alpha_{\text{sq}}} / \max(|W_j|)^{1-\alpha_{\text{sq}}}$$
 
-- $\alpha = 0$: No migration, activations remain difficult
-- $\alpha = 1$: Full migration, weights absorb all difficulty
-- $\alpha = 0.5$: Balanced (typical setting)
+- $\alpha_{\text{sq}} = 0$: No migration, activations remain difficult
+- $\alpha_{\text{sq}} = 1$: Full migration, weights absorb all difficulty
+- $\alpha_{\text{sq}} = 0.5$: Balanced (typical setting)
 
 In the W8A8 deployment regime, SmoothQuant enables INT8 quantization for both weights and activations. @tbl-smoothquant-w8a8 shows how W8A8 compares to FP16 baseline and weight-only quantization:
 

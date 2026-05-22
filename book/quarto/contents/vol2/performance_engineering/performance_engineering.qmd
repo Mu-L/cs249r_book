@@ -516,7 +516,8 @@ ML operations span three orders of magnitude in arithmetic intensity, and the po
 # │       to show why inference is predominantly memory-bound.
 # │ Show: ~1365 FLOP/byte (GEMM, compute-bound), ~1.25 (GELU, memory-bound),
 # │       ~1 (LLM decode batch=1, deeply memory-bound)—inline prose.
-# │ How: FLOP count/byte count; GEMM uses 2*M*N*K / (M*K + K*N + M*N)*bytes;
+# │ How: FLOP count/byte count; GEMM uses 2*M_dim*C_dim*K_dim /
+# │       (M_dim*K_dim + K_dim*C_dim + M_dim*C_dim)*bytes;
 # │       element-wise uses ~5 FLOPs per element / (load + store) bytes.
 # │
 # │ Imports: mlsysim.core.constants (BYTES_FP16), mlsysim.book (check)
@@ -532,19 +533,19 @@ class WorkloadIntensityCalc:
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     bytes_per_elem = BYTES_FP16.m_as(byte)
-    # GEMM: C = A*B where A is MxK, B is KxN
-    M, K, N = 4096, 4096, 4096
+    # GEMM: C = A*B where A is M_dim x K_dim, B is K_dim x C_dim
+    M_dim, K_dim, C_dim = 4096, 4096, 4096
     # Element-wise (e.g., GELU): ~5 ops per element
     elem_flops_per_val = 5
-    elem_count = M * K
+    elem_count = M_dim * K_dim
     # LLM decode: batch=1, hidden=4096
     decode_batch = 1
     decode_hidden = 4096
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # GEMM: 2*M*N*K FLOPs, load A (M*K*2) + B (K*N*2) + store C (M*N*2)
-    gemm_flops = 2 * M * N * K
-    gemm_bytes = (M * K + K * N + M * N) * bytes_per_elem
+    # GEMM: 2*M*C*K FLOPs, load A + B, then store C
+    gemm_flops = 2 * M_dim * C_dim * K_dim
+    gemm_bytes = (M_dim * K_dim + K_dim * C_dim + M_dim * C_dim) * bytes_per_elem
     gemm_intensity = gemm_flops/gemm_bytes
 
     # Element-wise: load+store
@@ -615,7 +616,7 @@ PagedAttention and KV cache quantization interact multiplicatively. PagedAttenti
 
 Modern LLM serving systems decompose each request into two distinct phases with fundamentally different performance characteristics. The distinction between these phases drives system architecture and optimization strategy.
 
-The **prefill phase**\index{Prefill Phase} processes the entire input prompt in parallel. If the prompt contains $N$ tokens, the prefill phase executes a single forward pass over all $N$ tokens simultaneously. The GEMM operations have shape $[N,d]{\times}[d,d]$, making the batch dimension equal to $N$. For a prompt of 1024 tokens, this is arithmetically intensive: the arithmetic intensity is approximately $2 \times 1024/2 = 1024$ FLOP/byte for FP16 weights, well into the compute-bound regime. Prefill is therefore limited by Tensor Core throughput, not memory bandwidth.
+The **prefill phase**\index{Prefill Phase} processes the entire input prompt in parallel. If the prompt contains $S$ tokens, the prefill phase executes a single forward pass over all $S$ tokens simultaneously. The GEMM operations have shape $[S,d]{\times}[d,d]$, making the batch dimension equal to $S$. For a prompt of 1024 tokens, this is arithmetically intensive: the arithmetic intensity is approximately $2 \times 1024/2 = 1024$ FLOP/byte for FP16 weights, well into the compute-bound regime. Prefill is therefore limited by Tensor Core throughput, not memory bandwidth.
 
 The **decode phase**\index{Decode Phase} generates output tokens one at a time, autoregressively. Each step has a batch dimension of 1 (for a single request) or the number of concurrent requests (for batched serving). At batch size 1, decode is deeply memory-bound as analyzed in @sec-performance-engineering-workload-placement.
 
@@ -810,7 +811,7 @@ The combination of operator fusion (reducing the number of kernels) and CUDA Gra
 
 ### FlashAttention: Tiled attention as a system primitive {#sec-performance-engineering-flashattention}
 
-Standard self-attention computes $\text{Softmax}(QK^T / \sqrt{d_k})V$, where $Q$, $K$, and $V$ are matrices of shape $[\text{sequence length}{\times}\text{head dimension}]$. The na\"ive implementation materializes the full $N{\times}N$ attention matrix $S = QK^T$ in HBM, where $N$ is the sequence length. For $N = 8192$ and FP16 precision, this matrix alone consumes $8192 \times 8192 \times 2 \approx 134$ MB per attention head. At 32 heads, the materialized attention matrices require approximately 4.3 GB per layer, dominating memory traffic for the entire forward pass.
+Standard self-attention computes $\text{Softmax}(QK^T / \sqrt{d_k})V$, where $Q$, $K$, and $V$ are matrices of shape $[\text{sequence length}{\times}\text{head dimension}]$. The na\"ive implementation materializes the full $S{\times}S$ attention matrix $A = QK^T$ in HBM, where $S$ is the sequence length. For $S = 8192$ and FP16 precision, this matrix alone consumes $8192 \times 8192 \times 2 \approx 134$ MB per attention head. At 32 heads, the materialized attention matrices require approximately 4.3 GB per layer, dominating memory traffic for the entire forward pass.
 
 ```{python}
 #| label: flash-attention-savings-refactor
@@ -848,7 +849,7 @@ class FlashAttentionSavings:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Step 1: Naive attention materialized state per head:
-    # Read Q, K, V once; write/read S; write/read P; write O once.
+    # Read Q, K, V once; write/read A; write/read P_attn; write Y once.
     # Step 2: Quadratic intermediates dominate for long sequences.
     naive_attn_bytes_per_head = (
         4 * seq_len * seq_len * bytes_per_elem
@@ -857,7 +858,7 @@ class FlashAttentionSavings:
     naive_attn_bytes_total = naive_attn_bytes_per_head * num_heads
 
     # FlashAttention persistent HBM-visible tensors per head:
-    # Read Q, K, V once (3 * N * d * bytes), write O once (N * d * bytes)
+    # Read Q, K, V once (3 * S * d * bytes), write Y once (S * d * bytes)
     # Step 3: No NxN materialization
     flash_attn_bytes_per_head = (3 + 1) * seq_len * head_dim * bytes_per_elem
     flash_attn_bytes_total = flash_attn_bytes_per_head * num_heads
@@ -882,15 +883,15 @@ class FlashAttentionSavings:
     flash_savings_factor_str = fmt(savings_ratio, precision=0, commas=False)
 ```
 
-FlashAttention [@dao2022] reformulates attention as a **tiled** computation. Instead of materializing the full $N{\times}N$ attention matrix, it processes $Q$, $K$, and $V$ in small blocks that fit in on-chip SRAM. The algorithm loads tiles of $Q$, $K$, and $V$, computes partial attention scores, and maintains running statistics (online softmax) to produce the exact result without ever storing the full attention matrix in HBM.
+FlashAttention [@dao2022] reformulates attention as a **tiled** computation. Instead of materializing the full $S{\times}S$ attention matrix, it processes $Q$, $K$, and $V$ in small blocks that fit in on-chip SRAM. The algorithm loads tiles of $Q$, $K$, and $V$, computes partial attention scores, and maintains running statistics (online softmax) to produce the exact result without ever storing the full attention matrix in HBM.
 
-The reduction in materialized attention state is dramatic. For a sequence length of `{python} FlashAttentionSavings.head_n_str`, 32 heads, and head dimension `{python} FlashAttentionSavings.head_d_str` in FP16, the naive implementation materializes and revisits approximately `{python} FlashAttentionSavings.naive_mb_str` MB of HBM-resident tensors for the full layer, or `{python} FlashAttentionSavings.naive_head_traffic_mb_str` MB per head. FlashAttention avoids the quadratic score and probability tensors; its persistent HBM-visible tensors are dominated by $Q$, $K$, $V$, and $O$, totaling approximately `{python} FlashAttentionSavings.flash_mb_str` MB for the full layer, or `{python} FlashAttentionSavings.flash_head_traffic_mb_str` MB per head. This simplified accounting excludes schedule-dependent tile reloads inside a particular kernel, but it captures the important scaling result: a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in materialized attention state for this configuration.
+The reduction in materialized attention state is dramatic. For a sequence length of `{python} FlashAttentionSavings.head_n_str`, 32 heads, and head dimension `{python} FlashAttentionSavings.head_d_str` in FP16, the naive implementation materializes and revisits approximately `{python} FlashAttentionSavings.naive_mb_str` MB of HBM-resident tensors for the full layer, or `{python} FlashAttentionSavings.naive_head_traffic_mb_str` MB per head. FlashAttention avoids the quadratic score and probability tensors; its persistent HBM-visible tensors are dominated by $Q$, $K$, $V$, and output $Y$, totaling approximately `{python} FlashAttentionSavings.flash_mb_str` MB for the full layer, or `{python} FlashAttentionSavings.flash_head_traffic_mb_str` MB per head. This simplified accounting excludes schedule-dependent tile reloads inside a particular kernel, but it captures the important scaling result: a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in materialized attention state for this configuration.
 
 The key insight behind FlashAttention is the **online softmax**[^fn-online-softmax-algo] trick, which makes tiling possible for an operation that appears to require global information.
 
-[^fn-online-softmax-algo]: **Online Softmax**: *Online* here is an algorithmic term meaning the computation processes data incrementally in a single pass without storing the full input -- the same sense as in *online learning* or *online algorithms*. This property is what makes tiling possible: the algorithm never needs the complete $N{\times}N$ score matrix in memory simultaneously, reducing attention memory from $O(N^2)$ to $O(N)$ and making long-context inference feasible on fixed-size SRAM. \index{Online Softmax!FlashAttention}
+[^fn-online-softmax-algo]: **Online Softmax**: *Online* here is an algorithmic term meaning the computation processes data incrementally in a single pass without storing the full input -- the same sense as in *online learning* or *online algorithms*. This property is what makes tiling possible: the algorithm never needs the complete $S{\times}S$ score matrix in memory simultaneously, reducing attention memory from $O(S^2)$ to $O(S)$ and making long-context inference feasible on fixed-size SRAM. \index{Online Softmax!FlashAttention}
 
-Standard softmax computes $\text{softmax}(s_i) = e^{s_i} / \sum_j e^{s_j}$, but for numerical stability it first subtracts the global maximum: $\text{softmax}(s_i) = e^{s_i - m} / \sum_j e^{s_j - m}$ where $m = \max_j s_j$. Finding this global maximum seems to require seeing all scores first, which would force materializing the full $N{\times}N$ matrix.
+Standard softmax computes $\text{softmax}(s_i) = e^{s_i} / \sum_j e^{s_j}$, but for numerical stability it first subtracts the global maximum: $\text{softmax}(s_i) = e^{s_i - m} / \sum_j e^{s_j - m}$ where $m = \max_j s_j$. Finding this global maximum seems to require seeing all scores first, which would force materializing the full $S{\times}S$ matrix.
 
 The online algorithm avoids this by maintaining running statistics that are updated incrementally as each tile is processed. When processing tile $t$, the algorithm:
 
@@ -903,11 +904,11 @@ After processing all tiles, the running output contains the mathematically equiv
 
 The cost of this tiling is additional arithmetic: the rescaling operations in step 3 add FLOPs that the standard algorithm does not perform. Because the operation is profoundly memory-bound (the arithmetic intensity of standard attention is roughly 1--10 FLOP/byte for typical sequence lengths), the additional compute is "free" in the sense that the GPU's arithmetic units would otherwise be idle, waiting for HBM data transfers. *Trading extra compute for fewer memory accesses is profitable whenever the operation is memory-bound*, the central principle of this entire chapter.
 
-A concrete numerical example clarifies the memory savings. Consider one attention head with sequence length $N = 8192$ and head dimension $d = 128$. The $Q$, $K$, $V$ matrices are each $8192{\times}128$ in FP16, occupying $8192 \times 128 \times 2 = 2$ MB each (6 MB total for one head). The output matrix $O$ is the same size (2 MB). The total input/output data is therefore 8 MB per head.
+A concrete numerical example clarifies the memory savings. Consider one attention head with sequence length $S = 8192$ and head dimension $d = 128$. The $Q$, $K$, $V$ matrices are each $8192{\times}128$ in FP16, occupying $8192 \times 128 \times 2 = 2$ MB each (6 MB total for one head). The output matrix $Y$ is the same size (2 MB). The total input/output data is therefore 8 MB per head.
 
-The na\"ive algorithm computes $S = QK^T$, a matrix of shape $8192{\times}8192$. In FP16, this score matrix occupies $8192 \times 8192 \times 2 \approx 134$ MB per head. After applying softmax, the result $P = \text{softmax}(S)$ is also $134$ MB. Computing $PV$ requires reading $P$ again. In total, the na\"ive algorithm reads $Q$, $K$, $V$ from HBM (6 MB), writes $S$ (134 MB), reads $S$ for softmax (134 MB), writes $P$ (134 MB), reads $P$ for the final multiply (134 MB), and writes $O$ (2 MB). The total HBM traffic is approximately 545 MB per head, dominated by the quadratic intermediates.
+The na\"ive algorithm computes $A = QK^T$, a matrix of shape $8192{\times}8192$. In FP16, this score matrix occupies $8192 \times 8192 \times 2 \approx 134$ MB per head. After applying softmax, the result $P_{\text{attn}} = \text{softmax}(A)$ is also $134$ MB. Computing $P_{\text{attn}}V$ requires reading $P_{\text{attn}}$ again. In total, the na\"ive algorithm reads $Q$, $K$, $V$ from HBM (6 MB), writes $A$ (134 MB), reads $A$ for softmax (134 MB), writes $P_{\text{attn}}$ (134 MB), reads $P_{\text{attn}}$ for the final multiply (134 MB), and writes $Y$ (2 MB). The total HBM traffic is approximately 545 MB per head, dominated by the quadratic intermediates.
 
-FlashAttention processes the computation in tiles of size $B_r{\times}B_c$ (typically $128{\times}128$ on H100). For one tile, the algorithm loads a block of $Q$ ($128 \times 128 \times 2 \approx 33$ KB), a block of $K$ ($128 \times 128 \times 2 \approx 33$ KB), and a block of $V$ (33 KB), totaling approximately 98 KB. This fits comfortably in the H100's 228 KB of shared memory per SM. The tile score $S_{\text{tile}} = Q_{\text{tile}} K_{\text{tile}}^T$ is computed and consumed entirely within SRAM; it is never written to HBM. The algorithm iterates over $8192/128 = 64$ column tiles for each of $64$ row tiles, reloading tiles as required by the kernel schedule. The important point is that the 134 MB score matrix and the 134 MB probability matrix per head are never materialized. The persistent per-head tensors are $Q$, $K$, $V$, $O$, and $O(N)$ softmax statistics, roughly 8 MB plus small state in this example, instead of hundreds of megabytes of quadratic intermediates.
+FlashAttention processes the computation in tiles of size $T_r{\times}T_c$ (typically $128{\times}128$ on H100). For one tile, the algorithm loads a block of $Q$ ($128 \times 128 \times 2 \approx 33$ KB), a block of $K$ ($128 \times 128 \times 2 \approx 33$ KB), and a block of $V$ (33 KB), totaling approximately 98 KB. This fits comfortably in the H100's 228 KB of shared memory per SM. The tile score $A_{\text{tile}} = Q_{\text{tile}} K_{\text{tile}}^T$ is computed and consumed entirely within SRAM; it is never written to HBM. The algorithm iterates over $8192/128 = 64$ column tiles for each of $64$ row tiles, reloading tiles as required by the kernel schedule. The important point is that the 134 MB score matrix and the 134 MB probability matrix per head are never materialized. The persistent per-head tensors are $Q$, $K$, $V$, $Y$, and $O(S)$ softmax statistics, roughly 8 MB plus small state in this example, instead of hundreds of megabytes of quadratic intermediates.
 
 FlashAttention-2 [@dao2023flashattention2] further optimizes the algorithm for modern GPU architectures by restructuring the parallelism pattern. The original FlashAttention parallelizes over batch and head dimensions, meaning each thread block handles one (batch, head) pair and iterates over the full sequence. FlashAttention-2 additionally parallelizes over the sequence dimension of the query matrix, distributing work across thread blocks more efficiently and achieving better occupancy on GPUs with many streaming multiprocessors. It also reduces the number of non-GEMM FLOPs by restructuring the rescaling operations and exploiting the asymmetry between the Q loop (outer) and K/V loop (inner).
 
@@ -917,7 +918,7 @@ The original breakthrough was a change in how engineers understood the bottlenec
 
 ::: {#exmp-performance-engineering-flashattention-breakthrough .callout-example title="The FlashAttention breakthrough"}
 
-In 2022, Tri Dao challenged the prevailing wisdom that the attention mechanism's $O(N^2)$ complexity required better matrix multiplication kernels. His insight was that the bottleneck was not compute, but memory hierarchy. Standard attention materialized the massive $N{\times}N$ attention score matrix in high-latency HBM. FlashAttention restructured the algorithm using tiling to keep running statistics in on-chip SRAM, computing the softmax without ever writing the full matrix to global memory. This reduced memory complexity to linear $O(N)$ and wall-clock time by 2--4$\times$ on relevant attention workloads. It quickly influenced the attention kernels used across major ML frameworks and serving stacks.
+In 2022, Tri Dao challenged the prevailing wisdom that the attention mechanism's $O(S^2)$ complexity required better matrix multiplication kernels. His insight was that the bottleneck was not compute, but memory hierarchy. Standard attention materialized the massive $S{\times}S$ attention score matrix in high-latency HBM. FlashAttention restructured the algorithm using tiling to keep running statistics in on-chip SRAM, computing the softmax without ever writing the full matrix to global memory. This reduced memory complexity to linear $O(S)$ and wall-clock time by 2--4$\times$ on relevant attention workloads. It quickly influenced the attention kernels used across major ML frameworks and serving stacks.
 
 :::
 
@@ -930,31 +931,31 @@ Verify your understanding of memory-aware attention:
 - [ ] Why does FlashAttention provide a larger speedup for **longer sequences** (for example, 32K) than for short sequences (for example, 512)?
 - [ ] In the FlashAttention algorithm, where are the "online softmax" statistics stored: in HBM, L2 Cache, or SM SRAM?
 - [ ] True or False: FlashAttention reduces the total number of floating-point operations (FLOPs) required for attention.
-- [ ] How does reducing the attention memory from $O(N^2)$ to $O(N)$ enable larger batch sizes for serving?
+- [ ] How does reducing the attention memory from $O(S^2)$ to $O(S)$ enable larger batch sizes for serving?
 
 :::
 
 @fig-flashattention-memory-savings quantifies how that workspace advantage grows with sequence length. Standard-attention workspace grows quadratically while FlashAttention's running state grows linearly, so the savings ratio grows linearly: at a typical 8K context, the quadratic score workspace alone is 4,096$\times$ larger than FlashAttention's running statistics; at 64K long-context, the ratio reaches 32,768$\times$.
 
-::: {#fig-flashattention-memory-savings fig-env="figure" fig-pos="htb" fig-cap="**FlashAttention Memory Savings**: $O(N^2) \rightarrow O(N)$. Standard attention allocates the full $N{\times}N$ score matrix in HBM, while FlashAttention maintains only $O(N)$ running statistics. The shaded region represents memory freed for KV cache, activations, or larger batch sizes. At long-context lengths (64K+), the savings exceed four orders of magnitude." fig-alt="Log-log plot of attention memory vs. sequence length. Standard O(N²) curve rises steeply; FlashAttention O(N) grows linearly. Shaded region shows savings, with annotations at 8K and 65K."}
+::: {#fig-flashattention-memory-savings fig-env="figure" fig-pos="htb" fig-cap="**FlashAttention Memory Savings**: $O(S^2) \rightarrow O(S)$. Standard attention allocates the full $S{\times}S$ score matrix in HBM, while FlashAttention maintains only $O(S)$ running statistics. The shaded region represents memory freed for KV cache, activations, or larger batch sizes. At long-context lengths (64K+), the savings exceed four orders of magnitude." fig-alt="Log-log plot of attention memory vs. sequence length. Standard O(S²) curve rises steeply; FlashAttention O(S) grows linearly. Shaded region shows savings, with annotations at 8K and 65K."}
 
 ```{python}
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FLASHATTENTION MEMORY SAVINGS (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: @fig-flashattention-memory-savings—O(N²) vs O(N) memory
+# │ Context: @fig-flashattention-memory-savings—O(S²) vs O(S) memory
 # │
-# │ Goal: Plot standard attention (N²) vs FlashAttention (N) memory vs seq len;
+# │ Goal: Plot standard attention (S²) vs FlashAttention (S) memory vs seq len;
 # │       show 4+ orders magnitude savings at 64K+.
 # │ Show: Two curves on log scale; shaded savings region.
-# │ How: N = logspace(512, 131072); bytes = 2*N^2 vs 2*N*...; matplotlib.
+# │ How: S_vals = logspace(512, 131072); bytes = 2*S^2 vs 2*S*...; matplotlib.
 # │
 # │ Imports: numpy (np), matplotlib.pyplot (plt), mlsysim.core.constants (byte, GB)
 # │ Exports: (figure only, no prose variables)
 # └─────────────────────────────────────────────────────────────────────────────
 # ┌── 1. CANVAS ────────────────────────────────────────────────────────────────
-# │ Plot standard attention (N²) vs FlashAttention (N) memory vs seq len;
+# │ Plot standard attention (S²) vs FlashAttention (S) memory vs seq len;
 import numpy as np
 import matplotlib.pyplot as plt
 from mlsysim.core.constants import byte, GB
@@ -965,25 +966,25 @@ plt.figure(figsize=(10, 6))
 
 
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
-N = np.logspace(np.log2(512), np.log2(131072), num=200, base=2.0)
+S_vals = np.logspace(np.log2(512), np.log2(131072), num=200, base=2.0)
 
 bytes_per_element_fp16 = 2
 num_heads = 32
 batch_size = 1
 
-mem_standard = (N**2 * bytes_per_element_fp16 * num_heads * batch_size * byte).m_as(GB)
-mem_flash = (N * 4 * num_heads * batch_size * byte).m_as(GB)
+mem_standard = (S_vals**2 * bytes_per_element_fp16 * num_heads * batch_size * byte).m_as(GB)
+mem_flash = (S_vals * 4 * num_heads * batch_size * byte).m_as(GB)
 
-plt.plot(N, mem_standard, label='Standard Attention O(N²)', color='#CC5500', linewidth=2)
-plt.plot(N, mem_flash, label='FlashAttention O(N)', color='#006395', linewidth=2)
-plt.fill_between(N, mem_flash, mem_standard, color='#D1E6F3', alpha=0.6, label='Memory Savings')
+plt.plot(S_vals, mem_standard, label='Standard Attention O(S²)', color='#CC5500', linewidth=2)
+plt.plot(S_vals, mem_flash, label='FlashAttention O(S)', color='#006395', linewidth=2)
+plt.fill_between(S_vals, mem_flash, mem_standard, color='#D1E6F3', alpha=0.6, label='Memory Savings')
 
 plt.xscale('log')
 plt.yscale('log')
 
-plt.xlabel('Sequence Length (N)')
+plt.xlabel('Sequence Length (S)')
 plt.ylabel('Attention Memory (GB)')
-plt.title('FlashAttention Memory Savings: O(N²) → O(N)', fontsize=14)
+plt.title('FlashAttention Memory Savings: O(S²) → O(S)', fontsize=14)
 
 plt.axvline(x=8192, color='gray', linestyle='--', linewidth=1.5)
 plt.text(8600, plt.ylim()[0]*1.5, ' Typical LLM context (8K)', rotation=90,
@@ -1055,11 +1056,11 @@ Applying uniform per-tensor INT8 quantization clips these outliers, destroying t
 
 ::: {#dfn-performance-engineering-block-wise-quantization .callout-definition title="Block-wise quantization"}
 
-***Block-wise Quantization***\index{Quantization!block-wise, definition} is a quantization scheme that partitions a weight tensor into nonoverlapping groups of $B_{\text{block}}$ elements and computes a per-group scale $s_i = (x_{\max,i} - x_{\min,i}) / (2^b - 1)$, bounding worst-case quantization error within each group independently.
+***Block-wise Quantization***\index{Quantization!block-wise, definition} is a quantization scheme that partitions a weight tensor into nonoverlapping groups of $G_{\text{block}}$ elements and computes a per-group scale $s_i = (x_{\max,i} - x_{\min,i}) / (2^b - 1)$, bounding worst-case quantization error within each group independently.
 
-1.  **Significance (quantitative)**: With block size $B_{\text{block}} = 64$ and $b = 4$ bits, weights compress from 16 bits to 4 bits (a 4$\times$ memory reduction) while each FP16 scale adds $16/64 = 0.25$ bits per weight. This yields an effective bit-width of $4.25$ bits per weight: 6.25 percent overhead relative to the INT4 payload, or about 1.6 percent of the original FP16 weight size.
+1.  **Significance (quantitative)**: With block size $G_{\text{block}} = 64$ and $b = 4$ bits, weights compress from 16 bits to 4 bits (a 4$\times$ memory reduction) while each FP16 scale adds $16/64 = 0.25$ bits per weight. This yields an effective bit-width of $4.25$ bits per weight: 6.25 percent overhead relative to the INT4 payload, or about 1.6 percent of the original FP16 weight size.
 2.  **Distinction (durable)**: Unlike **Per-Tensor Quantization**\index{Quantization!per-tensor}, which applies a single scale across the entire weight matrix and forces that scale to accommodate outlier values at the cost of wasting precision on the majority of near-zero weights, Block-wise Quantization contains outlier damage within individual blocks, preventing a single extreme value from degrading quantization fidelity for the whole tensor.
-3.  **Common pitfall**: Treating block size as a free hyperparameter is wrong. Smaller blocks ($B_{\text{block}} = 32$) reduce quantization error but double the metadata overhead vs. $B_{\text{block}} = 64$. At $B_{\text{block}} = 16$, the scale adds 1 bit per weight: 25 percent overhead relative to the INT4 payload, or 6.25 percent of the original FP16 weight size.
+3.  **Common pitfall**: Treating block size as a free hyperparameter is wrong. Smaller blocks ($G_{\text{block}} = 32$) reduce quantization error but double the metadata overhead vs. $G_{\text{block}} = 64$. At $G_{\text{block}} = 16$, the scale adds 1 bit per weight: 25 percent overhead relative to the INT4 payload, or 6.25 percent of the original FP16 weight size.
 
 :::
 
@@ -1974,7 +1975,7 @@ While Hardware Utilization reports how often GPUs are busy, it fails to distingu
 # │
 # │ Goal: Calculate MFU for a 70B model distributed across a 128-GPU cluster.
 # │ Show: How the "Scaling Tax" reduces MFU from a 65% local peak to 48% fleet avg.
-# │ How: MFU = (6 * P * D) / (N * R_peak * Time).
+# │ How: MFU = (6 * P * D) / (N * r_peak * time).
 # │
 # │ Imports: mlsysim.core.constants (BILLION, TRILLION, H100_FLOPS_FP16_TENSOR, LLAMA2_70B_PARAMS)
 # │ Exports: fleet_params_b_str, fleet_nodes_str, fleet_t_step_ms_str,
@@ -2171,7 +2172,7 @@ The Nsight Systems trace shows that GEMM time decreased by approximately 45 perc
 
 The second round targets the 14 percent of step time consumed by element-wise operations and the 24 percent consumed by attention. Applying `torch.compile` with the `max-autotune` backend fuses element-wise operations (GELU, LayerNorm, residual additions), reducing their contribution from 14 percent to approximately 4 percent of step time. Simultaneously, enabling FlashAttention-2 replaces the standard attention implementation, reducing attention HBM traffic by approximately 16$\times$ for the prefill phase.
 
-For the decode phase, FlashAttention's impact is more modest because decode attention is dominated by KV cache reads rather than the $N{\times}N$ score matrix. However, the combination of INT8 KV cache compression and FlashAttention's efficient PagedAttention kernel reduces attention decode time by approximately 30 percent.
+For the decode phase, FlashAttention's impact is more modest because decode attention is dominated by KV cache reads rather than the $S{\times}S$ score matrix. However, the combination of INT8 KV cache compression and FlashAttention's efficient PagedAttention kernel reduces attention decode time by approximately 30 percent.
 
 The `reduce-overhead` mode in `torch.compile` wraps the decode step in a CUDA Graph, eliminating the 12 percent kernel launch overhead almost entirely.
 

@@ -986,7 +986,7 @@ class ResNetServingSpectrum:
     tiny_inf_ms_str = fmt(tiny_inf_ms, precision=0, commas=False)
     tiny_throughput_str = MarkdownStr("8")
     tiny_arena_kb_str = MarkdownStr("320")
-    tiny_sram_kb_str = fmt(s_tiny.ram.m_as('KiB'), precision=0)
+    tiny_sram_kb_str = fmt(s_tiny.ram.m_as('KB'), precision=0)
     tiny_energy_mj_str = fmt(tiny_energy_mj, precision=0, commas=False)
 ```
 
@@ -2160,7 +2160,7 @@ class CapacityPlanning:
     latency_slo_s = 0.050 # 50 ms
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # Step 1: L = lambda * W
+    # Step 1: N_req = lambda * T_lat
     concurrency = lambda_qps * latency_slo_s
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
@@ -3025,11 +3025,11 @@ $$P(\text{batch size} = k) = \frac{(\lambda T)^k e^{-\lambda T}}{k!}$$ {#eq-batc
 #### Throughput maximization strategy {#sec-model-serving-throughput-maximization-strategy-27f5}
 
 Throughput optimization requires maximizing the number of requests processed per unit time. For a system with service time $T_{\text{service}}(B)$ for batch size $B$, throughput follows @eq-batch-throughput:
-$$\text{Throughput}(B) = \frac{B}{T + S(B)}$$ {#eq-batch-throughput}
+$$\text{Throughput}(B) = \frac{B}{T_{\text{window}} + T_{\text{service}}(B)}$$ {#eq-batch-throughput}
 
 The numerator increases linearly with batch size while the denominator increases sub-linearly (due to GPU parallelism). This creates an optimal batch size that balances these competing effects.
 
-For ResNet-50 on a V100 GPU, service time approximately scales as $S(B) = 5 \text{ ms} + 0.6 B$ (5 ms fixed overhead plus 0.6 ms per image in the batch). This linear approximation captures the dominant trend; actual service times may deviate slightly due to memory hierarchy effects. With $T = 10 \text{ ms}$ batching window:
+For ResNet-50 on a V100 GPU, service time approximately scales as $T_{\text{service}}(B) = 5 \text{ ms} + 0.6 B$ (5 ms fixed overhead plus 0.6 ms per image in the batch). This linear approximation captures the dominant trend; actual service times may deviate slightly due to memory hierarchy effects. With $T_{\text{window}} = 10 \text{ ms}$ batching window:
 
 ```{python}
 #| label: batching-analysis-calc
@@ -3130,8 +3130,8 @@ $$ T = \frac{O}{R_{\text{peak}} \cdot \eta_{\text{hw}}} + L_{\text{lat}} $$ {#eq
 
 #### Latency-constrained optimization {#sec-model-serving-latencyconstrained-optimization-8f66}
 
-When latency SLOs provide the binding constraint, the optimization problem becomes finding the maximum batch size that meets the SLO. For a latency target $L_{\text{lat,target}}$ and average wait time $T/2$, @eq-latency-constrained-batch defines the maximum allowable batch size using a first-order *average* latency approximation:
-$$B_{\text{max}} = \max\left\{B : \frac{T}{2} + S(B) \leq L_{\text{lat,target}}\right\}$$ {#eq-latency-constrained-batch}
+When latency SLOs provide the binding constraint, the optimization problem becomes finding the maximum batch size that meets the SLO. For a latency target $L_{\text{lat,target}}$ and average wait time $T_{\text{window}}/2$, @eq-latency-constrained-batch defines the maximum allowable batch size using a first-order *average* latency approximation:
+$$B_{\text{max}} = \max\left\{B : \frac{T_{\text{window}}}{2} + T_{\text{service}}(B) \leq L_{\text{lat,target}}\right\}$$ {#eq-latency-constrained-batch}
 
 Consider a 50 ms p95 latency SLO for ResNet-50 serving (using this mean-based approximation as a starting point):
 
@@ -3285,8 +3285,8 @@ class SloViolationCalc:
 ```
 
 Batch size variability causes SLO violations even when mean latency appears safe. The p99 latency includes both worst-case wait time (full window) and worst-case batch size (governed by Poisson tail). @eq-p99-batch-latency captures this relationship:
-$$L_{\text{lat,p99}} \approx T + S(b_{\text{p99}})$$ {#eq-p99-batch-latency}
-where $b_{\text{p99}}$ is the 99th percentile batch size. For $\lambda$ = `{python} SloViolationCalc.qps_str` QPS and $T$ = `{python} SloViolationCalc.T_slo_str` ms:
+$$L_{\text{lat,p99}} \approx T_{\text{window}} + T_{\text{service}}(b_{\text{p99}})$$ {#eq-p99-batch-latency}
+where $b_{\text{p99}}$ is the 99th percentile batch size. For $\lambda$ = `{python} SloViolationCalc.qps_str` QPS and $T_{\text{window}}$ = `{python} SloViolationCalc.T_slo_str` ms:
 
 - Mean batch size: `{python} SloViolationCalc.mean_batch_str`
 - p99 batch size: `{python} SloViolationCalc.p99_batch_str` (from Poisson distribution)
@@ -3519,11 +3519,11 @@ $$E[\text{batch size}] = \lambda \cdot T$$ {#eq-poisson-batch}
 
 [^fn-poisson-serving]: **Poisson Process**: Named after French mathematician Simeon Denis Poisson (1781--1840), this stochastic model describes events occurring continuously and independently at a constant average rate. The key property for serving: variance equals the mean, so batch sizes fluctuate significantly at moderate traffic---with $\lambda=200$ req/s and a 10 ms window, expected batch size is two but roughly 14 percent of windows will be empty (wasted GPU cycles). This variance is why batching windows must be tuned probabilistically rather than set from average traffic alone.
 
-The variance equals the mean (a property of Poisson distributions), so batch sizes fluctuate significantly at moderate traffic. With $\lambda = 200$ requests/second and $T = 10$ ms, expected batch size is two, but roughly 14 percent of windows will have zero requests (wasted compute cycles) while others may have four or more.
+The variance equals the mean (a property of Poisson distributions), so batch sizes fluctuate significantly at moderate traffic. With $\lambda = 200$ requests/second and $T_{\text{window}} = 10$ ms, expected batch size is two, but roughly 14 percent of windows will have zero requests (wasted compute cycles) while others may have four or more.
 
 A useful heuristic for the batching window balances waiting cost against throughput benefit. @eq-optimal-window expresses one such rule:
-$$T_{\text{window}} \approx \min\left(L_{\text{lat,SLO}} - S, \sqrt{\frac{S}{\lambda}}\right)$$ {#eq-optimal-window}
-where $L_{\text{lat,SLO}}$ is the latency SLO, $S$ is the service time (in seconds), and $\lambda$ is the arrival rate (in requests per second), making the second term dimensionally consistent in seconds. The square-root form follows the same scaling law as classical economic batch sizing, where the optimal batch interval grows as $\sqrt{\text{fixed cost}/\text{arrival rate}}$; see [@harchol-balter2013] for the underlying queueing analysis. The expression is a tuning heuristic rather than a closed-form optimum for ML serving specifically; production systems calibrate the window empirically against observed traffic. A counterintuitive result emerges from this equation: as traffic increases, the optimal window decreases while achieved batch sizes still grow. @tbl-traffic-adaptive demonstrates this phenomenon across four traffic levels.
+$$T_{\text{window}} \approx \min\left(L_{\text{lat,SLO}} - T_{\text{service}}, \sqrt{\frac{T_{\text{service}}}{\lambda}}\right)$$ {#eq-optimal-window}
+where $L_{\text{lat,SLO}}$ is the latency SLO, $T_{\text{service}}$ is the service time (in seconds), and $\lambda$ is the arrival rate (in requests per second), making the second term dimensionally consistent in seconds. The square-root form follows the same scaling law as classical economic batch sizing, where the optimal batch interval grows as $\sqrt{\text{fixed cost}/\text{arrival rate}}$; see [@harchol-balter2013] for the underlying queueing analysis. The expression is a tuning heuristic rather than a closed-form optimum for ML serving specifically; production systems calibrate the window empirically against observed traffic. A counterintuitive result emerges from this equation: as traffic increases, the optimal window decreases while achieved batch sizes still grow. @tbl-traffic-adaptive demonstrates this phenomenon across four traffic levels.
 
 ```{python}
 #| label: traffic-adaptive-batching-calc
@@ -3828,7 +3828,7 @@ Production LLM systems\index{Streaming Responses!LLM serving} return tokens as t
 
 Generative inference requires managing the KV Cache[^fn-kv-cache-serving]\index{KV Cache!LLM memory}\index{KV Cache!sequence length scaling}, a stateful memory structure that grows with sequence length. Unlike traditional models where memory usage is constant per batch, LLM memory usage is dynamic. Each generated token adds to the context window, consuming additional GPU memory through state accumulation, and variable-length sequences can lead to memory fragmentation if not managed explicitly.
 
-[^fn-kv-cache-serving]: **KV Cache (Key-Value Cache)**: To avoid redundant work, the system caches the Key and Value vectors from previous tokens, which remain valid throughout generation. This design choice is the direct cause of the dynamic memory growth described; the cache's size grows linearly with every generated token, making memory management, not computation, the primary constraint. For the 70B-class grouped-query-attention example used below, the FP16 KV cache is about 0.31 MB per token per sequence, so a batch of 32 requests at an 8,000-token context requires roughly 80 GB just for KV cache. Without grouped-query or multi-query attention, the KV cache can be several times larger. \index{KV Cache!memory scaling}
+[^fn-kv-cache-serving]: **KV Cache (Key-Value Cache)**: To avoid redundant work, the system caches the Key and Value vectors from previous tokens, which remain valid throughout generation. This design choice is the direct cause of the dynamic memory growth described; the cache's size grows linearly with every generated token, making memory management, not computation, the primary constraint. For the 70-billion-parameter-class grouped-query-attention example used below, the FP16 KV cache is about 0.31 MB per token per sequence, so a batch of 32 requests at an 8,000-token context requires roughly 80 GB just for KV cache. Without grouped-query or multi-query attention, the KV cache can be several times larger. \index{KV Cache!memory scaling}
 
 The continuous batching and PagedAttention techniques covered in @sec-model-serving-continuous-batching-8bb6 address these challenges.
 
@@ -4273,7 +4273,7 @@ Modern CPUs[^fn-simd-cpu-serving]\index{SIMD!CPU vectorization} (Intel Xeon, AMD
 
 On multi-socket servers[^fn-numa-cpu-serving]\index{NUMA!memory locality}\index{Thread Pinning!CPU affinity}, accessing memory attached to a different CPU socket (NUMA) adds significant latency. Inference servers must be "NUMA-aware," pinning threads to specific cores and ensuring that memory allocations remain local to those cores.
 
-[^fn-numa-cpu-serving]: **NUMA (Non-Uniform Memory Access)**: Accessing memory local to a CPU socket is faster than accessing memory attached to a different socket. Pinning an inference thread to a core is insufficient if its required memory is allocated remotely, forcing every weight access across the slower inter-socket link. This failure to co-locate threads and data imposes a ~60 percent latency overhead, as remote access takes ~130ns vs. ~80ns for local. \index{NUMA!inference latency}
+[^fn-numa-cpu-serving]: **NUMA (Non-Uniform Memory Access)**: Accessing memory local to a CPU socket is faster than accessing memory attached to a different socket. Pinning an inference thread to a core is insufficient if its required memory is allocated remotely, forcing every weight access across the slower inter-socket link. This failure to co-locate threads and data imposes a ~60 percent latency overhead, as remote access takes ~130 ns vs. ~80 ns for local. \index{NUMA!inference latency}
 
 #### Small batch advantage {#sec-model-serving-small-batch-advantage-c91c}
 
@@ -4450,11 +4450,11 @@ The worked example in @sec-model-serving-queuing-theory-tail-latency-29a6 demons
 
 ### Production case study: Serving Llama-3-8B {#sec-model-serving-production-case-study-serving-llama38b-0499}
 
-To synthesize the principles of latency budgeting, memory management, and hardware efficiency, this case study analyzes a complete production profile for a modern LLM serving workload\index{LLM Serving!8B parameter case study}\index{LLM Serving!production case study}. The Llama-3-8B\index{Llama-3-8B!serving case study} numbers in the rest of this section are computed for the 8B architecture; @fig-kv-cache-growth below is a separate 70B-class contrast that motivates why KV-cache memory is the dominant cost at any LLM scale before the 8B-specific analysis begins.
+To synthesize the principles of latency budgeting, memory management, and hardware efficiency, this case study analyzes a complete production profile for a modern LLM serving workload\index{LLM Serving!8 billion parameter case study}\index{LLM Serving!production case study}. The Llama-3-8B\index{Llama-3-8B!serving case study} numbers in the rest of this section are computed for the 8-billion-parameter architecture; @fig-kv-cache-growth below is a separate 70-billion-parameter-class contrast that motivates why KV-cache memory is the dominant cost at any LLM scale before the 8-billion-parameter-specific analysis begins.
 
-The bottleneck that dominates LLM serving costs is KV cache memory. The memory curves in @fig-kv-cache-growth climb steeply for larger batch sizes, illustrating *why* long-context serving is memory bound even on H100s; the figure uses 70B-class assumptions to amplify the effect, and the 8B-specific numbers follow.
+The bottleneck that dominates LLM serving costs is KV cache memory. The memory curves in @fig-kv-cache-growth climb steeply for larger batch sizes, illustrating *why* long-context serving is memory bound even on H100s; the figure uses 70-billion-parameter-class assumptions to amplify the effect, and the 8-billion-parameter-specific numbers follow.
 
-::: {#fig-kv-cache-growth fig-env="figure" fig-pos="htb" fig-cap="**The KV-Cache Explosion**: Memory usage vs. Context Length for a 70B-class model. Assumes 80 layers, d_model = 8192, FP16 KV cache, GQA (8$\times$). The linear growth of the Key-Value cache (storing attention history) quickly consumes available GPU memory (red dashed line). For batch size 32 (purple), the system hits the 'OOM Zone' at just 8k context length, forcing a trade-off between batch size (throughput) and context window (capability)." fig-alt="Line chart showing memory usage increasing linearly with context length. Multiple lines for different batch sizes. Red dashed horizontal line marks GPU memory limit. Purple line for batch 32 crosses into OOM zone at 8k context."}
+::: {#fig-kv-cache-growth fig-env="figure" fig-pos="htb" fig-cap="**The KV-Cache Explosion**: Memory usage vs. Context Length for a 70-billion-parameter-class model. Assumes 80 layers, d_model = 8192, FP16 KV cache, GQA (8$\times$). The linear growth of the Key-Value cache (storing attention history) quickly consumes available GPU memory (red dashed line). For batch size 32 (purple), the system hits the 'OOM Zone' at just 8k context length, forcing a trade-off between batch size (throughput) and context window (capability)." fig-alt="Line chart showing memory usage increasing linearly with context length. Multiple lines for different batch sizes. Red dashed horizontal line marks GPU memory limit. Purple line for batch 32 crosses into OOM zone at 8k context."}
 
 ```{python}
 #| echo: false
