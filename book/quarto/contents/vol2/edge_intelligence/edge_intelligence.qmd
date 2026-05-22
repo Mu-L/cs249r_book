@@ -614,9 +614,92 @@ Resource-constrained devices use a two-stage learning process. Offline pretraini
 
 ### Model constraints {#sec-edge-intelligence-model-constraints-9232}
 
+```{python}
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ EDGE MODEL SIZING (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-edge-intelligence-model-constraints-9232
+# │
+# │ Goal: Keep MobileNetV2, STM32 hidden-layer, TinyTL, and brain-efficiency
+# │       example numbers internally consistent.
+# │ Show: MobileNetV2 parameter/storage variants, STM32 dense-layer memory,
+# │       TinyTL parameter reduction, brain TOPS/W comparison.
+# │ How: bytes = parameters * bytes/parameter; efficiency = ops/s / watts.
+# │
+# │ Imports: mlsysim.core.constants (byte, KB, MB), mlsysim.fmt (fmt, check)
+# │ Exports: *_str values for prose references.
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import byte, KB, MB
+from mlsysim.fmt import fmt, check
+
+
+class EdgeModelSizing:
+    """Reusable sizing checks for edge model examples."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    bytes_fp32 = 4
+
+    mobilenetv2_alpha10_params = 3_504_872
+    mobilenetv2_alpha05_total_params = 1_968_680
+    mobilenetv2_alpha05_feature_params = 687_680
+
+    stm32_sram_kb = 192
+    stm32_hidden_inputs = 1_000
+    stm32_hidden_outputs = 10
+
+    tinytl_base_params = 3_400_000
+    tinytl_trainable_params = 50_000
+
+    brain_ops_per_s = 1e15
+    brain_power_w = 20
+    mobile_npu_eff_low_tops_per_w = 1
+    mobile_npu_eff_high_tops_per_w = 5
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    alpha10_mb = (mobilenetv2_alpha10_params * bytes_fp32 * byte).m_as(MB)
+    alpha05_total_mb = (mobilenetv2_alpha05_total_params * bytes_fp32 * byte).m_as(MB)
+    alpha05_feature_mb = (mobilenetv2_alpha05_feature_params * bytes_fp32 * byte).m_as(MB)
+
+    stm32_hidden_params = stm32_hidden_inputs * stm32_hidden_outputs + stm32_hidden_outputs
+    stm32_hidden_kb = (stm32_hidden_params * bytes_fp32 * byte).m_as(KB)
+    stm32_hidden_sram_pct = stm32_hidden_kb/stm32_sram_kb * 100
+
+    tinytl_param_reduction = tinytl_base_params/tinytl_trainable_params
+
+    brain_tops_per_w = brain_ops_per_s/brain_power_w/1e12
+    brain_vs_npu_low = brain_tops_per_w/mobile_npu_eff_high_tops_per_w
+    brain_vs_npu_high = brain_tops_per_w/mobile_npu_eff_low_tops_per_w
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(alpha10_mb > alpha05_total_mb > alpha05_feature_mb,
+          "MobileNetV2 storage variants should shrink in the expected order")
+    check(20 <= stm32_hidden_sram_pct <= 21,
+          f"STM32 hidden-layer SRAM share drifted: {stm32_hidden_sram_pct:.1f}%")
+    check(tinytl_param_reduction == 68,
+          f"TinyTL parameter reduction should be 68x, got {tinytl_param_reduction:.1f}x")
+    check(brain_tops_per_w == 50,
+          f"Brain efficiency should be 50 TOPS/W under stated operands, got {brain_tops_per_w:.1f}")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    mobilenetv2_alpha10_params_m_str = fmt(mobilenetv2_alpha10_params/1e6, precision=1, commas=False)
+    mobilenetv2_alpha10_mb_str = fmt(alpha10_mb, precision=1, commas=False)
+    mobilenetv2_alpha05_total_params_m_str = fmt(mobilenetv2_alpha05_total_params/1e6, precision=1, commas=False)
+    mobilenetv2_alpha05_total_mb_str = fmt(alpha05_total_mb, precision=1, commas=False)
+    mobilenetv2_alpha05_feature_params_m_str = fmt(mobilenetv2_alpha05_feature_params/1e6, precision=2, commas=False)
+    mobilenetv2_alpha05_feature_mb_str = fmt(alpha05_feature_mb, precision=1, commas=False)
+    stm32_hidden_inputs_str = fmt(stm32_hidden_inputs, precision=0, commas=False)
+    stm32_hidden_kb_str = fmt(stm32_hidden_kb, precision=0, commas=False)
+    stm32_hidden_sram_pct_str = fmt(stm32_hidden_sram_pct, precision=0, commas=False)
+    tinytl_param_reduction_str = fmt(tinytl_param_reduction, precision=0, commas=False)
+    brain_tops_per_w_str = fmt(brain_tops_per_w, precision=0, commas=False)
+    brain_vs_npu_low_str = fmt(brain_vs_npu_low, precision=0, commas=False)
+    brain_vs_npu_high_str = fmt(brain_vs_npu_high, precision=0, commas=False)
+```
+
 The structure and size of the machine learning model directly determine whether on-device training is possible. Cloud-deployed models can span billions of parameters and rely on multi-gigabyte memory budgets; models intended for on-device learning must conform to tight constraints on memory, storage, and computational complexity. These constraints tighten further during training, where gradient computation, parameter updates, and optimizer state management all demand additional resources beyond inference.
 
-The scale of these constraints becomes concrete across the device spectrum. MobileNetV2, commonly used in mobile vision tasks, requires approximately 14 MB of storage in its standard configuration. While feasible for modern smartphones with gigabytes of available RAM, this far exceeds the 256 KB of SRAM and 1 MB of flash storage on microcontrollers such as the Arduino Nano 33 BLE Sense[^fn-arduino-memory-wall]. On such severely constrained platforms, even a single convolutional layer may exceed available RAM during training due to intermediate feature maps and gradient storage.
+The scale of these constraints becomes concrete across the device spectrum. MobileNetV2, commonly used in mobile vision tasks, requires approximately `{python} EdgeModelSizing.mobilenetv2_alpha10_mb_str` MB of storage in its standard configuration. While feasible for modern smartphones with gigabytes of available RAM, this far exceeds the 256 KB of SRAM and 1 MB of flash storage on microcontrollers such as the Arduino Nano 33 BLE Sense[^fn-arduino-memory-wall]. On such severely constrained platforms, even a single convolutional layer may exceed available RAM during training due to intermediate feature maps and gradient storage.
 
 [^fn-arduino-memory-wall]: **Arduino Nano 33 BLE Sense**\index{Arduino Nano 33 BLE Sense}: With 256 KB SRAM, roughly 65,000$\times$ smaller than a flagship smartphone's 16 GB, a single $224{\times}224{\times}3$ RGB image (150 KB) consumes 60 percent of available memory. Activation and gradient storage alone can add several times overhead, and full training budgets can reach 4--12$\times$ inference memory once optimizer state is included. This means even a tiny convolutional neural network (CNN) layer can exceed total SRAM during backpropagation. This memory wall forces 8-bit or 4-bit quantization as a prerequisite, not an optimization. \index{Arduino!memory constraint}
 
@@ -632,7 +715,7 @@ These constraints demand that model architectures be designed for on-device lear
 
 [^fn-depthwise-separable-savings]: **Depthwise Separable Convolutions**\index{Depthwise Separable Convolution}: Decomposes a standard convolution into a per-channel depthwise filter followed by a $1{\times}1$ pointwise combination. For a $3{\times}3$ convolution with 512 input/output channels, this reduces parameters from 2.4 M to about 267 K, an 8.8$\times$ reduction. The savings are not just theoretical: this decomposition is what makes real-time CNN inference possible on mobile CPUs, and it equally reduces the memory needed for activation caching during on-device training. \index{Depthwise Separable Convolution!parameter reduction}
 
-Modularity is a key design property. MobileNets [@howard2017mobilenets] and MobileNetV2 [@sandler2018] can be configured with different width multipliers and resolution settings to balance performance and resource usage. MobileNetV2 with width multiplier $\alpha=1.0$ requires 3.4 M parameters (13.6 MB in FP32), but with $\alpha=0.5$ this drops to 0.7 M parameters (2.8 MB), enabling deployment on devices with just 4 MB available RAM.
+Modularity is a key design property. MobileNets [@howard2017mobilenets] and MobileNetV2 [@sandler2018] can be configured with different width multipliers and resolution settings to balance performance and resource usage. A complete MobileNetV2 with width multiplier $\alpha=1.0$ has approximately `{python} EdgeModelSizing.mobilenetv2_alpha10_params_m_str` M parameters (`{python} EdgeModelSizing.mobilenetv2_alpha10_mb_str` MB in FP32). With $\alpha=0.5$, the complete 1000-class model has approximately `{python} EdgeModelSizing.mobilenetv2_alpha05_total_params_m_str` M parameters (`{python} EdgeModelSizing.mobilenetv2_alpha05_total_mb_str` MB), while a feature-extractor-only deployment with a small task-specific head can be as small as `{python} EdgeModelSizing.mobilenetv2_alpha05_feature_params_m_str` M parameters (`{python} EdgeModelSizing.mobilenetv2_alpha05_feature_mb_str` MB), fitting within a 4 MB model budget.
 
 Model architecture determines the memory and computational baseline for on-device learning, but data availability and quality introduce equally fundamental limitations that shape every aspect of the learning process.
 
@@ -658,7 +741,7 @@ On-device learning must operate within computational envelopes that differ from 
 
 At the most constrained end, devices such as the STM32F4[^fn-stm32-compute-limits] or ESP32[^fn-esp32-edge-training] microcontrollers offer only a few hundred kilobytes of SRAM and limited compute and power budgets [@warden2020tinyml]. Although these families include single-precision floating-point support, practical ML deployments commonly rely on quantized or fixed-point kernels for efficiency. Libraries like CMSIS-NN [@lai2018cmsis] provide optimized neural network kernels for Arm Cortex-M processors, achieving 4.6$\times$ runtime improvement through fixed-point arithmetic and single instruction, multiple data (SIMD) optimizations. These severe limitations preclude conventional deep learning libraries and require models designed for quantized arithmetic and minimal runtime memory allocation. Even simple models require quantization-aware training[^fn-qat-edge-power] and selective parameter updates to execute training loops without exceeding memory or power budgets.
 
-[^fn-stm32-compute-limits]: **STM32F4 Microcontroller**\index{Microcontroller!stm32f4}: With 192 KB SRAM, a 168 MHz clock speed, and a single-precision FPU, the main constraint is not the absence of floating point but the tiny memory and energy envelope. A 10-neuron hidden layer requires approximately 40 KB for weights in FP32, consuming over 20 percent of total SRAM before accounting for activations or gradients. At approximately 100 mW active power, even simple gradient updates must be duty-cycled, and INT8 or fixed-point kernels remain preferable when accuracy allows. \index{STM32F4!compute constraints}
+[^fn-stm32-compute-limits]: **STM32F4 Microcontroller**\index{Microcontroller!stm32f4}: With 192 KB SRAM, a 168 MHz clock speed, and a single-precision FPU, the main constraint is not the absence of floating point but the tiny memory and energy envelope. A dense layer with `{python} EdgeModelSizing.stm32_hidden_inputs_str` input features and 10 hidden units requires approximately `{python} EdgeModelSizing.stm32_hidden_kb_str` KB for weights and biases in FP32, consuming about `{python} EdgeModelSizing.stm32_hidden_sram_pct_str` percent of total SRAM before accounting for activations or gradients. At approximately 100 mW active power, even simple gradient updates must be duty-cycled, and INT8 or fixed-point kernels remain preferable when accuracy allows. \index{STM32F4!compute constraints}
 
 [^fn-esp32-edge-training]: **ESP32**: Provides 520 KB SRAM and dual-core 240 MHz processing with built-in WiFi and Bluetooth, making it an inexpensive platform for experiments that combine local adaptation with federated coordination. Its CPU includes floating-point support, but fixed-point and 8-bit kernels are usually preferred for throughput, memory footprint, and energy efficiency; compact 8-bit models can fit in approximately 50 KB, enabling basic on-device adaptation for sensor anomaly detection. \index{ESP32!edge training}
 
@@ -1423,7 +1506,7 @@ Because the base model remains unchanged, TinyTL assumes that the pretrained fea
 
 These design choices allow TinyTL to reduce training memory usage by 10$\times$. For instance, adapting a MobileNetV2 model using TinyTL can reduce the number of updated parameters from over 3 million to fewer than 50,000[^fn-tinytl-memory-savings]. Combined with quantization, this allows local adaptation on devices with only a few hundred kilobytes of memory, making on-device learning truly feasible in constrained environments.
 
-[^fn-tinytl-memory-savings]: **TinyTL Memory Savings**\index{TinyTL Memory Savings}: The 60$\times$ parameter reduction (3.4 M to 50 K) collapses MobileNetV2 training memory from approximately 20 MB (weights + activations in FP32) to approximately 600 KB, fitting within a 1 MB microcontroller budget. Real deployments on STM32H7 achieve 85 percent of full fine-tuning accuracy while completing updates in approximately 30 seconds vs. 8 minutes, demonstrating that bias-only adaptation trades expressivity for feasibility on the most constrained hardware. \index{TinyTL!memory reduction}
+[^fn-tinytl-memory-savings]: **TinyTL Memory Savings**\index{TinyTL Memory Savings}: The approximately `{python} EdgeModelSizing.tinytl_param_reduction_str`$\times$ trainable-parameter reduction (3.4 M to 50 K) collapses MobileNetV2 training memory from approximately 20 MB (weights + activations in FP32) to approximately 600 KB, fitting within a 1 MB microcontroller budget. Real deployments on STM32H7 achieve 85 percent of full fine-tuning accuracy while completing updates in approximately 30 seconds vs. 8 minutes, demonstrating that bias-only adaptation trades expressivity for feasibility on the most constrained hardware. \index{TinyTL!memory reduction}
 
 ### Structured parameter updates {#sec-edge-intelligence-structured-parameter-updates-f1a1}
 
@@ -1657,7 +1740,7 @@ Few-shot adaptation is particularly relevant when the device observes a small nu
 
 Keyword spotting (KWS) systems offer a concrete example of few-shot adaptation in a real-world, on-device deployment [@warden2018speech]. These models are used to detect fixed phrases, including phrases like "Hey Siri"[^fn-hey-siri-power-budget] or "OK Google", with low latency and high reliability. A typical KWS model consists of a pretrained acoustic encoder (e.g., a small convolutional or recurrent network that transforms input audio into an embedding space) followed by a lightweight classifier. In commercial systems, the encoder is trained centrally using thousands of hours of labeled speech across multiple languages and speakers. However, supporting custom wake words (e.g., "Hey Jarvis") or adapting to underrepresented accents and dialects is often infeasible via centralized training due to data scarcity and privacy concerns.
 
-[^fn-hey-siri-power-budget]: **"Hey Siri" Power Budget**: The always-on detector consumes $<$1 mW while monitoring audio continuously, using a 192 KB model at approximately 0.5 TOPS. The constraint envelope is extreme: $<$100 ms detection latency, $<$0.1 false activations per hour, and $>$95 percent true positive rate across accents and noise conditions. Few-shot personalization must improve accuracy within this fixed power and model-size budget, meaning adaptation can tune classifier weights but cannot expand the model. \index{Hey Siri!power constraint}
+[^fn-hey-siri-power-budget]: **"Hey Siri" Power Budget**: The always-on detector consumes $<$1 mW while monitoring audio continuously, using a compact acoustic model on a low-power always-on processor rather than the main application cores. The constraint envelope is extreme: $<$100 ms detection latency, $<$0.1 false activations per hour, and $>$95 percent true positive rate across accents and noise conditions. Few-shot personalization must improve accuracy within this fixed power and model-size budget, meaning adaptation can tune classifier weights but cannot expand the model. \index{Hey Siri!power constraint}
 
 Few-shot adaptation solves this problem by finetuning only the output classifier or a small subset of parameters, including bias terms, using just a few example utterances collected directly on the device. For example, a user might provide 5–10 recordings of their custom wake word. These samples are then used to update the model locally, while the main encoder remains frozen to preserve generalization and reduce memory overhead. This allows personalization without requiring additional labeled data or transmitting private audio to the cloud.
 
@@ -2679,7 +2762,7 @@ Once the system chooses how much local work to perform, update compression deter
     \node[BoxGreen, right=of sp2] (sp3) {-};
     \node[BoxGreen, right=of sp3] (sp4) {0.8};
     \node[Title, above=0.2cm of sp2.north east] {\textbf{(c) Sparsification}};
-    \node[Sub, below=0.1cm of sp2.south east] {Top-k: 16 bits (8$\times$)};
+    \node[Sub, below=0.1cm of sp2.south east] {Top-k FP32: $\geq$64 bits + idx ($\leq$2$\times$)};
   \end{scope}
 
   \node[draw=BlueLine, dashed, rounded corners=2pt, line width=0.75pt, minimum width=4cm, minimum height=1cm, below=1.5cm of quant] (server) {Federated Aggregator (Server)};
@@ -2907,7 +2990,7 @@ Biological solutions illuminate why certain engineering approaches work. The spa
 
 The human brain operates at approximately 20 watts while continuously learning from limited supervision, precisely the efficiency target for on-device learning systems[^fn-brain-power-efficiency]. This efficiency emerges from several architectural principles that directly inform edge learning design, demonstrating what is theoretically achievable with highly optimized learning systems.
 
-[^fn-brain-power-efficiency]: **Brain Power Efficiency**\index{Brain Power Efficiency}: At 20 W, the brain processes approximately $10^{15}$ operations per second, roughly 50,000$\times$ more energy-efficient per operation than current AI accelerators. This efficiency derives from extreme sparsity (only 1--2 percent of 86 billion neurons active simultaneously) and event-driven processing that activates computation only on input change. These two principles directly inform edge ML design: sparse activation patterns and opportunistic training scheduling are not heuristics but attempts to approach biological efficiency limits. \index{Efficiency!brain, edge learning}
+[^fn-brain-power-efficiency]: **Brain Power Efficiency**\index{Brain Power Efficiency}: At 20 W, the brain processes approximately $10^{15}$ operations per second, equivalent to about `{python} EdgeModelSizing.brain_tops_per_w_str` TOPS/W under this coarse operation-counting model. Compared with the 1--5 TOPS/W mobile-NPU range used earlier in this chapter, that is roughly `{python} EdgeModelSizing.brain_vs_npu_low_str`--`{python} EdgeModelSizing.brain_vs_npu_high_str`$\times$ higher energy efficiency, though biological synaptic events and digital operations are only an approximate analogy. This efficiency derives from extreme sparsity (only 1--2 percent of 86 billion neurons active simultaneously) and event-driven processing that activates computation only on input change. These two principles directly inform edge ML design: sparse activation patterns and opportunistic training scheduling are not heuristics but attempts to approach biological efficiency limits. \index{Efficiency!brain, edge learning}
 
 The brain's efficiency characteristics reveal multiple dimensions of optimization that on-device systems should target. From a power perspective, the brain consumes just 20 W total, with approximately 10 W dedicated to active learning and memory consolidation, an energy budget comparable to what mobile devices can sustainably allocate to on-device learning during charging periods. Memory efficiency comes from sparse, distributed representations where only 1--2 percent of neurons activate simultaneously during any cognitive task, dramatically reducing the computational and storage requirements compared to dense neural networks. Learning efficiency manifests through few-shot learning capabilities that enable adaptation from single exposures, along with continuous adaptation mechanisms that avoid catastrophic forgetting when integrating new knowledge. Hierarchical processing organizes information across multiple scales, from low-level sensory inputs to high-level abstract reasoning, enabling efficient reuse of learned features across different tasks and contexts.
 

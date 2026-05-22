@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Post-render guard: fail the build if any unresolved cross-reference literal
-(`?@xxx-yyy`) remains in the rendered output.
+(`?@xxx-yyy`) remains in the rendered output or generated search index.
 
 WHY THIS EXISTS
 ---------------
@@ -47,11 +47,10 @@ from pathlib import Path
 RESIDUAL_XREF_RE = re.compile(r'\?@([a-z]+-[a-zA-Z0-9_-]+)')
 
 # Files inside the build tree we never want to scan (third-party assets that
-# can legitimately contain `?@` substrings in minified JS, search indexes,
-# EPUB nav/cover/title pages, etc.)
+# can legitimately contain `?@` substrings in minified JS, EPUB nav/cover/title
+# pages, etc.)
 SKIP_PATH_FRAGMENTS = (
     "site_libs/",
-    "search.json",
     "sitemap.xml",
     "robots.txt",
     "nav.xhtml",
@@ -59,7 +58,7 @@ SKIP_PATH_FRAGMENTS = (
     "title_page.xhtml",
 )
 
-CONTENT_GLOBS = ("*.html", "*.xhtml")
+CONTENT_GLOBS = ("*.html", "*.xhtml", "search.json")
 
 
 def _iter_files(build_dir: Path):

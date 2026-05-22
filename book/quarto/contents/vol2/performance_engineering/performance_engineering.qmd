@@ -1542,9 +1542,9 @@ The potential benefit of communication-computation overlap depends on the relati
 # │ Goal: Quantify training step speedup from overlapping ring-AllReduce with
 # │       backward pass for a 7B model on 8 H100 GPUs over NVLink (900 GB/s),
 # │       at 40% MFU, to show when overlap fully hides communication overhead.
-# │ Show: ~14 GB gradients; ~145 ms backward; ~31 ms AllReduce; step drops from
-# │       ~249 ms (no overlap) to ~217 ms (with overlap) -> ~1.14x speedup—inline.
-# │ How: AllReduce time = 2 * gradient_bytes/nvlink_bw; backward time =
+# │ Show: ~14 GB gradients; ~145 ms backward; ~27 ms AllReduce; step drops from
+# │       ~245 ms (no overlap) to ~217 ms (with overlap) -> ~1.13x speedup—inline.
+# │ How: AllReduce time = 2*(N-1)/N * gradient_bytes/nvlink_bw; backward time =
 # │       backward_flops / (h100_tflops * MFU); overlap removes min(back, AR).
 # │
 # │ Imports: mlsysim.core.constants (NVLINK_H100_BW, H100_FLOPS_FP16_TENSOR,
@@ -1565,7 +1565,7 @@ class OverlapCalc:
     bytes_per_param_fp16 = 2     # FP16 gradients
     num_gpus = 8
     nvlink_bw = NVLINK_H100_BW.m_as(byte/second)  # H100 NVLink: 900 GB/s bidirectional
-    ring_allreduce_factor = 2    # Ring AllReduce: 2*(N-1)/N ≈ 2 for large N
+    ring_allreduce_factor = 2 * (num_gpus - 1) / num_gpus
 
     # Backward pass compute: ~2 * forward FLOPs (gradient computation)
     # Forward FLOPs ≈ 2 * params * seq_len * batch_per_gpu
@@ -1608,6 +1608,7 @@ class OverlapCalc:
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     gradient_gb_str = fmt((gradient_bytes * byte).m_as(GB), precision=0, commas=False)
+    ring_allreduce_factor_str = fmt(ring_allreduce_factor, precision=2, commas=False)
     allreduce_ms_str = fmt(allreduce_time_s * 1000, precision=1, commas=False)
     backward_ms_str = fmt(backward_time_s * 1000, precision=1, commas=False)
     step_no_overlap_ms_str = fmt(step_no_overlap * 1000, precision=1, commas=False)
@@ -1617,7 +1618,7 @@ class OverlapCalc:
     overlap_status_str = MarkdownStr("fully hidden" if can_overlap else "partially hidden")
 ```
 
-Consider a 7B parameter model trained on 8 H100 GPUs within a single node connected by NVLink at 900 GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers approximately $2 \times (N-1)/N \approx 2$ times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
+Consider a 7B parameter model trained on 8 H100 GPUs within a single node connected by NVLink at 900 GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers $2 \times (N-1)/N =$ `{python} OverlapCalc.ring_allreduce_factor_str` times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
 
 Without overlap, the training step requires `{python} OverlapCalc.step_no_overlap_ms_str` ms (forward + backward + AllReduce). With overlap, the AllReduce is `{python} OverlapCalc.overlap_status_str` behind the backward pass, reducing the step time to `{python} OverlapCalc.step_overlap_ms_str` ms, a `{python} OverlapCalc.overlap_speedup_str`$\times$ improvement. This example illustrates a critical property: overlap is most effective when backward compute time exceeds AllReduce time. As @fig-overlap-budget shows, as cluster scale increases from 8 to 1024 GPUs, overlap efficiency degrades from ~90 percent to ~18 percent because communication overhead eventually exceeds the computation budget. For smaller models or slower interconnects (for example, PCIe at 64 GB/s instead of NVLink at 900 GB/s), the AllReduce would exceed the backward pass, and no amount of overlap can fully hide the communication.
 

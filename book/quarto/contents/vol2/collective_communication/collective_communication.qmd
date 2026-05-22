@@ -472,10 +472,10 @@ class LogPOverlap:
     compute_us = 500
     # ┌── 2. EXECUTE ───────────────────────────────────────
     two_o_us = 2 * o_us
-    effective_us = max(compute_us, L_us + two_o_us)
+    effective_us = two_o_us + max(compute_us, L_us)
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(two_o_us == 100, f"2o = {two_o_us}, expected 100")
-    check(effective_us == 500, f"Effective = {effective_us}, expected 500")
+    check(effective_us == 600, f"Effective = {effective_us}, expected 600")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     L_str = fmt(L_us, precision=0, commas=False)
     two_o_str = fmt(two_o_us, precision=0, commas=False)
@@ -495,7 +495,7 @@ class LogPOverlap:
 4.  **Hidden**\index{Hidden}: All `{python} LogPOverlap.L_str` μs of $L_{\text{lat}}$ can overlap with compute.
 5.  **Exposed**\index{Exposed}: The `{python} LogPOverlap.two_o_str` μs of $o$ cannot overlap.
 
-**Effective time**\index{Effective Time}: max(`{python} LogPOverlap.compute_str`, `{python} LogPOverlap.L_str` + `{python} LogPOverlap.two_o_str`) = `{python} LogPOverlap.effective_str` $\mu$s (communication hidden!). @fig-comm-compute-overlap shows this overlap visually.
+**Effective time**\index{Effective Time}: `{python} LogPOverlap.two_o_str` $\mu$s + max(`{python} LogPOverlap.compute_str`, `{python} LogPOverlap.L_str`) = `{python} LogPOverlap.effective_str` $\mu$s. The network latency is hidden, but the processor overhead remains exposed. @fig-comm-compute-overlap shows this overlap visually.
 
 **Systems insight**: The α-β model captures the total communication time. The LogP model reveals **how much of it can be hidden**. When designing pipelined training, optimize for low $o$ (kernel bypass, GPUDirect) rather than high $\beta$ alone.
 
@@ -611,7 +611,7 @@ The total hierarchical AllReduce takes approximately `{python} LlamaBudgetCalc.h
 
 ### Theory vs. practice: The NCCL reality gap {#sec-communication-nccl-reality}
 
-The bandwidth-latency trade-off (Principle \ref{pri-alpha-beta-model}) provides useful first-order predictions, but real communication libraries introduce overheads that the idealized $\alpha$-$\beta$ model does not capture. NCCL, the dominant GPU communication library, adds protocol negotiation, memory registration, and internal pipelining that modify the effective alpha and beta values. @tbl-nccl-vs-theory compares alpha-beta predictions against measured NCCL performance for common message sizes on an 8-node DGX H100 cluster (64 GPUs, InfiniBand NDR 400G).
+The bandwidth-latency trade-off (Principle \ref{pri-alpha-beta-model}) provides useful first-order predictions, but real communication libraries introduce overheads that the idealized $\alpha$-$\beta$ model does not capture. NCCL, the dominant GPU communication library, adds protocol negotiation, memory registration, and internal pipelining that modify the effective alpha and beta values. @tbl-nccl-vs-theory compares one-message alpha-beta payload predictions against measured NCCL performance for common message sizes on an 8-node DGX H100 cluster (64 GPUs, InfiniBand NDR 400G).
 
 | **Message Size** | **$\alpha$-$\beta$ Prediction** | **Measured NCCL** | **Ratio (Measured/Predicted)** | **Explanation**                         |
 |:-----------------|--------------------------------:|------------------:|-------------------------------:|:----------------------------------------|
@@ -622,7 +622,7 @@ The bandwidth-latency trade-off (Principle \ref{pri-alpha-beta-model}) provides 
 | 1 GB             |                          ~20 ms |            ~23 ms |                  ~1.15$\times$ | Bandwidth-dominant; NCCL nearly optimal |
 | 10 GB            |                         ~200 ms |           ~215 ms |                  ~1.08$\times$ | Large payloads saturate the wire        |
 
-: **$\alpha$-$\beta$ Predictions vs. Measured NCCL Performance**: For small messages, NCCL's protocol overhead (memory registration, channel setup, kernel launch) inflates the effective latency by 7--8$\times$ over the bare-wire alpha. For large messages, NCCL achieves within 8--15 percent of theoretical bandwidth, validating the model's predictions in the bandwidth-bound regime. Values are illustrative reference numbers for Ring AllReduce on 8-node DGX H100 clusters with InfiniBand NDR 400G; actual measurements vary with topology, NCCL version, and tuning. {#tbl-nccl-vs-theory}
+: **$\alpha$-$\beta$ Predictions vs. Measured NCCL Performance**: For small messages, NCCL's protocol overhead (memory registration, channel setup, kernel launch) inflates the effective latency by 7--8$\times$ over the bare-wire alpha. For large messages, NCCL achieves within 8--15 percent of theoretical bandwidth, validating the one-message payload model in the bandwidth-bound regime. Values are illustrative reference numbers for an effective NCCL payload-transfer model on 8-node DGX H100 clusters with InfiniBand NDR 400G; actual collective timings vary with algorithm, topology, NCCL version, and tuning. {#tbl-nccl-vs-theory}
 
 The table reveals two critical lessons. First, the alpha-beta model underestimates small-message latency by 7--8$\times$ because it accounts only for wire-level propagation, not the software stack overhead. For latency-sensitive operations (tensor parallelism AllReduce, MoE token routing), the effective alpha is 5--10$\times$ higher than the physical wire latency. Second, for large messages the model is accurate to within 8--15 percent, confirming that bandwidth is the binding constraint and that NCCL's internal optimizations (channel pipelining, kernel fusion) successfully saturate the available links.
 
@@ -702,7 +702,6 @@ To make the AllToAll pattern concrete, consider a Mixture of Experts model with 
 #| label: moe-alltoall-calc
 #| echo: false
 from mlsysim.fmt import check, fmt
-from mlsysim.core.constants import KB, MB
 
 class MoeAllToAll:
     # ┌── 1. LOAD ──────────────────────────────────────────
@@ -717,32 +716,33 @@ class MoeAllToAll:
     tokens_per_gpu = total_tokens // n_gpus
     experts_per_gpu = n_experts // n_gpus
     bytes_per_token = hidden_dim * bytes_per_elem
-    kb_per_token = bytes_per_token / 1024  # binary KB (4096 B = 4 KiB)
+    kb_per_token = bytes_per_token / 1000
     tokens_per_expert = total_tokens // n_experts
     tokens_per_transfer = tokens_per_gpu // n_gpus
     remote_gpus = n_gpus - 1
     data_per_transfer_kb = tokens_per_transfer * kb_per_token
     total_sent_kb = remote_gpus * data_per_transfer_kb
-    total_sent_mb = (total_sent_kb * KB).m_as(MB)
-    bw_time_us = data_per_transfer_kb * 1e3 / (beta_gbs * 1e9) * 1e6
+    total_sent_mb = total_sent_kb / 1000
+    data_per_transfer_bytes = tokens_per_transfer * bytes_per_token
+    bw_time_us = data_per_transfer_bytes / (beta_gbs * 1e9) * 1e6
     bw_time_us_approx = round(bw_time_us)
     per_transfer_us = alpha_us + bw_time_us_approx
     serialized_us = remote_gpus * per_transfer_us
     parallel_us = per_transfer_us
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(tokens_per_gpu == 512, f"tokens/GPU = {tokens_per_gpu}")
-    check(kb_per_token == 4, f"KB/token = {kb_per_token}")
+    check(abs(kb_per_token - 4.096) < 1e-9, f"KB/token = {kb_per_token}")
     check(tokens_per_expert == 64, f"tokens/expert = {tokens_per_expert}")
-    check(data_per_transfer_kb == 256, f"data/transfer = {data_per_transfer_kb} KB")
+    check(abs(data_per_transfer_kb - 262.144) < 1e-9, f"data/transfer = {data_per_transfer_kb} KB")
     check(per_transfer_us == 8, f"T/transfer = {per_transfer_us} μs")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     alpha_str = fmt(alpha_us, precision=0, commas=False)
     beta_str = fmt(beta_gbs, precision=0, commas=False)
     tokens_per_gpu_str = fmt(tokens_per_gpu, precision=0, commas=False)
     tokens_per_transfer_str = fmt(tokens_per_transfer, precision=0, commas=False)
-    kb_per_token_str = fmt(kb_per_token, precision=0, commas=False)
+    kb_per_token_str = fmt(kb_per_token, precision=3, commas=False)
     tokens_per_expert_str = fmt(tokens_per_expert, precision=0, commas=False)
-    data_per_transfer_kb_str = fmt(data_per_transfer_kb, precision=0, commas=False)
+    data_per_transfer_kb_str = fmt(data_per_transfer_kb, precision=3, commas=False)
     total_sent_mb_str = fmt(total_sent_mb, precision=2, commas=False)
     bw_time_approx_str = fmt(bw_time_us_approx, precision=0, commas=False)
     per_transfer_us_str = fmt(per_transfer_us, precision=0, commas=False)
@@ -1427,7 +1427,7 @@ class ThreeLevelNapkin:
     total_gpus_3l  = n_racks * nodes_per_rack * gpus_per_node_3l
 
     from mlsysim.core.constants import NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second as _sec_3l
-    gradient_3l_gb = 2    # 2 GB gradient (BF16 for a ~250B model)
+    gradient_3l_gb = 2    # 2 GB gradient (BF16 for a ~1B model)
     nvlink_bw_3l   = NVLINK_H100_BW.m_as(GB/_sec_3l)            # H100 NVLink 4.0
     ib_bw_3l       = INFINIBAND_NDR_BW.m_as(GB/_sec_3l)         # InfiniBand NDR 400 Gbps per port
     cross_rack_bw  = ib_bw_3l / 2                                # 2:1 oversubscription
