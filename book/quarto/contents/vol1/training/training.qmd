@@ -99,10 +99,6 @@ class TrainingScenarios:
     gpt3_cost        = 4.6 * MILLION
     gpt2_fwd_flops   = 3e9
     gpt2_total_flops = 1e19
-    loss_spike_val   = 2.5
-    lost_days        = 4
-    lost_cost        = 5000
-    fp16_max_val     = 65504
     adam_example_params_b = 7
     adam_example_params = adam_example_params_b * BILLION
     ckpt_layers = 48
@@ -127,10 +123,6 @@ class TrainingScenarios:
     gpt4_training_cost_est_str  = fmt(gpt4_cost_est/MILLION, precision=0, commas=False)
     gpt2_fwd_flops_str          = fmt_sci(gpt2_fwd_flops)
     gpt2_total_flops_str        = fmt_sci(gpt2_total_flops)
-    loss_spike_val_str          = fmt(loss_spike_val, precision=1, commas=False)
-    lost_days_str               = fmt(lost_days, precision=0, commas=False)
-    lost_cost_str               = fmt(lost_cost, precision=0, commas=True)
-    fp16_max_val_str            = fmt(fp16_max_val, precision=0, commas=True)
     gpt3_gpu_years_str          = fmt(gpt3_gpu_years, precision=0, commas=True)
     gpt3_compute_cost_str       = fmt(gpt3_cost/MILLION, precision=1, commas=False)
     adam_example_params_b_str   = fmt(adam_example_params_b, precision=0, commas=False)
@@ -194,15 +186,15 @@ The chapter proceeds through five stages. First, we formalize the iron law of tr
 
 Before formalizing the iron law, consider how these constraints interact in practice. The theoretical framework matters because failures are expensive: a single *gradient explosion* can erase days of computation worth thousands of dollars.
 
-::: {#ws-training-3am-gradient-explosion .callout-war-story title="The 3AM gradient explosion"}
+::: {#ws-training-palm-loss-spikes .callout-war-story title="The PaLM loss spikes"}
 
-**The context**: A team is training a 7B parameter large language model (LLM). The loss curve has been decreasing smoothly for four days. The engineers leave for the night.
+**The context**: During training of the 540B-parameter PaLM model, the largest run exhibited training-instability behavior that smaller runs did not show.
 
-**The failure**: At 3:00 AM, the training loss suddenly spikes from `{python} TrainingScenarios.loss_spike_val_str` to NaN (Not a Number). The training crashes.
+**The failure**: The training loss spiked roughly 20 times despite gradient clipping. The spikes occurred irregularly, sometimes late in training, and were not explained by a simple "bad data batch" story.
 
-**The consequence**: The team has lost `{python} TrainingScenarios.lost_days_str` days of compute ($\approx$ \$`{python} TrainingScenarios.lost_cost_str`). The mechanism: a single batch contained an outlier with extremely high activation values. In **Mixed Precision (FP16)**, these values exceeded the dynamic range (> `{python} TrainingScenarios.fp16_max_val_str`), causing an overflow to Infinity. The gradients became Infinite\index{Gradient!explosion, physics of}, updating all weights to NaN.
+**The consequence**: The practical mitigation was operational: restart from a checkpoint about 100 steps before the spike and skip roughly 200--500 data batches around the failure window. That avoided recurrence at the same point, but it also showed that frontier training requires planned recovery paths, not only optimizer theory.
 
-**The systems lesson**: Three system-level safeguards prevent this class of failure: checkpointing limits the loss to one hour of compute rather than four days, gradient clipping\index{Gradient Clipping!overflow prevention} caps gradient norms before a single-batch spike can destroy the weights, and BF16\index{BF16!dynamic range advantage} trades precision for range so overflows are far less likely than in standard FP16. The bit-level comparison of BF16 vs. FP16 dynamic range appears in @tbl-numerical-formats, and @fig-float-formats shows the layout that makes the precision-range trade-off concrete.
+**The systems lesson**: Large-scale training stability is an operational problem as much as an optimization problem. Checkpoint cadence, automated loss-spike detection, batch skipping, and numerically robust formats such as BF16\index{BF16!dynamic range advantage} are part of the training system, not afterthoughts [@chowdhery2022palm].
 
 :::
 
@@ -3476,13 +3468,13 @@ Training bottlenecks fall into three categories that map directly to the D·A·M
 
 Profiling tools reveal which bottleneck dominates a given workload. @fig-tf-bottleneck-trace captures a data-bound pathology through TensorFlow's profiler: the gaps in GPU activity (white regions between compute blocks) reveal that the device frequently waits for input data, with utilization dropping to zero during data loading phases.
 
-::: {#ws-training-gil-locked-gpu .callout-war-story title="The GIL-locked GPU"}
+::: {#exmp-training-gil-locked-gpu .callout-example title="The GIL-locked GPU"}
 
-**The context**: A research lab purchased a \$100,000 GPU cluster to accelerate training. They wrote their data loading pipeline in standard Python, using a simple loop to read images, augment them, and feed the GPU.
+**Scenario**: A team writes its data loading pipeline in standard Python, using a simple loop to read images, augment them, and feed the GPU.
 
-**The failure**: Python expert David Beazley demonstrated that the Global Interpreter Lock (GIL) ensures only one thread executes Python bytecode at a time. The data loader, running on the CPU, processed one image, then the GPU processed it instantly, then waited for the next. The CPU was pinned at 100 percent (on one core), while the massive GPU cluster sat at 0 percent utilization for 90 percent of the time.
+**Failure mode**: Python expert David Beazley demonstrated that the Global Interpreter Lock (GIL) ensures only one thread executes Python bytecode at a time. A CPU-bound threaded data loader can therefore pin one core while accelerators wait for the next batch.
 
-**The consequence**: The expensive cluster trained slower than a laptop because the single-threaded CPU pipeline became the bottleneck. The team had optimized the "AI" (the GPU code) but ignored the "System" (the data loader).
+**The consequence**: The accelerator trace shows white space: the GPU is healthy, but it is starved by the input pipeline.
 
 **The systems lesson**: Amdahl's Law is brutal. A serial data pipeline renders a parallel accelerator useless. High-performance training requires multiprocessing (to bypass the GIL) or offloading preprocessing to the accelerator (like NVIDIA DALI) to keep the compute units fed [@beazley2010understanding].
 
