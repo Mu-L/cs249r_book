@@ -546,7 +546,9 @@ For large-scale fleets, detection is computationally nontrivial. A cluster with 
 The traditional gang scheduling model assumes a homogeneous Bulk Synchronous Parallel (BSP) workload: $N$ identical workers executing the exact same compute graph. However, advanced training paradigms fundamentally break this assumption. Reinforcement Learning from Human Feedback (RLHF) requires running four models of different sizes simultaneously: an Actor model (training), a Critic model (training), a Reference model (inference), and a Reward model (inference).
 
 ::: {#psp-fleet-orchestration-routing-over-synchrony .callout-perspective title="Routing over synchrony"}
+
 This necessitates **Heterogeneous Gang Scheduling**\index{Heterogeneous Gang Scheduling}. The scheduler must atomically allocate a diverse constellation of resources—high-HBM nodes optimized for memory-bound inference generation, alongside high-compute nodes for compute-bound backpropagation. The orchestration challenge shifts from static topological bin-packing to dynamic data routing. Activations and gradients are no longer just reduced within a homogeneous ring; instead, data must stream continuously between inference nodes generating rollouts and training nodes computing policy updates. If the heterogeneous gang allocation is not perfectly balanced across these distinct workload profiles, the entire cluster falls out of sync, leaving expensive accelerators starved for data.
+
 :::
 
 The tension between gang scheduling's safety guarantees and backfill's utilization gains defines the core trade-off in training cluster scheduling. Gang scheduling prevents deadlock but wastes resources; backfill improves utilization but requires runtime estimates that users cannot accurately provide. The next section examines how the two dominant orchestration paradigms resolve this tension through fundamentally different architectural philosophies.
@@ -929,9 +931,13 @@ Migration is not free; it requires a coordinated checkpoint, a job kill, a resch
 
 ::: {#ws-fleet-orchestration-silent-switch-failure .callout-war-story title="The silent switch failure"}
 
-A major research lab spent a week debugging a 30 percent performance regression in their flagship foundation model training run. The GPUs were healthy, the code was unchanged, and the job was placed on a "prime" pod with full bisection bandwidth. The culprit was a single top-of-rack switch with a corrupted transceiver. The switch was technically "up" and passing standard health checks (ping, link status), but it was silently dropping 50 percent of packets due to CRC errors, forcing massive TCP retransmissions.
+**The context**: A major research lab spent a week debugging a 30 percent performance regression in their flagship foundation model training run. The GPUs were healthy, the code was unchanged, and the job was placed on a "prime" pod with full bisection bandwidth.
 
-Because the scheduler relied on a static topology map, it continued to schedule the most communication-intensive jobs on the degraded rack, assuming full 800 Gb/s connectivity. The fix required shifting from binary health checks (up/down) to **performance-aware topology monitoring**\index{Performance-Aware Topology Monitoring}, where the scheduler integrates real-time bandwidth counters from the switch fabric. Nodes connected to a "limping" switch are now dynamically **tainted**\index{Tainted}, forcing the scheduler to route high-bandwidth jobs elsewhere until the hardware is replaced.
+**The failure**: The culprit was a single top-of-rack switch with a corrupted transceiver. The switch was technically "up" and passing standard health checks (ping, link status), but it was silently dropping 50 percent of packets due to CRC errors, forcing massive TCP retransmissions.
+
+**The consequence**: Because the scheduler relied on a static topology map, it continued to schedule the most communication-intensive jobs on the degraded rack, assuming full 800 Gb/s connectivity.
+
+**The systems lesson**: The fix required shifting from binary health checks (up/down) to **performance-aware topology monitoring**\index{Performance-Aware Topology Monitoring}, where the scheduler integrates real-time bandwidth counters from the switch fabric. Nodes connected to a "limping" switch are now dynamically **tainted**\index{Tainted}, forcing the scheduler to route high-bandwidth jobs elsewhere until the hardware is replaced.
 
 :::
 
@@ -1298,7 +1304,13 @@ The same need for contingency planning becomes acute when spot interruptions are
 
 ::: {#ws-fleet-orchestration-spot-market-crash .callout-war-story title="The spot market crash"}
 
-A major AI lab configured their entire research fleet to use spot instances in a single cloud region to save costs. Two days before a top-tier conference deadline, a massive wave of last-minute experiments from thousands of researchers worldwide hit the same region. The spot market "crashed": prices spiked to equal on-demand rates, and the provider reclaimed 90 percent of the lab's spot instances within a 15-minute window. Dozens of paper-critical training runs died simultaneously. The lab had no fallback strategy to shift to on-demand capacity or other regions. The lesson: spot capacity is correlated with global research deadlines. A robust scheduler must have a "break glass" capability to flee to on-demand capacity when the spot market becomes toxic.
+**The context**: A major AI lab configured their entire research fleet to use spot instances in a single cloud region to save costs. Two days before a top-tier conference deadline, a massive wave of last-minute experiments from thousands of researchers worldwide hit the same region.
+
+**The failure**: The spot market "crashed": prices spiked to equal on-demand rates, and the provider reclaimed 90 percent of the lab's spot instances within a 15-minute window.
+
+**The consequence**: Dozens of paper-critical training runs died simultaneously. The lab had no fallback strategy to shift to on-demand capacity or other regions.
+
+**The systems lesson**: Spot capacity is correlated with global research deadlines. A robust scheduler must have a "break glass" capability to flee to on-demand capacity when the spot market becomes toxic.
 
 :::
 
@@ -1496,9 +1508,13 @@ The risk is not only implementation cost; a scheduler can also optimize a metric
 
 ::: {#ws-fleet-orchestration-scheduler-that-optimized-wrong-metric .callout-war-story title="The scheduler that optimized the wrong metric"}
 
-A platform team at a major autonomous vehicle company deployed a custom scheduler designed to minimize average job completion time (JCT), a standard academic metric. The logic was sound: by prioritizing shorter jobs, the queue clears faster, and developer velocity increases.
+**The context**: A platform team at a major autonomous vehicle company deployed a custom scheduler designed to minimize average job completion time (JCT), a standard academic metric. The logic was sound: by prioritizing shorter jobs, the queue clears faster, and developer velocity increases.
 
-The result was a disaster for the model architecture team. The scheduler correctly identified that their massive Transformer pretraining jobs would take weeks to complete. To minimize average JCT, it continuously preempted these long-running jobs to squeeze in thousands of short, minute-long debugging and visualization tasks submitted by other teams. While the *average wait time* dropped by 40 percent, the *P99 wait time* for critical-path training jobs exploded from 4 hours to 9 days. The core product, the autonomous driving model, effectively stopped learning for two weeks. The team learned that optimizing for an aggregate metric without distinct Quality of Service (QoS) tiers for different workload classes (interactive vs. batch vs. production) is a recipe for organizational paralysis.
+**The failure**: The scheduler correctly identified that their massive Transformer pretraining jobs would take weeks to complete. To minimize average JCT, it continuously preempted these long-running jobs to squeeze in thousands of short, minute-long debugging and visualization tasks submitted by other teams.
+
+**The consequence**: While the *average wait time* dropped by 40 percent, the *P99 wait time* for critical-path training jobs exploded from 4 hours to 9 days. The core product, the autonomous driving model, effectively stopped learning for two weeks.
+
+**The systems lesson**: Optimizing for an aggregate metric without distinct Quality of Service (QoS) tiers for different workload classes (interactive vs. batch vs. production) is a recipe for organizational paralysis.
 
 :::
 
@@ -1992,9 +2008,13 @@ A concrete quota incident shows how quickly idle reservations become expensive.
 
 ::: {#ws-fleet-orchestration-quota-hoarding-incident .callout-war-story title="The quota hoarding incident"}
 
-A computer vision team at a major logistics company reserved a block of 500 GPUs for a "critical" urgent model refresh. Due to upstream data delays, the training jobs were postponed, but the team retained the reservation to ensure availability "when the data arrives." The GPUs sat idle for three weeks, a capital waste of roughly \$`{python} QuotaHoardingCost.hoarding_cost_str`, while the NLP team's queues overflowed, delaying a chatbot release by a month.
+**The context**: A computer vision team at a major logistics company reserved a block of 500 GPUs for a "critical" urgent model refresh.
 
-The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
+**The failure**: Due to upstream data delays, the training jobs were postponed, but the team retained the reservation to ensure availability "when the data arrives."
+
+**The consequence**: The GPUs sat idle for three weeks, a capital waste of roughly \$`{python} QuotaHoardingCost.hoarding_cost_str`, while the NLP team's queues overflowed, delaying a chatbot release by a month.
+
+**The systems lesson**: The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
 
 :::
 
@@ -2309,12 +2329,12 @@ Mastery of fleet orchestration requires a shift from algorithm design to rigorou
 
 ::: {.callout-takeaways title="Scheduling is systems engineering"}
 
-* **Distributed scheduling is fundamentally hard**\index{Distributed Scheduling Is Fundamentally Hard}: Cluster scheduling faces challenges (partial failures, network partitions, state inconsistency) that single-machine schedulers never encounter. The CAP theorem forces trade-offs between consistency and availability that shape every scheduling system's design.
-* **Gang scheduling prevents deadlock but reduces flexibility**\index{Gang Scheduling!prevents deadlock but reduces flexibility}: Distributed training requires atomic resource allocation to prevent hold-and-wait deadlocks, but rigid gang scheduling wastes resources when combined with backfill timeouts and elastic training alternatives.
-* **Topology determines performance**\index{Topology Determines Performance}: Where GPUs are placed within the cluster hierarchy matters as much as how many GPUs a job receives. NVLink vs. InfiniBand placement decisions can create 15 to 30 percent throughput differences for the same job on the same hardware.
-* **ML-specific scheduling outperforms generic approaches**\index{ML-Specific Scheduling Outperforms Generic Approaches}: Exploiting workload characteristics (predictable resource needs, iterative computation, diminishing returns) enables 40 to 60 percent improvements in job completion time compared to general-purpose FIFO or fair-share policies.
+* **Distributed scheduling is fundamentally hard**: Cluster scheduling\index{Distributed Scheduling!challenges} faces challenges (partial failures, network partitions, state inconsistency) that single-machine schedulers never encounter. The CAP theorem forces trade-offs between consistency and availability that shape every scheduling system's design.
+* **Gang scheduling prevents deadlock but reduces flexibility**: Distributed training\index{Gang Scheduling!deadlock prevention} requires atomic resource allocation to prevent hold-and-wait deadlocks, but rigid gang scheduling wastes resources when combined with backfill timeouts and elastic training alternatives.
+* **Topology determines performance**: Where GPUs are placed within the cluster hierarchy\index{Scheduling!topology awareness} matters as much as how many GPUs a job receives. NVLink vs. InfiniBand placement decisions can create 15 to 30 percent throughput differences for the same job on the same hardware.
+* **ML-specific scheduling outperforms generic approaches**: Exploiting workload characteristics\index{Scheduling!ML-specific policies} (predictable resource needs, iterative computation, diminishing returns) enables 40 to 60 percent improvements in job completion time compared to general-purpose FIFO or fair-share policies.
 * **Utilization is a first-order economic driver**: Improving cluster utilization from 50 percent to 80 percent on a large cluster effectively adds thousands of GPUs worth of capacity. Closing this gap through policy and algorithm work pays back faster than buying additional accelerators.
-* **Policies must evolve with infrastructure**\index{Policies Must Evolve with Infrastructure}: Scheduling algorithms are only as effective as the policies they implement. When infrastructure changes (heterogeneous hardware additions, topology upgrades, workload mix shifts), policies must be re-evaluated and updated.
+* **Policies must evolve with infrastructure**: Scheduling algorithms\index{Scheduling Policy!infrastructure coupling} are only as effective as the policies they implement. When infrastructure changes (heterogeneous hardware additions, topology upgrades, workload mix shifts), policies must be re-evaluated and updated.
 
 :::
 
