@@ -222,9 +222,9 @@ With the mapping in place, diagnosis becomes a matter of matching symptoms to th
 
 The same classification can be written as a time budget for each distributed step.
 
-The Fleet Law, introduced in @sec-vol2-introduction-c-cube, decomposes every distributed training step into three irreducible time components:
+The Fleet Law, introduced in @sec-vol2-introduction-c-cube, decomposes every distributed training step into the distributed-step time budget:
 
-$$ T_{\text{step}} = T_{\text{Computation}} + T_{\text{Communication}} + T_{\text{Coordination}} $$
+$$ T_{\text{step}}(N) = \frac{T_{\text{compute}}}{N} + T_{\text{comm}}(N) + T_{\text{sync}}(N) - T_{\text{overlap}} $$
 
 This equation is the fleet-scale counterpart of the iron law. Where the iron law decomposes single-machine execution into data movement, compute, and overhead, the Fleet Law decomposes distributed execution into local arithmetic, network data transfer, and synchronization logic. The diagnostic strategy is identical: measure each term, identify which dominates, and direct engineering effort at the dominant term.
 
@@ -232,13 +232,14 @@ This equation is the fleet-scale counterpart of the iron law. Where the iron law
 
 Each Fleet Law term maps to specific measurable activities:
 
-- **$T_{\text{Computation}}$**: Forward pass, backward pass, optimizer step---all local arithmetic on each GPU. Governed by MFU and per-GPU kernel efficiency. Improvements come from better kernels, mixed precision, and operator fusion.
-- **$T_{\text{Communication}}$**: AllReduce of gradients, AllGather of parameters (in FSDP/ZeRO), activation transfers in tensor/pipeline parallelism. Governed by network bandwidth and collective algorithm choice. Improvements come from gradient compression, hierarchical collectives, and compute-communication overlap.
-- **$T_{\text{Coordination}}$**: Synchronization barriers, checkpoint writes, failure detection and recovery, pipeline bubble idle time, scheduler preemptions, and maintenance windows. Governed by cluster reliability and orchestration software. Improvements come from asynchronous checkpointing, elastic training, and faster failure detection.
+- **$T_{\text{compute}}/N$**: Forward pass, backward pass, optimizer step---all local arithmetic after distribution across $N$ devices. Governed by MFU and per-GPU kernel efficiency. Improvements come from better kernels, mixed precision, and operator fusion.
+- **$T_{\text{comm}}(N)$**: AllReduce of gradients, AllGather of parameters (in FSDP/ZeRO), activation transfers in tensor/pipeline parallelism. Governed by network bandwidth and collective algorithm choice. Improvements come from gradient compression, hierarchical collectives, and compute-communication overlap.
+- **$T_{\text{sync}}(N)$**: Synchronization barriers, checkpoint writes, failure detection and recovery, pipeline bubble idle time, scheduler preemptions, and maintenance windows. Governed by cluster reliability and orchestration software. Improvements come from asynchronous checkpointing, elastic training, and faster failure detection.
+- **$T_{\text{overlap}}$**: Communication or coordination time hidden behind useful arithmetic. Governed by scheduling and implementation overlap.
 
 The fleet's efficiency follows directly:
 
-$$ f_{\text{compute}} = \frac{T_{\text{Computation}}}{T_{\text{step}}} $$
+$$ f_{\text{compute}} = \frac{T_{\text{compute}}/N}{T_{\text{step}}(N)} $$
 
 When $f_{\text{compute}}$ drops below 0.5, the fleet spends more time on communication and coordination than on useful arithmetic. This compute-time fraction is not total fleet efficiency; useful fleet efficiency also depends on MFU, scaling efficiency, and goodput. The C$^3$ taxonomy identifies which noncompute term is responsible.
 
@@ -248,7 +249,7 @@ Like D·A·M, the C$^3$ axes interact at their boundaries. Production bottleneck
 
 ### Computation $\cap$ communication {#sec-c3-taxonomy-comp-comm}
 
-This intersection governs whether the system can hide communication behind computation. The **communication-computation ratio** ($\rho = T_{\text{comm}} / T_{\text{comp}}$) is the key metric (@sec-fleet-foundations). When $\rho < 1$, computation takes longer than communication and the network transfer can be overlapped---the system is compute-bound and healthy. When $\rho > 1$, GPUs finish their local work before the network delivers the next round of data, and the system is communication-bound.
+This intersection governs whether the system can hide communication behind computation. The **communication-computation ratio** ($\rho = T_{\text{comm}}(N) / (T_{\text{compute}}/N)$) is the key metric (@sec-fleet-foundations). When $\rho < 1$, computation takes longer than communication and the network transfer can be overlapped---the system is compute-bound and healthy. When $\rho > 1$, GPUs finish their local work before the network delivers the next round of data, and the system is communication-bound.
 
 Engineering at this intersection focuses on overlap strategies: launching AllReduce during the backward pass, using CUDA streams to pipeline local computation with network transfers, and increasing the computation per synchronization point (larger microbatches, gradient accumulation). @sec-distributed-training-systems and @sec-collective-communication cover these techniques in depth.
 
