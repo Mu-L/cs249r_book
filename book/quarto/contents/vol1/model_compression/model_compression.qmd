@@ -57,7 +57,7 @@ from mlsysim.core.constants import (
     ENERGY_DRAM_ACCESS_PJ, ENERGY_DRAM_PJ_PER_BYTE,
     ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_INT8_PJ,
     ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ,
-    Bparam, GB, KiB, byte, ureg
+    Bparam, GB, MB, KiB, TINY_MEM_KIB, byte, ureg
 )
 from mlsysim.fmt import fmt, check, MarkdownStr
 
@@ -83,6 +83,8 @@ class CompressionSetup:
     # Energy from constants (Horowitz 2014, 45nm process)
     energy_dram = ENERGY_DRAM_ACCESS_PJ.m_as(ureg.picojoule)
     energy_dram_per_byte = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/ureg.byte)
+    energy_dram_read_bytes = energy_dram / energy_dram_per_byte
+    energy_dram_read_bits = energy_dram_read_bytes * 8
     energy_flop_fp32 = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.count)
     energy_flop_int8 = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.count)
     energy_add_fp32 = ENERGY_ADD_FP32_PJ.m_as(ureg.picojoule)
@@ -91,6 +93,8 @@ class CompressionSetup:
     energy_dram_read_ratio = energy_dram / energy_add_int8
     energy_int8_mac = energy_flop_int8 + energy_add_int8
     dram_read_vs_int8_mac = energy_dram / energy_int8_mac
+    mobilenet_int8_mem = 3.5 * MB
+    mobilenet_int8_tiny_ratio = mobilenet_int8_mem.m_as(byte) / TINY_MEM_KIB.m_as(byte)
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(llm_7b_mem_fp16_gb > smartphone_ram_gb,
@@ -103,6 +107,10 @@ class CompressionSetup:
           "DRAM reads should exceed INT8 add energy by more than four orders of magnitude.")
     check(dram_read_vs_int8_mac > 1000,
           "DRAM reads should dominate INT8 MAC energy by orders of magnitude.")
+    check(abs(energy_dram_read_bits - 32) < 1e-9,
+          "The 640 pJ DRAM access should correspond to a 32-bit read under the per-byte constant.")
+    check(6 <= mobilenet_int8_tiny_ratio <= 8,
+          "MobileNetV2 INT8 should exceed TinyML memory by about 7x.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     llm_7b_str = fmt(llm_7b_params, precision=0, commas=False)
@@ -115,6 +123,7 @@ class CompressionSetup:
     smartphone_ram_str = fmt(smartphone_ram_gb, precision=0, commas=False)
     mcu_ram_str = fmt(mcu_ram_kb, precision=0, commas=False)
     energy_dram_str = fmt(energy_dram, precision=0, commas=False)
+    energy_dram_read_bits_str = fmt(energy_dram_read_bits, precision=0, commas=False)
     energy_dram_per_byte_str = fmt(energy_dram_per_byte, precision=0, commas=False)
     energy_flop_fp32_str = fmt(energy_flop_fp32, precision=1, commas=False)
     energy_flop_int8_str = fmt(energy_flop_int8, precision=1, commas=False)
@@ -122,6 +131,7 @@ class CompressionSetup:
     energy_dram_read_ratio_str = fmt(energy_dram_read_ratio, precision=0)
     dram_read_vs_int8_mac_str = fmt(dram_read_vs_int8_mac, precision=0)
     int8_energy_reduction_str = fmt(int8_energy_reduction, precision=0, commas=False)
+    mobilenet_int8_tiny_ratio_str = fmt(mobilenet_int8_tiny_ratio, precision=0, commas=False)
 ```
 
 ## Optimization Framework {#sec-model-compression-optimization-framework-9e21}
@@ -142,7 +152,7 @@ Throughout this chapter, we ground each technique in concrete systems: ResNet-50
 
 ***Model Compression***\index{Model Compression!definition} is a family of techniques that reduce a trained model's computational cost and memory footprint by eliminating redundant parameters (pruning), reducing numerical precision (quantization), or transferring learned behavior into a smaller architecture (distillation), while preserving as much predictive accuracy as possible.
 
-1.  **Significance (quantitative)**: Compression directly reduces both iron law terms. INT8 quantization of a `{python} CompressionSetup.llm_175b_str`B-parameter large language model (LLM) cuts weight memory from `{python} CompressionSetup.llm_175b_mem_str` GB (FP16) to `{python} CompressionSetup.llm_175b_mem_int8_str` GB, a `{python} CompressionSetup.llm_175b_fp16_int8_reduction_str`$\times$ reduction in $D_{\text{vol}}$, while Tensor Core INT8 paths can increase compute throughput when kernels and layouts use the supported low-precision path. Unstructured pruning to 50 percent sparsity theoretically halves $O$, but hardware speedup only materializes when sparsity is structured (for example, 2:4 sparse) to match accelerator capabilities.
+1.  **Significance (quantitative)**: Compression directly reduces the iron law's data-movement and compute terms. INT8 quantization of a `{python} CompressionSetup.llm_175b_str`B-parameter large language model (LLM) cuts weight memory from `{python} CompressionSetup.llm_175b_mem_str` GB (FP16) to `{python} CompressionSetup.llm_175b_mem_int8_str` GB, a `{python} CompressionSetup.llm_175b_fp16_int8_reduction_str`$\times$ reduction in $D_{\text{vol}}$, while Tensor Core INT8 paths can increase compute throughput when kernels and layouts use the supported low-precision path. Unstructured pruning to 50 percent sparsity theoretically halves $O$, but hardware speedup only materializes when sparsity is structured (for example, 2:4 sparse) to match accelerator capabilities.
 2.  **Distinction (durable)**: Unlike posttraining compression methods such as pruning and quantization, neural architecture search discovers efficient architectures from scratch by exploring a design space. This chapter treats NAS as a related structural optimization technique: it changes the representation before training rather than compressing a finished model post hoc.
 3.  **Common pitfall**: A frequent misconception is that compression techniques compose without interference. In practice, applying quantization after pruning can amplify quantization error in near-zero weight regions that pruning left behind, causing accuracy degradation that neither technique produces alone.
 
@@ -234,13 +244,13 @@ According to the iron law $(T = \frac{D_{\text{vol}}}{\text{BW}} + \frac{O}{R_{\
 ```{=latex}
 \vspace{-9pt}
 ```
-| **Operation**   | **Bit-Width** |                                                **Relative Energy** |
-|:----------------|--------------:|-------------------------------------------------------------------:|
-| **Integer Add** |         8-bit |                                                          1$\times$ |
-| **Float Add**   |        32-bit |     `{python} CompressionSetup.energy_float_add_ratio_str`$\times$ |
-| **DRAM Read**   |        64-bit | **`{python} CompressionSetup.energy_dram_read_ratio_str`$\times$** |
+| **Operation**   |                                             **Bit-Width** |                                                **Relative Energy** |
+|:----------------|----------------------------------------------------------:|-------------------------------------------------------------------:|
+| **Integer Add** |                                                     8-bit |                                                          1$\times$ |
+| **Float Add**   |                                                    32-bit |     `{python} CompressionSetup.energy_float_add_ratio_str`$\times$ |
+| **DRAM Read**   | `{python} CompressionSetup.energy_dram_read_bits_str`-bit | **`{python} CompressionSetup.energy_dram_read_ratio_str`$\times$** |
 
-: **The Energy Hierarchy**: Relative energy cost of representative arithmetic and memory operations, normalized to an 8-bit integer add. A 32-bit float add costs `{python} CompressionSetup.energy_float_add_ratio_str`$\times$ more than its 8-bit integer counterpart, but a single 64-bit DRAM read costs `{python} CompressionSetup.energy_dram_read_ratio_str`$\times$ more—more than four orders of magnitude above on-chip compute. This gap is why bit-width reductions that shrink data movement dominate the energy budget of inference far more than the arithmetic savings alone would suggest. {#tbl-model-compression-energy-hierarchy}
+: **The Energy Hierarchy**: Relative energy cost of representative arithmetic and memory operations, normalized to an 8-bit integer add. A 32-bit float add costs `{python} CompressionSetup.energy_float_add_ratio_str`$\times$ more than its 8-bit integer counterpart, but a single `{python} CompressionSetup.energy_dram_read_bits_str`-bit DRAM read costs `{python} CompressionSetup.energy_dram_read_ratio_str`$\times$ more—more than four orders of magnitude above on-chip compute. This gap is why bit-width reductions that shrink data movement dominate the energy budget of inference far more than the arithmetic savings alone would suggest. {#tbl-model-compression-energy-hierarchy}
 
 For inference workloads, moving from FP32 to INT8 saves 4$\times$ memory and can reduce the energy per inference by up to `{python} CompressionSetup.int8_energy_reduction_str`$\times$ on hardware with dedicated INT8 units, depending on the compute-to-memory ratio of the workload. The practical impact: a battery lasting one hour or 20 hours.
 
@@ -457,7 +467,7 @@ TinyML\index{TinyML!model compression} makes optimization existential, not optio
 @tbl-model-vs-device quantifies this mismatch using the Lighthouse models from @sec-network-architectures-lighthouse-roster-model-biographies-a763. The gap between model requirements and device capabilities explains *why* compression is not optional for resource-constrained deployment: without it, the models simply cannot run.
 
 \index{Environmental Impact!model compression benefits}
-As @tbl-model-vs-device makes concrete, even aggressively optimized models like MobileNetV2 at INT8 precision exceed TinyML device memory by an order of magnitude. Optimization also contributes to sustainable and accessible AI deployment. Reducing a model's energy footprint is important as AI workloads scale, helping mitigate the environmental impact of large-scale ML training and inference [@patterson2021carbon]. At the same time, optimized models can expand the reach of machine learning, supporting applications in low-resource environments, from rural healthcare to autonomous systems operating in the field.
+As @tbl-model-vs-device makes concrete, even aggressively optimized models like MobileNetV2 at INT8 precision exceed TinyML device memory by about `{python} CompressionSetup.mobilenet_int8_tiny_ratio_str`$\times$. Optimization also contributes to sustainable and accessible AI deployment. Reducing a model's energy footprint is important as AI workloads scale, helping mitigate the environmental impact of large-scale ML training and inference [@patterson2021carbon]. At the same time, optimized models can expand the reach of machine learning, supporting applications in low-resource environments, from rural healthcare to autonomous systems operating in the field.
 
 ```{python}
 #| label: model-device-comparison
@@ -569,7 +579,7 @@ This tension manifests differently across deployment contexts. Training requires
 Optimization is a search for the Pareto frontier.
 
 *   **Region 1: The free lunch**: Techniques like "Operator Fusion" or "Dead Code Elimination" reduce latency without touching accuracy. Do these first.
-*   **Region 2: The efficient trade**: Techniques like "INT8 Quantization" might drop accuracy by 0.5 percent but improve speed by 400 percent. This is usually a winning trade.
+*   **Region 2: The efficient trade**: Techniques like "INT8 Quantization" might drop accuracy by 0.5 percent but produce a 4$\times$ speedup. This is usually a winning trade.
 *   **Region 3: The steep drop**: Aggressive pruning (for example, removing 90 percent of weights) might drop accuracy by 10 percent to gain another 20 percent speedup. This is the **danger zone** where the model becomes useless.
 
 **Systems Rule**: Compression should stop at the "knee" of the curve, where the marginal loss in accuracy exceeds the marginal gain in efficiency.
@@ -3080,7 +3090,7 @@ Beyond computational and memory benefits, the energy costs associated with diffe
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import (
     ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ,
-    ENERGY_DRAM_ACCESS_PJ, ENERGY_FLOP_INT8_PJ, ureg
+    ENERGY_DRAM_ACCESS_PJ, ENERGY_DRAM_PJ_PER_BYTE, ENERGY_FLOP_INT8_PJ, ureg
 )
 from mlsysim.fmt import fmt, check
 
@@ -3096,6 +3106,8 @@ class EnergyDividend:
     e_add_fp32 = ENERGY_ADD_FP32_PJ.m_as('pJ')
     e_add_int8 = ENERGY_ADD_INT8_PJ.m_as('pJ')
     e_dram = ENERGY_DRAM_ACCESS_PJ.m_as(ureg.picojoule)
+    e_dram_per_byte = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/ureg.byte)
+    dram_read_bits = (e_dram / e_dram_per_byte) * 8
     e_int8_mac = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.count) + e_add_int8
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
@@ -3107,12 +3119,15 @@ class EnergyDividend:
     check(dividend >= 25, f"INT8 should be ~30x more efficient than FP32. Ratio: {dividend:.1f}")
     check(dram_read_vs_int8_mac > 1000,
           "A DRAM read should dominate INT8 MAC energy by orders of magnitude.")
+    check(abs(dram_read_bits - 32) < 1e-9,
+          "The 640 pJ DRAM access should correspond to a 32-bit read under the per-byte constant.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     energy_add_fp32_str = fmt(e_add_fp32, precision=2, commas=False)
     energy_add_int8_str = fmt(e_add_int8, precision=2, commas=False)
     energy_dividend_str = fmt(int(dividend), precision=0, commas=False)
     energy_dram_str = fmt(e_dram, precision=0, commas=False)
+    dram_read_bits_str = fmt(dram_read_bits, precision=0, commas=False)
     dram_read_vs_int8_mac_str = fmt(dram_read_vs_int8_mac, precision=0)
 ```
 
@@ -3242,13 +3257,13 @@ While DLRM operates at the terabyte scale, our Smart Doorbell Lighthouse faces t
 
 **The energy and storage constraint**: Our **Smart Doorbell Lighthouse** operates at the opposite extreme of the iron law from DLRM. The deployment table used a roughly 512 KB TinyML capacity where the purpose-built 500 KB DS-CNN keyword spotter fits. A stricter smart-doorbell microcontroller with 256 KB SRAM leaves closer to 100 KB for model weights after runtime buffers, audio windows, and feature extraction state, motivating more aggressive INT4 or binary compression.
 
-In FP32, even the compact DS-CNN architecture consumes 4$\times$ more memory bandwidth and energy per inference than in INT8. For an always-on device running on a coin cell battery, this 4$\times$ energy difference translates directly to battery life: a device that lasts one month on FP32 might last four months on INT8. Here, quantization is the primary lever for the **Energy Term** $(O / (R_{\text{peak}} \cdot \eta_{\text{hw}}))$ of the iron law.
+In FP32, even the compact DS-CNN architecture consumes 4$\times$ more memory bandwidth and energy per inference than in INT8. For an always-on device running on a coin cell battery, this 4$\times$ energy difference translates directly to battery life: a device that lasts one month on FP32 might last four months on INT8. Here, quantization reduces both the data-movement term and the **Compute Term** $(O / (R_{\text{peak}} \cdot \eta_{\text{hw}}))$ of the iron law.
 
 :::
 
-Beyond direct compute savings, reducing numerical precision has a significant impact on memory energy consumption, which often dominates total system power. Lower-precision representations reduce data storage requirements and memory bandwidth usage, leading to fewer and more efficient memory accesses. Accessing memory, particularly off-chip DRAM, is far more energy-intensive than performing arithmetic operations: the representative 64-bit DRAM read used in this chapter costs `{python} EnergyDividend.energy_dram_str` pJ, compared with picojoule-scale cache and arithmetic operations. An instruction's total energy can therefore be dominated by memory access patterns rather than computation[^fn-int8-energy-deployment].
+Beyond direct compute savings, reducing numerical precision has a significant impact on memory energy consumption, which often dominates total system power. Lower-precision representations reduce data storage requirements and memory bandwidth usage, leading to fewer and more efficient memory accesses. Accessing memory, particularly off-chip DRAM, is far more energy-intensive than performing arithmetic operations: the representative `{python} EnergyDividend.dram_read_bits_str`-bit DRAM read used in this chapter costs `{python} EnergyDividend.energy_dram_str` pJ, compared with picojoule-scale cache and arithmetic operations. An instruction's total energy can therefore be dominated by memory access patterns rather than computation[^fn-int8-energy-deployment].
 
-[^fn-int8-energy-deployment]: **INT8 Energy Impact**: The energy dominance of memory access is extreme: with the Horowitz constants used here, a single 64-bit DRAM read costs roughly `{python} EnergyDividend.dram_read_vs_int8_mac_str`$\times$ the energy of an INT8 multiply-accumulate [@horowitz2014]. Quantizing from FP32 to INT8 attacks this disparity on both fronts—4$\times$ fewer bytes moved *and* cheaper arithmetic per operation. Representative MobileNetV2 INT8 measurements show multi-fold energy-per-inference reductions, with most savings coming from reduced memory traffic rather than cheaper arithmetic. \index{Quantization!energy impact}
+[^fn-int8-energy-deployment]: **INT8 Energy Impact**: The energy dominance of memory access is extreme: with the Horowitz constants used here, a single `{python} EnergyDividend.dram_read_bits_str`-bit DRAM read costs roughly `{python} EnergyDividend.dram_read_vs_int8_mac_str`$\times$ the energy of an INT8 multiply-accumulate [@horowitz2014]. Quantizing from FP32 to INT8 attacks this disparity on both fronts—4$\times$ fewer bytes moved *and* cheaper arithmetic per operation. Representative MobileNetV2 INT8 measurements show multi-fold energy-per-inference reductions, with most savings coming from reduced memory traffic rather than cheaper arithmetic. \index{Quantization!energy impact}
 
 Reducing numerical precision thus improves efficiency on two fronts: faster computation and less data movement. This dual benefit is especially valuable for hardware accelerators and edge devices, where memory bandwidth and power efficiency are binding constraints.
 
@@ -5169,7 +5184,7 @@ class V100Specs:
 # │ How: Model memory elimination and launch overhead for ResNet-50.
 # │
 # │ Imports: mlsysim.book (fmt)
-# │ Exports: conv_bn_relu_intermediate_mb_str, gemm_intermediate_mb_str,
+# │ Exports: gemm_intermediate_mb_str,
 # │          feat_map_kb_str, weights_mb_str, bn_params_kb_str,
 # │          unfused_conv_mb_str, unfused_bn_mb_str, unfused_relu_mb_str,
 # │          total_unfused_mb_str, total_fused_mb_str,
@@ -5205,9 +5220,9 @@ class FusionCalc:
     # Step 1: Feature map size (SI MB)
     feat_map_mb = conv_channels * conv_spatial * conv_spatial * bytes_per_element/MILLION
 
-    # Step 2: Conv-BN-ReLU intermediate (2 feature maps written: conv→BN boundary)
-    conv_bn_relu_intermediate_mb = (
-        2 * conv_channels * conv_spatial * conv_spatial * bytes_per_element / MILLION
+    # Step 2: Conv-BN-ReLU intermediate traffic eliminated (2 intermediate maps × read+write)
+    conv_bn_relu_eliminated_traffic_mb = (
+        4 * conv_channels * conv_spatial * conv_spatial * bytes_per_element / MILLION
     )
 
     # Step 3: GEMM intermediate
@@ -5237,7 +5252,6 @@ class FusionCalc:
     check(fusion_speedup > 1, "Fused execution must be faster than unfused.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    conv_bn_relu_intermediate_mb_str = fmt(conv_bn_relu_intermediate_mb, precision=1, commas=False)
     gemm_intermediate_mb_str = fmt(gemm_intermediate_mb, precision=1, commas=False)
     feat_map_kb_str = fmt(feat_map_mb * THOUSAND, precision=0, commas=False)   # MB → KB
     weights_mb_str = fmt(weights_mb, precision=1, commas=False)
@@ -5343,7 +5357,7 @@ class ConvFusionCalc:
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     transfer_reduction_str = fmt(transfer_reduction, precision=0, commas=False)
     conv_bn_relu_mem_math = fmt_math(
-        f"2 \\times 256 \\times 28 \\times 28 \\times 4 \\text{{ bytes}} \\approx \\text{{{FusionCalc.conv_bn_relu_intermediate_mb_str} MB}}"
+        f"4 \\times 256 \\times 28 \\times 28 \\times 4 \\text{{ bytes}} \\approx \\text{{{FusionCalc.conv_bn_relu_eliminated_traffic_mb:.1f} MB}}"
     )
 ```
 
