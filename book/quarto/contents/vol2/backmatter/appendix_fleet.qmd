@@ -20,7 +20,7 @@ This appendix collects the reference numbers and compact models for fleet-scale 
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: PERSISTENT—All values used throughout the Fleet Foundations
 # │          appendix: hardware reference table, MTBF tables, checkpoint sizing,
-# │          effective FLOPS, comm-compute ratio, and all prose inline values.
+# │          effective FLOP/s, comm-compute ratio, and all prose inline values.
 # │
 # │ Goal: Provide all quantitative fleet engineering constants in one place.
 # │ How: pint Quantities from mlsysim.core.constants; fleet formulas from formulas.py.
@@ -110,7 +110,7 @@ class FleetFoundations:
     pfail_8192_24h = calc_failure_probability(mtbf_8192_h, 24 * ureg.hour)
     pfail_100k_24h = calc_failure_probability(mtbf_100k_h, 24 * ureg.hour)
 
-    # Step 2: Effective FLOPS (1024-GPU cluster)
+    # Step 2: Effective FLOP/s (1024-GPU cluster)
     _peak_1024_qty = 1024 * h100_qty
     goodput_ratio = 1.0 - (oh_pipeline + oh_checkpoint + oh_failure + oh_maintenance)
     _eff_flops_1024_qty = calc_effective_flops(
@@ -316,7 +316,7 @@ Just as single-machine analysis depends on a set of core numbers, fleet-scale en
 
 ::: {#psp-appendix-fleet-node-level-numbers .callout-perspective title="Node-level numbers for fleet reasoning"}
 
-Fleet reasoning depends on a few node-level numbers that directly affect fleet design: **about 14 bytes per parameter** for common Adam checkpoint state, with larger footprints when gradients, activations, metadata, or extra optimizer buffers are included; **NVLink vs. HBM bandwidth** (intra-node parallelism placement); **peak FLOPS and HBM capacity** (MFU and effective FLOPS, batch and model sharding). @tbl-fleet-numbers-quick-ref and the communication numbers below give inter-node and current-generation values; the memory hierarchy and roofline ridge points within a node provide the necessary baseline.
+Fleet reasoning depends on a few node-level numbers that directly affect fleet design: **about 14 bytes per parameter** for common Adam checkpoint state, with larger footprints when gradients, activations, metadata, or extra optimizer buffers are included; **NVLink vs. HBM bandwidth** (intra-node parallelism placement); **peak FLOP/s and HBM capacity** (MFU and effective FLOP/s, batch and model sharding). @tbl-fleet-numbers-quick-ref and the communication numbers below give inter-node and current-generation values; the memory hierarchy and roofline ridge points within a node provide the necessary baseline.
 
 :::
 
@@ -326,7 +326,7 @@ Those node-level baselines make the fleet-level ratios easier to interpret.
 
 * **18$\times$ gap**: NVLink bandwidth within a node is ~`{python} FF.nvlink_to_ib_str`$\times$ faster than InfiniBand between nodes. This ratio determines where parallelism boundaries belong---model parallelism within a node, data parallelism across nodes.
 * **MTBF scales as $1/N$**: A cluster's mean time between failures is the single-component MTBF divided by the number of components. At `{python} FF.cl_mega_str` GPUs, expect a failure every `{python} FF.mtbf_100k_min_str` minutes.
-* **~`{python} FF.eff_fraction_pct_str` percent effective utilization**: After MFU, scaling efficiency, and overhead losses compound, a 1,024-GPU cluster delivers roughly `{python} FF.eff_fraction_pct_str` percent of its peak FLOPS as useful training work.
+* **~`{python} FF.eff_fraction_pct_str` percent effective utilization**: After MFU, scaling efficiency, and overhead losses compound, a 1,024-GPU cluster delivers roughly `{python} FF.eff_fraction_pct_str` percent of its peak FLOP/s as useful training work.
 
 :::
 
@@ -373,7 +373,7 @@ class FleetQuickRef:
 |:---------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------|
 | **Communication**          | NVLink ~`{python} FleetQuickRef.nvlink_ib_str`$\times$ IB NDR                                                                                                                                                                                             | Parallelism boundary (in-node vs. cross-node)                       |
 | **Communication**          | IB NDR ~`{python} FleetQuickRef.ib_ndr_gbs_str` GB/s, ~`{python} FleetQuickRef.ib_ndr_us_str` μs one-way                                                                                                                                                  | Inter-node bandwidth and latency                                    |
-| **Computation**            | MFU `{python} FleetQuickRef.mfu_lo_str`--`{python} FleetQuickRef.mfu_hi_str`%, η ~`{python} FleetQuickRef.eff_1024_str`% @ 1K, ~`{python} FleetQuickRef.eff_8192_str`% @ 8K                                                                               | Effective FLOPS and scaling sanity checks                           |
+| **Computation**            | MFU `{python} FleetQuickRef.mfu_lo_str`--`{python} FleetQuickRef.mfu_hi_str`%, $\eta_{\text{scaling}}$ ~`{python} FleetQuickRef.eff_1024_str`% @ 1K, ~`{python} FleetQuickRef.eff_8192_str`% @ 8K                                                         | Effective FLOP/s and scaling sanity checks                          |
 | **Coordination**           | MTBF 8K: ~`{python} FleetQuickRef.mtbf_8k_min_str` min; 100K: ~`{python} FleetQuickRef.mtbf_100k_min_str` min                                                                                                                                             | Failure expectation and checkpoint cadence                          |
 | **Coordination**           | 175B checkpoint ~`{python} FleetQuickRef.ckpt_175_str` GB (14 B/param common Adam state)                                                                                                                                                                  | Recovery and storage sizing                                         |
 | **Coordination**           | Goodput ~`{python} FleetQuickRef.goodput_str`% after overheads                                                                                                                                                                                            | Wall-clock utilization                                              |
@@ -475,18 +475,18 @@ class FleetCommNumbers:
 
 ### Computation numbers {.unnumbered}
 
-Raw peak FLOPS are a necessary but misleading metric for fleet capacity planning. Two multiplicative losses---Model FLOPS Utilization (MFU) and scaling efficiency---reduce effective throughput dramatically. Understanding these losses transforms fleet sizing from guesswork into engineering.
+Raw peak FLOP/s is a necessary but misleading metric for fleet capacity planning. Two multiplicative losses---Model FLOPs Utilization (MFU) and scaling efficiency---reduce effective throughput dramatically. Understanding these losses transforms fleet sizing from guesswork into engineering.
 
-Model FLOPS Utilization (MFU) measures what fraction of peak FLOPS a training workload actually achieves. Well-optimized large-model training on current hardware achieves `{python} FF.mfu_low_str`--`{python} FF.mfu_high_str` percent MFU. The gap comes from memory stalls, kernel launch overhead, pipeline bubbles, and suboptimal operator fusion. MFU below `{python} FF.mfu_low_str` percent signals optimization opportunities; MFU above `{python} FF.mfu_high_str` percent indicates excellent hardware utilization.
+Model FLOPs Utilization (MFU) measures what fraction of peak FLOP/s a training workload actually achieves. Well-optimized large-model training on current hardware achieves `{python} FF.mfu_low_str`--`{python} FF.mfu_high_str` percent MFU. The gap comes from memory stalls, kernel launch overhead, pipeline bubbles, and suboptimal operator fusion. MFU below `{python} FF.mfu_low_str` percent signals optimization opportunities; MFU above `{python} FF.mfu_high_str` percent indicates excellent hardware utilization.
 
-Scaling efficiency ($\eta_{\text{hw}}$) measures how much useful computation survives as accelerators are added. @tbl-fleet-scaling-efficiency shows the empirical ranges for well-optimized distributed training.
+Scaling efficiency ($\eta_{\text{scaling}}$) measures how much useful computation survives as accelerators are added. @tbl-fleet-scaling-efficiency shows the empirical ranges for well-optimized distributed training.
 
-| **Cluster Size** | **Scaling Efficiency ($\eta_{\text{hw}}$)** | **Implication**                                       |
-|:-----------------|:--------------------------------------------|:------------------------------------------------------|
-| **32 GPUs**      | ~`{python} FF.eff_32_str`%                  | Near-linear scaling; communication is negligible      |
-| **256 GPUs**     | ~`{python} FF.eff_256_str`%                 | Communication starts to erode throughput              |
-| **1,024 GPUs**   | ~`{python} FF.eff_1024_str`%                | Significant overhead; optimization critical           |
-| **8,192 GPUs**   | ~`{python} FF.eff_8192_str`%                | Fleet-scale regime; 65 percent of compute is overhead |
+| **Cluster Size** | **Scaling Efficiency ($\eta_{\text{scaling}}$)** | **Implication**                                       |
+|:-----------------|:-------------------------------------------------|:------------------------------------------------------|
+| **32 GPUs**      | ~`{python} FF.eff_32_str`%                       | Near-linear scaling; communication is negligible      |
+| **256 GPUs**     | ~`{python} FF.eff_256_str`%                      | Communication starts to erode throughput              |
+| **1,024 GPUs**   | ~`{python} FF.eff_1024_str`%                     | Significant overhead; optimization critical           |
+| **8,192 GPUs**   | ~`{python} FF.eff_8192_str`%                     | Fleet-scale regime; 65 percent of compute is overhead |
 
 : **Scaling Efficiency by Cluster Size**: Efficiency degrades roughly as the logarithm of cluster size. These ranges assume well-optimized data parallelism with gradient compression. Poorly optimized systems can lose 2--3$\times$ more. {#tbl-fleet-scaling-efficiency}
 
@@ -698,13 +698,13 @@ class FleetHardwareRef:
     mi300x_tdp_str   = fmt(FF.mi300x_tdp, precision=0)
 ```
 
-| **Spec**             | **NVIDIA B200**                                   | **AMD MI300X**                                      | **Google TPU v6**                                  |
-|:---------------------|:--------------------------------------------------|:----------------------------------------------------|:---------------------------------------------------|
-| **BF16/FP16 Peak**   | `{python} FleetHardwareRef.b200_flops_str` TFLOPS | `{python} FleetHardwareRef.mi300x_flops_str` TFLOPS | `{python} FleetHardwareRef.tpuv6_flops_str` TFLOPS |
-| **Memory Bandwidth** | `{python} FF.b200_bw_tbs_str` TB/s                | `{python} FF.mi300x_bw_tbs_str` TB/s                | `{python} FF.tpuv6_bw_tbs_str` TB/s                |
-| **HBM Capacity**     | `{python} FleetHardwareRef.b200_cap_str` GB       | `{python} FleetHardwareRef.mi300x_cap_str` GB       | `{python} FleetHardwareRef.tpuv6_cap_str` GB       |
-| **Intra-Node Link**  | 1,800 GB/s (NVLink 5.0)                           | ~890 GB/s (Infinity Fab)                            | ~2,000 GB/s (estimated)                            |
-| **TDP**              | `{python} FleetHardwareRef.b200_tdp_str` W        | `{python} FleetHardwareRef.mi300x_tdp_str` W        | ~600 W (estimated)                                 |
+| **Spec**             | **NVIDIA B200**                                    | **AMD MI300X**                                       | **Google TPU v6**                                   |
+|:---------------------|:---------------------------------------------------|:-----------------------------------------------------|:----------------------------------------------------|
+| **BF16/FP16 Peak**   | `{python} FleetHardwareRef.b200_flops_str` TFLOP/s | `{python} FleetHardwareRef.mi300x_flops_str` TFLOP/s | `{python} FleetHardwareRef.tpuv6_flops_str` TFLOP/s |
+| **Memory Bandwidth** | `{python} FF.b200_bw_tbs_str` TB/s                 | `{python} FF.mi300x_bw_tbs_str` TB/s                 | `{python} FF.tpuv6_bw_tbs_str` TB/s                 |
+| **HBM Capacity**     | `{python} FleetHardwareRef.b200_cap_str` GB        | `{python} FleetHardwareRef.mi300x_cap_str` GB        | `{python} FleetHardwareRef.tpuv6_cap_str` GB        |
+| **Intra-Node Link**  | 1,800 GB/s (NVLink 5.0)                            | ~890 GB/s (Infinity Fab)                             | ~2,000 GB/s (estimated)                             |
+| **TDP**              | `{python} FleetHardwareRef.b200_tdp_str` W         | `{python} FleetHardwareRef.mi300x_tdp_str` W         | ~600 W (estimated)                                  |
 
 : **Fleet-Scale Hardware Reference (c. 2025--2026)**: Per-accelerator specifications for the current and emerging generations. The B200, MI300X, and Tensor Processing Unit (TPU) v6 (Trillium) represent the frontier of fleet-scale compute density and memory bandwidth. {#tbl-fleet-hardware-ref}
 
@@ -891,11 +891,11 @@ The key insight for fleet-scale ML is that weak scaling is not just a mathematic
 #| label: fleet-effective-flops
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
-# │ FLEET EFFECTIVE FLOPS—1,024-GPU COMPOUND LOSS
+# │ FLEET EFFECTIVE FLOP/s—1,024-GPU COMPOUND LOSS
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: @sec-fleet-foundations-weak-scaling-fleet compound-loss callout
 # │
-# │ Goal: Format peak and effective FLOPS; build display math (vol1 pattern:
+# │ Goal: Format peak and effective FLOP/s; build display math (vol1 pattern:
 # │       no {python} inside $...$ or $$...$$).
 # │ Show: FleetEffectiveFlops.effective_eq_math display equation; peak, eff_pct etc. in prose.
 # │ How: fmt() on FF values; build MarkdownStr() display math from formatted strings.
@@ -922,19 +922,19 @@ class FleetEffectiveFlops:
 
     effective_eq_math = MarkdownStr(
         f"$$= {_peak_str} \\times {_mfu_fmt} \\times {_scaling_fmt} \\times {_goodput_fmt} "
-        f"\\approx {_eff_str} \\text{{ TFLOPS}}$$"
+        f"\\approx {_eff_str} \\text{{ TFLOP/s}}$$"
     )
 ```
 
 ::: {#psp-appendix-fleet-compound-loss-utilization .callout-perspective title="The compound loss of fleet utilization"}
 
-A 1,024-GPU H100 cluster has a peak aggregate throughput of `{python} FleetEffectiveFlops.peak_str` TFLOPS. After the three multiplicative losses, the effective throughput is:
+A 1,024-GPU H100 cluster has a peak aggregate throughput of `{python} FleetEffectiveFlops.peak_str` TFLOP/s. After the three multiplicative losses, the effective throughput is:
 
 $$\text{Effective} = \text{Peak} \times \text{MFU} \times \eta_{\text{scaling}} \times \text{Goodput Ratio}$$
 
 `{python} FleetEffectiveFlops.effective_eq_math`
 
-The cluster delivers `{python} FleetEffectiveFlops.eff_pct_str` percent of its peak FLOPS as useful training work. The remaining `{python} FleetEffectiveFlops.loss_pct_str` percent is explained by retained factors of `{python} FleetEffectiveFlops.mfu_pct_str` percent MFU, `{python} FleetEffectiveFlops.scaling_pct_str` percent scaling efficiency, and `{python} FleetEffectiveFlops.goodput_pct_str` percent goodput.
+The cluster delivers `{python} FleetEffectiveFlops.eff_pct_str` percent of its peak FLOP/s as useful training work. The remaining `{python} FleetEffectiveFlops.loss_pct_str` percent is explained by retained factors of `{python} FleetEffectiveFlops.mfu_pct_str` percent MFU, `{python} FleetEffectiveFlops.scaling_pct_str` percent scaling efficiency, and `{python} FleetEffectiveFlops.goodput_pct_str` percent goodput.
 
 This is not a failure of engineering---it is the physics of fleet-scale computation. Every additional GPU adds less marginal useful work, but the total throughput still far exceeds what a smaller cluster could achieve. The goal is not to reach 100 percent utilization; the goal is to deliver trained models faster than any smaller configuration could.
 
@@ -1033,7 +1033,7 @@ Air cooling physically cannot remove heat fast enough above ~`{python} FF.air_li
 * **Three paradigms, one hybrid**: ML fleets combine HPC's tight coupling (for training) with WSC's elastic fault tolerance (for inference), creating a new architectural paradigm that cannot adopt either predecessor's patterns wholesale.
 * **The `{python} FleetCommNumbers.nvlink_to_ib_str`$\times$ bandwidth gap**: NVLink provides ~`{python} FleetCommNumbers.nvlink_to_ib_str`$\times$ more bandwidth than InfiniBand. This invariant ratio determines parallelism placement: tensor parallelism within nodes, data parallelism across nodes.
 * **Failures become routine at scale**: Cluster MTBF scales as $1/N$. At 8,192 GPUs, expect a GPU failure about every `{python} FleetMtbfTable.mtbf_8192_min_str` minutes, with `{python} FleetMtbfTable.pfail_8192_str` percent probability over 24 hours. Fault tolerance is not optional---it is a prerequisite for completing any fleet-scale training job.
-* **Compound utilization loss**: After MFU (~`{python} FleetEffectiveFlops.mfu_pct_str` percent), scaling efficiency (~`{python} FleetEffectiveFlops.scaling_pct_str` percent), and operational overhead (~`{python} FleetEffectiveFlops.goodput_pct_str` percent goodput) compound, a 1,024-GPU cluster delivers ~`{python} FleetEffectiveFlops.eff_pct_str` percent of peak FLOPS as useful work.
+* **Compound utilization loss**: After MFU (~`{python} FleetEffectiveFlops.mfu_pct_str` percent), scaling efficiency (~`{python} FleetEffectiveFlops.scaling_pct_str` percent), and operational overhead (~`{python} FleetEffectiveFlops.goodput_pct_str` percent goodput) compound, a 1,024-GPU cluster delivers ~`{python} FleetEffectiveFlops.eff_pct_str` percent of peak FLOP/s as useful work.
 * **Power density demands liquid cooling**: AI racks consume `{python} FF.rack_ratio_str`$\times$ the power of traditional racks. Air cooling fails above ~`{python} FF.air_limit_str` kW per rack, making liquid cooling a physical requirement for modern AI clusters.
 * **Communication-computation ratio ($\rho$) governs scaling strategy**: When $\rho > 1$, GPUs are idle waiting for data---reduce parallelism or increase computation per step. When $\rho \ll 1$, communication can be fully overlapped.
 * **Weak scaling is the fleet-scale paradigm**: Engineers do not use more GPUs to solve the same problem faster (strong scaling); they use more GPUs to solve larger problems in reasonable time. This keeps the serial fraction small and utilization high.

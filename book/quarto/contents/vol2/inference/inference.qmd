@@ -742,7 +742,7 @@ Single-GPU deployment is the simplest topology: the entire model fits in one dev
 
 Multi-GPU tensor parallelism shards each layer's weight matrices across multiple GPUs connected by high-bandwidth interconnect (NVLink at `{python} InferenceSetup.nvlink_h100_gbs_str` GB/s on H100). Each GPU computes a partial result for every layer, and an all-reduce operation synchronizes the partial results before the next layer. This topology is necessary when model weights exceed single-device memory and provides latency reduction proportional to the parallelism degree, at the cost of communication overhead per layer. The model sharding section (@sec-inference-scale-model-sharding-inference-82b3) analyzes the communication overhead quantitatively.
 
-Disaggregated serving separates the prefill phase (processing the input prompt, which is compute-bound) from the decode phase (generating tokens one at a time, which is memory-bandwidth-bound) onto different hardware pools optimized for each workload profile. Prefill nodes use high-FLOPS accelerators; decode nodes use high-bandwidth-memory configurations. This separation allows each phase to operate at its hardware's optimal operating point rather than compromising between the two regimes on shared hardware. The disaggregated serving section (@sec-inference-scale-disaggregated-serving-splitting-workload-b8f9) develops this architecture in detail.
+Disaggregated serving separates the prefill phase (processing the input prompt, which is compute-bound) from the decode phase (generating tokens one at a time, which is memory-bandwidth-bound) onto different hardware pools optimized for each workload profile. Prefill nodes use high-FLOP/s accelerators; decode nodes use high-bandwidth-memory configurations. This separation allows each phase to operate at its hardware's optimal operating point rather than compromising between the two regimes on shared hardware. The disaggregated serving section (@sec-inference-scale-disaggregated-serving-splitting-workload-b8f9) develops this architecture in detail.
 
 ### Stateful vs. stateless: The scaling divide {#sec-inference-scale-triton-inference-server-f0ba}
 
@@ -809,18 +809,18 @@ For recommendation systems\index{Recommendation Systems}, the bottleneck is ofte
 
 ### The physics of batching: The efficiency curve {#sec-inference-scale-physics-batching-efficiency-curve-021c}
 
-Batching is not merely a heuristic; it is a trade-off governed by the physics of hardware utilization. We can model the relationship between batch size $(B)$, latency $(L_{\text{lat}})$, and throughput $(X)$ to identify the optimal operating point for any inference system.
+Batching is not merely a heuristic; it is a trade-off governed by the physics of hardware utilization. We can model the relationship between batch size $(B)$, request latency $(T_{\text{lat}})$, and throughput $(X)$ to identify the optimal operating point for any inference system.
 
 The latency equation decomposes per-request latency into fixed overheads (kernel launch, memory loading) and variable costs (compute per sample):
 
-$$L_{\text{lat}}(B) = T_{\text{fixed}} + B \times T_{\text{variable}}$$
+$$T_{\text{lat}}(B) = T_{\text{fixed}} + B \times T_{\text{variable}}$$
 
 *   $T_{\text{fixed}}$: Costs paid once per batch (for example, loading weights from HBM, kernel launch latency).
 *   $T_{\text{variable}}$: Marginal cost of adding one request (for example, compute time for that sample).
 
 The throughput equation describes the system's capacity:
 
-$$X(B) = \frac{B}{L_{\text{lat}}(B)} = \frac{B}{T_{\text{fixed}} + B \times T_{\text{variable}}}$$
+$$X(B) = \frac{B}{T_{\text{lat}}(B)} = \frac{B}{T_{\text{fixed}} + B \times T_{\text{variable}}}$$
 
 The resulting curve is the **Batching Efficiency Curve**\index{Batching!efficiency curve}:
 
@@ -828,7 +828,7 @@ The resulting curve is the **Batching Efficiency Curve**\index{Batching!efficien
 2.  **Large $B$**: As $B \to \infty$, the $T_{\text{fixed}}$ term becomes negligible. Throughput asymptotically approaches the hardware limit $1/T_{\text{variable}}$. The system becomes compute-bound\index{Compute-Bound} (or bandwidth-bound for LLMs).
 3.  **The knee**: The optimal batch size is the point where throughput gains diminish while latency continues to grow linearly.
 
-The engineering goal is to find the maximum $B$ such that $L_{\text{lat}}(B) \le \text{SLO}$. This formulation explains why vision models (high $T_{\text{variable}}$) saturate at smaller batches than LLMs (high $T_{\text{fixed}}$ due to weight loading), requiring different tuning strategies.
+The engineering goal is to find the maximum $B$ such that $T_{\text{lat}}(B) \le \text{SLO}$. This formulation explains why vision models (high $T_{\text{variable}}$) saturate at smaller batches than LLMs (high $T_{\text{fixed}}$ due to weight loading), requiring different tuning strategies.
 
 ```{python}
 #| label: batching-efficiency-notebook
@@ -1379,7 +1379,7 @@ The autoregressive bottleneck (Principle \ref{pri-autoregressive-bottleneck}) go
 
 ***Continuous Batching***\index{Continuous Batching!definition} is a serving strategy that decouples batch membership from iteration boundaries, allowing new requests to enter and completed ones to exit at every decode step.
 
-1.  **Significance (quantitative)**: It maximizes the system throughput $(\eta_{\text{hw}})$ by eliminating the padding waste and head-of-line blocking inherent in static batching. It ensures the GPU remains saturated even when requests have widely varying sequence lengths.
+1.  **Significance (quantitative)**: It maximizes system throughput $(X)$ by eliminating the padding waste and head-of-line blocking inherent in static batching. It ensures the GPU remains saturated even when requests have widely varying sequence lengths.
 2.  **Distinction (durable)**: Unlike static or dynamic batching (which group requests at the request level), continuous batching operates at the **Iteration Level**\index{Iteration Level}, dynamically reshaping the compute tensor at each clock cycle.
 3.  **Common pitfall**: A frequent misconception is that continuous batching is "purely a scheduler change." In reality, it requires a **Dynamic Memory Manager** (like PagedAttention) because the KV caches for different requests grow and shrink at different rates, preventing static memory preallocation.
 
@@ -2448,7 +2448,7 @@ Production systems report 60--80 percent memory waste from fragmentation under r
 
 ***PagedAttention***\index{PagedAttention!block table}\index{PagedAttention!definition} is a memory management technique that applies virtual memory principles to **KV Cache**\index{KV Cache!quantization} allocation, storing attention states in noncontiguous, fixed-size physical blocks.
 
-1.  **Significance (quantitative)**: It eliminates **Internal and External Fragmentation**\index{Internal and External Fragmentation}, which can waste up to 80 percent of GPU memory. By allowing sequences to grow dynamically, it enables 2--4$\times$ higher **Concurrent Throughput** $(\eta_{\text{hw}})$ on the same hardware.
+1.  **Significance (quantitative)**: It eliminates **Internal and External Fragmentation**\index{Internal and External Fragmentation}, which can waste up to 80 percent of GPU memory. By allowing sequences to grow dynamically, it enables 2--4$\times$ higher **Concurrent Throughput** $(X)$ on the same hardware.
 2.  **Distinction (durable)**: Unlike **Contiguous Allocation** (which requires prereserving the maximum context length), PagedAttention uses a **Block Table** to map logical sequence indices to physical memory pages, allocating only what is currently used.
 3.  **Common pitfall**: A frequent misconception is that PagedAttention speeds up *individual token math*. In reality, it is a **Capacity Optimization**\index{Optimization!capacity}: it improves *system-level efficiency* by allowing larger batch sizes, though it adds a small **Indirection Overhead** $(L_{\text{lat}})$ for the pointer lookups.
 
@@ -3195,7 +3195,7 @@ With chunk size chosen to match decode iteration time, prefill and decode can sh
 
 Prefill-decode disaggregation takes this separation further by running prefill and decode on separate GPU pools:
 
-- **Prefill pool**\index{Prefill Pool}: Optimized for compute intensity (for example, H100 nodes with high TFLOPS) using moderate request batches or large token chunks to maximize throughput without blocking decode.
+- **Prefill pool**\index{Prefill Pool}: Optimized for compute intensity (for example, H100 nodes with high TFLOP/s) using moderate request batches or large token chunks to maximize throughput without blocking decode.
 - **Decode pool**\index{Disaggregated Serving!decode pool}: Optimized for memory bandwidth (for example, nodes with maximum HBM capacity, the Tier 0 storage resource discussed in @sec-storage-tier0-hbm) to handle thousands of concurrent autoregressive streams.
 
 Independent scaling follows directly: prefill capacity scales with input volume while decode capacity scales with output volume. Crucially, this architecture relies on the high-speed, RDMA-enabled networking fabric established in @sec-network-fabrics. When a prefill finishes, the resulting KV cache (often megabytes of data) must be migrated to a decode node within the inter-token latency budget, typically under 10 ms. InfiniBand's low-microsecond latency and high bisection bandwidth are the physical enablers of this logical disaggregation.

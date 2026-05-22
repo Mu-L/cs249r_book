@@ -171,7 +171,7 @@ A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios
 :::
 
 \index{Training!computational intensity}\index{Training!memory pressure}
-Three characteristics distinguish training workloads from general-purpose computing. First, *computational intensity*: that `{python} TrainingScenarios.gpt2_total_flops_str` operation budget spread over days of wall-clock time demands sustained petaFLOPS-scale throughput from hardware that rarely exceeds 30 to 70 percent utilization. Second, *memory pressure*: storing `{python} TrainingModels.gpt2_params_b_str` billion weights requires `{python} TrainingModels.gpt2_params_gb_fp32_str` GB in FP32; the Adam optimizer adds two additional state tensors per parameter, consuming another `{python} TrainingModels.gpt2_adam_gb_str` GB; and activation storage across `{python} TrainingModels.gpt2_layers_str` transformer layers can double or triple this total, easily exceeding a single accelerator's memory capacity. Third, *data dependencies*: each gradient update depends on the result of the previous one, creating sequential bottlenecks that limit how much parallelism the system can exploit.
+Three characteristics distinguish training workloads from general-purpose computing. First, *computational intensity*: that `{python} TrainingScenarios.gpt2_total_flops_str` operation budget spread over days of wall-clock time demands sustained petaFLOP/s-scale throughput from hardware that rarely exceeds 30 to 70 percent utilization. Second, *memory pressure*: storing `{python} TrainingModels.gpt2_params_b_str` billion weights requires `{python} TrainingModels.gpt2_params_gb_fp32_str` GB in FP32; the Adam optimizer adds two additional state tensors per parameter, consuming another `{python} TrainingModels.gpt2_adam_gb_str` GB; and activation storage across `{python} TrainingModels.gpt2_layers_str` transformer layers can double or triple this total, easily exceeding a single accelerator's memory capacity. Third, *data dependencies*: each gradient update depends on the result of the previous one, creating sequential bottlenecks that limit how much parallelism the system can exploit.
 
 Each of these challenges opens a corresponding optimization pathway. Computational intensity can be addressed through hardware acceleration (@sec-hardware-acceleration) and the BF16/FP8 mixed-precision techniques developed later in @sec-model-training-mixedprecision-training-9218. Memory pressure responds to techniques like gradient checkpointing[^fn-checkpointing-training], a specific application of *rematerialization* (discarding and recomputing intermediate values to save memory, from @sec-ml-frameworks) that trades recomputation for reduced activation storage, and mixed-precision training[^fn-mixed-precision-training], which halves the memory footprint of weights and activations. Data dependencies motivate pipeline designs that overlap computation with data movement, heavily relying on the data loading throughput optimized in @sec-data-engineering, so the accelerator never sits idle waiting for the next batch. The current chapter focuses on single-machine and single-node multi-GPU training; scaling to hundreds of machines across network boundaries introduces communication and fault tolerance challenges beyond our current scope.
 
@@ -1786,7 +1786,7 @@ Consider a GPT-2 attention layer that materializes the $S{\times}S$ attention-sc
 
 Accelerators have characteristic hardware ridge points where operations transition from memory-bound to compute bound. The A100 with `{python} AcceleratorSpecs.a100_tflops_fp16_str` TFLOP/s FP16 Tensor Core and `{python} AcceleratorSpecs.a100_bw_tbs_str` TB/s bandwidth has a ridge point of `{python} AcceleratorSpecs.a100_ridge_str` FLOP/byte. The H100 SXM with `{python} AcceleratorSpecs.h100_tflops_fp16_str` TFLOP/s FP16 Tensor Core and `{python} AcceleratorSpecs.h100_bw_tbs_str` TB/s bandwidth has a ridge point of approximately `{python} AcceleratorSpecs.h100_ridge_str` FLOP/byte. Operations below the ridge point are memory bound; above are compute bound.
 
-::: {#psp-training-peak-flops-vs-sustained-performance .callout-perspective title="Peak FLOPS vs. sustained performance"}
+::: {#psp-training-peak-flops-vs-sustained-performance .callout-perspective title="Peak FLOP/s vs. sustained performance"}
 
 Hardware vendors often market "Peak TFLOP/s," but for a systems engineer, this number is often a theoretical limit that is rarely reached. The intensity gap reveals that most neural network operations, especially in the backward pass, have arithmetic intensities well below the hardware's ridge point. When an operation is memory bound (like LayerNorm or Softmax), doubling the hardware's peak TFLOP/s does nothing for performance. This is why **Mixed-Precision (FP16/BF16)** is so effective: beyond enabling faster arithmetic, it halves the bytes moved per operation, effectively doubling the "Data Supply Rate" and allowing the system to reach a much higher percentage of its peak computational capability. Successful optimization is the art of increasing arithmetic intensity through kernel fusion and reducing data movement through precision management.
 
@@ -3413,7 +3413,7 @@ The preceding pipeline architecture established the structural *what* of trainin
 
 The diagnostic methodology that transforms blueprint knowledge into actionable optimization decisions begins with a meaningful measure of training efficiency. Raw accelerator utilization percentages can be misleading because they include overhead from recomputation and padding. A more precise metric captures only the *useful* training work performed per second.
 
-\index{Model FLOPS Utilization!origin}
+\index{Model FLOPs Utilization!origin}
 Production systems typically achieve 30–50 percent MFU[^fn-mfu]; values below this range indicate optimization opportunities in one of three bottleneck categories.
 
 ```{python}
@@ -3457,7 +3457,7 @@ class MFUExampleCalc:
 
 ::: {#dfn-training-model-flops-utilization-mfu .callout-definition title="Model FLOPs utilization (MFU)"}
 
-***Model FLOPs Utilization (MFU)***\index{Model FLOPS Utilization!definition} is the efficiency metric $\text{MFU} = C_{\text{model}} / (R_{\text{peak}} \cdot T_{\text{step}})$, where $C_{\text{model}}$ is the useful per-step model FLOP count (forward plus backward, excluding rematerialization) and $T_{\text{step}}$ is the measured wall-clock time per training step, expressing what fraction of peak hardware throughput is doing useful model computation.
+***Model FLOPs Utilization (MFU)***\index{Model FLOPs Utilization!definition} is the efficiency metric $\text{MFU} = C_{\text{model}} / (R_{\text{peak}} \cdot T_{\text{step}})$, where $C_{\text{model}}$ is the useful per-step model FLOP count (forward plus backward, excluding rematerialization) and $T_{\text{step}}$ is the measured wall-clock time per training step, expressing what fraction of peak hardware throughput is doing useful model computation.
 
 1.  **Significance (quantitative)**: MFU is the $\eta_{\text{hw}}$ term in the iron law made concrete. For a `{python} MFUExampleCalc.params_b_str`-billion-parameter transformer processing `{python} MFUExampleCalc.tokens_per_step_str` tokens per step on an A100 (`{python} MFUExampleCalc.a100_tflops_str` TFLOP/s FP16/BF16 Tensor Core peak), a `{python} MFUExampleCalc.step_seconds_str`-second step gives useful model FLOPs divided by available peak FLOPs of approximately `{python} MFUExampleCalc.mfu_str` (`{python} MFUExampleCalc.mfu_pct_str` percent), meaning `{python} MFUExampleCalc.lost_pct_str` percent of peak compute is lost to memory stalls, communication, and scheduling overhead. Production systems typically reach 30–50 percent MFU; values below 30 percent indicate a specific addressable bottleneck.
 2.  **Distinction (durable)**: Unlike hardware utilization reported by profilers (which counts all cycles where the compute units are active, including gradient checkpointing recomputation and padding FLOPs), MFU counts only the FLOPs that directly advance the model toward convergence—providing a hardware-agnostic efficiency score that is comparable across different accelerator generations.
@@ -4497,7 +4497,7 @@ For transformer training where attention gradients vary from $10^{-10}$ to $10^3
 \index{FP8!hardware acceleration}\index{FP8!E4M3 and E5M2 formats}
 NVIDIA's Hopper architecture (H100) introduces FP8 support with two formats. E4M3 uses four exponent bits and three mantissa bits (prioritizing precision for forward pass weights and activations), while E5M2 uses five exponent bits and two mantissa bits (prioritizing dynamic range for backward pass gradients).
 
-FP8 training doubles Tensor Core throughput again (`{python} MixedPrecisionHardware.h100_pflops_fp8_str` PFLOPS on H100 dense vs. `{python} MixedPrecisionHardware.h100_pflops_fp16_str` PFLOPS for FP16 dense, without sparsity). However, FP8's severely limited precision requires per-tensor scaling factors maintained in higher precision, adding algorithmic complexity. @tbl-precision-decision-tree summarizes when each precision is appropriate:
+FP8 training doubles Tensor Core throughput again (`{python} MixedPrecisionHardware.h100_pflops_fp8_str` PFLOP/s on H100 dense vs. `{python} MixedPrecisionHardware.h100_pflops_fp16_str` PFLOP/s for FP16 dense, without sparsity). However, FP8's severely limited precision requires per-tensor scaling factors maintained in higher precision, adding algorithmic complexity. @tbl-precision-decision-tree summarizes when each precision is appropriate:
 
 | **Precision** | **When to Use**                                  | **Hardware Requirement** |
 |:--------------|:-------------------------------------------------|-------------------------:|
@@ -6326,14 +6326,14 @@ Within a single node, GPUs communicate via high-bandwidth interconnects like NVL
 **Data parallelism (split the batch)**
 
 *   **Compute $(O)$**: Split by $N$ (Each GPU does $1/N$ of the batch).
-*   **Memory $(D_{\text{vol}})$**: **Replicated**. Every GPU must hold the full model weights $P$.
+*   **Memory footprint**: **Replicated**. Every GPU must hold the full model weights $P$.
 *   **Communication**: **Gradients**. Size $\propto P$. Occurs at end of backward pass.
 *   **Bottleneck**: When Model Size $P >$ GPU Memory.
 
 **Model parallelism (split the weights)**
 
 *   **Compute $(O)$**: Split by $N$ (Each accelerator computes part of the layer).
-*   **Memory $(D_{\text{vol}})$**: **Split**. Each GPU holds $P/N$ weights.
+*   **Memory footprint**: **Split**. Each GPU holds $P/N$ weights.
 *   **Communication**: **Activations**. Size $\propto B \times \text{Width}$. Occurs at every layer boundary.
 *   **Bottleneck**: When Activation Size is large (high communication frequency).
 
