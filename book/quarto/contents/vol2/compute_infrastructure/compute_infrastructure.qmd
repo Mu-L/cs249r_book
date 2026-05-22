@@ -3089,7 +3089,7 @@ These principles (that the network is the bottleneck, failure is routine, and ho
 
 The homogeneity principle deserves deeper examination because it has practical consequences that extend beyond network topology into scheduling, debugging, and fleet economics.
 
-In a homogeneous pod, every node has identical compute, memory, and network capabilities. The job scheduler can assign any subset of $N_{\text{node}}$ nodes to any training job without worrying about capability mismatches. In a heterogeneous fleet with mixed GPU generations (V100, A100, H100), the scheduler must solve a constrained bin-packing problem: a training job that requires 256 GPUs of the same generation may wait in the queue even when 256 GPUs are available across generations, because mixing generations within a single data-parallel group creates a straggler problem (the oldest GPU determines the step time for the entire group). This fragmentation can reduce effective fleet utilization by 10--20 percent, as capacity that is technically available cannot be allocated to waiting jobs.
+In a homogeneous pod, every node has identical compute, memory, and network capabilities. The job scheduler can assign any subset of $N$ nodes to any training job without worrying about capability mismatches. In a heterogeneous fleet with mixed GPU generations (V100, A100, H100), the scheduler must solve a constrained bin-packing problem: a training job that requires 256 GPUs of the same generation may wait in the queue even when 256 GPUs are available across generations, because mixing generations within a single data-parallel group creates a straggler problem (the oldest GPU determines the step time for the entire group). This fragmentation can reduce effective fleet utilization by 10--20 percent, as capacity that is technically available cannot be allocated to waiting jobs.
 
 Debugging benefits equally from homogeneity. When all nodes are identical, a performance anomaly on one node can be immediately compared against the fleet baseline. If node 347 achieves 85 percent of the throughput that nodes 1--346 and 348--1024 achieve, the anomaly is hardware-related and the node can be quarantined for diagnosis. In a heterogeneous fleet, distinguishing between "this node is slow because it has older hardware" and "this node is slow because it has a failing component" requires much more sophisticated analysis, and subtle degradation can go undetected for days or weeks.
 
@@ -3101,19 +3101,19 @@ The software infrastructure of a WSC functions less like a collection of servers
 
 ### Scaling efficiency {#sec-compute-scaling-efficiency}
 
-Before examining specific pod architectures, we must understand the metric that determines whether scaling from one node to many is worthwhile: **scaling efficiency**. If a model trains in time $T_1$ on one node, ideal (linear) scaling would train it in time $T_1/N_{\text{node}}$ on $N_{\text{node}}$ nodes. In practice, communication overhead, pipeline bubbles, and load imbalances reduce the speedup. Scaling efficiency is defined as:
+Before examining specific pod architectures, we must understand the metric that determines whether scaling from one device to many is worthwhile: **scaling efficiency**. If a model trains in time $T_1$ on one device, ideal (linear) scaling would train it in time $T_1/N$ on $N$ devices. In practice, communication overhead, pipeline bubbles, and load imbalances reduce the speedup. Scaling efficiency is defined as:
 
-$$\eta_{\text{scaling}} = \frac{T_1}{N_{\text{node}} \times T_{N_{\text{node}}}}$$ {#eq-cluster-scaling-efficiency}
+$$\eta_{\text{scaling}} = \frac{T_1}{N \times T_N}$$ {#eq-cluster-scaling-efficiency}
 
-where $T_{N_{\text{node}}}$ is the training time on $N_{\text{node}}$ nodes. An efficiency of 1.0 means perfect linear scaling; an efficiency of 0.5 means we achieve only half the expected speedup.
+where $T_N$ is the training time on $N$ devices. An efficiency of 1.0 means perfect linear scaling; an efficiency of 0.5 means we achieve only half the expected speedup.
 
 ::: {#dfn-compute-infrastructure-scaling-efficiency .callout-definition title="Scaling efficiency"}
 
-***Scaling Efficiency $(\eta_{\text{scaling}})$***\index{Scaling Efficiency!definition} is the ratio of actual throughput to ideal linear throughput when increasing the number of compute nodes ($N_{\text{node}}$).
+***Scaling Efficiency $(\eta_{\text{scaling}})$***\index{Scaling Efficiency!definition} is the ratio of actual throughput to ideal linear throughput when increasing the number of compute devices ($N$).
 
-1.  **Significance (quantitative)**: It is the most important metric for cluster productivity ($\eta_{\text{scaling}} = \frac{T_1}{N_{\text{node}} \times T_{N_{\text{node}}}}$). A scaling efficiency of 0.50 means that a 10,000-GPU cluster is delivering only the same useful work as a 5,000-GPU cluster, wasting 50 percent of the hardware investment.
+1.  **Significance (quantitative)**: It is the most important metric for cluster productivity ($\eta_{\text{scaling}} = \frac{T_1}{N \times T_N}$). A scaling efficiency of 0.50 means that a 10,000-GPU cluster is delivering only the same useful work as a 5,000-GPU cluster, wasting 50 percent of the hardware investment.
 2.  **Distinction (durable)**: Unlike **single-node efficiency** (which captures local bottlenecks like $\text{BW}$), scaling efficiency captures the **cluster-level overhead** of communication time $(T_{\text{comm}}(N))$ and synchronization.
-3.  **Common pitfall**: A frequent misconception is that scaling efficiency is constant. In reality, it is a **function of problem size**\index{Function of Problem Size}: as $N_{\text{node}}$ increases, the communication-to-compute ratio typically worsens (Amdahl's Law), making it harder to maintain high efficiency for small models.
+3.  **Common pitfall**: A frequent misconception is that scaling efficiency is constant. In reality, it is a **function of problem size**\index{Function of Problem Size}: as $N$ increases, the communication-to-compute ratio typically worsens (Amdahl's Law), making it harder to maintain high efficiency for small models.
 
 :::
 
@@ -3156,7 +3156,7 @@ class CommScalingMath:
     t_comm_math = fmt_math(f"T_{{\\text{{comm}}}}(N) \\approx {_effective_time_s:.1f}")
 ```
 
-For data-parallel training of our `{python} InfraSetup.frontier_params_b_str`B model, the communication cost per step is dominated by the AllReduce of 350 GB of gradients. Using ring-AllReduce over InfiniBand at `{python} BandwidthHierarchyScenario.ib_bw_str` GB/s effective bandwidth, the raw communication time is approximately `{python} CommScalingMath.comm_time_formula_math`, which for large $N_{\text{node}}$ approaches `{python} CommScalingMath.comm_approx_math` seconds. With 75 percent overlap between gradient communication and the backward pass, the effective exposed communication time drops to `{python} CommScalingMath.t_comm_math` seconds. Under the same assumptions, the compute term is `{python} CommScalingMath.t_compute_math` seconds, so the exposed step time is about 5.6 seconds and naive data-parallel scaling efficiency is $2.1/5.6 \approx 0.375$. Production systems recover much of this loss by combining tensor parallelism, pipeline parallelism, topology-aware placement, and more effective communication overlap, achieving 70--90 percent scaling efficiency for well-optimized training systems.
+For data-parallel training of our `{python} InfraSetup.frontier_params_b_str`B model, the communication cost per step is dominated by the AllReduce of 350 GB of gradients. Using ring-AllReduce over InfiniBand at `{python} BandwidthHierarchyScenario.ib_bw_str` GB/s effective bandwidth, the raw communication time is approximately `{python} CommScalingMath.comm_time_formula_math`, which for large $N$ approaches `{python} CommScalingMath.comm_approx_math` seconds. With 75 percent overlap between gradient communication and the backward pass, the effective exposed communication time drops to `{python} CommScalingMath.t_comm_math` seconds. Under the same assumptions, the compute term is `{python} CommScalingMath.t_compute_math` seconds, so the exposed step time is about 5.6 seconds and naive data-parallel scaling efficiency is $2.1/5.6 \approx 0.375$. Production systems recover much of this loss by combining tensor parallelism, pipeline parallelism, topology-aware placement, and more effective communication overlap, achieving 70--90 percent scaling efficiency for well-optimized training systems.
 
 The scaling efficiency depends critically on the ratio of computation to communication. Three factors govern this ratio:
 
