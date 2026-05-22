@@ -16,7 +16,7 @@ This particularly affects:
 ### How It Works
 
 1. **Runs automatically** as a post-render hook after Quarto finishes building
-2. **Scans ALL HTML files** in the `_build/html/` directory
+2. **Scans ALL HTML files** and the generated `search.json` in the `_build/html/` directory
 3. **Finds unresolved references** that appear as `<strong>?@sec-xxx</strong>`
 4. **Converts them to proper links**: `<strong><a href="../path/to/chapter.html#sec-xxx">Chapter Title</a></strong>`
 
@@ -68,7 +68,7 @@ python3 scripts/resolve_cross_references.py _build/html/contents/backmatter/glos
 The script provides clear output showing what it fixed:
 
 ```
-🔗 [Cross-Reference Fix] Scanning 3 HTML files...
+🔗 [Cross-Reference Fix] Scanning 3 HTML files and 1 search index file(s)...
 ✅ Fixed 850 cross-references in 2 files:
    📄 contents/backmatter/glossary/glossary.html: 810 refs
    📄 contents/core/introduction/introduction.html: 40 refs

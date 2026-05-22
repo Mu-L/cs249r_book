@@ -5456,8 +5456,17 @@ class ValidateCommand:
         for file in files:
             lines = self._read_text(file).splitlines()
             in_code = False
+            in_html_comment = False
             for idx, line in enumerate(lines, 1):
                 stripped = line.strip()
+                if in_html_comment:
+                    if "-->" in stripped:
+                        in_html_comment = False
+                    continue
+                if stripped.startswith("<!--"):
+                    if "-->" not in stripped:
+                        in_html_comment = True
+                    continue
                 if stripped.startswith("```"):
                     in_code = not in_code
                     continue

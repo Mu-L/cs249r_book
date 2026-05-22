@@ -67,9 +67,11 @@ class C3Taxonomy:
     case1_target_mfu = MFU_TRAINING_HIGH
 
     # Case 2: Communication Wall
+    case2_baseline_gpus = 64
     case2_n_gpus = 512
     case2_mfu = 0.45
     case2_comm_fraction = 0.55
+    case2_observed_speedup = 4
 
     # Case 3: Coordination Tax
     case3_n_gpus = 10_000
@@ -106,15 +108,21 @@ class C3Taxonomy:
     # Case 2 derived values
     case2_compute_fraction = 1 - case2_comm_fraction
     case2_speedup_if_fixed = 1 / case2_compute_fraction  # Amdahl-like
+    case2_ideal_speedup = case2_n_gpus / case2_baseline_gpus
+    case2_scaling_efficiency = case2_observed_speedup / case2_ideal_speedup
 
     # Case 3 derived values
     case3_coord_fraction = 1 - case3_goodput_ratio
     case3_compute_fraction = case3_goodput_ratio - case3_comm_fraction
+    case3_failure_interval_hours = GPU_MTTF_HOURS / case3_n_gpus
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(case1_mfu < MFU_TRAINING_LOW, "Case 1 MFU must be below training low")
     check(case2_comm_fraction > 0.5, "Case 2 must be communication-dominated")
+    check(case2_ideal_speedup == 8, f"Case 2 expected speedup changed: {case2_ideal_speedup}")
+    check(abs(case2_scaling_efficiency - 0.5) < 1e-9, "Case 2 scaling efficiency should be 50%")
     check(case3_goodput_ratio < 0.7, "Case 3 goodput must show coordination tax")
+    check(abs(case3_failure_interval_hours - 5) < 1e-9, "Case 3 failure cadence should be 5 hours")
     check(eff_fraction < 0.15, "100K GPU effective fraction must be <15%")
     check(c3_tax > 5, "C³ tax must show significant overhead")
 
@@ -130,7 +138,11 @@ class C3Taxonomy:
     case1_wasted_pct_str = fmt(case1_wasted_pct, precision=0, commas=False)
 
     # Case 2
+    case2_baseline_gpus_str = fmt(case2_baseline_gpus, precision=0, commas=False)
     case2_n_gpus_str = fmt(case2_n_gpus, precision=0)
+    case2_observed_speedup_str = fmt(case2_observed_speedup, precision=0, commas=False)
+    case2_ideal_speedup_str = fmt(case2_ideal_speedup, precision=0, commas=False)
+    case2_scaling_efficiency_pct_str = fmt_percent(case2_scaling_efficiency, precision=0, commas=False)
     case2_mfu_pct_str = fmt_percent(case2_mfu, precision=0, commas=False)
     case2_comm_pct_str = fmt_percent(case2_comm_fraction, precision=0, commas=False)
     case2_compute_pct_str = fmt_percent(case2_compute_fraction, precision=0, commas=False)
@@ -139,6 +151,7 @@ class C3Taxonomy:
 
     # Case 3
     case3_n_gpus_str = fmt(case3_n_gpus, precision=0)
+    case3_failure_interval_hours_str = fmt(case3_failure_interval_hours, precision=0, commas=False)
     case3_mfu_pct_str = fmt_percent(case3_mfu, precision=0, commas=False)
     case3_comm_pct_str = fmt_percent(case3_comm_fraction, precision=0, commas=False)
     case3_goodput_pct_str = fmt_percent(case3_goodput_ratio, precision=0, commas=False)
@@ -309,7 +322,7 @@ Raising MFU from `{python} C3.case1_mfu_pct_str` percent to `{python} C3.case1_t
 
 #### Symptom {.unnumbered}
 
-A `{python} C3.case2_n_gpus_str`-GPU data-parallel training run achieves `{python} C3.case2_mfu_pct_str` percent MFU on each individual GPU---good per-device efficiency. Yet scaling from 64 to `{python} C3.case2_n_gpus_str` GPUs yields only 4$\times$ speedup instead of the expected 8$\times$. NCCL profiling reveals that AllReduce consumes `{python} C3.case2_comm_pct_str` percent of every training step.
+A `{python} C3.case2_n_gpus_str`-GPU data-parallel training run achieves `{python} C3.case2_mfu_pct_str` percent MFU on each individual GPU---good per-device efficiency. Yet scaling from `{python} C3.case2_baseline_gpus_str` to `{python} C3.case2_n_gpus_str` GPUs yields only `{python} C3.case2_observed_speedup_str`$\times$ speedup instead of the expected `{python} C3.case2_ideal_speedup_str`$\times$, or `{python} C3.case2_scaling_efficiency_pct_str` percent scaling efficiency. NCCL profiling reveals that AllReduce consumes `{python} C3.case2_comm_pct_str` percent of every training step.
 
 #### Diagnosis {.unnumbered}
 
@@ -333,7 +346,7 @@ A `{python} C3.case3_n_gpus_str`-GPU training run shows `{python} C3.case3_mfu_p
 
 #### Diagnosis {.unnumbered}
 
-The **Coordination** axis dominates. Per-GPU computation and inter-node communication are both efficient, but `{python} C3.case3_coord_pct_str` percent of wall time is consumed by nonproductive overhead: `{python} C3.oh_failure_str` percent failure recovery (at `{python} C3.case3_n_gpus_str` GPUs, failures occur every few hours), `{python} C3.oh_pipeline_str` percent pipeline bubbles, `{python} C3.oh_checkpoint_str` percent checkpoint writes, and `{python} C3.oh_maintenance_str` percent maintenance windows. Neither faster GPUs nor faster networks will help---coordination, not computation or communication, consumes the time.
+The **Coordination** axis dominates. Per-GPU computation and inter-node communication are both efficient, but `{python} C3.case3_coord_pct_str` percent of wall time is consumed by nonproductive overhead: `{python} C3.oh_failure_str` percent failure recovery (at `{python} C3.case3_n_gpus_str` GPUs, GPU failures occur about every `{python} C3.case3_failure_interval_hours_str` hours), `{python} C3.oh_pipeline_str` percent pipeline bubbles, `{python} C3.oh_checkpoint_str` percent checkpoint writes, and `{python} C3.oh_maintenance_str` percent maintenance windows. Neither faster GPUs nor faster networks will help---coordination, not computation or communication, consumes the time.
 
 #### The fix {.unnumbered}
 
@@ -466,11 +479,49 @@ A `{python} C3.case2_n_gpus_str`-GPU training job shows `{python} C3.case2_mfu_p
 
 A training step on a 1,024-GPU cluster takes 200 ms. Profiling reveals: forward + backward pass = 100 ms, AllReduce = 60 ms, pipeline bubble + checkpoint = 40 ms. Calculate $f_{\text{compute}}$. Which C$^3$ axis would you optimize first, and why?
 
+```{python}
+#| label: appendix-c3-exercise2
+#| echo: false
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ C³ EXERCISE 2—FLEET LAW DECOMPOSITION
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Exercise 2 (@sec-c3-taxonomy-exercises)
+# │
+# │ Goal: Compute the exercise answer from the stated step-time components.
+# │ Show: Exercise2.f_compute_math, comm_pct_str, coord_pct_str, eta_overlap_str.
+# │ How: Ratios over total step time; overlap removes visible communication.
+# └─────────────────────────────────────────────────────────────────────────────
+
+class Exercise2:
+    step_ms = 200
+    compute_ms = 100
+    communication_ms = 60
+    coordination_ms = 40
+
+    f_compute = compute_ms / step_ms
+    comm_fraction = communication_ms / step_ms
+    coord_fraction = coordination_ms / step_ms
+    overlapped_step_ms = compute_ms + coordination_ms
+    eta_overlap = compute_ms / overlapped_step_ms
+
+    check(abs(f_compute - 0.50) < 1e-9, "Exercise 2 compute fraction changed")
+    check(abs(eta_overlap - (100/140)) < 1e-9, "Exercise 2 overlap efficiency changed")
+
+    f_compute_str = fmt(f_compute, precision=2, commas=False)
+    comm_pct_str = fmt_percent(comm_fraction, precision=0, commas=False)
+    coord_pct_str = fmt_percent(coord_fraction, precision=0, commas=False)
+    eta_overlap_str = fmt(eta_overlap, precision=2, commas=False)
+    f_compute_math = MarkdownStr(
+        f"$$f_{{\\text{{compute}}}} = \\frac{{T_{{\\text{{Computation}}}}}}{{T_{{\\text{{step}}}}}} "
+        f"= \\frac{{{compute_ms}}}{{{step_ms}}} = {f_compute_str}$$"
+    )
+```
+
 **Answer**: Fleet efficiency is:
 
-$$f_{\text{compute}} = \frac{T_{\text{Computation}}}{T_{\text{step}}} = \frac{100}{200} = 0.50$$
+`{python} Exercise2.f_compute_math`
 
-The fleet spends exactly half its time on useful computation. Breaking down the noncompute time: Communication accounts for 60/200 = 30 percent and Coordination accounts for 40/200 = 20 percent. Both are in the "yellow" zone of the traffic light, but Communication (30 percent) is the larger contributor. Optimize Communication first: overlapping AllReduce with the backward pass could reduce the visible 60 ms to near zero (if computation is longer), pushing $\eta_{\text{fleet}}$ toward 100/140 = 0.71. Tackle the 40 ms coordination overhead only after addressing communication.
+The fleet spends exactly half its time on useful computation. Breaking down the noncompute time: Communication accounts for 60/200 = `{python} Exercise2.comm_pct_str` percent and Coordination accounts for 40/200 = `{python} Exercise2.coord_pct_str` percent. Both are in the "yellow" zone of the traffic light, but Communication (`{python} Exercise2.comm_pct_str` percent) is the larger contributor. Optimize Communication first: overlapping AllReduce with the backward pass could reduce the visible 60 ms to near zero (if computation is longer), pushing $\eta_{\text{fleet}}$ toward 100/140 = `{python} Exercise2.eta_overlap_str`. Tackle the 40 ms coordination overhead only after addressing communication.
 
 ### Exercise 3: Effective FLOPS calculation {.unnumbered}
 

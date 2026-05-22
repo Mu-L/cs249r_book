@@ -18,7 +18,8 @@ WHAT THIS SCRIPT DOES:
 ----------------------
 1. Scans QMD source files to dynamically build a mapping of section/figure/table
    IDs → HTML paths and titles.
-2. Scans ALL HTML files in the build directory after Quarto finishes.
+2. Scans ALL HTML files and the generated search index in the build directory
+   after Quarto finishes.
 3. Finds unresolved references that appear as: <strong>?@sec-xxx</strong>
    (and the parallel forms for `<a href="@xxx-yyy">` and quarto-unresolved spans).
 4. Converts them to proper HTML links: <strong><a href="../path/to/chapter.html#sec-xxx">Title</a></strong>
@@ -40,6 +41,7 @@ HOW TO USE:
 3. Test all: python3 scripts/resolve_cross_references.py  # processes all HTML files
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -623,6 +625,25 @@ def resolve_cross_references(
     return fixed_content, fixed_count, unmapped_refs
 
 
+def resolve_search_text(text: str) -> tuple[str, int, list[str]]:
+    """Resolve bare `?@label` tokens in Quarto's generated search index text."""
+    chapter_mapping, chapter_titles = get_mappings()
+    unmapped_refs: list[str] = []
+
+    pattern = rf'\?\@({CROSSREF_PREFIXES}-[a-zA-Z0-9-]+)'
+
+    def fix_search_reference(match):
+        ref = match.group(1)
+        title = chapter_titles.get(ref)
+        if ref in chapter_mapping and title:
+            return title
+        unmapped_refs.append(ref)
+        return match.group(0)
+
+    fixed_text, fixed_count = re.subn(pattern, fix_search_reference, text)
+    return fixed_text, fixed_count, unmapped_refs
+
+
 # ---------------------------------------------------------------------------
 # File processing
 # ---------------------------------------------------------------------------
@@ -642,6 +663,49 @@ def process_html_file(html_file: Path, base_dir: Path, epub_mapping: dict | None
         try:
             html_file.write_text(fixed_content, encoding="utf-8")
             return html_file.relative_to(base_dir), fixed_count, unmapped
+        except Exception:
+            return None, 0, []
+
+    return None, 0, []
+
+
+def _map_json_strings(value, mapper):
+    """Return JSON value with mapper applied to every nested string."""
+    if isinstance(value, str):
+        return mapper(value)
+    if isinstance(value, list):
+        return [_map_json_strings(item, mapper) for item in value]
+    if isinstance(value, dict):
+        return {key: _map_json_strings(item, mapper) for key, item in value.items()}
+    return value
+
+
+def process_search_json_file(search_file: Path, base_dir: Path):
+    """Process Quarto's search.json to remove stale `?@label` text."""
+    try:
+        data = json.loads(search_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None, 0, []
+
+    total_fixed = 0
+    all_unmapped: list[str] = []
+
+    def mapper(text: str) -> str:
+        nonlocal total_fixed, all_unmapped
+        fixed_text, fixed_count, unmapped = resolve_search_text(text)
+        total_fixed += fixed_count
+        all_unmapped.extend(unmapped)
+        return fixed_text
+
+    fixed_data = _map_json_strings(data, mapper)
+
+    if total_fixed > 0:
+        try:
+            search_file.write_text(
+                json.dumps(fixed_data, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return search_file.relative_to(base_dir), total_fixed, all_unmapped
         except Exception:
             return None, 0, []
 
@@ -709,7 +773,11 @@ def main():
             sys.exit(0)
 
         files = list(build_dir.rglob(file_pattern))
-        print(f"🔗 [Cross-Reference Fix] Scanning {len(files)} {file_type} files...")
+        search_files = [build_dir / "search.json"] if (build_dir / "search.json").exists() else []
+        print(
+            f"🔗 [Cross-Reference Fix] Scanning {len(files)} {file_type} files"
+            f" and {len(search_files)} search index file(s)..."
+        )
 
         files_fixed = []
         total_refs_fixed = 0
@@ -720,6 +788,13 @@ def main():
                 continue
 
             rel_path, fixed_count, unmapped = process_html_file(file, build_dir, epub_mapping)
+            if fixed_count > 0:
+                files_fixed.append((rel_path, fixed_count))
+                total_refs_fixed += fixed_count
+            all_unmapped.update(unmapped)
+
+        for file in search_files:
+            rel_path, fixed_count, unmapped = process_search_json_file(file, build_dir)
             if fixed_count > 0:
                 files_fixed.append((rel_path, fixed_count))
                 total_refs_fixed += fixed_count
@@ -750,9 +825,14 @@ def main():
             print(f"   Found {len(epub_mapping)} section IDs across chapters")
 
         print(f"🔗 Fixing cross-reference links in: {html_file}")
-        rel_path, fixed_count, unmapped = process_html_file(
-            html_file, html_file.parent, epub_mapping
-        )
+        if html_file.name == "search.json":
+            rel_path, fixed_count, unmapped = process_search_json_file(
+                html_file, html_file.parent
+            )
+        else:
+            rel_path, fixed_count, unmapped = process_html_file(
+                html_file, html_file.parent, epub_mapping
+            )
         if fixed_count > 0:
             print(f"✅ Fixed {fixed_count} cross-references")
             if unmapped:

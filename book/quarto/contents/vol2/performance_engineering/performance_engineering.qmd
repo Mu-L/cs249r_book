@@ -26,7 +26,7 @@ engine: jupyter
 
 _How do we make billion-parameter models run on millisecond timescales?_
 
-Model compression reduces the size of what we compute. Performance engineering reshapes *how* we compute to match the physics of the hardware. The distinction matters: a quantized model loaded naively into a GPU kernel that reads every weight from off-chip memory wastes the very bandwidth savings that quantization was designed to provide. Real performance comes from understanding the full path a tensor travels, from registers through SRAM to HBM and back, and then engineering each step to eliminate wasted movement. This chapter develops the system-level optimization techniques that bridge the gap between a theoretically efficient model and a production artifact that saturates hardware. We examine operator fusion and tiling strategies that keep data in fast SRAM, precision formats that double effective bandwidth, compilation frameworks that automate kernel selection, and algorithmic innovations like speculative decoding[^fn-speculative-decoding-pe] and sparse expert routing that fundamentally change the performance equation. Together, these techniques transform a model that "should" be fast into one that *is* fast, often by an order of magnitude.
+Model compression reduces the size of what we compute. Performance engineering reshapes *how* we compute to match the physics of the hardware. The distinction matters: a quantized model loaded naively into a GPU kernel that reads every weight from off-chip memory wastes the very bandwidth savings that quantization was designed to provide. Real performance comes from understanding the full path a tensor travels, from registers through SRAM to HBM and back, and then engineering each step to eliminate wasted movement. This chapter develops the system-level optimization techniques that bridge the gap between a theoretically efficient model and a production artifact that saturates hardware. We examine operator fusion and tiling strategies that keep data in fast SRAM, precision formats that double effective bandwidth, compilation frameworks that automate kernel selection, and algorithmic innovations like speculative decoding[^fn-speculative-decoding-pe] and sparse expert routing that fundamentally change the performance equation. Together, these techniques transform a model that *should* be fast into one that *is* fast, often by an order of magnitude.
 
 [^fn-speculative-decoding-pe]: **Speculative Decoding**: A technique that uses a small, fast "draft" model to predict multiple tokens in parallel, which are then verified by the large "target" model in a single forward pass. This trades "wasted" compute (to process rejected tokens) for reduced memory bandwidth pressure: the target model's massive weights are loaded from HBM once to process $k$ tokens, effectively increasing the arithmetic intensity of the decode phase by $k\times$. \index{Speculative Decoding!bandwidth optimization}
 
@@ -80,7 +80,7 @@ Performance Engineering is the **Optimization Layer** of the fleet stack. While 
 
 An H100 GPU capable of 989 teraFLOPS often sits 95 percent idle while generating text from a large language model because the processor is starving for data. Performance engineering operates within a constrained optimization space defined by the memory wall, where the speed of moving bytes from memory to compute units fundamentally caps our operational throughput.
 
-Part II established the distributed logic of the fleet: partitioning workloads, synchronizing gradients, recovering from faults, and orchestrating scarce accelerator capacity. Those chapters ensured that workloads reach the right hardware and survive failures along the way. This chapter ensures that each workload *uses* that hardware efficiently, extracting maximum throughput from every accelerator cycle.
+Part II established the distributed logic of the fleet: partitioning workloads, synchronizing gradients, recovering from faults, and orchestrating scarce accelerator capacity. Those chapters ensured that workloads *reach* the right hardware and survive failures along the way. This chapter ensures that each workload *uses* that hardware efficiently, extracting maximum throughput from every accelerator cycle.
 
 ### The iron law of ML performance {#sec-performance-engineering-efficiency-frontier}
 
@@ -94,7 +94,7 @@ The $\max$ operator simplifies this equation: one term usually dominates at a gi
 
 This equation decomposes execution time into three terms. The first fraction represents compute time: the total floating-point operations divided by the hardware's peak throughput. The second fraction represents memory time: the total bytes transferred divided by the memory bandwidth. The $\max$ operator reflects the roofline principle: the slower of the two determines performance. The overhead term captures everything else: kernel launch latency, synchronization, communication, and software stack inefficiency.
 
-Standard model compression (pruning, quantization, distillation) reduces the numerators, performing fewer operations on smaller data. System optimization, the focus of this chapter, attacks the *structure* of the equation itself:
+Standard model compression (pruning, quantization, distillation) reduces the *numerators*, performing fewer operations on smaller data. System optimization, the focus of this chapter, attacks the *structure* of the equation itself:
 
 Operator fusion and tiling (FlashAttention, fused kernels) reduce the Memory Access numerator by eliminating intermediate HBM round-trips. When a sequence of operations keeps its data in SRAM, the effective Memory Access term shrinks dramatically, often by 10--30$\times$ for attention computation.
 
@@ -155,7 +155,7 @@ Configuration B achieves 60$\times$ lower cost per token than Configuration A, b
 
 ### The memory wall {#sec-performance-engineering-memory-wall-physics}
 
-The efficiency frontier establishes what we are optimizing *toward*. The physics of memory bandwidth determines where we start. Many performance engineering problems in modern ML begin with the same observation: memory bandwidth, not compute, is the bottleneck. Consider a single autoregressive decoding step in a large language model. The model reads its full weight matrix from High Bandwidth Memory (HBM)[^fn-hbm-perf] to generate a single token, performing only one or two multiply-accumulate operations per weight loaded.
+The efficiency frontier establishes what we are optimizing toward. The physics of memory bandwidth determines where we start. Many performance engineering problems in modern ML begin with the same observation: memory bandwidth, not compute, is the bottleneck. Consider a single autoregressive decoding step in a large language model. The model reads its full weight matrix from High Bandwidth Memory (HBM)[^fn-hbm-perf] to generate a single token, performing only one or two multiply-accumulate operations per weight loaded.
 
 [^fn-hbm-perf]: **HBM (High Bandwidth Memory)**: Achieves its bandwidth by vertically stacking DRAM dies connected through thousands of through-silicon vias (TSVs), a 3D packaging technique first commercialized by SK Hynix in 2013. Despite the "high bandwidth" label, HBM's 3.35 TB/s on the H100 is still 200--600$\times$ slower than on-chip SRAM access, making the memory hierarchy gap the central constraint of every optimization technique in this chapter. \index{HBM!memory hierarchy}
 
@@ -261,7 +261,7 @@ The memory wall is not static; it grows wider with each hardware generation. Com
 
 : **The Widening Memory Wall**: Compute throughput has increased 18$\times$ from V100 to B200 over seven years, while memory bandwidth has increased only 8.9$\times$. The ridge point has increased 2$\times$, meaning more workloads fall into the memory-bound regime with each generation. {#tbl-widening-gap}
 
-@tbl-widening-gap quantifies this trend. For the FP16/BF16 table as written, the ridge point increased from 139 FLOP/byte on the V100 to 281 FLOP/byte on the B200, about a 2$\times$ increase. An operation with arithmetic intensity of 200 FLOP/byte was compute-bound on the V100 and A100, but memory-bound on the H100 and B200. Performance engineering techniques targeting memory efficiency, fusion, precision, and tiling therefore become *more* important with each hardware generation, not less. The engineering effort invested in FlashAttention and INT4 quantization today will yield even greater returns on future hardware.
+@tbl-widening-gap quantifies this trend. For the FP16/BF16 table as written, the ridge point increased from 139 FLOP/byte on the V100 to 281 FLOP/byte on the B200, about a 2$\times$ increase. An operation with arithmetic intensity of 200 FLOP/byte was compute-bound on the V100 and A100, but memory-bound on the H100 and B200. Performance engineering techniques targeting memory efficiency, fusion, precision, and tiling therefore become *more* important with each hardware generation, not *less*. The engineering effort invested in FlashAttention and INT4 quantization today will yield even greater returns on future hardware.
 
 ### The roofline model {#sec-performance-engineering-roofline}
 
@@ -667,7 +667,7 @@ A quick decode calculation shows why the memory wall dominates even when the acc
 
 **Math**:
 
-*Step 1: Arithmetic Intensity.*
+Step 1: Arithmetic intensity.
 Each decode step per GPU: FLOPs $= 2 \times 8.75 \times 10^9 =$ `{python} RooflineDiagnostic.flops_B_str` $\times 10^9$ FLOP. Bytes loaded $= 8.75 \times 10^9 \times 2 =$ `{python} RooflineDiagnostic.weight_gb_str` $\times 10^9$ bytes $=$ `{python} RooflineDiagnostic.weight_gb_str` GB.
 
 $$
@@ -676,7 +676,7 @@ $$
 
 At `{python} RooflineDiagnostic.ai_str` FLOP/byte, the operation sits far below the H100 ridge point of ~295 FLOP/byte: deeply memory-bound.
 
-*Step 2: Token Rate.*
+Step 2: Token rate.
 Since the operation is memory-bound, performance is limited by bandwidth, not compute:
 
 $$
@@ -888,7 +888,7 @@ The reduction in materialized attention state is dramatic. For a sequence length
 
 The key insight behind FlashAttention is the **online softmax**[^fn-online-softmax-algo] trick, which makes tiling possible for an operation that appears to require global information.
 
-[^fn-online-softmax-algo]: **Online Softmax**: "Online" here is an algorithmic term meaning the computation processes data incrementally in a single pass without storing the full input -- the same sense as in "online learning" or "online algorithms." This property is what makes tiling possible: the algorithm never needs the complete $N{\times}N$ score matrix in memory simultaneously, reducing attention memory from $O(N^2)$ to $O(N)$ and making long-context inference feasible on fixed-size SRAM. \index{Online Softmax!FlashAttention}
+[^fn-online-softmax-algo]: **Online Softmax**: *Online* here is an algorithmic term meaning the computation processes data incrementally in a single pass without storing the full input -- the same sense as in *online learning* or *online algorithms*. This property is what makes tiling possible: the algorithm never needs the complete $N{\times}N$ score matrix in memory simultaneously, reducing attention memory from $O(N^2)$ to $O(N)$ and making long-context inference feasible on fixed-size SRAM. \index{Online Softmax!FlashAttention}
 
 Standard softmax computes $\text{softmax}(s_i) = e^{s_i} / \sum_j e^{s_j}$, but for numerical stability it first subtracts the global maximum: $\text{softmax}(s_i) = e^{s_i - m} / \sum_j e^{s_j - m}$ where $m = \max_j s_j$. Finding this global maximum seems to require seeing all scores first, which would force materializing the full $N{\times}N$ matrix.
 
@@ -901,7 +901,7 @@ The online algorithm avoids this by maintaining running statistics that are upda
 
 After processing all tiles, the running output contains the mathematically equivalent result to the standard algorithm up to the floating-point roundoff of the chosen precision. The rescaling step (step 3) is the critical innovation: it allows the algorithm to "fix up" previous partial results when a new tile reveals a larger maximum value. The algorithm is exact in the mathematical sense, but floating-point execution order can still change the last few bits relative to an unfused implementation.
 
-The cost of this tiling is additional arithmetic: the rescaling operations in step 3 add FLOPs that the standard algorithm does not perform. Because the operation is profoundly memory-bound (the arithmetic intensity of standard attention is roughly 1--10 FLOP/byte for typical sequence lengths), the additional compute is "free" in the sense that the GPU's arithmetic units would otherwise be idle, waiting for HBM data transfers. Trading extra compute for fewer memory accesses is profitable whenever the operation is memory-bound, the central principle of this entire chapter.
+The cost of this tiling is additional arithmetic: the rescaling operations in step 3 add FLOPs that the standard algorithm does not perform. Because the operation is profoundly memory-bound (the arithmetic intensity of standard attention is roughly 1--10 FLOP/byte for typical sequence lengths), the additional compute is "free" in the sense that the GPU's arithmetic units would otherwise be idle, waiting for HBM data transfers. *Trading extra compute for fewer memory accesses is profitable whenever the operation is memory-bound*, the central principle of this entire chapter.
 
 A concrete numerical example clarifies the memory savings. Consider one attention head with sequence length $N = 8192$ and head dimension $d = 128$. The $Q$, $K$, $V$ matrices are each $8192{\times}128$ in FP16, occupying $8192 \times 128 \times 2 = 2$ MB each (6 MB total for one head). The output matrix $O$ is the same size (2 MB). The total input/output data is therefore 8 MB per head.
 
@@ -1069,7 +1069,7 @@ GPTQ\index{GPTQ} [@frantar2023gptq] takes a different approach: weight-only quan
 
 AWQ [Activation-Aware Weight Quantization; @lin2025] observes that not all weights are equally important: weights connected to high-activation channels contribute disproportionately to model output. AWQ identifies these salient weights by analyzing activation magnitudes across a calibration dataset, then applies per-channel scaling to protect them before uniform group quantization. This achieves INT4 weight quantization with quality comparable to GPTQ but with 10--100$\times$ faster quantization time (minutes instead of hours), since it avoids the expensive Hessian computation.
 
-SmoothQuant\index{SmoothQuant} [@xiao2023smoothquant] takes yet another approach to the outlier problem. Rather than handling outliers at runtime (LLM.int8()) or through weight optimization (GPTQ, AWQ), SmoothQuant smooths the activation distribution *before* quantization by migrating the quantization difficulty from activations to weights. The key observation is that activation outliers are channel-specific: certain hidden dimensions consistently produce large values across all tokens. SmoothQuant applies a per-channel scaling transformation that divides the activation by a smoothing factor and multiplies the corresponding weight by the same factor. This mathematically equivalent transformation reduces activation outlier magnitudes at the cost of slightly increasing weight magnitudes, making both tensors more amenable to uniform INT8 quantization. The result is efficient W8A8 (weight-8-bit, activation-8-bit) quantization that exploits INT8 Tensor Cores for both bandwidth and compute benefits.
+SmoothQuant\index{SmoothQuant} [@xiao2023smoothquant] takes yet another approach to the outlier problem. Rather than handling outliers at runtime (LLM.int8()) or through weight optimization (GPTQ, AWQ), SmoothQuant smooths the activation distribution before quantization by migrating the quantization difficulty from activations to weights. The key observation is that activation outliers are channel-specific: certain hidden dimensions consistently produce large values across all tokens. SmoothQuant applies a per-channel scaling transformation that divides the activation by a smoothing factor and multiplies the corresponding weight by the same factor. This mathematically equivalent transformation reduces activation outlier magnitudes at the cost of slightly increasing weight magnitudes, making both tensors more amenable to uniform INT8 quantization. The result is efficient W8A8 (weight-8-bit, activation-8-bit) quantization that exploits INT8 Tensor Cores for both bandwidth and compute benefits.
 
 These four approaches, LLM.int8(), GPTQ, AWQ, and SmoothQuant, represent a progression in the sophistication of quantization techniques for LLMs. LLM.int8() handles outliers at runtime with mixed-precision decomposition but limits compression to INT8. GPTQ uses second-order information for aggressive INT4 weight compression but requires hours of calibration per model. AWQ achieves similar INT4 quality with minutes of calibration by focusing on activation-aware scaling. SmoothQuant enables W8A8 quantization by preprocessing the weight-activation pairs. In practice, AWQ is a common choice for weight-only quantization in production LLM deployment, while SmoothQuant is often used when both weight and activation quantization are needed for compute-bound workloads.
 
@@ -1079,7 +1079,7 @@ The storage cost for block-wise quantization is minimal. Storing one FP32 scale 
 
 ::: {#lhs-performance-engineering-archetype-c-federated-mobilenet-tinyml-survival .callout-lighthouse title="Archetype C (Federated MobileNet): TinyML survival"}
 
-For **Archetype C (Federated MobileNet)**, quantization is a prerequisite for survival, not an optimization. On a microcontroller with only 512 KB of SRAM, an FP16 model is physically impossible to load. **Binary Neural Networks (BNN)** and **1-bit Quantization** push this to the extreme, representing weights as single bits (+1/-1). While this trades significant accuracy, it reduces the weight memory footprint by 16$\times$ relative to FP16 (32$\times$ relative to FP32) and the energy per operation by up to 100$\times$, enabling intelligence on devices that operate on harvested energy (microwatts).
+For **Archetype C (Federated MobileNet)**, quantization is *a prerequisite for survival*, not *an optimization*. On a microcontroller with only 512 KB of SRAM, an FP16 model is physically impossible to load. **Binary Neural Networks (BNN)** and **1-bit Quantization** push this to the extreme, representing weights as single bits (+1/-1). While this trades significant accuracy, it reduces the weight memory footprint by 16$\times$ relative to FP16 (32$\times$ relative to FP32) and the energy per operation by up to 100$\times$, enabling intelligence on devices that operate on harvested energy (microwatts).
 
 :::
 
@@ -1202,7 +1202,7 @@ A capacity calculation makes the serving impact of precision choices concrete.
 
 :::
 
-Precision engineering reduces the bytes per memory transaction. Operator fusion reduces the number of transactions. Together, they attack the same fundamental bottleneck from complementary directions: when data must traverse a slow bus, move less of it (precision) and move it fewer times (fusion). The multiplicative interaction between these two techniques explains why modern serving systems deploy both simultaneously: FlashAttention removes the quadratic attention intermediates, and INT8 KV cache compression further halves the remaining KV-cache bytes. The combined effect exceeds what either technique achieves alone.
+Precision engineering reduces the bytes per memory transaction. Operator fusion reduces the number of transactions. Together, they attack the same fundamental bottleneck from complementary directions: when data must traverse a slow bus, *move less of it* (precision) and *move it fewer times* (fusion). The multiplicative interaction between these two techniques explains why modern serving systems deploy both simultaneously: FlashAttention removes the quadratic attention intermediates, and INT8 KV cache compression further halves the remaining KV-cache bytes. The combined effect exceeds what either technique achieves alone.
 
 Graph compilers automate both of these optimizations, applying them systematically across an entire model.
 
@@ -1236,7 +1236,7 @@ TorchDynamo operates at the Python bytecode level[^fn-torchdynamo-bytecode], a d
 
 [^fn-torchdynamo-bytecode]: **TorchDynamo Bytecode Interception**\index{TorchDynamo Bytecode Interception}: By hooking CPython's frame evaluation function (`PEP 523`, added in Python 3.6), TorchDynamo captures the computation graph at the lowest level of the Python interpreter, below any source-level abstractions. This is why it can trace through decorators, closures, and third-party libraries that defeated earlier tracing approaches. The trade-off is tight coupling to CPython internals: TorchDynamo must be updated for each new Python version, and it cannot run on alternative interpreters like PyPy. \index{TorchDynamo!bytecode tracing}
 
-Previous tracing methods (torch.jit.trace, torch.fx) operated at the Python source or abstract syntax tree (AST) level, requiring users to avoid unsupported Python constructs. TorchDynamo intercepts the bytecode interpreter itself, capturing a computational graph without requiring the user to modify their model code. When TorchDynamo encounters Python constructs it cannot trace (data-dependent control flow, unsupported operations), it inserts a "graph break\index{Graph Break}" that splits the trace into multiple subgraphs, each compiled independently. The goal is to capture as large a subgraph as possible while gracefully handling dynamic Python behavior.
+Previous tracing methods (torch.jit.trace, torch.fx) operated at the Python source or abstract syntax tree (AST) level, requiring users to avoid unsupported Python constructs. TorchDynamo intercepts the bytecode interpreter itself, capturing a computational graph without requiring the user to modify their model code. When TorchDynamo encounters Python constructs it cannot trace (data-dependent control flow, unsupported operations), it inserts a *graph break*\index{Graph Break} that splits the trace into multiple subgraphs, each compiled independently. The goal is to capture as large a subgraph as possible while gracefully handling dynamic Python behavior.
 
 TorchInductor generates optimized Triton kernels (for GPU) or C++/OpenMP code (for CPU) from the captured graph. Triton is a domain-specific language for writing GPU kernels in Python-like syntax, abstracting away thread block management and memory coalescing while still exposing tiling and fusion decisions. TorchInductor automatically fuses element-wise operations, reduces memory traffic by combining operations that share inputs, and selects tile sizes through autotuning.
 
@@ -1280,7 +1280,7 @@ The trade-off for XLA's performance is compilation latency and rigidity. Because
 
 ### TensorRT: Inference optimization {#sec-performance-engineering-tensorrt}
 
-NVIDIA TensorRT is a specialized inference compiler that treats the model not as a flexible program but as a rigid global optimization problem. Because inference requires no backward pass and no gradient storage, TensorRT applies aggressive transformations that would be mathematically invalid or impractically slow for training. It performs a calibration pass where it runs the model on representative data to determine the numerical range of every activation tensor.
+NVIDIA TensorRT is a specialized inference compiler that treats the model not as a *flexible program* but as a *rigid global optimization problem*. Because inference requires no backward pass and no gradient storage, TensorRT applies aggressive transformations that would be mathematically invalid or impractically slow for training. It performs a calibration pass where it runs the model on representative data to determine the numerical range of every activation tensor.
 
 This calibration enables **mixed-precision quantization** at a granular level. Blindly quantizing all layers of a 70B parameter LLM to INT8 often degrades perplexity. TensorRT can calibrate INT8 ranges from representative data and can build mixed-precision inference engines when precisions are enabled or constrained; for LLMs, layer-wise fallback policies usually require explicit quantization analysis or user-specified precision constraints. TensorRT also eliminates training-only operations (dropout, batch normalization running statistics updates), optimizes for static shapes by generating kernels tuned for exact dimensions, and plans memory precisely since no gradient tensors are needed.
 
@@ -1318,7 +1318,7 @@ The choice of backend also matters. TorchInductor (the default) generates Triton
 
 Between hand-written CUDA and fully automated graph compilers sits **Triton**[^fn-triton-tiling], a Python-based language for writing GPU kernels. Triton occupies a middle ground: the programmer specifies the algorithm (tiling strategy, fusion pattern) while Triton handles low-level concerns (thread block scheduling, memory coalescing, shared memory management).
 
-[^fn-triton-tiling]: **Triton**: Created by Philippe Tillet at Harvard (2019), later developed at OpenAI. The key design decision was making the *tile* -- not the thread -- the fundamental programming abstraction. This choice directly mirrors the tiling strategy of FlashAttention: the programmer reasons about blocks of data that fit in SRAM, and the compiler maps those blocks to GPU threads and shared memory. This abstraction eliminates the most error-prone aspects of CUDA (warp divergence, bank conflicts, coalescing) while preserving control over the memory hierarchy decisions that determine ML kernel performance. \index{Triton!kernel programming}
+[^fn-triton-tiling]: **Triton**: Created by Philippe Tillet at Harvard (2019), later developed at OpenAI. The key design decision was making the *tile* -- not the *thread* -- the fundamental programming abstraction. This choice directly mirrors the tiling strategy of FlashAttention: the programmer reasons about blocks of data that fit in SRAM, and the compiler maps those blocks to GPU threads and shared memory. This abstraction eliminates the most error-prone aspects of CUDA (warp divergence, bank conflicts, coalescing) while preserving control over the memory hierarchy decisions that determine ML kernel performance. \index{Triton!kernel programming}
 
 A Triton kernel for fused GELU activation illustrates the programming model:
 
@@ -1409,10 +1409,10 @@ A simple profile breakdown shows how compiler optimizations convert overhead int
 
 **Math**:
 
-*Step 1: Identify the addressable overhead.*
+Step 1: Identify the addressable overhead.
 Element-wise kernels (35 percent) and launch overhead (15 percent) total 50 percent of execution time. torch.compile fuses element-wise operations (reducing their time by approximately 70 percent due to eliminated HBM round-trips) and reduces kernel launches (eliminating most launch overhead).
 
-*Step 2: Estimate postcompilation time.*
+Step 2: Estimate postcompilation time.
 Original time per token: $1/120 =$ `{python} CompilationDividend.tpt_str` ms.
 
 - GEMM time (unchanged): `{python} CompilationDividend.tpt_str` $\times 0.50 =$ `{python} CompilationDividend.gemm_ms_str` ms
@@ -1429,7 +1429,7 @@ Graph compilation automates what manual kernel engineering achieves for individu
 
 ## Speculative Decoding {#sec-performance-engineering-speculative}
 
-Speculative decoding is a latency optimization that breaks the sequential bottleneck of autoregressive generation by using a smaller draft model to predict multiple tokens, which are then verified in parallel by the target model. The performance-engineering relevance is that speculative decoding raises the *effective* arithmetic intensity of the decode phase: a single forward pass of the target model now processes $k$ candidate tokens for the same weight-streaming cost as one token, shifting the operating point from deeply memory-bound toward the ridge point on the roofline. The speedup is bounded by the draft model's acceptance rate and breaks down when the draft model is too cheap (low acceptance) or too expensive (compute-bound verification). It interacts with batching: at large batch sizes the decode phase is already closer to compute-bound, so the marginal benefit of speculation shrinks. The full algorithm, speedup analysis, and SLA-driven deployment patterns are in @sec-inference-scale-speculative-decoding-c438.
+Speculative decoding is a latency optimization that breaks the sequential bottleneck of autoregressive generation by using a smaller draft model to predict multiple tokens, which are then verified in parallel by the target model. The performance-engineering relevance is that speculative decoding raises the effective arithmetic intensity of the decode phase: a single forward pass of the target model now processes $k$ candidate tokens for the same weight-streaming cost as one token, shifting the operating point from deeply memory-bound toward the ridge point on the roofline. The speedup is bounded by the draft model's acceptance rate and breaks down when the draft model is too cheap (low acceptance) or too expensive (compute-bound verification). It interacts with batching: at large batch sizes the decode phase is already closer to compute-bound, so the marginal benefit of speculation shrinks. The full algorithm, speedup analysis, and SLA-driven deployment patterns are in @sec-inference-scale-speculative-decoding-c438.
 
 ```{python}
 #| echo: false
@@ -1542,9 +1542,9 @@ The potential benefit of communication-computation overlap depends on the relati
 # │ Goal: Quantify training step speedup from overlapping ring-AllReduce with
 # │       backward pass for a 7B model on 8 H100 GPUs over NVLink (900 GB/s),
 # │       at 40% MFU, to show when overlap fully hides communication overhead.
-# │ Show: ~14 GB gradients; ~145 ms backward; ~31 ms AllReduce; step drops from
-# │       ~249 ms (no overlap) to ~217 ms (with overlap) -> ~1.14x speedup—inline.
-# │ How: AllReduce time = 2 * gradient_bytes/nvlink_bw; backward time =
+# │ Show: ~14 GB gradients; ~145 ms backward; ~27 ms AllReduce; step drops from
+# │       ~245 ms (no overlap) to ~217 ms (with overlap) -> ~1.13x speedup—inline.
+# │ How: AllReduce time = 2*(N-1)/N * gradient_bytes/nvlink_bw; backward time =
 # │       backward_flops / (h100_tflops * MFU); overlap removes min(back, AR).
 # │
 # │ Imports: mlsysim.core.constants (NVLINK_H100_BW, H100_FLOPS_FP16_TENSOR,
@@ -1565,7 +1565,7 @@ class OverlapCalc:
     bytes_per_param_fp16 = 2     # FP16 gradients
     num_gpus = 8
     nvlink_bw = NVLINK_H100_BW.m_as(byte/second)  # H100 NVLink: 900 GB/s bidirectional
-    ring_allreduce_factor = 2    # Ring AllReduce: 2*(N-1)/N ≈ 2 for large N
+    ring_allreduce_factor = 2 * (num_gpus - 1) / num_gpus
 
     # Backward pass compute: ~2 * forward FLOPs (gradient computation)
     # Forward FLOPs ≈ 2 * params * seq_len * batch_per_gpu
@@ -1608,6 +1608,7 @@ class OverlapCalc:
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     gradient_gb_str = fmt((gradient_bytes * byte).m_as(GB), precision=0, commas=False)
+    ring_allreduce_factor_str = fmt(ring_allreduce_factor, precision=2, commas=False)
     allreduce_ms_str = fmt(allreduce_time_s * 1000, precision=1, commas=False)
     backward_ms_str = fmt(backward_time_s * 1000, precision=1, commas=False)
     step_no_overlap_ms_str = fmt(step_no_overlap * 1000, precision=1, commas=False)
@@ -1617,7 +1618,7 @@ class OverlapCalc:
     overlap_status_str = MarkdownStr("fully hidden" if can_overlap else "partially hidden")
 ```
 
-Consider a 7B parameter model trained on 8 H100 GPUs within a single node connected by NVLink at 900 GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers approximately $2 \times (N-1)/N \approx 2$ times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
+Consider a 7B parameter model trained on 8 H100 GPUs within a single node connected by NVLink at 900 GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers $2 \times (N-1)/N =$ `{python} OverlapCalc.ring_allreduce_factor_str` times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
 
 Without overlap, the training step requires `{python} OverlapCalc.step_no_overlap_ms_str` ms (forward + backward + AllReduce). With overlap, the AllReduce is `{python} OverlapCalc.overlap_status_str` behind the backward pass, reducing the step time to `{python} OverlapCalc.step_overlap_ms_str` ms, a `{python} OverlapCalc.overlap_speedup_str`$\times$ improvement. This example illustrates a critical property: overlap is most effective when backward compute time exceeds AllReduce time. As @fig-overlap-budget shows, as cluster scale increases from 8 to 1024 GPUs, overlap efficiency degrades from ~90 percent to ~18 percent because communication overhead eventually exceeds the computation budget. For smaller models or slower interconnects (for example, PCIe at 64 GB/s instead of NVLink at 900 GB/s), the AllReduce would exceed the backward pass, and no amount of overlap can fully hide the communication.
 
@@ -1739,7 +1740,7 @@ with torch.cuda.stream(comm_stream):
 torch.cuda.synchronize()  # Wait for both to complete
 ```
 
-The GPU hardware scheduler interleaves execution units from both streams, running the GEMM on the SMs while the NVLink engine handles the AllReduce data transfer. However, while streams provide logical concurrency, they contend for physical resources. The SMs must manage the data movement instructions for the communication kernel. On an H100 with 132 SMs, a heavy NCCL operation might occupy 4--8 SMs solely for protocol processing and memory copying, leading to **SM partitioning**\index{SM Partitioning}: the available compute throughput is reduced by 3--6 percent during communication. If the compute kernel is dense enough to saturate 100 percent of the SMs, enabling overlap can paradoxically slow down execution due to this resource contention, a phenomenon known as interference. In practice, the 3--6 percent compute throughput reduction is far smaller than the communication time that would otherwise be exposed, making the trade-off overwhelmingly favorable.
+The GPU hardware scheduler interleaves execution units from both streams, running the GEMM on the SMs while the NVLink engine handles the AllReduce data transfer. However, while streams provide *logical* concurrency, they contend for *physical* resources. The SMs must manage the data movement instructions for the communication kernel. On an H100 with 132 SMs, a heavy NCCL operation might occupy 4--8 SMs solely for protocol processing and memory copying, leading to **SM partitioning**\index{SM Partitioning}: the available compute throughput is reduced by 3--6 percent during communication. If the compute kernel is dense enough to saturate 100 percent of the SMs, enabling overlap can paradoxically slow down execution due to this resource contention, a phenomenon known as interference. In practice, the 3--6 percent compute throughput reduction is far smaller than the communication time that would otherwise be exposed, making the trade-off overwhelmingly favorable.
 
 In practice, achieving effective overlap requires attention to several details. The communication operation must be launched early enough to overlap with subsequent compute; in backward passes, DDP starts each bucket's AllReduce as soon as that bucket is ready so NCCL launch latency is hidden behind later gradient kernels. Synchronization points (where one stream waits for another) must be minimized, as each synchronization serializes execution.
 
@@ -1783,7 +1784,7 @@ Inter-token latency (ITL) measures the time between consecutive output tokens du
 
 Throughput (tokens/second for the system, or tokens/second/GPU for per-device efficiency) measures aggregate production capacity. Throughput is maximized by large batch sizes and high utilization, often at the expense of increased per-request latency. The fundamental trade-off between throughput and latency is captured by queuing theory, as explored in @sec-inference-scale-queuing-theory-batched-inference-bbf0.
 
-While MFU is the standard metric for training efficiency, it is often misleading for inference. Inference is predominantly memory-bound, meaning the Tensor Cores spend most cycles waiting for data. For these workloads, **Model Bandwidth Utilization (MBU)**\index{Model Bandwidth Utilization} is the more informative metric: the ratio of achieved memory bandwidth to the hardware's peak bandwidth. A decoding step on an H100 might show a dismal 2 percent MFU (using a fraction of the compute capability) but achieve 85 percent MBU (saturating the HBM3 memory bandwidth). In this context, 85 percent MBU indicates a highly optimized system; no amount of code optimization can squeeze more tokens per second without faster memory hardware. The choice of primary metric, MFU for training and MBU for inference, reflects the fundamental bottleneck shift between these two regimes.
+While MFU is the standard metric for training efficiency, it is often misleading for inference. Inference is predominantly memory-bound, meaning the Tensor Cores spend most cycles waiting for data. For these workloads, **Model Bandwidth Utilization (MBU)**\index{Model Bandwidth Utilization} is the more informative metric: the ratio of achieved memory bandwidth to the hardware's peak bandwidth. A decoding step on an H100 might show a dismal 2 percent MFU (using a fraction of the compute capability) but achieve 85 percent MBU (saturating the HBM3 memory bandwidth). In this context, 85 percent MBU indicates a highly optimized system; no amount of code optimization can squeeze more tokens per second without faster memory hardware. The choice of primary metric, MFU for *training* and MBU for *inference*, reflects the fundamental bottleneck shift between these two regimes.
 
 ### Using the roofline for diagnosis {#sec-performance-engineering-roofline-diagnosis}
 
@@ -1902,20 +1903,20 @@ A full decode trace shows how several of these smaller bottlenecks can combine i
 
 **Investigation**\index{Investigation}:
 
-*Step 1: Kernel-level analysis.* Run Nsight Compute on the dominant GEMM kernel. Result: achieves 2.8 TB/s effective bandwidth out of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak. Efficiency: 84 percent. This kernel is performing well.
+Step 1: Kernel-level analysis. Run Nsight Compute on the dominant GEMM kernel. Result: achieves 2.8 TB/s effective bandwidth out of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak. Efficiency: 84 percent. This kernel is performing well.
 
-*Step 2: Trace-level analysis.* Run Nsight Systems on a full decode step. Result: 42 percent of step time is spent in GEMM kernels. The remaining 58 percent is split between:
+Step 2: Trace-level analysis. Run Nsight Systems on a full decode step. Result: 42 percent of step time is spent in GEMM kernels. The remaining 58 percent is split between:
 
 - Attention kernels (including KV cache reads): 28 percent
 - Layer normalization and activation kernels: 12 percent
 - Softmax and top-$k$ sampling: 8 percent
 - Kernel launch gaps: 10 percent
 
-*Step 3: Identify optimization targets.*
+Step 3: Identify optimization targets.
 
-- The KV cache attention kernel achieves only 1.9 TB/s bandwidth because of irregular memory access patterns. *Fix*: Implement KV cache quantization (INT8) with better memory layout.
-- Kernel launch gaps (10 percent of time) come from 120+ individual kernel launches per layer. *Fix*: Apply `torch.compile` to fuse element-wise operations, reducing to ~30 kernels per layer.
-- Layer normalization and activation kernels are unfused. *Fix*: Fused LayerNorm-GELU kernel via Triton.
+- The KV cache attention kernel achieves only 1.9 TB/s bandwidth because of irregular memory access patterns. Fix: Implement KV cache quantization (INT8) with better memory layout.
+- Kernel launch gaps (10 percent of time) come from 120+ individual kernel launches per layer. Fix: Apply `torch.compile` to fuse element-wise operations, reducing to ~30 kernels per layer.
+- Layer normalization and activation kernels are unfused. Fix: Fused LayerNorm-GELU kernel via Triton.
 
 **Systems insight**: The dominant GEMM is near-optimal, but secondary operations and launch overhead consume over half the execution time. Systematic profiling reveals that the bottleneck is not where intuition suggests (the largest kernel) but in the accumulated overhead of many small operations.
 
@@ -2122,7 +2123,7 @@ Test your ability to design an optimization plan:
 - [ ] Given an LLM serving workload at batch size 1 that achieves 25 percent of peak bandwidth, can you identify the three most impactful optimizations and their expected interaction?
 - [ ] Can you explain why applying FP8 quantization to a workload that is already communication-bound provides no speedup?
 - [ ] Can you describe the iterative profiling workflow and explain why verifying each optimization is as important as applying it?
-- [ ] Can you identify a scenario where applying `torch.compile` would *degrade* performance (hint: consider compilation overhead and graph breaks)?
+- [ ] Can you identify a scenario where applying `torch.compile` would degrade performance (hint: consider compilation overhead and graph breaks)?
 
 :::
 
@@ -2284,13 +2285,13 @@ The unifying principle is that performance engineering is not about making hardw
 * **Operator Fusion** and **Tiling** (FlashAttention) eliminate redundant HBM traffic by keeping intermediate results in on-chip SRAM and avoiding the quadratic attention intermediates that dominate long-context memory use.
 * **Precision Engineering** doubles effective bandwidth by reducing numerical representation (FP8, INT4), but requires careful handling of outlier features (LLM.int8(), GPTQ, AWQ) and dynamic scaling for training stability.
 * **Graph Compilation**\index{Graph Compilation!graph capture}\index{Graph Compilation!memory planning}\index{Graph Compilation!kernel selection} (torch.compile, XLA, TensorRT) automates known optimizations across the entire model graph, but cannot discover algorithmic innovations like FlashAttention or speculative decoding.
-* **Speculative Decoding** reduces *latency* for memory-bound decode without changing precision or batch size by trading abundant compute for scarce bandwidth through parallel verification of draft tokens.
+* **Speculative Decoding** reduces latency for memory-bound decode without changing precision or batch size by trading abundant compute for scarce bandwidth through parallel verification of draft tokens.
 * **Mixture of Experts** enables parameter scaling without proportional compute scaling, but introduces AllToAll communication patterns and load balancing challenges that require careful system engineering.
 * **Always profile before optimizing**\index{Always Profile Before Optimizing}: the dominant bottleneck is often not where intuition suggests, and applying the wrong optimization wastes engineering effort while leaving the actual bottleneck untouched.
 
 :::
 
-The central lesson of performance engineering is that it is an iterative, measurement-driven discipline, not a one-shot transformation. Every optimization shifts the bottleneck: fusing attention kernels may move the constraint from HBM bandwidth to compute throughput, and reducing precision may free enough memory to increase batch size, which in turn changes the arithmetic intensity and demands a different optimization entirely. The practitioner who masters this profile-optimize-reprofile loop can extract 2 to 10 times more throughput from the same hardware than one who applies optimizations blindly. Profiling is not merely the first step; it is every step.
+The central lesson of performance engineering is that it is an iterative, measurement-driven discipline, not a one-shot transformation. Every optimization shifts the bottleneck: fusing attention kernels may move the constraint from HBM bandwidth to compute throughput, and reducing precision may free enough memory to increase batch size, which in turn changes the arithmetic intensity and demands a different optimization entirely. The practitioner who masters this profile-optimize-reprofile loop can extract 2 to 10 times more throughput from the same hardware than one who applies optimizations blindly. *Profiling is not merely the first step; it is every step.*
 
 This iterative mindset also determines which skills endure as hardware evolves. Individual techniques will change as new accelerator generations shift the ridge point of the Roofline Model and as new architectures alter the dominant computational patterns. What will not change is the fundamental discipline: measure the system, identify the binding constraint, apply the optimization that addresses that specific constraint, and then measure again. Engineers who internalize this cycle treat performance engineering as a continuous practice rather than a checklist, and that practice is what separates systems that merely run from systems that run efficiently at scale.
 
