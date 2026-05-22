@@ -210,11 +210,11 @@ With the mapping in place, diagnosis becomes a matter of matching symptoms to th
 
 @tbl-c3-diagnostic-summary provides the main reference table for fleet-scale diagnosis. Each C$^3$ axis maps to a physical constraint, observable symptoms, measurable metrics, and engineering levers.
 
-| **C$^3$ Axis**            | **Physical Constraint**                                           | **Symptoms**                                                                    | **Key Metric**                                                                                           | **High-Leverage Optimization**                                                                             |
-|:--------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------|
-| **Computation ($C_1$)**   | Arithmetic throughput ($R_{\text{peak}} \times \eta_{\text{hw}}$) | Low MFU, GPU utilization below 80 percent, poor per-GPU performance             | MFU (Model FLOPs Utilization)                                                                            | Kernel optimization, mixed precision, operator fusion (@sec-performance-engineering)                       |
-| **Communication ($C_2$)** | Network bandwidth ($\text{BW}_{\text{net}}$)                      | High AllReduce time, low scaling efficiency, communication > 30 percent of step | Scaling efficiency ($\eta_{\text{scaling}}$), communication fraction ($T_{\text{comm}}/T_{\text{step}}$) | Gradient compression, overlap compute/communication, topology optimization (@sec-collective-communication) |
-| **Coordination ($C_3$)**  | Synchronization overhead and failure recovery                     | Low goodput ratio, frequent restarts, large pipeline bubbles, scheduler churn   | Goodput ratio ($T_{\text{useful}}/T_{\text{wall}}$)                                                      | Async checkpointing, elastic training, faster failure detection (@sec-fault-tolerance-reliability)         |
+| **C$^3$ Axis**            | **Physical Constraint**                                           | **Symptoms**                                                                    | **Key Metric**                                                                                                 | **High-Leverage Optimization**                                                                             |
+|:--------------------------|:------------------------------------------------------------------|:--------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------|
+| **Computation ($C_1$)**   | Arithmetic throughput ($R_{\text{peak}} \times \eta_{\text{hw}}$) | Low MFU, GPU utilization below 80 percent, poor per-GPU performance             | MFU (Model FLOPs Utilization)                                                                                  | Kernel optimization, mixed precision, operator fusion (@sec-performance-engineering)                       |
+| **Communication ($C_2$)** | Network bandwidth ($\text{BW}_{\text{net}}$)                      | High AllReduce time, low scaling efficiency, communication > 30 percent of step | Scaling efficiency ($\eta_{\text{scaling}}$), communication fraction ($T_{\text{comm}}(N)/T_{\text{step}}(N)$) | Gradient compression, overlap compute/communication, topology optimization (@sec-collective-communication) |
+| **Coordination ($C_3$)**  | Synchronization overhead and failure recovery                     | Low goodput ratio, frequent restarts, large pipeline bubbles, scheduler churn   | Goodput ratio ($T_{\text{useful}}/T_{\text{wall}}$)                                                            | Async checkpointing, elastic training, faster failure detection (@sec-fault-tolerance-reliability)         |
 
 : **C$^3$ Diagnostic Summary**: Each axis maps to a distinct physical constraint and a high-leverage optimization strategy. Start diagnosis here: identify which constraint binds, then follow the optimization pointer to the relevant chapter. {#tbl-c3-diagnostic-summary}
 
@@ -285,11 +285,11 @@ In the middle of a production incident, fast heuristics narrow the search space 
 
 Once the bottleneck axis is identified, @tbl-c3-bottleneck-actions shows which optimizations help and which ones are wasted.
 
-| **If the fleet is...**  | **Dominant Term**          | **Optimization That Works**                                                              | **Optimization That is Wasted**                                                                           |
-|:------------------------|:---------------------------|:-----------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------|
-| **Computation-bound**   | $T_{\text{Computation}}$   | Better kernels, mixed precision, operator fusion, next-gen accelerators                  | More network bandwidth (GPUs are not waiting on the network)                                              |
-| **Communication-bound** | $T_{\text{Communication}}$ | Gradient compression, compute-comm overlap, hierarchical collectives, InfiniBand upgrade | Faster GPUs (they will just idle faster while waiting for the network)                                    |
-| **Coordination-bound**  | $T_{\text{Coordination}}$  | Async checkpointing, elastic training, faster failure detection, fewer pipeline stages   | Neither faster GPUs nor faster network (the time is lost to overhead, not to data movement or arithmetic) |
+| **If the fleet is...**  | **Dominant Term**      | **Optimization That Works**                                                              | **Optimization That is Wasted**                                                                           |
+|:------------------------|:-----------------------|:-----------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------|
+| **Computation-bound**   | $T_{\text{compute}}/N$ | Better kernels, mixed precision, operator fusion, next-gen accelerators                  | More network bandwidth (GPUs are not waiting on the network)                                              |
+| **Communication-bound** | $T_{\text{comm}}(N)$   | Gradient compression, compute-comm overlap, hierarchical collectives, InfiniBand upgrade | Faster GPUs (they will just idle faster while waiting for the network)                                    |
+| **Coordination-bound**  | $T_{\text{sync}}(N)$   | Async checkpointing, elastic training, faster failure detection, fewer pipeline stages   | Neither faster GPUs nor faster network (the time is lost to overhead, not to data movement or arithmetic) |
 
 : **What Works vs. What Is Wasted at Fleet Scale**: Optimizing a nondominant C$^3$ axis yields limited improvement and often worsens cost efficiency. A communication-bound fleet will gain little from faster GPUs until AllReduce and other communication bottlenecks are addressed. {#tbl-c3-bottleneck-actions}
 
@@ -362,14 +362,14 @@ Target the Coordination axis:
 
 @tbl-c3-troubleshooting provides a diagnostic matrix for common fleet-scale failure modes.
 
-| **Symptom**                                    | **C$^3$ Axis**        | **Diagnostic Question**                                                      | **Measurement**                                     | **Action**                                                             |
-|:-----------------------------------------------|:----------------------|:-----------------------------------------------------------------------------|:----------------------------------------------------|:-----------------------------------------------------------------------|
-| **Low MFU despite fast network**               | **Computation**       | Are Tensor Cores engaged? Is batch size sufficient for arithmetic intensity? | Per-GPU kernel trace (Nsight/PyTorch Profiler)      | Enable mixed precision, increase per-GPU batch size                    |
-| **Throughput plateaus when adding GPUs**       | **Communication**     | Does AllReduce time grow faster than computation shrinks?                    | NCCL trace, $\rho$ ratio                            | Gradient compression, hierarchical collectives, overlap                |
-| **Frequent job restarts**                      | **Coordination**      | What is the cluster MTBF? Is detection fast enough?                          | Failure logs, MTBF calculation                      | Elastic training, faster detection, smaller blast radius               |
-| **High GPU-hours but slow progress**           | **Coordination**      | What fraction of GPU-hours produce useful training steps?                    | Goodput ratio ($T_{\text{useful}}/T_{\text{wall}}$) | Async checkpointing, reduce pipeline stages, eliminate scheduler churn |
-| **Scaling efficiency drops with cluster size** | **Comm/Coord**        | Is the bottleneck network bandwidth or synchronization barriers?             | Separate $T_{\text{comm}}$ from $T_{\text{coord}}$  | If comm: compress or overlap. If coord: async methods                  |
-| **Stragglers slow entire job**                 | **Comm $\cap$ Coord** | Is one node consistently last to reach the AllReduce barrier?                | Per-node step time histogram                        | Straggler detection + replacement, bounded staleness, backup workers   |
+| **Symptom**                                    | **C$^3$ Axis**        | **Diagnostic Question**                                                      | **Measurement**                                         | **Action**                                                             |
+|:-----------------------------------------------|:----------------------|:-----------------------------------------------------------------------------|:--------------------------------------------------------|:-----------------------------------------------------------------------|
+| **Low MFU despite fast network**               | **Computation**       | Are Tensor Cores engaged? Is batch size sufficient for arithmetic intensity? | Per-GPU kernel trace (Nsight/PyTorch Profiler)          | Enable mixed precision, increase per-GPU batch size                    |
+| **Throughput plateaus when adding GPUs**       | **Communication**     | Does AllReduce time grow faster than computation shrinks?                    | NCCL trace, $\rho$ ratio                                | Gradient compression, hierarchical collectives, overlap                |
+| **Frequent job restarts**                      | **Coordination**      | What is the cluster MTBF? Is detection fast enough?                          | Failure logs, MTBF calculation                          | Elastic training, faster detection, smaller blast radius               |
+| **High GPU-hours but slow progress**           | **Coordination**      | What fraction of GPU-hours produce useful training steps?                    | Goodput ratio ($T_{\text{useful}}/T_{\text{wall}}$)     | Async checkpointing, reduce pipeline stages, eliminate scheduler churn |
+| **Scaling efficiency drops with cluster size** | **Comm/Coord**        | Is the bottleneck network bandwidth or synchronization barriers?             | Separate $T_{\text{comm}}(N)$ from $T_{\text{sync}}(N)$ | If comm: compress or overlap. If coord: async methods                  |
+| **Stragglers slow entire job**                 | **Comm $\cap$ Coord** | Is one node consistently last to reach the AllReduce barrier?                | Per-node step time histogram                            | Straggler detection + replacement, bounded staleness, backup workers   |
 
 : **C$^3$ Troubleshooting Matrix**: Root cause identification and remediation for common fleet-scale bottlenecks. Each row connects a user-visible symptom to the C$^3$ axis most likely responsible, reducing the search space before reaching for a profiler. {#tbl-c3-troubleshooting}
 
@@ -474,7 +474,7 @@ The C$^3$ taxonomy provides a systematic framework for diagnosing fleet-scale bo
 
 A `{python} C3.case2_n_gpus_str`-GPU training job shows `{python} C3.case2_mfu_pct_str` percent MFU per device, but NCCL logs reveal that AllReduce consumes `{python} C3.case2_comm_pct_str` percent of each training step. Which C$^3$ axis is the bottleneck? Name two specific optimizations and explain why each targets the correct axis.
 
-**Answer**: The bottleneck is **Communication** ($C_2$). Per-GPU MFU of `{python} C3.case2_mfu_pct_str` percent is healthy (above the `{python} C3.mfu_low_str` percent threshold), so Computation is not the problem. The `{python} C3.case2_comm_pct_str` percent communication fraction far exceeds the 40 percent red-line threshold. Two optimizations: (1) **Gradient compression** (for example, TopK sparsification) directly reduces the bytes crossing the network, shrinking $T_{\text{Communication}}$ while leaving $T_{\text{Computation}}$ unchanged. (2) **Compute-communication overlap** launches the AllReduce during the backward pass rather than waiting until it completes, converting the sequential sum $T_{\text{comp}} + T_{\text{comm}}$ into the overlapped $\max(T_{\text{comp}}, T_{\text{comm}})$---both target the Communication axis.
+**Answer**: The bottleneck is **Communication** ($C_2$). Per-GPU MFU of `{python} C3.case2_mfu_pct_str` percent is healthy (above the `{python} C3.mfu_low_str` percent threshold), so Computation is not the problem. The `{python} C3.case2_comm_pct_str` percent communication fraction far exceeds the 40 percent red-line threshold. Two optimizations: (1) **Gradient compression** (for example, TopK sparsification) directly reduces the bytes crossing the network, shrinking $T_{\text{comm}}(N)$ while leaving $T_{\text{compute}}/N$ unchanged. (2) **Compute-communication overlap** launches the AllReduce during the backward pass rather than waiting until it completes, converting the sequential sum of compute and communication into the overlapped $\max(T_{\text{compute}}/N, T_{\text{comm}}(N))$ and increasing $T_{\text{overlap}}$---both target the Communication axis.
 
 ### Exercise 2: Fleet law decomposition {.unnumbered}
 
@@ -513,16 +513,16 @@ class Exercise2:
     coord_pct_str = fmt_percent(coord_fraction, precision=0, commas=False)
     eta_overlap_str = fmt(eta_overlap, precision=2, commas=False)
     f_compute_math = MarkdownStr(
-        f"$$f_{{\\text{{compute}}}} = \\frac{{T_{{\\text{{Computation}}}}}}{{T_{{\\text{{step}}}}}} "
+        f"$$f_{{\\text{{compute}}}} = \\frac{{T_{{\\text{{compute}}}}/N}}{{T_{{\\text{{step}}}}(N)}} "
         f"= \\frac{{{compute_ms}}}{{{step_ms}}} = {f_compute_str}$$"
     )
 ```
 
-**Answer**: Fleet efficiency is:
+**Answer**: The compute-time fraction is:
 
 `{python} Exercise2.f_compute_math`
 
-The fleet spends exactly half its time on useful computation. Breaking down the noncompute time: Communication accounts for 60/200 = `{python} Exercise2.comm_pct_str` percent and Coordination accounts for 40/200 = `{python} Exercise2.coord_pct_str` percent. Both are in the "yellow" zone of the traffic light, but Communication (`{python} Exercise2.comm_pct_str` percent) is the larger contributor. Optimize Communication first: overlapping AllReduce with the backward pass could reduce the visible 60 ms to near zero (if computation is longer), pushing $\eta_{\text{fleet}}$ toward 100/140 = `{python} Exercise2.eta_overlap_str`. Tackle the 40 ms coordination overhead only after addressing communication.
+The fleet spends exactly half its time on useful computation. Breaking down the noncompute time: Communication accounts for 60/200 = `{python} Exercise2.comm_pct_str` percent and Coordination accounts for 40/200 = `{python} Exercise2.coord_pct_str` percent. Both are in the "yellow" zone of the traffic light, but Communication (`{python} Exercise2.comm_pct_str` percent) is the larger contributor. Optimize Communication first: overlapping AllReduce with the backward pass could reduce the visible 60 ms to near zero (if computation is longer), pushing $f_{\text{compute}}$ toward 100/140 = `{python} Exercise2.eta_overlap_str`. Tackle the 40 ms coordination overhead only after addressing communication.
 
 ### Exercise 3: Effective FLOP/s calculation {.unnumbered}
 
