@@ -597,10 +597,10 @@ The memory-bound nature of inference also explains a common source of confusion:
 Batch size is the highest-impact lever for performance, and also the most constrained. Increasing the batch size transforms the arithmetic intensity of every operation. For an LLM decode step, the arithmetic intensity scales linearly with batch size:
 
 $$
-I_{\text{decode}}(\text{batch}) = \frac{2 \times \text{params} \times \text{batch}}{\text{params} \times \text{bytes\_per\_param} + \text{batch} \times d \times \text{bytes\_per\_elem}}
+I_{\text{decode}}(B) = \frac{2PB}{P b_{\text{param}} + B d_{\text{model}} b_{\text{elem}}}
 $$
 
-At batch size 1, the denominator is dominated by the weight term $(\text{params} \times \text{bytes\_per\_param})$, and $I \approx 2 / \text{bytes\_per\_param} \approx 1$ FLOP/byte for FP16. At batch size 256, the weight term still dominates, but the same weight bytes are amortized across more requests, so $I \approx 2 \times 256 / \text{bytes\_per\_param} \approx 256$ FLOP/byte, approaching the compute-bound regime.
+At batch size 1, the denominator is dominated by the weight term $(P b_{\text{param}})$, and $I \approx 2/b_{\text{param}} \approx 1$ FLOP/byte for FP16. At batch size 256, the weight term still dominates, but the same weight bytes are amortized across more requests, so $I \approx 2 \times 256/b_{\text{param}} \approx 256$ FLOP/byte, approaching the compute-bound regime.
 
 At large batch sizes, the GPU transitions from memory-bound to compute-bound, and utilization increases dramatically. A single H100 achieving 2 percent utilization at batch size 1 may achieve 60 percent utilization at batch size 256. The economic implication is stark: the cost per token decreases by 30$\times$ as batch size increases from 1 to 256.
 
@@ -908,7 +908,7 @@ After processing all tiles, the running output contains the mathematically equiv
 
 The cost of this tiling is additional arithmetic: the rescaling operations in step 3 add FLOPs that the standard algorithm does not perform. Because the operation is profoundly memory-bound (the arithmetic intensity of standard attention is roughly 1--10 FLOP/byte for typical sequence lengths), the additional compute is "free" in the sense that the GPU's arithmetic units would otherwise be idle, waiting for HBM data transfers. *Trading extra compute for fewer memory accesses is profitable whenever the operation is memory-bound*, the central principle of this entire chapter.
 
-A concrete numerical example clarifies the memory savings. Consider one attention head with sequence length $S = 8192$ and head dimension $d = 128$. The $Q$, $K$, $V$ matrices are each $8192{\times}128$ in FP16, occupying $8192 \times 128 \times 2 = 2$ MB each (6 MB total for one head). The output matrix $Y$ is the same size (2 MB). The total input/output data is therefore 8 MB per head.
+A concrete numerical example clarifies the memory savings. Consider one attention head with sequence length $S = 8192$ and head dimension $d_{\text{head}} = 128$. The $Q$, $K$, $V$ matrices are each $8192{\times}128$ in FP16, occupying $8192 \times 128 \times 2 = 2$ MB each (6 MB total for one head). The output matrix $Y$ is the same size (2 MB). The total input/output data is therefore 8 MB per head.
 
 The na\"ive algorithm computes $A = QK^T$, a matrix of shape $8192{\times}8192$. In FP16, this score matrix occupies $8192 \times 8192 \times 2 \approx 134$ MB per head. After applying softmax, the attention-probability matrix $A_{\text{prob}} = \text{softmax}(A)$ is also $134$ MB. Computing $A_{\text{prob}}V$ requires reading $A_{\text{prob}}$ again. In total, the na\"ive algorithm reads $Q$, $K$, $V$ from HBM (6 MB), writes $A$ (134 MB), reads $A$ for softmax (134 MB), writes $A_{\text{prob}}$ (134 MB), reads $A_{\text{prob}}$ for the final multiply (134 MB), and writes $Y$ (2 MB). The total HBM traffic is approximately 545 MB per head, dominated by the quadratic intermediates.
 
@@ -1530,7 +1530,7 @@ class NvlinkH100:
     bw_gbps_str = fmt(bw_gbps, precision=0, commas=False)
 ```
 
-Consider a concrete example: a 70B model with tensor parallelism across 8 H100 GPUs. Each transformer layer requires two AllReduce\index{AllReduce} operations (one after attention, one after FFN). Each AllReduce transfers approximately $2 \times d \times \text{batch} \times 2$ bytes at FP16 (where $d = 8192$ for a 70B model). At batch size 1, the data volume is $2 \times 8192 \times 1 \times 2 = 32$ KB per AllReduce. At `{python} NvlinkH100.bw_gbps_str` GB/s NVLink bandwidth, this transfer takes approximately 36 ns. However, the AllReduce launch overhead (approximately 5 $\mu$s) dominates the actual data transfer time by 100$\times$. At batch size 1, the AllReduce overhead is dominated by software launch latency, not bandwidth, and overlap provides limited benefit because there is insufficient compute to hide behind.
+Consider a concrete example: a 70B model with tensor parallelism across 8 H100 GPUs. Each transformer layer requires two AllReduce\index{AllReduce} operations (one after attention, one after FFN). Each AllReduce transfers approximately $2 \times d_{\text{model}} \times B \times 2$ bytes at FP16 (where $d_{\text{model}} = 8192$ for a 70B model and $B$ is batch size). At batch size 1, the data volume is $2 \times 8192 \times 1 \times 2 = 32$ KB per AllReduce. At `{python} NvlinkH100.bw_gbps_str` GB/s NVLink bandwidth, this transfer takes approximately 36 ns. However, the AllReduce launch overhead (approximately 5 $\mu$s) dominates the actual data transfer time by 100$\times$. At batch size 1, the AllReduce overhead is dominated by software launch latency, not bandwidth, and overlap provides limited benefit because there is insufficient compute to hide behind.
 
 At batch size 64, the data volume per AllReduce grows to $2 \times 8192 \times 64 \times 2 = 2$ MB, taking approximately 2.2 $\mu$s at NVLink bandwidth. The compute path over a shard is now a bundle of kernels, not a single GEMM: the attention and FFN work together take on the order of 20 $\mu$s for this configuration, while the communication remains around 2.2 $\mu$s. Here, the compute time exceeds the communication time by about 9$\times$, and overlap becomes highly effective. This illustrates why batch size is the universal control knob: it simultaneously improves arithmetic intensity, GPU utilization, and communication overlap effectiveness.
 
@@ -1979,7 +1979,7 @@ While Hardware Utilization reports how often GPUs are busy, it fails to distingu
 # │
 # │ Goal: Calculate MFU for a 70B model distributed across a 128-GPU cluster.
 # │ Show: How the "Scaling Tax" reduces MFU from a 65% local peak to 48% fleet avg.
-# │ How: MFU = (6 * P * D) / (N * r_peak * time).
+# │ How: MFU = (6 * P * D) / (N * R_peak * T).
 # │
 # │ Imports: mlsysim.core.constants (BILLION, TRILLION, H100_FLOPS_FP16_TENSOR, LLAMA2_70B_PARAMS)
 # │ Exports: fleet_params_b_str, fleet_nodes_str, fleet_t_step_ms_str,

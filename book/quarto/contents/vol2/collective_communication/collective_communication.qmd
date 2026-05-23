@@ -680,7 +680,7 @@ A key insight is that AllReduce can be decomposed into ReduceScatter followed by
     *   Semantics: Worker $i$ sends $x_{i \to j}$ to worker $j$ and receives $x_{j \to i}$ from worker $j$, for all $j$.
     *   Complexity: $\mathcal{O}(N^2)$ logical connections create potential for network congestion; bandwidth cost is $\frac{N-1}{N}M$ per worker, but contention makes this the hardest primitive to scale.
 
-[^fn-fsdp-memory]: **FSDP (Fully Sharded Data Parallel)**: PyTorch's implementation of ZeRO-3, which shards parameters, gradients, and optimizer states across $N$ accelerators, reducing per-GPU memory from $16P$ bytes under FP32 Adaptive Moment Estimation (Adam) to $16P/N$ bytes. The trade-off is communication frequency: FSDP issues $2N_{\text{layers}}$ collective operations per step (AllGather + ReduceScatter per layer) instead of data parallelism's single AllReduce, making it more sensitive to the $\alpha$ overhead. \index{FSDP!memory trade-off}
+[^fn-fsdp-memory]: **FSDP (Fully Sharded Data Parallel)**: PyTorch's implementation of ZeRO-3, which shards parameters, gradients, and optimizer states across $N$ accelerators, reducing per-GPU memory from $16P$ bytes under FP32 Adaptive Moment Estimation (Adam) to $16P/N$ bytes. The trade-off is communication frequency: FSDP issues $2N_L$ collective operations per step (AllGather + ReduceScatter per layer) instead of data parallelism's single AllReduce, making it more sensitive to the $\alpha$ overhead. \index{FSDP!memory trade-off}
 
 [^fn-dlrm-embedding]: **DLRM (Deep Learning Recommendation Model)**: Meta's 2019 architecture for click-through rate prediction, where embedding tables can exceed 100 GB and must be sharded across workers. Each forward pass triggers AllToAll to exchange sparse embedding lookups, creating a communication pattern where message sizes are small (hundreds of KB) but fan-out is $\mathcal{O}(N)$, making DLRM one of the most latency-sensitive distributed workloads in production. \index{DLRM!AllToAll}
 
@@ -764,7 +764,7 @@ Each GPU holds `{python} MoeAllToAll.tokens_per_gpu_str` tokens that need to rea
 
 **Latency Analysis (InfiniBand NDR, $\alpha =$ `{python} MoeAllToAll.alpha_str` $\mu\text{s}$, $\beta =$ `{python} MoeAllToAll.beta_str` GB/s)**:
 
-Each of the 7 transfers is a `{python} MoeAllToAll.data_per_transfer_kb_str` KB message. From the $\alpha$-$\beta$ model: $T$ = 3 + `{python} MoeAllToAll.bw_time_approx_str` = `{python} MoeAllToAll.per_transfer_us_str` $\mu\text{s}$ per transfer.
+Each of the 7 transfers is a `{python} MoeAllToAll.data_per_transfer_kb_str` KB message. From the $\alpha$-$\beta$ model: $T_{\text{transfer}}$ = 3 + `{python} MoeAllToAll.bw_time_approx_str` = `{python} MoeAllToAll.per_transfer_us_str` $\mu\text{s}$ per transfer.
 
 If serialized: 7 $\times$ `{python} MoeAllToAll.per_transfer_us_str` $\mu\text{s}$ = `{python} MoeAllToAll.serialized_us_str` $\mu\text{s}$. If all 7 transfers run in parallel (full-duplex, non-blocking): $\approx$ `{python} MoeAllToAll.parallel_us_str` $\mu\text{s}$.
 
@@ -794,9 +794,9 @@ The FSDP/ZeRO strategy deserves special attention because its communication patt
 
 The memory optimization transforms the communication pattern. Before each layer's forward pass, the GPU must reconstruct the full parameter tensor by calling AllGather to collect the shards from all other GPUs. After the backward pass, the gradients are reduced and redistributed via ReduceScatter, so each GPU holds gradients only for its own parameter shard. The sharded parameters can then be discarded (freed from memory) until the next forward pass needs them.
 
-The consequence is a trade-off between memory and communication frequency. Standard data parallelism communicates once per training step (a single AllReduce of the full gradient). FSDP communicates twice per layer per step (AllGather in forward, ReduceScatter in backward), but each communication is smaller (only that layer's parameters, sharded across ranks). For a model with $N_{\text{layers}}$ layers, FSDP issues $2N_{\text{layers}}$ collective operations per step instead of 1; across all those operations, the total communication volume can be comparable to the single full-gradient AllReduce, but it is spread across many smaller operations.
+The consequence is a trade-off between memory and communication frequency. Standard data parallelism communicates once per training step (a single AllReduce of the full gradient). FSDP communicates twice per layer per step (AllGather in forward, ReduceScatter in backward), but each communication is smaller (only that layer's parameters, sharded across ranks). For a model with $N_L$ layers, FSDP issues $2N_L$ collective operations per step instead of 1; across all those operations, the total communication volume can be comparable to the single full-gradient AllReduce, but it is spread across many smaller operations.
 
-The higher operation count makes FSDP more sensitive to latency ($\alpha$) than standard data parallelism. If each of the $2N_{\text{layers}}$ collectives pays the full NCCL startup overhead (25--50 $\mu\text{s}$ per operation from @tbl-nccl-vs-theory), the aggregate overhead for a 100-layer model is 5--10 ms, which can represent a meaningful fraction of step time. FSDP implementations mitigate this through prefetching\index{Prefetching} (launching the next layer's AllGather while the current layer is computing) and **communication stream pipelining** (using dedicated CUDA streams for communication that overlap with compute streams).
+The higher operation count makes FSDP more sensitive to latency ($\alpha$) than standard data parallelism. If each of the $2N_L$ collectives pays the full NCCL startup overhead (25--50 $\mu\text{s}$ per operation from @tbl-nccl-vs-theory), the aggregate overhead for a 100-layer model is 5--10 ms, which can represent a meaningful fraction of step time. FSDP implementations mitigate this through prefetching\index{Prefetching} (launching the next layer's AllGather while the current layer is computing) and **communication stream pipelining** (using dedicated CUDA streams for communication that overlap with compute streams).
 
 Selecting the right collective algorithm at each invocation requires understanding these asymmetric patterns. The AllGather operations in FSDP are medium-sized (one layer's parameters, typically 10--100 MB for transformer models) and latency-sensitive (because computation blocks until the full parameters are available). The ReduceScatter operations are of similar size but can overlap with the next layer's backward computation. This asymmetry means the AllGather operations benefit more from low-latency algorithms (Tree or hybrid) while the ReduceScatter operations can use bandwidth-optimal algorithms (Ring) because their latency is hidden behind computation.
 
@@ -814,7 +814,7 @@ Consider a naive implementation using a Parameter Server (Star topology). All $N
 *   **Time**\index{Time}: $T \propto N \times M / \beta$.
 *   **Result**\index{Result}: Linear slowdown. With 1000 GPUs, rank 0 melts.
 
-This naive approach was historically common in early distributed ML frameworks, where a dedicated parameter server process received all gradients, performed the aggregation, and broadcast the result. For small clusters (4--8 GPUs), the bottleneck at rank 0 was tolerable. At moderate scale (32--64 GPUs), practitioners mitigated the bottleneck by sharding parameters across multiple parameter servers, so that each server handled only a subset of the gradient tensor. This sharded parameter server approach reduces the per-server traffic from $N \times M$ to $N \times M/S$ (where $S$ is the number of servers), but it still scales linearly with $N$ on each shard and introduces additional complexity in parameter partitioning and consistency management.
+This naive approach was historically common in early distributed ML frameworks, where a dedicated parameter server process received all gradients, performed the aggregation, and broadcast the result. For small clusters (4--8 GPUs), the bottleneck at rank 0 was tolerable. At moderate scale (32--64 GPUs), practitioners mitigated the bottleneck by sharding parameters across multiple parameter servers, so that each server handled only a subset of the gradient tensor. This sharded parameter server approach reduces the per-server traffic from $N \times M$ to $N \times M/K_{\text{srv}}$ (where $K_{\text{srv}}$ is the number of servers), but it still scales linearly with $N$ on each shard and introduces additional complexity in parameter partitioning and consistency management.
 
 The fundamental limitation is that any star-topology approach concentrates traffic at a central point. Regardless of how many servers participate, the aggregate traffic through the central tier scales as $\mathcal{O}(N \times M)$. To achieve true scalability, we need algorithms where the communication volume per node is **constant**\index{Constant}, regardless of $N$. This property, known as **bandwidth optimality**\index{Bandwidth!optimality}, is the design target for all modern collective algorithms.
 
@@ -1958,8 +1958,8 @@ A realistic training configuration shows how much communication remains exposed 
 # │       a 32-layer, 7B transformer on 64 GPUs, showing the exposed-latency
 # │       residual when AllReduce exceeds per-layer backward time.
 # │ Show: overlap_savings_pct_str ≈ 35 percent—inline in callout insight sentence.
-# │ How: Sequential: T = T_bwd + N_layers × T_comm; pipelined: T = T_bwd +
-# │      T_first_comm + (N-1) × max(0, T_comm - T_bwd_per_layer).
+# │ How: Sequential: T_no_overlap = T_backward + N_L * T_comm; pipelined:
+# │      T_overlap = T_backward + T_first_comm + (N_L - 1) * max(0, T_comm - T_backward_per_layer).
 # │
 # │ Imports: (none from mlsys—bare arithmetic for pedagogical clarity)
 # │ Exports: total_backward_ms_str, allreduce_per_layer_ms_str,
@@ -2018,7 +2018,7 @@ $T_{\text{sequential}} = T_{\text{backward}} + T_{\text{comm}}(N)$ = `{python} O
 
 Each layer's AllReduce (`{python} OverlapBudgetCalc.allreduce_per_layer_ms_str` ms) runs in parallel with the next layer's backward pass (15 ms). Since `{python} OverlapBudgetCalc.allreduce_per_layer_ms_str` ms > 15 ms, there is `{python} OverlapBudgetCalc.exposed_per_layer_ms_str` ms of exposed communication per layer that cannot be hidden.
 
-$T_{\text{pipelined}} = T_{\text{backward}} + T_{\text{first layer comm}} + (N_{\text{layers}} - 1) \times T_{\text{exposed}}$ = `{python} OverlapBudgetCalc.with_overlap_ms_str` ms.
+$T_{\text{pipelined}} = T_{\text{backward}} + T_{\text{first layer comm}} + (N_L - 1) \times T_{\text{exposed}}$ = `{python} OverlapBudgetCalc.with_overlap_ms_str` ms.
 
 **Systems insight**: Overlap reduces total step time by `{python} OverlapBudgetCalc.overlap_savings_pct_str` percent. The remaining exposed communication comes from the AllReduce being slower than the per-layer backward pass. To eliminate this residual, either increase the backward pass computation (larger batch size) or reduce AllReduce time (more aggressive compression, better topology). The overlap is most effective when $T_{\text{backward per layer}} > T_{\text{AllReduce per layer}}$.
 
