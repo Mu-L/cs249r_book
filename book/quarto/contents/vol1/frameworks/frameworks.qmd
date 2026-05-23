@@ -174,7 +174,7 @@ In 1979, writing a matrix multiplication in Fortran that saturated the hardware 
 
 [^fn-gemm-utilization]: **GEMM**: The single operation that the "near-peak silicon speed" claim rests on. Hardware vendors hand-tune GEMM for their specific chips because every layer in a neural network reduces to matrix multiplication, making this one routine the performance floor for all frameworks above it on the ladder. The catch: GEMM achieves peak throughput only when matrix dimensions satisfy strict alignment constraints (multiples of eight for NVIDIA Tensor Cores), and violating these rules drops a framework from over 90 percent to roughly 30 percent of $R_{\text{peak}}$. \index{GEMM!hardware utilization}
 
-[^fn-lapack-algebra]: **LAPACK (Linear Algebra PACKage)**: Extends BLAS by providing a standard API for higher-level routines (SVD, eigendecomposition, least-squares) that vendors implement with chip-specific code layered on top of fast GEMM kernels. This layered design is the architectural pattern every ML framework inherits: high-level operations delegate downward to hand-tuned primitives, so a vendor-optimized LAPACK call can execute over 10$\times$ faster than a naive implementation without the framework author writing a single line of hardware-specific code. \index{LAPACK!ML initialization}
+[^fn-lapack-algebra]: **LAPACK (Linear Algebra PACKage)**: Extends BLAS by providing a standard API for higher-level routines (SVD, eigendecomposition, least-squares) that vendors implement with chip-specific code layered on top of fast GEMM kernels. This layered design is the architectural pattern every ML framework inherits: high-level operations delegate downward to hand-tuned primitives, so a vendor-optimized LAPACK call can execute over 10$\times$ faster than a naive implementation without the framework author writing a single line of hardware-specific code. \index{LAPACK!framework foundation}
 
 [^fn-blas-performance]: **BLAS (Basic Linear Algebra Subprograms)**: The 1979 API specification that forms the bottom rung of the ladder described here. By decoupling `C = A @ B` from its hardware implementation, BLAS forced vendors to compete on optimized libraries (NVIDIA cuBLAS, Intel MKL) for a fixed set of primitives. Every framework above it on the ladder inherits this bargain: a single BLAS call from any language can saturate an A100, achieving over `{python} A100BLAS.dense_tflops_str` TFLOPS for GEMM alone, without the framework knowing anything about the silicon. \index{BLAS!performance foundation}
 
@@ -303,10 +303,9 @@ class MemoryWallSpecs:
 # Note: Use MemoryWallSpecs.a100_tflops_fp16_str directly.
 ```
 
-\index{Memory Wall!execution strategy impact}
 To understand why execution strategy matters so much, consider the memory wall\index{Memory Wall!framework execution} developed in @sec-hardware-acceleration-understanding-ai-memory-wall-3ea9, the growing gap between processor computational speed and memory bandwidth. Modern GPUs can perform arithmetic far faster than they can fetch data. On an A100 GPU with `{python} A100BLAS.dense_tflops_str` TFLOPS of compute and `{python} MemoryWallSpecs.a100_bw_tbs_str` TB/s of memory bandwidth, element-wise operations like ReLU achieve less than 1 percent of peak compute capacity, not because the hardware is slow, but because they spend nearly all their time waiting for data. The Roofline Model (@sec-machine-foundations-roofline-model-2529) formalizes this trade-off, showing exactly when operations are memory bound vs. compute bound.
 
-The memory wall creates a critical classification: operations are either **compute-bound**\index{Compute-bound operations} (limited by arithmetic throughput, like large matrix multiplications) or **memory-bound**\index{Memory-bound operations} (limited by data movement, like activation functions and normalization). Most individual neural network operation types (activations, normalizations, element-wise operations) are memory bound, though the large matrix multiplications that dominate total compute time can be compute bound.
+The memory wall creates a critical classification: operations are either **compute-bound**\index{Compute-Bound!operation classification} (limited by arithmetic throughput, like large matrix multiplications) or **memory-bound**\index{Memory-Bound!operation classification} (limited by data movement, like activation functions and normalization). Most individual neural network operation types (activations, normalizations, element-wise operations) are memory bound, though the large matrix multiplications that dominate total compute time can be compute bound.
 
 The key optimization for memory-bound operations is **kernel fusion**\index{Kernel Fusion!definition}\index{Kernel Fusion!optimizing memory-bound ops}, combining multiple operations into a single GPU function (called a *kernel*)[^fn-kernel-gpu-dispatch] to avoid intermediate memory traffic. Fusing a sequence of LayerNorm, Dropout, and ReLU into one kernel can yield 5$\times$ speedup by eliminating intermediate writes between operations. FlashAttention[^fn-flashattention-fusion-fw] fuses the entire attention computation, reducing HBM traffic by 10--20$\times$ and achieving 2--4$\times$ wall-clock speedup.
 
@@ -2296,10 +2295,9 @@ Consider what training actually requires: for each of millions of parameters, co
 
 ## Differentiation Problem {#sec-ml-frameworks-differentiation-problem-8b8a}
 
-\index{Gradient!etymology}
 The **differentiation problem**\index{Differentiation Problem!definition} is the task of computing gradients[^fn-gradient-descent-memory] automatically. Neural network training requires derivatives of a scalar loss $\mathcal{L}$ with respect to millions or billions of parameters, making manual differentiation impractical. Because a single scalar loss depends on all parameters, reverse-mode **automatic differentiation (AD)**\index{Automatic Differentiation!definition}[^fn-autodiff-reverse-mode] is the optimal strategy: one backward pass computes all parameter gradients simultaneously, while forward mode would require a separate pass for each parameter. All major ML frameworks therefore implement reverse-mode AD by default [@baydin2018].
 
-[^fn-gradient-descent-memory]: **Automatic Differentiation (AD)**: The "automatically" in the triggering sentence is the key word: AD mechanizes the chain rule as a graph traversal, eliminating the manual derivative computation that made scaling beyond toy networks impractical. The systems trade-off that makes this feasible is the choice of reverse mode, which exploits the many-to-one topology of training (many parameters, one scalar loss) to compute all gradients in a single backward pass. Forward mode would require one pass *per parameter*, making billion-parameter training computationally impossible. \index{Gradient!memory cost}
+[^fn-gradient-descent-memory]: **Automatic Differentiation (AD)**: The "automatically" in the triggering sentence is the key word: AD mechanizes the chain rule as a graph traversal, eliminating the manual derivative computation that made scaling beyond toy networks impractical. The systems trade-off that makes this feasible is the choice of reverse mode, which exploits the many-to-one topology of training (many parameters, one scalar loss) to compute all gradients in a single backward pass. Forward mode would require one pass *per parameter*, making billion-parameter training computationally impossible. \index{Reverse Mode AD!memory cost}
 
 [^fn-autodiff-reverse-mode]: **Reverse-Mode AD**: The $O(1)$-vs.-$O(N)$ asymmetry mentioned earlier has a concrete price: reverse mode must store every intermediate value from the forward pass for use during the backward traversal. For a billion-parameter transformer, these stored activations can consume 3--4$\times$ more memory than the weights themselves. This memory cost is the reason frameworks provide activation checkpointing and gradient accumulation, techniques that trade recomputation time for the memory that reverse-mode AD demands. \index{Automatic Differentiation!reverse mode}
 
@@ -2548,7 +2546,7 @@ checkpoint2 = save_for_backward(activation4)
 \index{Kernel Fusion!eliminating intermediate allocations}
 The second strategy is *operation fusion*\index{Kernel Fusion}[^fn-operation-fusion-bandwidth]. Rather than executing matrix multiplication, bias addition, and ReLU as three separate operations, each writing intermediate results to memory, frameworks fuse them into a single kernel. This eliminates intermediate memory allocations entirely and achieves 2--3$\times$ speedup on modern GPUs by keeping data in registers and caches.
 
-[^fn-operation-fusion-bandwidth]: **Operation Fusion**: The 2--3$\times$ speedup cited in the triggering sentence arises from a specific hardware fact: GPU registers and L1 cache deliver 10--100$\times$ higher bandwidth than HBM. When matmul, bias, and ReLU execute as separate kernels, each writes its output to HBM and the next reads it back, a round-trip that dominates execution time for memory-bound operations. Fusing them into one kernel keeps intermediates in registers, converting three HBM round-trips into zero. \index{Operation Fusion!bandwidth reduction}
+[^fn-operation-fusion-bandwidth]: **Operation Fusion**: The 2--3$\times$ speedup cited in the triggering sentence arises from a specific hardware fact: GPU registers and L1 cache deliver 10--100$\times$ higher bandwidth than HBM. When matmul, bias, and ReLU execute as separate kernels, each writes its output to HBM and the next reads it back, a round-trip that dominates execution time for memory-bound operations. Fusing them into one kernel keeps intermediates in registers, converting three HBM round-trips into zero. \index{Kernel Fusion!bandwidth reduction}
 
 The backward pass itself benefits from hardware-specific optimization. Rather than directly translating the mathematical definition of a convolution gradient into code, frameworks implement specialized backward kernels that exploit memory access patterns and hardware capabilities of modern accelerators [@chetlur2014cudnn]. These optimizations, checkpointing, fusion, and specialized kernels, work together to make training practical for architectures that would otherwise exhaust GPU memory in a single forward pass.
 
@@ -2565,8 +2563,7 @@ The autograd system is the framework component that solves the differentiation p
 ##### The reverse-linked graph structure { .unnumbered}
 
 \index{Autograd!reverse-linked graph}
-\index{Gradient Function Nodes!computation graph}
-During the forward pass, the autograd system constructs a reverse-linked graph of `Function` nodes. Each node records the operation performed and stores references to the tensors it needs for gradient computation. This graph is the data structure that makes reverse-mode automatic differentiation possible: regardless of how many parameters a model has, a single backward pass through this graph computes all gradients. For a model with $N$ parameters, reverse-mode AD requires $O(1)$ backward passes (compared to $O(N)$ for forward-mode), which is why every major framework implements this approach.
+During the forward pass, the autograd system constructs a reverse-linked graph of `Function` nodes\index{Gradient Function Node!computation graph}. Each node records the operation performed and stores references to the tensors it needs for gradient computation. This graph is the data structure that makes reverse-mode automatic differentiation possible: regardless of how many parameters a model has, a single backward pass through this graph computes all gradients. For a model with $N$ parameters, reverse-mode AD requires $O(1)$ backward passes (compared to $O(N)$ for forward-mode), which is why every major framework implements this approach.
 
 Concretely, every tensor produced by a differentiable operation stores a `grad_fn` attribute pointing to the `Function` that created it. Each `Function` links to its inputs through `next_functions`, forming a chain from the loss back to the leaf parameters. @lst-grad-fn-chain illustrates this structure for a simple computation:
 
@@ -2803,8 +2800,7 @@ y.backward()
 
 ###### Detach vs. data {.unnumbered}
 
-\index{Gradient Flow!detaching tensors}\index{Gradient Flow!breaking with detach}
-Use `.detach()` to break gradient flow, and clone the result before in-place mutation. @lst-detach-vs-data illustrates how the legacy `.data` attribute can silently corrupt gradient computation through in-place operations:
+Use `.detach()` to break gradient flow\index{Gradient Flow!tensor detachment}, and clone the result before in-place mutation. @lst-detach-vs-data illustrates how the legacy `.data` attribute can silently corrupt gradient computation through in-place operations:
 
 ::: {#lst-detach-vs-data lst-cap="**Safe Gradient Detachment**: Use `.detach()` to break gradient flow, and use `.detach().clone()` before in-place mutation. The legacy `.data` attribute can silently corrupt gradients through in-place operations."}
 
@@ -3122,7 +3118,7 @@ The first step is the data container itself. Framework data structures must sust
 
 \index{Tensor!n-dimensional arrays}
 \index{Tensor!etymology}
-At the foundation of every framework's data representation lies a single abstraction: the **tensor**\index{Tensor!definition}.
+At the foundation of every framework's data representation lies a single abstraction: the **tensor**.
 
 ```{python}
 #| label: tensor-footprint-calc
@@ -3263,8 +3259,7 @@ The memory breakdown for ResNet-50 in @sec-ml-frameworks-principle-2-memorycompu
 
 #### Tensor structure and dimensions {#sec-ml-frameworks-tensor-structure-dimensions-4a14}
 
-\index{Tensor!rank hierarchy}\index{Broadcasting!shape compatibility}
-A tensor generalizes scalars, vectors, and matrices to arbitrary dimensions. The hierarchy is straightforward: a scalar is a rank-0 tensor (single value), a vector is rank-1 (sequence of values), and a matrix is rank-2 (rows and columns). Higher ranks extend this pattern through nesting, so a rank-3 tensor is a stack of matrices---compare all four ranks side by side in @fig-tensor-data-structure-a to see how each level adds a new axis of organization.
+A tensor generalizes scalars, vectors, and matrices to arbitrary dimensions. The hierarchy\index{Tensor!rank hierarchy} is straightforward: a scalar is a rank-0 tensor (single value), a vector is rank-1 (sequence of values), and a matrix is rank-2 (rows and columns). Higher ranks extend this pattern through nesting, so a rank-3 tensor is a stack of matrices---compare all four ranks side by side in @fig-tensor-data-structure-a to see how each level adds a new axis of organization.
 
 ::: {#fig-tensor-data-structure-a fig-env="figure" fig-pos="htb" fig-cap="**Tensor Rank Hierarchy**: Four shapes illustrating tensor ranks from left to right: a single value (rank 0, scalar), a column of values (rank 1, vector), a grid of values (rank 2, matrix), and a cube of values (rank 3, three-dimensional tensor)." fig-alt="Four shapes showing tensor ranks left to right: single box labeled Rank 0, vertical column of numbers labeled Rank 1, 2D grid of numbers labeled Rank 2, and 3D cube labeled Rank 3."}
 
@@ -3522,9 +3517,9 @@ Tensors and their memory layouts establish *what* the framework computes with. W
 
 ### Frameworks as the operating system interface {#sec-ml-frameworks-os-interface}
 
-\index{CUDA!runtime, OS layer}\index{DMA!pcie, data movement interface} While the high-level API focuses on math, the framework's backend functions as the operating system of the Single-Machine Stack. It manages the two critical resources of a single node: compute scheduling and data movement.
+While the high-level API focuses on math, the framework's backend functions as the operating system of the Single-Machine Stack. It manages the two critical resources of a single node: compute scheduling and data movement.
 
-The CUDA Runtime serves as this OS layer, providing the low-level primitives for launching kernels and managing device memory. The framework coordinates with this runtime to implement **Direct Memory Access (DMA)** over the PCIe bus. As established in @sec-hardware-acceleration, the bandwidth gap between the host (CPU) and device (GPU) is the primary "Data Loading Bottleneck." Frameworks mitigate this through **pinned memory**\index{Pinned Memory!definition} (page-locked memory) that allows the GPU to read directly from CPU RAM via DMA without interrupting the processor. This "HW/OS" interface is what makes high-throughput training loops possible on a single machine.
+The CUDA Runtime\index{CUDA!runtime, OS layer} serves as this OS layer, providing the low-level primitives for launching kernels and managing device memory. The framework coordinates with this runtime to implement **Direct Memory Access (DMA)**\index{DMA!PCIe data movement interface} over the PCIe bus. As established in @sec-hardware-acceleration, the bandwidth gap between the host (CPU) and device (GPU) is the primary "Data Loading Bottleneck." Frameworks mitigate this through **pinned memory**\index{Pinned Memory!definition} (page-locked memory) that allows the GPU to read directly from CPU RAM via DMA without interrupting the processor. This "HW/OS" interface is what makes high-throughput training loops possible on a single machine.
 
 Every tensor resides on a specific device, and cross-device operations incur transfer costs that can dominate execution time. PCIe 4.0 delivers `{python} DeviceBandwidthHierarchy.pcie4_gbs_str` GB/s between CPU and GPU, while HBM2e provides `{python} DeviceBandwidthHierarchy.a100_bw_tbs_str` TB/s within the GPU. This `{python} DeviceBandwidthHierarchy.pcie_to_hbm_gap_str`$\times$ bandwidth gap means a single misplaced tensor transfer can erase the entire speedup from GPU acceleration.
 
@@ -3765,7 +3760,7 @@ Worker process management introduces several subtle issues. Because workers are 
 
 The DataLoader wraps a Dataset object that defines how individual samples are accessed. PyTorch supports two dataset paradigms. *Map-style* datasets implement `__len__` and `__getitem__`, enabling random access to samples by index---this pattern works well for datasets that fit in memory or support efficient random access on disk. *Iterable-style* datasets implement `__iter__` instead, yielding samples sequentially for streaming data sources where random access is impractical. The choice between paradigms determines whether the DataLoader can shuffle samples (map-style only) or must process them in arrival order (iterable-style).
 
-A final detail is *collation\index{Collation!batch assembly}*: the `collate_fn` parameter determines how individual samples are combined into batches. The default collation stacks tensors along a new batch dimension, which works when all samples have identical shapes. For variable-length data such as text sequences, custom collation handles padding, sorting by length, or creating attention masks---directly affecting both memory usage and training throughput.
+A final detail is *collation*\index{Collation!batch assembly}: the `collate_fn` parameter determines how individual samples are combined into batches. The default collation stacks tensors along a new batch dimension, which works when all samples have identical shapes. For variable-length data such as text sequences, custom collation handles padding, sorting by length, or creating attention masks---directly affecting both memory usage and training throughput.
 
 ```{python}
 #| label: gpt3-parameter-structures
@@ -3942,8 +3937,7 @@ The data structures examined so far---tensors, device managers, data pipelines, 
 
 ### Core operations {#sec-ml-frameworks-core-operations-914f}
 
-\index{Operator Kernels!dispatch hierarchy}
-When an engineer writes `y = torch.matmul(x, w)`, the gap between Python and the GPU is larger than it appears. The gap between a single line of Python and thousands of parallel GPU threads is bridged by three groups of operations working in coordination. @fig-mlfm-core-ops is arranged left to right: system-level operations coordinate resources and execution, basic numerical operations implement mathematical computations, and hardware abstraction operations manage computing platform complexity.
+When an engineer writes `y = torch.matmul(x, w)`, the gap between Python and the GPU is larger than it appears. The gap between a single line of Python and thousands of parallel GPU threads is bridged by three groups of operations\index{Operator Kernel!dispatch hierarchy} working in coordination. @fig-mlfm-core-ops is arranged left to right: system-level operations coordinate resources and execution, basic numerical operations implement mathematical computations, and hardware abstraction operations manage computing platform complexity.
 
 ::: {#fig-mlfm-core-ops fig-env="figure" fig-pos="htb" fig-cap="**Core Operations Stack**: Three side-by-side groups showing how frameworks bridge Python code to hardware. From left to right: system-level operations (scheduling, memory management, resource optimization), numerical operations (GEMM, BLAS, element-wise), and hardware operations (kernel management, memory abstraction, execution control)." fig-alt="Three grouped boxes connected left to right by arrows. System level: Scheduling, memory management, resource optimization. Numerical: GEMM, BLAS, element-wise operations. Hardware: Kernel management, memory abstraction, execution control."}
 
@@ -4102,7 +4096,7 @@ class ResNetGFLOPS:
 \index{GEMM!arithmetic intensity}
 With hardware abstraction managing the platform-specific details, frameworks build a layer of mathematical operations on top. General Matrix Multiply (GEMM)\index{GEMM!matrix multiplication}\index{Tensor!operations, GEMM} dominates ML computation (see @sec-algorithm-foundations-general-matrix-multiply-gemm-b55d for arithmetic intensity analysis and the roofline implications). The operation $C = \alpha AB + \beta C$ accounts for the vast majority of arithmetic in neural networks: a single ResNet-50 forward pass performs approximately `{python} ResNetGFLOPS.resnet_gflops_str` billion floating-point operations, nearly all of which reduce to GEMM. Frameworks optimize GEMM through cache-aware tiling (splitting matrices into blocks that fit in L1/L2 cache), loop unrolling for instruction-level parallelism, and shape-specific kernels. Fully connected layers use standard dense GEMM, while convolutional layers use im2col transformations that reshape input patches into matrix columns, converting convolution into GEMM.
 
-Beyond GEMM, frameworks implement BLAS operations\index{BLAS!vector and matrix operations} (AXPY for vector addition, GEMV for matrix-vector products) and element-wise operations\index{Element-wise Operations!memory bandwidth} (activation functions, normalization). Element-wise operations are *individually cheap* but *collectively expensive* due to memory bandwidth. Each operation reads and writes the full tensor, so a sequence of five element-wise operations on a 100 MB tensor moves 1 GB of data. Fusing those five operations into a single kernel reduces memory traffic to 200 MB, a 5$\times$ bandwidth savings that directly translates to faster execution.
+Beyond GEMM, frameworks implement BLAS operations\index{BLAS!vector and matrix operations} (AXPY for vector addition, GEMV for matrix-vector products) and element-wise operations\index{Element-Wise Operation!memory bandwidth} (activation functions, normalization). Element-wise operations are *individually cheap* but *collectively expensive* due to memory bandwidth. Each operation reads and writes the full tensor, so a sequence of five element-wise operations on a 100 MB tensor moves 1 GB of data. Fusing those five operations into a single kernel reduces memory traffic to 200 MB, a 5$\times$ bandwidth savings that directly translates to faster execution.
 
 Numerical precision adds another dimension. Training in FP32 uses 4 bytes per parameter; quantizing to INT8 reduces this to 1 byte, cutting memory by 4$\times$ and enabling 2--4$\times$ throughput improvements on hardware with INT8 acceleration. Training typically requires FP32 for gradient stability, while inference runs at FP16 or INT8 with minimal accuracy loss. Frameworks maintain separate kernel implementations for each precision format and handle mixed-precision workflows where different layers operate at different bit widths within a single forward pass.
 
@@ -4393,7 +4387,7 @@ Each major framework represents a distinct point in the design space defined by 
 \index{TensorFlow!production deployment}
 TensorFlow's architecture reflects a comprehensive solution to the Abstraction Problem: targeting diverse hardware, from cloud TPUs to microcontrollers, through a single interface. Google's production environment demanded this breadth because the same model often needed to serve predictions on TPU pods in the data center, on Android phones via TensorFlow Lite, and in web browsers through TensorFlow.js\index{TensorFlow.js!browser deployment}. This deployment diversity drove the choice of a static graph (or "Define-and-Run") design. By requiring the model to be represented as a complete computational graph before execution, TensorFlow enables ahead-of-time (AOT) compilation and optimization for each target platform.
 
-The graph-first approach prioritizes the deployment spectrum: because the framework sees the entire graph, it can perform aggressive optimizations like constant folding, operator fusion, and memory layout optimization before the first byte of data is processed. TensorFlow's dominance in complex production ecosystems traces directly to this ahead-of-time optimization capability. @fig-tensorflow-architecture maps the full training-to-deployment pipeline---trace how a model flows from data preprocessing through distributed training on the left, then fans out to serving, mobile (TF Lite), browser (TF.js), and language bindings on the right.
+The graph-first approach prioritizes the deployment spectrum: because the framework sees the entire graph, it can perform aggressive optimizations like constant folding, operator fusion, and memory layout optimization before the first byte of data is processed. TensorFlow's dominance in complex production ecosystems traces directly to this ahead-of-time optimization capability. @fig-tensorflow-architecture maps the full training-to-deployment pipeline---trace how a model flows from data preprocessing through distributed training on the left, then fans out through SavedModel export\index{SavedModel!TensorFlow export format} to TensorFlow Serving\index{TensorFlow Serving!production deployment}, mobile (TF Lite), browser (TF.js), and language bindings on the right.
 
 ::: {#fig-tensorflow-architecture fig-env="figure" fig-pos="htb" fig-cap="**TensorFlow Training-to-Deployment Pipeline**: Two-column diagram showing the training path (left) from data preprocessing through tf.keras and distribution strategy across CPU, GPU, and TPU, and the deployment path (right) from SavedModel export to TensorFlow Serving, Lite, JS, and language bindings. Source: TensorFlow." fig-alt="Two-column diagram. Training: data preprocessing, tf.keras, TensorFlow Hub, Premade Estimators, Distribution Strategy across CPU/GPU/TPU. Deployment via SavedModel to TensorFlow Serving, Lite, JS, and language bindings."}
 
@@ -4429,11 +4423,11 @@ The graph-first approach prioritizes the deployment spectrum: because the framew
              anchor=north east](B7){\textbf{TPU}};
 \node[Box,fill= BrownL,draw= BrownLine,minimum width=18mm](B8)at($(B6.east)!0.5!(B7.west)$){\textbf{GPU}};
 %
-\node[Box,fill= BlueL,draw= BlueLine,right=1.0 of $(B1.east)!0.5!(B7.east)$](B9){\textbf{SavedModel\index{SavedModel!TensorFlow export format}}};
+\node[Box,fill= BlueL,draw= BlueLine,right=1.0 of $(B1.east)!0.5!(B7.east)$](B9){\textbf{SavedModel}};
 %
 \def\di{4.35}
 \node[Box,text width=50mm,fill= RedL,right=\di of B1,
-            draw= RedLine](L1){\textbf{TensorFlow Serving\index{TensorFlow Serving!production deployment}}\\ Cloud, on-prem};
+            draw= RedLine](L1){\textbf{TensorFlow Serving}\\ Cloud, on-prem};
 \node[Box,text width=50mm,fill= RedL,right=\di of B3,
             draw= RedLine](L2){\textbf{TensorFlow Lite}\\ Android, iOS, Raspberry Pi};
 \node[Box,text width=50mm,fill= RedL,right=\di of B5,
@@ -4840,7 +4834,7 @@ When `h = torch.relu(x @ W1 + b1)` executes, PyTorch's eager execution triggers 
 
 1. **Python Dispatch**\index{Python Dispatch!overhead} (microseconds-scale): Python interpreter calls `torch.matmul`, which routes through PyTorch's dispatcher to select the CUDA backend.
 
-2. **Kernel Selection**\index{BLAS Library!kernel selection}: cuBLAS selects an optimized GEMM kernel based on matrix dimensions (`{python} TrainingStepDims.train_batch_str` $\times$ `{python} TrainingStepDims.train_input_str` $\times$ `{python} TrainingStepDims.train_hidden_str`). For these dimensions, it might choose a tiled algorithm optimized for L2 cache.
+2. **Kernel Selection**\index{Kernel Dispatch!BLAS kernel selection}: cuBLAS selects an optimized GEMM kernel based on matrix dimensions (`{python} TrainingStepDims.train_batch_str` $\times$ `{python} TrainingStepDims.train_input_str` $\times$ `{python} TrainingStepDims.train_hidden_str`). For these dimensions, it might choose a tiled algorithm optimized for L2 cache.
 
 3. **Kernel Launch** (a few microseconds): The selected kernel is queued to the GPU's command buffer. The CPU continues immediately (asynchronous execution).
 
@@ -5063,7 +5057,7 @@ Total: ~`{python} MnistTrainingStepCalc.mnist_total_flops_str` FLOPs, ~`{python}
 - $T_{\text{memory}} \approx$ `{python} MnistTrainingStepCalc.mnist_mem_traffic_str`/`{python} MnistTrainingStepCalc.a100_mem_bw_tbs_str` TB/s ≈ `{python} MnistTrainingStepCalc.mnist_t_memory_us_str`µs
 - $T_{\text{overhead}} \approx$ `{python} MnistTrainingStepCalc.mnist_n_ops_str` ops $\times$ `{python} MnistTrainingStepCalc.mnist_us_per_op_str` μs ≈ `{python} MnistTrainingStepCalc.mnist_t_overhead_us_str` μs
 
-The training step is overhead-bound.\index{Overhead-bound!small model training} For small models, Python dispatch and kernel launch dominate. This explains why:
+The training step is overhead-bound.\index{Overhead-Bound!small model training} For small models, Python dispatch and kernel launch dominate. This explains why:
 
 - `torch.compile` provides 2--3$\times$ speedup by fusing operations and reducing kernel launches
 - Batch size increases help amortize per-batch overhead
