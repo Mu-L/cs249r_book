@@ -58,6 +58,7 @@ B200_FLOPS_FP16_TENSOR = 2250 * TFLOPs / second  # Dense. Sparse is 4500.
 B200_FLOPS_FP16_SPARSE = 4500 * TFLOPs / second
 B200_FLOPS_FP8_TENSOR = 4500 * TFLOPs / second   # Dense. Sparse is 9000.
 B200_FLOPS_INT4 = 9000 * TFLOPs / second         # Dense. Sparse is 18 PFLOPS.
+B200_FLOPS_FP4_TENSOR = B200_FLOPS_INT4          # FP4 tensor headline alias for book prose.
 B200_MEM_BW = 8 * TB / second             # HBM3e
 B200_MEM_CAPACITY = 192 * GiB
 B200_TDP = 1000 * watt

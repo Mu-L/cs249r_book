@@ -652,7 +652,7 @@ Effective benchmark interpretation requires knowing the performance characterist
 # │          resnet_perf_tflops_str, bert_ai_b1_str, bert_perf_b1_str,
 # │          bert_util_b1_str, utilization_peak_pct_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import A100_MEM_BW, A100_FLOPS_FP16_TENSOR, H100_FLOPS_FP8_TENSOR, H100_FLOPS_INT8, TB, TFLOPs, second
+from mlsysim.core.constants import A100_MEM_BW, A100_FLOPS_FP16_TENSOR, H100_FLOPS_FP8_TENSOR, H100_FLOPS_INT8, TB, TFLOPs, count, second, TRILLION
 from mlsysim.core.constants import BILLION, MILLION
 from mlsysim.fmt import fmt_percent, fmt, check
 
@@ -1128,7 +1128,7 @@ Measuring these operations correctly requires discipline. A small set of measure
 # │ How: Retrieve H100 specs from Digital Twins.
 # │
 # │ Imports: mlsysim (Hardware), mlsysim.constants (H100_FLOPS_FP8_TENSOR,
-# │          TFLOPs, second, watt), mlsysim.book (fmt)
+# │          count, TFLOPs, second, watt), mlsysim.book (fmt)
 # │ Exports: h100_tflops_fp16_str, h100_tflops_fp8_str,
 # │          h100_tops_int8_str, h100_tdp_str
 # └─────────────────────────────────────────────────────────────────────────────
@@ -1138,14 +1138,14 @@ class H100Specs:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     _h100_fp16 = Hardware.H100.peak_flops.m_as(TFLOPs/second)
     _h100_fp8 = H100_FLOPS_FP8_TENSOR.m_as(TFLOPs/second)
-    _h100_int8 = H100_FLOPS_INT8.m_as(TFLOPs/second)
+    _h100_int8_tops = H100_FLOPS_INT8.m_as(count/second) / TRILLION
     _h100_bw_tbs = Hardware.H100.memory_bw.m_as(TB/second)
     _h100_tdp = Hardware.H100.tdp.m_as(watt)
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     h100_tflops_fp16_str = fmt(_h100_fp16, precision=0, commas=False)
     h100_tflops_fp8_str = fmt(_h100_fp8, precision=0, commas=True)
-    h100_tops_int8_str = fmt(_h100_int8, precision=0, commas=False)
+    h100_tops_int8_str = fmt(_h100_int8_tops, precision=0, commas=False)
     h100_tdp_str = fmt(_h100_tdp, precision=0, commas=False)
 ```
 
@@ -2397,7 +2397,7 @@ class EnergyBreakdownCalc:
     m_ops = MOBILENETV2_FLOPs.m_as(MFLOPs)                                      # MFLOPs
     _dram_pj = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/byte)
     _fp32_pj = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.flop)
-    _int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.flop)
+    _int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.count)
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # FP32: 4 bytes/param for load; INT8: 1 byte/param
     e_fp32_load = (m_params * MILLION * 4 * _dram_pj) / MILLION               # uJ
@@ -2469,10 +2469,10 @@ from mlsysim.core.constants import (
 class EnergyPerOp:
     """Energy per operation and memory access for precision comparison tables."""
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    # Note: _FLOP_ constants have units pJ/flop—use .magnitude for bare numeric
+    # FP constants use pJ/FLOP; INT8 uses pJ/op. Use .magnitude for bare numeric values.
     _fp32_pj = ENERGY_FLOP_FP32_PJ.magnitude
     _fp16_pj = ENERGY_FLOP_FP16_PJ.magnitude
-    _int8_pj = ENERGY_FLOP_INT8_PJ.magnitude
+    _int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.count)
     _reg_pj = ENERGY_REG_PJ
     _l1_pj = ENERGY_SRAM_L1_PJ
     _l2_pj = ENERGY_SRAM_L2_PJ
@@ -2558,7 +2558,7 @@ A comprehensive training benchmark considers multiple dimensions of system behav
 | **Training Time and Throughput**        | Time-to-accuracy (seconds, minutes, hours); Throughput (samples/sec)                                                         | Comparing training speed across different GPU architectures |
 | **Scalability and Parallelism**         | Scaling efficiency (percent of ideal speedup); Communication overhead (latency, bandwidth)                                   | Analyzing distributed training performance for large models |
 | **Resource Utilization**                | Compute utilization (percent GPU/TPU usage); Memory bandwidth (GB/s); I/O efficiency (data loading speed)                    | Optimizing data pipelines to improve GPU utilization        |
-| **Energy Efficiency and Cost**          | Energy consumption per run (MWh, kWh); Performance per watt (TOPS/W)                                                         | Evaluating energy-efficient training strategies             |
+| **Energy Efficiency and Cost**          | Energy consumption per run (MWh, kWh); Training throughput per watt (FLOP/s/W)                                               | Evaluating energy-efficient training strategies             |
 | **Fault Tolerance and Robustness**      | Checkpoint overhead (time per save); Recovery success rate (percent)                                                         | Assessing failure recovery in cloud-based training systems  |
 | **Reproducibility and Standardization** | Variance across runs (percent difference in accuracy, training time); Framework consistency (TensorFlow vs. PyTorch vs. JAX) | Ensuring consistency in benchmark results across hardware   |
 
@@ -3024,10 +3024,10 @@ Benchmarking inference systems often involves balancing competing metrics. For e
 # │ Show: H100 dense INT8 throughput in TOPS units.
 # │ How: Read the H100 INT8 hardware constant and format it for prose.
 # │
-# │ Imports: mlsysim.core.constants (H100_FLOPS_INT8, TFLOPs, second)
+# │ Imports: mlsysim.core.constants (H100_FLOPS_INT8, count, second, TRILLION)
 # │ Exports: TopsFootnoteAnchor.h100_tops_int8_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import H100_FLOPS_INT8, TFLOPs, second
+from mlsysim.core.constants import H100_FLOPS_INT8, count, second, TRILLION
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -3035,7 +3035,7 @@ class TopsFootnoteAnchor:
     """Local H100 INT8 TOPS anchor for the metric-comparability footnote."""
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    h100_tops_int8 = H100_FLOPS_INT8.m_as(TFLOPs/second)
+    h100_tops_int8 = H100_FLOPS_INT8.m_as(count/second) / TRILLION
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Direct hardware-constant lookup.
@@ -5155,7 +5155,7 @@ class PrecisionEnergySummary:
     m_ops = MOBILENETV2_FLOPs.m_as(MFLOPs)
     dram_pj = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/byte)
     fp32_pj = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.flop)
-    int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.flop)
+    int8_pj = ENERGY_FLOP_INT8_PJ.m_as(ureg.picojoule/ureg.count)
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     e_fp32_load = (m_params * MILLION * 4 * dram_pj) / MILLION

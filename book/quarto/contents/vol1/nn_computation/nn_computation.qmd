@@ -184,7 +184,7 @@ class TensorLayoutCost:
 class AcceleratorSpecRefs:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     h100_fp16_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs / second)
-    tpuv1_tops = TPUV1_FLOPS_INT8.m_as(TFLOPs / second)
+    tpuv1_tops = TPUV1_FLOPS_INT8.m_as(count / second) / TRILLION
     tpuv1_tdp_w = TPUV1_TDP.m_as(watt)
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -2098,12 +2098,12 @@ These algorithmic advances created demand for higher-throughput computing infras
 # │ Show: TPU v1 provided 92 TOPS for INT8 inference at the constant TDP.
 # │ How: Convert the constants to TOPS and watts, then format for the footnote.
 # │
-# │ Imports: mlsysim.constants (TPUV1_FLOPS_INT8, TPUV1_TDP, TFLOPs, second, watt),
+# │ Imports: mlsysim.constants (TPUV1_FLOPS_INT8, TPUV1_TDP, count, second, watt),
 # │          mlsysim.book (fmt, check)
 # │ Exports: TpuHardwareFootnoteLocal.tpuv1_tops_str,
 # │          TpuHardwareFootnoteLocal.tpuv1_tdp_w_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import TPUV1_FLOPS_INT8, TPUV1_TDP, TFLOPs, second, watt
+from mlsysim.core.constants import TPUV1_FLOPS_INT8, TPUV1_TDP, count, second, watt, TRILLION
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -2111,7 +2111,7 @@ class TpuHardwareFootnoteLocal:
     """Namespace for local TPU hardware footnote specs."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    tpuv1_tops = TPUV1_FLOPS_INT8.m_as(TFLOPs / second)
+    tpuv1_tops = TPUV1_FLOPS_INT8.m_as(count / second) / TRILLION
     tpuv1_tdp_w = TPUV1_TDP.m_as(watt)
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -4080,12 +4080,14 @@ For each image in the batch, this produces a probability distribution over the p
 # │ Context: "Counting Ops in Forward Pass" worked example callout in
 # │          @sec-neural-computation-matrix-multiplication-formulation-417c
 # │
-# │ Goal: Count FLOPs per layer for the canonical 784→128→64→10 MLP at batch=32,
-# │       then show that doubling hidden widths (→256→128) causes ~4× FLOP growth.
+# │ Goal: Count operation-equivalent work per layer for the canonical 784→128→64→10
+# │       MLP at batch=32, then show that doubling hidden widths (→256→128)
+# │       causes ~4× growth.
 # │ Show: That dense FC layers scale quadratically with width, so a 2× width increase costs
 # │       ~4×, making architecture decisions a dominant systems variable.
-# │ How: Apply the formula 2×Batch×M×N for each matmul layer plus 2×Batch×N for
-# │      bias+activation; compare original vs. doubled-width totals.
+# │ How: Apply the formula 2×Batch×M×N FLOPs for each matmul layer plus
+# │      elementwise operations for bias+activation; compare original vs.
+# │      doubled-width totals.
 # │
 # │ Imports: mlsysim.book (fmt, check), mlsysim.constants (flop, MFLOPs)
 # │ Exports: MnistFlopsCalc.l1_mm_str, MnistFlopsCalc.l1_bias_str,
@@ -4172,7 +4174,7 @@ class MnistFlopsCalc:
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(round(total_mops_value, 1) == 7.0, f"Expected ~7.0 MFLOPs, got {total_mops_value:.1f}")
-    check(round(per_image_kops) == 219, f"Expected ~219 KFLOPs per image, got {per_image_kops:.1f}")
+    check(round(per_image_kops) == 219, f"Expected ~219 KOp per image, got {per_image_kops:.1f}")
     check(inf_act_elements == 986, f"Expected 986 inference activation values, got {inf_act_elements}")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
@@ -4197,17 +4199,17 @@ class MnistFlopsCalc:
     double_ratio_exact_str = fmt(double_ratio_value, precision=2, commas=False)
 ```
 
-::: {#exmp-nn-computation-counting-ops-forward-pass .callout-example title="Counting FLOPs in forward pass"}
+::: {#exmp-nn-computation-counting-ops-forward-pass .callout-example title="Counting operations in forward pass"}
 
 **Problem**: What is the total arithmetic operation count (**$O$**) for one forward pass through the MNIST network (784 → 128 → 64 → 10) with batch size 32?
 
-**Background**: A matrix multiplication of dimensions $(M{\times}K) \times (K{\times}N)$ requires $2 \times M \times K \times N$ operations (one multiply and one add per output element, summed over $K$ terms). Bias addition adds $M \times N$ operations. ReLU activation adds $M \times N$ comparisons (counted as operations).
+**Background**: A matrix multiplication of dimensions $(M{\times}K) \times (K{\times}N)$ requires $2 \times M \times K \times N$ FLOPs (one multiply and one add per output element, summed over $K$ terms). Bias addition adds $M \times N$ floating-point additions. ReLU activation adds $M \times N$ comparisons, so the table reports total operation-equivalent work rather than pure FLOPs for activation rows.
 
-**Solution**: @tbl-nn-computation-mnist-flops breaks down the FLOP count layer by layer:
+**Solution**: @tbl-nn-computation-mnist-flops breaks down the operation count layer by layer:
 
 ::: {tbl-colwidths="[14,20,28,40]"}
 
-| **Layer**   | **Operation**  |                **Dimensions**                |                                  **FLOPs**                                  |
+| **Layer**   | **Operation**  |                **Dimensions**                |                                **Operations**                               |
 |:------------|:---------------|:--------------------------------------------:|:---------------------------------------------------------------------------:|
 | **Layer 1** | MatMul         | ($32{\times}784$)$\times$ ($784{\times}128$) | 2$\times$ 32$\times$ $784{\times}128$ = `{python} MnistFlopsCalc.l1_mm_str` |
 | **Layer 1** | Bias + ReLU    |               $32{\times}128$                |           $2{\times}4,096$ = `{python} MnistFlopsCalc.l1_bias_str`          |
@@ -4215,19 +4217,19 @@ class MnistFlopsCalc:
 | **Layer 2** | Bias + ReLU    |                $32{\times}64$                |           $2{\times}2,048$ = `{python} MnistFlopsCalc.l2_bias_str`          |
 | **Layer 3** | MatMul         |  ($32{\times}64$)$\times$ ($64{\times}10$)   |  2$\times$ 32$\times$ $64{\times}10$ = `{python} MnistFlopsCalc.l3_mm_str`  |
 | **Layer 3** | Bias + Softmax |                $32{\times}10$                |             ~`{python} MnistFlopsCalc.l3_bias_str` (simplified)             |
-| **Total**   |                |                                              |             **~`{python} MnistFlopsCalc.total_mops_str` MFLOPs**            |
+| **Total**   |                |                                              |              **~`{python} MnistFlopsCalc.total_mops_str` MOp**              |
 
-: **MNIST Forward Pass Operation Count by Layer**: FLOP breakdown for a single forward pass through the 784-128-64-10 network at batch size 32. Layer 1's matrix multiply dominates because it multiplies the 784-dimensional input against the widest weight matrix; bias and activation operations contribute under one percent of the total. {#tbl-nn-computation-mnist-flops}
+: **MNIST Forward Pass Operation Count by Layer**: Operation-equivalent breakdown for a single forward pass through the 784-128-64-10 network at batch size 32. Matrix multiplication rows are FLOPs; bias, ReLU, and softmax rows are elementwise operations included to show their negligible contribution. Layer 1's matrix multiply dominates because it multiplies the 784-dimensional input against the widest weight matrix. {#tbl-nn-computation-mnist-flops}
 
 :::
 
-**Per-image cost**: `{python} MnistFlopsCalc.total_mops_str` $\text{MFLOPs} / 32$ = **~`{python} MnistFlopsCalc.per_image_kops_str` KFLOPs per image**
+**Per-image cost**: `{python} MnistFlopsCalc.total_mops_str` MOp divided by 32 = **~`{python} MnistFlopsCalc.per_image_kops_str` KOp per image**
 
 **Key insights**:
 
 1. **Layer 1 dominates**: The first layer accounts for `{python} MnistFlopsCalc.layer1_pct_str` percent of all operations because it processes the largest input (784 dimensions). This is why dimensionality reduction in early layers is so impactful.
-2. **Compute vs. Memory**: At `{python} MnistFlopsCalc.per_image_kops_str` KFLOPs per image and ~`{python} MNISTMemory.inference_kb_str` KB memory, this network has an arithmetic intensity of ~`{python} MnistFlopsCalc.arith_intensity_str` FLOP/byte—firmly in the memory-bound regime for most hardware (see the Roofline Model in @sec-machine-foundations-roofline-model-2529 for how arithmetic intensity determines whether a workload is memory bound or compute bound). A modern GPU achieving ten TFLOP/s would process each image in ~22 nanoseconds of pure compute, but memory latency typically dominates actual inference time.
-3. **Scaling intuition**: Doubling the hidden layer widths (784 → 256 → 128 → 10) increases $O$ by ~`{python} MnistFlopsCalc.double_ratio_str`$\times$ to ~`{python} MnistFlopsCalc.double_total_mops_str` MFLOPs. This comes from recomputing each layer: layers 1 and 3 double, layer 2 quadruples, so the total grows by about `{python} MnistFlopsCalc.double_ratio_exact_str`$\times$ rather than 4$\times$.
+2. **Compute vs. Memory**: At `{python} MnistFlopsCalc.per_image_kops_str` KOp per image and ~`{python} MNISTMemory.inference_kb_str` KB memory, this network has a matmul-dominated arithmetic intensity of ~`{python} MnistFlopsCalc.arith_intensity_str` FLOP/byte—firmly in the memory-bound regime for most hardware (see the Roofline Model in @sec-machine-foundations-roofline-model-2529 for how arithmetic intensity determines whether a workload is memory bound or compute bound). A modern GPU achieving ten TFLOP/s would process each image in ~22 nanoseconds of pure compute, but memory latency typically dominates actual inference time.
+3. **Scaling intuition**: Doubling the hidden layer widths (784 → 256 → 128 → 10) increases $O$ by ~`{python} MnistFlopsCalc.double_ratio_str`$\times$ to ~`{python} MnistFlopsCalc.double_total_mops_str` MOp. This comes from recomputing each layer: layers 1 and 3 double, layer 2 quadruples, so the total grows by about `{python} MnistFlopsCalc.double_ratio_exact_str`$\times$ rather than 4$\times$.
 
 :::
 
