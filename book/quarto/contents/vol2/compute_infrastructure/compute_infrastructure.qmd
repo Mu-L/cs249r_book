@@ -997,9 +997,9 @@ $$ \text{Achievable FLOP/s} = \min\left(R_{\text{peak}},\ \text{BW} \times I\rig
 
 ***ridge point***\index{Ridge Point!definition} is the specific arithmetic intensity where the memory bandwidth ceiling meets the compute ceiling $(I_{\text{ridge}} = \frac{R_{\text{peak}}}{\text{BW}})$.
 
-1.  **Significance (quantitative)**: It defines the **Hardware Efficiency Threshold**. Workloads with an intensity below the ridge point are **Bandwidth-Bound** $(\text{BW})$, while those above are **Compute-Bound**\index{Compute-Bound} $(R_{\text{peak}})$.
-2.  **Distinction (durable)**: Unlike **Peak FLOP/s**\index{Peak FLOP/s} (which only describes the horizontal ceiling), the ridge point describes the **Balance** of the architecture. A rising ridge point over hardware generations indicates that compute is growing faster than bandwidth, making utilization harder.
-3.  **Common pitfall**: A frequent misconception is that all GPUs have the same ridge point. In reality, it varies by **Precision**: because $R_{\text{peak}}$ is higher for INT8 than FP32 while $\text{BW}$ is constant, the ridge point for INT8 is much higher, requiring more data reuse to saturate the hardware.
+1.  **Significance (quantitative)**: It defines the Hardware Efficiency Threshold. Workloads with an intensity below the ridge point are Bandwidth-Bound $(\text{BW})$, while those above are Compute-Bound\index{Compute-Bound} $(R_{\text{peak}})$.
+2.  **Distinction (durable)**: Unlike Peak FLOP/s\index{Peak FLOP/s} (which only describes the horizontal ceiling), the ridge point describes the Balance of the architecture. A rising ridge point over hardware generations indicates that compute is growing faster than bandwidth, making utilization harder.
+3.  **Common pitfall**: A frequent misconception is that all GPUs have the same ridge point. In reality, it varies by Precision: because $R_{\text{peak}}$ is higher for INT8 than FP32 while $\text{BW}$ is constant, the ridge point for INT8 is much higher, requiring more data reuse to saturate the hardware.
 
 :::
 
@@ -1372,7 +1372,7 @@ The hardware dictates the software abstraction, which in turn shapes what archit
 # │                                  H100_FLOPS_FP8_TENSOR,
 # │                                  H100_FLOPS_FP32_CUDA, TFLOPs, second)
 # │ Exports: h100_fp16_tc_str, h100_fp8_tc_str, h100_fp32_cuda_str,
-# │          tc_vs_cuda_ratio_str, mfu_example_tokens_str, mfu_example_math
+# │          tc_vs_cuda_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.core.constants import (
     H100_FLOPS_FP16_TENSOR, H100_FLOPS_FP8_TENSOR,
@@ -1387,42 +1387,18 @@ class TensorCoreH100Specs:
     fp16_tc_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs / second)
     fp8_tc_tflops = H100_FLOPS_FP8_TENSOR.m_as(TFLOPs / second)
     fp32_cuda_tflops = H100_FLOPS_FP32_CUDA.m_as(TFLOPs / second)
-    # MFU-example anchors: 7B-parameter transformer, single H100, batch
-    # of 4 sequences × 2,048 tokens = 8,192 tokens per step, 1.0 second
-    # step time. Pedagogical anchor — typical single-GPU pretraining
-    # workload that lands at ~35% MFU, below the 40-50% "good" band.
-    mfu_params = 7e9
-    mfu_tokens_per_step = 8192
-    mfu_step_seconds = 1.0
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
     ratio = fp16_tc_tflops / fp32_cuda_tflops  # ≈ 15× (989 / 67)
-    mfu_example_value = (
-        6 * mfu_params * mfu_tokens_per_step
-        / (fp16_tc_tflops * 1e12 * mfu_step_seconds)
-    )
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
     check(14 < ratio < 16, "TC-vs-CUDA ratio should be ~15x for H100")
-    check(
-        0.33 < mfu_example_value < 0.37,
-        f"MFU example should land ~35%, got {mfu_example_value:.3f}",
-    )
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
     h100_fp16_tc_str = fmt(fp16_tc_tflops, precision=0, commas=False)
     h100_fp8_tc_str = fmt(fp8_tc_tflops, precision=0, commas=True)
     h100_fp32_cuda_str = fmt(fp32_cuda_tflops, precision=0, commas=False)
     tc_vs_cuda_ratio_str = fmt(ratio, precision=0, commas=False)
-    mfu_example_tokens_str = fmt(mfu_tokens_per_step, precision=0)
-    # Pre-build the MFU-example math expression with constant-driven
-    # H100 FP16 peak and explicit tokens-per-step factor so the formula
-    # stays in sync if H100_FLOPS_FP16_TENSOR or the example anchors
-    # change. Branded result (~35%) is the pedagogical anchor.
-    mfu_example_math = fmt_math(
-        f"\\text{{MFU}} = 6 \\times 7 \\times 10^9 \\times {mfu_tokens_per_step} / "
-        f"({h100_fp16_tc_str} \\times 10^{{12}} \\times {mfu_step_seconds:.1f})"
-    )
 ```
 
 ::: {#dfn-compute-infrastructure-tensor-core .callout-definition title="Tensor core"}
@@ -1457,17 +1433,7 @@ The gap between peak and sustained throughput arises from several sources, each 
 
 Memory stalls occur when the Tensor Cores complete their current tile multiplication before the next tile has been loaded from HBM. Even with the H100's `{python} MemoryBandwidthScenario.h100_bw_str` TB/s HBM bandwidth, the Tensor Cores can consume data faster than HBM can deliver it for certain matrix dimensions, creating idle cycles while the arithmetic units wait for data.
 
-Pipeline bubbles arise when one operation must complete before the next can begin, leaving some processing elements idle. In a Transformer layer, the attention computation must complete before the feed-forward network can begin, and the feed-forward computation must complete before the next layer's attention can start. These sequential dependencies create brief periods where some hardware resources are unused.
-
-::: {#dfn-compute-infrastructure-pipeline-bubble .callout-definition title="Pipeline bubble"}
-
-***Pipeline Bubble***\index{Pipeline!bubble, definition} is the idle time in pipeline-parallel training caused by stages waiting for inputs from upstream workers during the fill and drain phases of a micro-batch cycle.
-
-1.  **Significance (quantitative)**: It represents a direct loss in **scaling efficiency** $(\eta_{\text{scaling}})$. For a model with $p$ pipeline stages and $m$ micro-batches, the bubble fraction is approximately **$(p-1)/m$**, dictating the maximum theoretical utilization of the cluster.
-2.  **Distinction (durable)**: Unlike **Network Latency** (which is a data transfer delay), a Pipeline Bubble is a **Temporal Dependency** delay: workers are idle not because the network is slow, but because the next piece of work has not yet been computed.
-3.  **Common pitfall**: A frequent misconception is that bubbles can be eliminated by "faster networking." In reality, the bubble is an **Algorithmic Constraint**: it can only be reduced by increasing the number of micro-batches $(m)$, which in turn increases the **Memory Footprint**\index{Memory Footprint} for stored activations.
-
-:::
+Pipeline bubbles arise when one operation must complete before the next can begin, leaving some processing elements idle. In a Transformer layer, the attention computation must complete before the feed-forward network can begin, and the feed-forward computation must complete before the next layer's attention can start. These sequential dependencies create brief periods where some hardware resources are unused. The bubble fraction grows with the number of pipeline stages and shrinks with the number of micro-batches; @sec-distributed-training-systems-systems-hybrid-parallelism-pipeline-bubble formalizes this trade-off.
 
 Communication overhead from AllReduce operations (for tensor parallelism) or gradient synchronization (for data parallelism) pauses computation entirely while data is exchanged between accelerators. Even when communication is overlapped with computation (using separate communication and compute streams), there are typically operations that cannot be overlapped because they depend on the result of the communication.
 
@@ -1475,17 +1441,7 @@ Software overhead from kernel launch latency, memory allocation, and Python-leve
 
 Kernel fusion partially addresses this gap by combining multiple operations (matrix multiply, bias add, activation function, dropout) into a single GPU kernel, eliminating the intermediate memory reads and writes that would otherwise stall the Tensor Cores between operations. The art of achieving high sustained utilization is largely the art of minimizing the time Tensor Cores spend idle, which is why specialized kernel libraries like FlashAttention and the Transformer Engine exist.
 
-For capacity planning, the sustained throughput rate, not the peak rate, should be used. A training run estimated at 1,000 GPU-hours using peak FLOP/s will actually require 2,000--3,000 GPU-hours when accounting for real-world utilization. Experienced infrastructure teams track their **Model FLOPs Utilization (MFU)**, defined as the ratio of the model's useful FLOP count to the product of hardware peak FLOP/s and wall-clock time, as the primary metric for infrastructure efficiency. MFU values of 40--50 percent are considered good for large-scale Transformer training; values above 50 percent indicate excellent software optimization.
-
-::: {#dfn-compute-infrastructure-model-flops-utilization-mfu .callout-definition title="Model FLOPs utilization (MFU)"}
-
-***Model FLOPs Utilization (MFU)***\index{Model FLOPs Utilization!definition} is the ratio of a model's theoretical FLOP count per training step (calculated from architecture parameters and tokens processed) to the product of hardware peak throughput and elapsed wall-clock time, measuring what fraction of the hardware's theoretical capacity is doing useful model computation rather than overhead.
-
-1.  **Significance (quantitative)**: $\text{MFU} = O_{\text{step}} / (R_{\text{peak}} \cdot T_{\text{step}})$, where $O_{\text{step}} \approx 6PN_{\text{tokens}}$ FLOPs for a $P$-parameter transformer processing $N_{\text{tokens}}$ tokens in the step. For a 7B-parameter model on H100 ($R_{\text{peak}} =$ `{python} TensorCoreH100Specs.h100_fp16_tc_str` TFLOP/s FP16) processing `{python} TensorCoreH100Specs.mfu_example_tokens_str` tokens per step (a batch of 4 sequences of 2,048 tokens) with a step time of 1.0 second: `{python} TensorCoreH100Specs.mfu_example_math` $\approx 35\%$. A practical ceiling of 55-65 percent applies even in highly optimized implementations; the gap represents inescapable memory stalls ($\text{BW}$ bottleneck), AllReduce communication time $(T_{\text{comm}}(N))$, and pipeline bubbles.
-2.  **Distinction (durable)**: Unlike hardware utilization (the fraction of clock cycles during which the GPU reports being "busy"), MFU counts only cycles spent on useful forward- or backward-pass arithmetic—not recomputed activations, padding computation, or gradient buffer copies that consume cycles but do not advance model training.
-3.  **Common pitfall**: A frequent misconception is that high hardware utilization implies high MFU. Engineers optimizing for GPU utilization metrics can find the GPU reports 95 percent busy while MFU is below 20 percent, because cycles spent on gradient recomputation, speculative computation, or excessive kernel launches are visible to utilization counters but not to MFU.
-
-:::
+For capacity planning, the sustained throughput rate, not the peak rate, should be used. A training run estimated at 1,000 GPU-hours using peak FLOP/s will actually require 2,000--3,000 GPU-hours when accounting for real-world utilization. Experienced infrastructure teams track their model FLOPs utilization (MFU)\index{Model FLOPs Utilization}, the ratio of useful model FLOP count to the product of hardware peak FLOP/s and wall-clock time, as the primary metric for infrastructure efficiency. MFU values of 40--50 percent are considered good for large-scale transformer training; values above 50 percent indicate excellent software optimization. @sec-performance-engineering-fleet-efficiency-metric-dff4 formalizes MFU and develops its fleet-scale application.
 
 The memory wall constrains how fast data reaches the compute units; the Roofline Model diagnoses whether compute or memory is the binding constraint; and Tensor Cores maximize the arithmetic value of every byte fetched. A third physical constraint also limits the accelerator's performance: the heat generated by all this computation. Every FLOP dissipates energy, and the faster we compute, the more heat we must remove. This is the power wall. @fig-power-path traces the journey of energy from grid to transistor.
 
@@ -2004,9 +1960,9 @@ Those timings are the operational form of a broader concept: bandwidth falls in 
 
 ***Bandwidth Hierarchy***\index{Bandwidth Hierarchy!definition} is the physical ordering of data transfer rates across system boundaries, from on-chip SRAM (fastest) to the wide-area network (slowest).
 
-1.  **Significance (quantitative)**: It dictates the **Scaling Ceiling** for distributed training. At each physical boundary (die edge, package edge, chassis, rack), the **Effective Bandwidth** $(\text{BW})$ drops by approximately one order of magnitude while latency $(L_{\text{lat}})$ increases.
-2.  **Distinction (durable)**: Unlike **Idealized Networking Models**\index{Idealized Networking Models}, the Bandwidth Hierarchy captures the **Physical Cost of Distance**\index{Physical Cost of Distance}: shorter signal paths over denser wiring achieve higher throughput at lower energy per bit.
-3.  **Common pitfall**: A frequent misconception is that all cluster communication is equal. In reality, parallelism strategies must be **Hierarchy-Aware**\index{Hierarchy-Aware Parallelism}: placing high-frequency synchronization (for example, Tensor Parallelism) on a slow tier will rapidly idle the compute units $(R_{\text{peak}})$, collapsing scaling efficiency $(\eta_{\text{scaling}})$.
+1.  **Significance (quantitative)**: It dictates the Scaling Ceiling for distributed training. At each physical boundary (die edge, package edge, chassis, rack), the Effective Bandwidth $(\text{BW})$ drops by approximately one order of magnitude while latency $(L_{\text{lat}})$ increases.
+2.  **Distinction (durable)**: Unlike Idealized Networking Models\index{Idealized Networking Models}, the Bandwidth Hierarchy captures the Physical Cost of Distance\index{Physical Cost of Distance}: shorter signal paths over denser wiring achieve higher throughput at lower energy per bit.
+3.  **Common pitfall**: A frequent misconception is that all cluster communication is equal. In reality, parallelism strategies must be Hierarchy-Aware\index{Hierarchy-Aware Parallelism}: placing high-frequency synchronization (for example, Tensor Parallelism) on a slow tier will rapidly idle the compute units $(R_{\text{peak}})$, collapsing scaling efficiency $(\eta_{\text{scaling}})$.
 
 :::
 
@@ -2627,9 +2583,9 @@ Reducing PUE is a primary engineering objective for ML data centers because the 
 
 ***Power Usage Effectiveness (PUE)***\index{Power Usage Effectiveness!definition} is the ratio of total facility power consumption to the power consumed specifically by IT equipment ($P_{\text{facility}} / P_{\text{IT}}$).
 
-1.  **Significance (quantitative)**: It measures the **Infrastructure Overhead** of the data center. A PUE of 1.0 is the theoretical ideal; a PUE of 1.10 means that for every 100 watts of computation, an additional 10 watts are required for cooling and power distribution.
-2.  **Distinction (durable)**: Unlike **Computing Efficiency** (which focuses on FLOPs per Watt), PUE focuses on **Facility Efficiency**\index{Efficiency!facility}: it captures how much energy is "wasted" before it even reaches the processor.
-3.  **Common pitfall**: A frequent misconception is that a low PUE means a "green" data center. In reality, PUE only measures **Efficiency**, not the **Carbon Intensity** of the energy source; a coal-powered data center can have a better PUE than a solar-powered one while having a much higher environmental impact.
+1.  **Significance (quantitative)**: It measures the Infrastructure Overhead of the data center. A PUE of 1.0 is the theoretical ideal; a PUE of 1.10 means that for every 100 watts of computation, an additional 10 watts are required for cooling and power distribution.
+2.  **Distinction (durable)**: Unlike Computing Efficiency (which focuses on FLOPs per Watt), PUE focuses on Facility Efficiency\index{Efficiency!facility}: it captures how much energy is "wasted" before it even reaches the processor.
+3.  **Common pitfall**: A frequent misconception is that a low PUE means a "green" data center. In reality, PUE only measures Efficiency, not the Carbon Intensity of the energy source; a coal-powered data center can have a better PUE than a solar-powered one while having a much higher environmental impact.
 
 :::
 
@@ -3121,8 +3077,8 @@ where $T_N$ is the training time on $N$ devices. An efficiency of 1.0 means perf
 ***Scaling Efficiency $(\eta_{\text{scaling}})$***\index{Scaling Efficiency!definition} is the ratio of actual throughput to ideal linear throughput when increasing the number of compute devices ($N$).
 
 1.  **Significance (quantitative)**: It is the most important metric for cluster productivity ($\eta_{\text{scaling}} = \frac{T_1}{N \times T_N}$). A scaling efficiency of 0.50 means that a 10,000-GPU cluster is delivering only the same useful work as a 5,000-GPU cluster, wasting 50 percent of the hardware investment.
-2.  **Distinction (durable)**: Unlike **single-node efficiency** (which captures local bottlenecks like $\text{BW}$), scaling efficiency captures the **cluster-level overhead** of communication time $(T_{\text{comm}}(N))$ and synchronization.
-3.  **Common pitfall**: A frequent misconception is that scaling efficiency is constant. In reality, it is a **function of problem size**\index{Scaling Efficiency!problem size dependence}: as $N$ increases, the communication-to-compute ratio typically worsens (Amdahl's Law), making it harder to maintain high efficiency for small models.
+2.  **Distinction (durable)**: Unlike single-node efficiency (which captures local bottlenecks like $\text{BW}$), scaling efficiency captures the cluster-level overhead of communication time $(T_{\text{comm}}(N))$ and synchronization.
+3.  **Common pitfall**: A frequent misconception is that scaling efficiency is constant. In reality, it is a function of problem size\index{Scaling Efficiency!problem size dependence}: as $N$ increases, the communication-to-compute ratio typically worsens (Amdahl's Law), making it harder to maintain high efficiency for small models.
 
 :::
 
@@ -3218,9 +3174,9 @@ The three-way comparison reveals a clear pattern: configurations that keep high-
 
 ***Hierarchy-Aware Parallelism***\index{Hierarchy-Aware Parallelism!definition} is the strategy of mapping different parallel execution modes to the physical bandwidth tiers of the cluster.
 
-1.  **Significance (quantitative)**: It ensures that high-frequency synchronization (for example, Tensor Parallelism) stays on the fastest links (NVLink), while lower-frequency tasks (for example, Data Parallelism) use slower tiers (InfiniBand). This alignment maximizes **scaling efficiency** $(\eta_{\text{scaling}})$ by reducing exposed communication time $(T_{\text{comm}}(N))$ and latency $(L_{\text{lat}})$.
-2.  **Distinction (durable)**: Unlike **Uniform Parallelism**\index{Uniform Parallelism}, which treats all node-to-node links as equal, Hierarchy-Aware strategies respect the **Bandwidth Cliffs** between die, node, and rack boundaries.
-3.  **Common pitfall**: A frequent misconception is that any model can be sharded across any number of nodes. In reality, if the **Hierarchy Mapping**\index{Mapping!hierarchy} is wrong (for example, sharding a large tensor across a slow inter-rack link), the communication time will dwarf the compute time, making the scale-out useless.
+1.  **Significance (quantitative)**: It ensures that high-frequency synchronization (for example, Tensor Parallelism) stays on the fastest links (NVLink), while lower-frequency tasks (for example, Data Parallelism) use slower tiers (InfiniBand). This alignment maximizes scaling efficiency $(\eta_{\text{scaling}})$ by reducing exposed communication time $(T_{\text{comm}}(N))$ and latency $(L_{\text{lat}})$.
+2.  **Distinction (durable)**: Unlike Uniform Parallelism\index{Uniform Parallelism}, which treats all node-to-node links as equal, Hierarchy-Aware strategies respect the Bandwidth Cliffs between die, node, and rack boundaries.
+3.  **Common pitfall**: A frequent misconception is that any model can be sharded across any number of nodes. In reality, if the Hierarchy Mapping\index{Mapping!hierarchy} is wrong (for example, sharding a large tensor across a slow inter-rack link), the communication time will dwarf the compute time, making the scale-out useless.
 
 :::
 
