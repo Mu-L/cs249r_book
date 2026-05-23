@@ -216,7 +216,7 @@ The bandwidth requirements impose a hard constraint on hardware placement: each 
 
 ::: {#psp-distributed-training-jeff-dean-test .callout-perspective title="The Jeff Dean test"}
 
-Tensor parallelism across server racks connected by standard Ethernet will stall. The communication volume (proportional to Batch $\times$ Layers) requires the `{python} DistTrainConstants.nvlink_a100_str`--`{python} DistTrainConstants.nvlink_h100_str` GB/s bandwidth of NVLink. For cross-rack scaling, the design must switch to **Pipeline** or **Data**\index{Data} parallelism to respect the physics of the network.
+Tensor parallelism across server racks connected by standard Ethernet will stall. The communication volume (proportional to $B \times N_L$) requires the `{python} DistTrainConstants.nvlink_a100_str`--`{python} DistTrainConstants.nvlink_h100_str` GB/s bandwidth of NVLink. For cross-rack scaling, the design must switch to **Pipeline** or **Data**\index{Data} parallelism to respect the physics of the network.
 
 :::
 
@@ -1645,7 +1645,7 @@ This staggered execution gives the strategy its formal shape.
 
 ***Pipeline Parallelism***\index{Pipeline Parallelism!definition} is a model parallelism technique that partitions a neural network's layers into sequential stages assigned to different devices, passing activations forward and gradients backward between stages while overlapping computation across stages using micro-batches to maintain throughput.
 
-1.  **Significance (quantitative)**: Inter-stage communication transmits only the activation tensor at each stage boundary, sized as $\text{microbatch} \times \text{seq\_len} \times \text{hidden} \times 2$ bytes at BF16. For a hidden dimension of 8,192 with micro-batch size 1 and a 2,048-token sequence, this is approximately $8{,}192 \times 2{,}048 \times 2 \approx 32$ MB per boundary, compared to the gigabytes required for gradient AllReduce in data parallelism. This low communication volume makes pipeline parallelism the primary technique for scaling model depth across nodes connected by 50 GB/s InfiniBand. The pipeline bubble wastes approximately $(p-1)/(m+p-1)$ of total compute, where $p$ is the number of stages and $m$ is the number of micro-batches—with $p=8$ stages and $m=32$ micro-batches, bubble overhead is about 18 percent.
+1.  **Significance (quantitative)**: Inter-stage communication transmits only the activation tensor at each stage boundary, sized as $B_{\mu} \times S \times d_{\text{model}} \times 2$ bytes at BF16, where $B_{\mu}$ is the micro-batch size. For a hidden dimension of 8,192 with micro-batch size 1 and a 2,048-token sequence, this is approximately $8{,}192 \times 2{,}048 \times 2 \approx 32$ MB per boundary, compared to the gigabytes required for gradient AllReduce in data parallelism. This low communication volume makes pipeline parallelism the primary technique for scaling model depth across nodes connected by 50 GB/s InfiniBand. The pipeline bubble wastes approximately $(p-1)/(m+p-1)$ of total compute, where $p$ is the number of stages and $m$ is the number of micro-batches—with $p=8$ stages and $m=32$ micro-batches, bubble overhead is about 18 percent.
 2.  **Distinction (durable)**: Unlike tensor parallelism, which shards individual matrix multiplications within a single layer and requires AllReduce on every layer's output (demanding NVLink-class bandwidth within each stage), pipeline parallelism shards at layer boundaries and requires only point-to-point activation transfers between stages—tolerating InfiniBand bandwidth between nodes.
 3.  **Common pitfall**: A frequent misconception is that adding more pipeline stages always improves throughput. The pipeline bubble fraction grows as $(p-1)/(m+p-1)$: with $p=16$ stages and $m=16$ micro-batches, 48 percent of compute is wasted idle—requiring large micro-batch counts ($m \gg p$) to keep the bubble below 10 percent, which in turn increases peak activation memory and the memory pressure on each stage.
 
@@ -1710,7 +1710,7 @@ GPipe[^fn-gpipe] [@huang2019gpipe] introduced synchronous pipeline parallelism w
 
 In a transformer model distributed across four devices, device 1 would process blocks 1-6 for microbatch $i+1$ while device 2 computes blocks 7-12 for microbatch $i$. Simultaneously, device 3 executes blocks 13-18 for microbatch $i-1$, and device 4 processes blocks 19-24 for microbatch $i-2$. Each device maintains its assigned transformer blocks but operates on a different microbatch, creating a continuous flow of computation.
 
-The transfer of hidden states between devices occurs continuously rather than in distinct phases. When device 1 completes processing a microbatch, it immediately transfers the output tensor of shape [microbatch_size, sequence_length, hidden_dimension] to device 2 and begins processing the next microbatch. This overlapping computation pattern maintains full hardware utilization while preserving the model's mathematical properties.
+The transfer of hidden states between devices occurs continuously rather than in distinct phases. When device 1 completes processing a microbatch, it immediately transfers the output tensor of shape $B_{\mu} \times S \times d_{\text{model}}$ to device 2 and begins processing the next microbatch. This overlapping computation pattern maintains full hardware utilization while preserving the model's mathematical properties.
 
 ##### Zero-bubble pipeline parallelism {#sec-distributed-training-systems-systems-zero-bubble}
 
@@ -2379,7 +2379,7 @@ The asymmetry creates a placement dilemma. Co-locating training and inference mo
 # │
 # │ Goal: Quantify generation-phase KV cache for a 70B GQA policy.
 # │ Show: Llama-2-70B-style GQA cache, and dense-MHA counterfactual.
-# │ How: KV bytes = 2 × layers × kv_heads × head_dim × sequence × batch × bytes.
+# │ How: KV bytes = 2 × N_L × H_{\text{KV}} × d_{\text{head}} × S × B × bytes.
 # │
 # │ Imports: mlsysim.core.constants (Llama-2-70B architecture, BYTES_FP16)
 # │ Imports: mlsysim.fmt (check)
