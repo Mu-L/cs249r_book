@@ -158,7 +158,7 @@ Running GPT-2 once costs a fraction of a cent. Training GPT-2 cost approximately
 
 [^fn-training-cost-scaling]: **Training Cost Scaling**: The roughly 2,000$\times$ cost increase from GPT-2--scale training [@radford2019language] to GPT-4--class frontier training (widely cited nine-figure estimates in industry reporting) over several years reflects three compounding factors: frontier parameter counts, training-token budgets, and accelerator fleets all grew dramatically. Exact GPT-4 training details were not disclosed, but public estimates commonly place frontier training runs in the regime of tens of thousands of A100-class accelerators for months, not single-node clusters. This trajectory made training the single largest capital expenditure in AI development, exceeding the annual R&D budget of most universities. \index{Training Cost!scaling trajectory}
 
-A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios.gpt2_fwd_flops_str` floating-point operations. Training requires tens of billions of such passes, and each backward pass costs approximately twice as much as the forward pass, yielding a total computational budget on the order of `{python} TrainingScenarios.gpt2_total_flops_str` operations [@radford2019language]. This asymmetry makes training systems engineering a distinct discipline and explains why access to training infrastructure increasingly determines who can participate in AI development.
+A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios.gpt2_fwd_flops_str` floating-point operations. Training requires tens of billions of such passes, and each backward pass costs approximately twice as much as the forward pass, yielding a total computational budget on the order of `{python} TrainingScenarios.gpt2_total_flops_str` FLOPs [@radford2019language]. This asymmetry makes training systems engineering a distinct discipline and explains why access to training infrastructure increasingly determines who can participate in AI development.
 
 ::: {#dfn-training-training-systems .callout-definition title="Training systems"}
 
@@ -171,7 +171,7 @@ A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios
 :::
 
 \index{Training!computational intensity}\index{Training!memory pressure}
-Three characteristics distinguish training workloads from general-purpose computing. First, *computational intensity*: that `{python} TrainingScenarios.gpt2_total_flops_str` operation budget spread over days of wall-clock time demands sustained PFLOP/s-scale throughput from hardware that rarely exceeds 30 to 70 percent utilization. Second, *memory pressure*: storing `{python} TrainingModels.gpt2_params_b_str` billion weights requires `{python} TrainingModels.gpt2_params_gb_fp32_str` GB in FP32; the Adam optimizer adds two additional state tensors per parameter, consuming another `{python} TrainingModels.gpt2_adam_gb_str` GB; and activation storage across `{python} TrainingModels.gpt2_layers_str` transformer layers can double or triple this total, easily exceeding a single accelerator's memory capacity. Third, *data dependencies*: each gradient update depends on the result of the previous one, creating sequential bottlenecks that limit how much parallelism the system can exploit.
+Three characteristics distinguish training workloads from general-purpose computing. First, *computational intensity*: that `{python} TrainingScenarios.gpt2_total_flops_str` FLOP budget spread over days of wall-clock time demands sustained PFLOP/s-scale throughput from hardware that rarely exceeds 30 to 70 percent utilization. Second, *memory pressure*: storing `{python} TrainingModels.gpt2_params_b_str` billion weights requires `{python} TrainingModels.gpt2_params_gb_fp32_str` GB in FP32; the Adam optimizer adds two additional state tensors per parameter, consuming another `{python} TrainingModels.gpt2_adam_gb_str` GB; and activation storage across `{python} TrainingModels.gpt2_layers_str` transformer layers can double or triple this total, easily exceeding a single accelerator's memory capacity. Third, *data dependencies*: each gradient update depends on the result of the previous one, creating sequential bottlenecks that limit how much parallelism the system can exploit.
 
 Each of these challenges opens a corresponding optimization pathway. Computational intensity can be addressed through hardware acceleration (@sec-hardware-acceleration) and the BF16/FP8 mixed-precision techniques developed later in @sec-model-training-mixedprecision-training-9218. Memory pressure responds to techniques like gradient checkpointing[^fn-checkpointing-training], a specific application of *rematerialization* (discarding and recomputing intermediate values to save memory, from @sec-ml-frameworks) that trades recomputation for reduced activation storage, and mixed-precision training[^fn-mixed-precision-training], which halves the memory footprint of weights and activations. Data dependencies motivate pipeline designs that overlap computation with data movement, heavily relying on the data loading throughput optimized in @sec-data-engineering, so the accelerator never sits idle waiting for the next batch. The current chapter focuses on single-machine and single-node multi-GPU training; scaling to hundreds of machines across network boundaries introduces communication and fault tolerance challenges beyond our current scope.
 
@@ -2597,7 +2597,7 @@ class NetworkWall:
     # Gradient Size = 7B * 2 bytes = 14 GB
     gradient_size_gb = params_b * bytes_per_param
 
-    # Ring AllReduce sends 2(N-1)/N copies of the gradient per worker.
+    # Ring AllReduce sends 2(N_GPU-1)/N_GPU copies of the gradient per worker.
     allreduce_factor = 2 * (n_gpus - 1) / n_gpus
     allreduce_gb = allreduce_factor * gradient_size_gb
 
@@ -2623,8 +2623,8 @@ class NetworkWall:
 **Math**: For a `{python} NetworkWall.model_params_b_str` B parameter model with FP16 gradients:
 
 1. **Gradient size**: `{python} NetworkWall.model_params_b_str` $\times 10^9 \times 2$ bytes = `{python} NetworkWall.gradient_size_str` GB per step.
-2. **AllReduce cost**: Ring AllReduce sends `{python} NetworkWall.allreduce_factor_str`$\times$ the gradient per worker, because $2(N-1)/N$ equals `{python} NetworkWall.allreduce_factor_str` for `{python} NetworkWall.n_gpus_str` GPUs. That gives `{python} NetworkWall.allreduce_factor_str` $\times$ `{python} NetworkWall.gradient_size_str` GB = `{python} NetworkWall.allreduce_str` GB total.
-3. **Network time**: At 100 Gbps (`{python} NetworkWall.network_bw_str` GB/s) InfiniBand: `{python} NetworkWall.allreduce_str` / `{python} NetworkWall.network_bw_str` = `{python} NetworkWall.network_time_str` s.
+2. **AllReduce cost**: Ring AllReduce sends `{python} NetworkWall.allreduce_factor_str`$\times$ the gradient per worker, because $2(N_{\text{GPU}}-1)/N_{\text{GPU}}$ equals `{python} NetworkWall.allreduce_factor_str` for `{python} NetworkWall.n_gpus_str` GPUs. That gives `{python} NetworkWall.allreduce_factor_str` $\times$ `{python} NetworkWall.gradient_size_str` GB = `{python} NetworkWall.allreduce_str` GB total.
+3. **Network time**: At `{python} NetworkWall.network_bw_str` GB/s InfiniBand (100 Gbps): `{python} NetworkWall.allreduce_str` / `{python} NetworkWall.network_bw_str` = `{python} NetworkWall.network_time_str` s.
 4. **Compute time**: If forward + backward takes $1 \text{ s}$, network is the bottleneck.
 
 \index{AllReduce!network wall}
@@ -4716,8 +4716,8 @@ Flash Attention achieves asymptotic improvements in both memory footprint and me
 
 ##### Memory complexity {#sec-model-training-memory-complexity-ad72}
 
-- **Standard Attention**: $\mathcal{O}(n^2)$ memory for storing score matrices $\mathbf{Z}_{\text{attn}}$ and attention-probability matrices $A_{\text{attn}}$ across all sequence positions
-- **Flash Attention**: $\mathcal{O}(n)$ memory, storing only input/output tensors $(Q, K, V, Y)$ plus a small constant SRAM buffer
+- **Standard Attention**: $\mathcal{O}(S^2)$ memory for storing score matrices $\mathbf{Z}_{\text{attn}}$ and attention-probability matrices $A_{\text{attn}}$ across all sequence positions
+- **Flash Attention**: $\mathcal{O}(S)$ memory, storing only input/output tensors $(Q, K, V, Y)$ plus a small constant SRAM buffer
 
 ```{python}
 #| label: flash-attention-calc
@@ -4913,7 +4913,7 @@ This principle extends beyond attention. In IO-aware matrix multiplication, tili
 
 The same logic applies to communication-efficient distributed training: gradient compression techniques trade extra computation (compression/decompression) for reduced network bandwidth consumption. Low-power edge devices with limited memory bandwidth benefit even more from IO-aware algorithms, where a 10 percent increase in FLOPs that halves memory traffic yields 3--5$\times$ energy savings.
 
-Flash Attention transforms practical model training capabilities. By eliminating the $\mathcal{O}(n^2)$ memory bottleneck, it enables:
+Flash Attention transforms practical model training capabilities. By eliminating the $\mathcal{O}(S^2)$ memory bottleneck, it enables:
 
 - **4$\times$ longer sequences** on the same hardware (2K → 8K context for GPT-2 on A100)
 - **2$\times$ larger batch sizes** through freed memory (faster convergence)
@@ -5305,7 +5305,7 @@ Both techniques introduce explicit trade-offs. Activation checkpointing adds app
 
 ### Optimization technique comparison {#sec-model-training-optimization-technique-comparison-a89a}
 
-@tbl-optimization synthesizes three of the four core optimization strategies, contrasting their primary goals, mechanisms, and trade-offs. Flash Attention (@sec-model-training-flash-attention-ioaware-attention-optimization-3da0) complements these by addressing memory-bandwidth bottlenecks in attention layers through IO-aware tiling, achieving 2--4$\times$ speedups while reducing memory from $\mathcal{O}(n^2)$ to $\mathcal{O}(n)$. Selecting an appropriate strategy depends on the specific bottleneck identified through profiling.
+@tbl-optimization synthesizes three of the four core optimization strategies, contrasting their primary goals, mechanisms, and trade-offs. Flash Attention (@sec-model-training-flash-attention-ioaware-attention-optimization-3da0) complements these by addressing memory-bandwidth bottlenecks in attention layers through IO-aware tiling, achieving 2--4$\times$ speedups while reducing memory from $\mathcal{O}(S^2)$ to $\mathcal{O}(S)$. Selecting an appropriate strategy depends on the specific bottleneck identified through profiling.
 
 | **Aspect**                    | **Prefetching and Overlapping**                                    | **Mixed-Precision Training**                                | **Gradient Accumulation and Checkpointing**                              |
 |:------------------------------|:-------------------------------------------------------------------|:------------------------------------------------------------|:-------------------------------------------------------------------------|
@@ -5697,7 +5697,7 @@ ax.annotate("The **communication tax**", xy=(128, 128/(1+127*0.43)), xytext=(16,
             color=COLORS['RedLine'], fontsize=9, fontweight='normal',
             bbox=dict(facecolor='white', alpha=0.9, edgecolor='none', pad=4))
 
-ax.set_xlabel('Number of GPUs (N)',fontsize=10)
+ax.set_xlabel(r'Number of GPUs ($N_{\mathrm{GPU}}$)',fontsize=10)
 ax.set_ylabel('Effective Speedup (x)',fontsize=10)
 ax.legend(
     loc='upper left',
@@ -6326,11 +6326,11 @@ Within a single node, GPUs communicate via high-bandwidth interconnects like NVL
 
 **The physics of splitting**: How should a model that is too big or too slow be split across multiple devices?
 
-**Scenario**: Training a model with parameters $P$ and batch size $B$ across $N$ GPUs.
+**Scenario**: Training a model with parameters $P$ and batch size $B$ across $N_{\text{GPU}}$ GPUs.
 
 **Data parallelism (split the batch)**
 
-*   **Compute $(O)$**: Split by $N$ (Each GPU does $1/N$ of the batch).
+*   **Compute $(O)$**: Split by $N_{\text{GPU}}$ (each GPU does $1/N_{\text{GPU}}$ of the batch).
 *   **Memory footprint**: **Replicated**. Every GPU must hold the full model weights $\theta$ ($P$ parameters).
 *   **Communication**: **Gradients**. Size $\propto P$. Occurs at end of backward pass.
 *   **Bottleneck**: When Model Size $P >$ GPU Memory.
@@ -6338,8 +6338,8 @@ Within a single node, GPUs communicate via high-bandwidth interconnects like NVL
 **Model parallelism (split the weights)**
 
 *   **Compute $(O)$**: Split by $N$ (Each accelerator computes part of the layer).
-*   **Memory footprint**: **Split**. Each GPU holds a shard of $\theta$ containing approximately $P/N$ parameters.
-*   **Communication**: **Activations**. Size $\propto B \times \text{Width}$. Occurs at every layer boundary.
+*   **Memory footprint**: **Split**. Each GPU holds a shard of $\theta$ containing approximately $P/N_{\text{GPU}}$ parameters.
+*   **Communication**: **Activations**. Size $\propto B \times d$. Occurs at every layer boundary.
 *   **Bottleneck**: When Activation Size is large (high communication frequency).
 
 **Systems insight**:
@@ -6354,7 +6354,7 @@ Within a single node, GPUs communicate via high-bandwidth interconnects like NVL
 ### Scaling beyond a single node {#sec-model-training-scaling-beyond-single-node-a671}
 
 \index{Distributed Training!communication overhead}
-When single-node multi-GPU training remains insufficient, distributed training extends across multiple machines. This introduces network communication bottlenecks (typically 10--100 Gbps between nodes vs. `{python} SingleNodeInterconnect.nvlink_h100_str` GB/s within a node) and fault tolerance requirements absent from single-node setups. The bandwidth gap matters because synchronization turns every gradient update into a data-movement problem.
+When single-node multi-GPU training remains insufficient, distributed training extends across multiple machines. This introduces network communication bottlenecks (typically 1.25--12.5 GB/s, or 10--100 Gbps, between nodes vs. `{python} SingleNodeInterconnect.nvlink_h100_str` GB/s within a node) and fault tolerance requirements absent from single-node setups. The bandwidth gap matters because synchronization turns every gradient update into a data-movement problem.
 
 ::: {#psp-training-physics-synchronization .callout-perspective title="The physics of synchronization"}
 
@@ -6384,7 +6384,7 @@ Hybrid strategies combine these approaches because each has different scaling ch
 
 The implementation details of gradient synchronization algorithms (AllReduce\index{AllReduce!gradient synchronization}\index{Ring AllReduce!bandwidth optimization}[^fn-allreduce-training], ring-reduce), communication patterns (parameter server, peer-to-peer), fault tolerance mechanisms, and scaling efficiency analysis for training runs spanning thousands of GPUs constitute a specialized domain that builds on the foundations established here.
 
-[^fn-allreduce-training]: **AllReduce**: A collective communication primitive that sums data across all devices and distributes the result back to each. Ring AllReduce, popularized by Baidu's AI Lab in 2017, achieves bandwidth-optimal performance by passing gradients in a ring topology: each device sends and receives only $2(N{-}1)/N$ of the total gradient volume, making communication cost nearly independent of GPU count. This constant scaling property is why data-parallel training remains practical at cluster scale. \index{AllReduce!ring topology}
+[^fn-allreduce-training]: **AllReduce**: A collective communication primitive that sums data across all devices and distributes the result back to each. Ring AllReduce, popularized by Baidu's AI Lab in 2017, achieves bandwidth-optimal performance by passing gradients in a ring topology: each device sends and receives only $2(N_{\text{GPU}}{-}1)/N_{\text{GPU}}$ of the total gradient volume, making communication cost nearly independent of GPU count. This constant scaling property is why data-parallel training remains practical at cluster scale. \index{AllReduce!ring topology}
 
 ### The evolution of training infrastructure {#sec-model-training-evolution-training-infrastructure-f3a6}
 
