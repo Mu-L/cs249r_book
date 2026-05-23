@@ -2267,11 +2267,11 @@ While Little's Law relates queue depth to throughput, it does not account for th
 
 When an inference server batches requests, it introduces two distinct sources of latency:
 
-1.  **Batch Formation Delay $(W_{\text{form}})$**\index{Batching!batch formation delay, definition}: The time the first request in a batch waits for the last request to arrive.
-2.  **Inference Inflation $(W_{\text{inf}})$**\index{Inference Inflation!definition}: The increase in execution time when the GPU processes $B$ samples instead of 1.
+1.  **Batch formation delay $(L_{\text{lat,form}})$**\index{Batching!batch formation delay, definition}: The time the first request in a batch waits for the last request to arrive.
+2.  **Inference time $T_{\text{inf}}(B)$**\index{Inference Inflation!definition}: The execution time when the GPU processes $B$ samples instead of 1.
 
-The resulting latency-throughput Pareto frontier\index{Pareto Frontier!serving trade-offs} is the set of configurations where one cannot improve throughput without paying a "tax" in increased wait time. We can quantify the total wait time for a batch size $B$ and arrival rate $\lambda$ as @eq-batching-tax:
-$$ W_{\text{total}} \approx \underbrace{ \frac{B-1}{2\lambda} }_{\text{Formation Delay}} + \underbrace{ T_{\text{inf}}(B) }_{\text{Inference Time}} $$ {#eq-batching-tax}
+The resulting latency-throughput Pareto frontier\index{Pareto Frontier!serving trade-offs} is the set of configurations where one cannot improve throughput without paying a "tax" in increased latency. We can quantify the total batched-request latency for a batch size $B$ and arrival rate $\lambda$ as @eq-batching-tax:
+$$ L_{\text{lat,total}} \approx \underbrace{ \frac{B-1}{2\lambda} }_{\text{Formation delay}} + \underbrace{ T_{\text{inf}}(B) }_{\text{Inference time}} $$ {#eq-batching-tax}
 
 This equation reveals the "cost of throughput." Increasing $B$ to saturate the GPU amortizes the hardware cost, but inflates the per-request latency. Concretely, at 500 QPS, moving from batch-1 to batch-32 increases wait-time from `{python} BatchingTax.wait_time_b1_ms_str` ms to `{python} BatchingTax.wait_time_b32_ms_str` ms, contributing to a `{python} BatchingTax.penalty_ratio_str`$\times$ total latency penalty (`{python} BatchingTax.lat_b1_ms_str` ms → `{python} BatchingTax.lat_b32_ms_str` ms). For a systems engineer, this tax is the primary regulator of economic efficiency: the engineer chooses the batch size that maximizes throughput (minimizing cost per query) without violating the latency SLO $(L_{\text{lat}})$.
 
@@ -2280,7 +2280,7 @@ Little's Law has immediate practical implications. If an inference service avera
 ### The utilization-latency relationship {#sec-model-serving-utilizationlatency-relationship-a2f0}
 
 Little's Law describes average system behavior, but it does not reveal *how* latency changes as load approaches capacity. To answer the critical question of *how* much spare capacity a serving system needs, we turn to the M/M/1 queue model.[^fn-mm1-erlang-serving] For a system with Poisson arrivals\index{Poisson Arrivals!queuing model} and exponential service times, the average time in system follows:
-$$W = \frac{1}{\mu - \lambda} = \frac{\text{service time}}{1 - \rho}$$ {#eq-mm1-wait}
+$$T_{\text{lat}} = \frac{1}{\mu - \lambda} = \frac{\text{service time}}{1 - \rho}$$ {#eq-mm1-wait}
 where $\mu$ is the service rate (requests per second the server can handle), and $\rho = \lambda/\mu$ is the utilization\index{Utilization!latency relationship}\index{M/M/1 Queue!wait time formula} (fraction of time the server is busy).
 
 [^fn-mm1-erlang-serving]: **M/M/1 Queue**: Queuing theory originated with Agner Krarup Erlang's 1909 analysis of the Copenhagen Telephone Exchange, where call arrivals genuinely were memoryless (Poisson). The M/M/1 model's exponential service time assumption fit telephony well but overpredicts variance for ML inference, where fixed-architecture forward passes produce near-constant service times. This mismatch is useful: M/M/1 overestimates wait times by roughly 2$\times$ compared to the more realistic M/D/1, providing a built-in safety margin for capacity planning. \index{M/M/1 Queue!Erlang origin}
@@ -2329,7 +2329,7 @@ For traffic exceeding single-node capacity, production systems deploy multiple r
 ### Tail latency {#sec-model-serving-tail-latency-5376}
 
 Production SLOs\index{SLO!percentile targets} typically specify percentile targets (p95, p99) rather than averages because tail latency determines user experience for the slowest requests [@dean2013]. For an M/M/1 queue, the p99 latency follows:
-$$W_{\text{p99}} \approx \frac{\text{service time}}{1 - \rho} \cdot \ln\left(\frac{1}{1 - 0.99}\right) \approx \frac{4.6 \cdot \text{service time}}{1 - \rho}$$ {#eq-p99-latency}
+$$T_{\text{lat,p99}} \approx \frac{\text{service time}}{1 - \rho} \cdot \ln\left(\frac{1}{1 - 0.99}\right) \approx \frac{4.6 \cdot \text{service time}}{1 - \rho}$$ {#eq-p99-latency}
 
 At 70 percent utilization, p99 latency is approximately 15 times the service time $(4.6/0.3 \approx 15.3)$, while average latency is only 3.3 times. For the M/D/1 model (more representative of ML inference with near-constant service times), p99 values are roughly half these M/M/1 estimates. This explains *why* systems that seem healthy with low average latency can have unacceptable tail latency, since the average hides the experience of the unluckiest requests.
 
@@ -2427,7 +2427,7 @@ Consider designing a ResNet-50 serving system with these requirements:
 - **Service time** (TensorRT FP16): 5 ms
 
 **Step 1**: Find safe utilization.
-From @eq-p99-latency, $W_{\text{p99}} \approx$ `{python} CapacityPlanningCalc.mm1_p99_factor_str` $\times$ service time / $(1 - \rho)$. Setting $W_{\text{p99}} \leq 50$ ms with 5 ms service time gives `{python} CapacityPlanningCalc.cp_rho_safe_math` (`{python} CapacityPlanningCalc.cp_rho_safe_pct_str` percent maximum utilization). This uses the conservative M/M/1 p99 bound from the displayed equation rather than applying an average-wait M/D/1 adjustment to a tail-latency SLO.
+From @eq-p99-latency, $T_{\text{lat,p99}} \approx$ `{python} CapacityPlanningCalc.mm1_p99_factor_str` $\times$ service time / $(1 - \rho)$. Setting $T_{\text{lat,p99}} \leq 50$ ms with 5 ms service time gives `{python} CapacityPlanningCalc.cp_rho_safe_math` (`{python} CapacityPlanningCalc.cp_rho_safe_pct_str` percent maximum utilization). This uses the conservative M/M/1 p99 bound from the displayed equation rather than applying an average-wait M/D/1 adjustment to a tail-latency SLO.
 
 **Step 2**: Calculate required service rate.
 `{python} CapacityPlanningCalc.cp_mu_required_math`
@@ -2973,12 +2973,12 @@ Dynamic batching introduces a quantifiable tension between throughput optimizati
 
 @eq-batching-latency decomposes the total user-perceived latency for a batched request into two components:
 $$L_{\text{lat}} = L_{\text{lat,wait}} + L_{\text{lat,compute}}(B)$$ {#eq-batching-latency}
-where $L_{\text{lat,wait}}$ is the time spent waiting in the batching queue (corresponding to $L_{\text{lat,queue}}$ in the overall latency budget) and $L_{\text{lat,compute}}(B)$ is the inference time for batch size $B$ (encompassing $L_{\text{lat,infer}}$ plus portions of $L_{\text{lat,pre}}$ and $L_{\text{lat,post}}$). The batching window $T$ bounds wait time ($L_{\text{lat,wait}} \leq T$), while batch size affects compute time through GPU utilization characteristics.
+where $L_{\text{lat,wait}}$ is the time spent waiting in the batching queue (corresponding to $L_{\text{lat,queue}}$ in the overall latency budget) and $L_{\text{lat,compute}}(B)$ is the inference time for batch size $B$ (encompassing $L_{\text{lat,infer}}$ plus portions of $L_{\text{lat,pre}}$ and $L_{\text{lat,post}}$). The batching window $T_{\text{window}}$ bounds wait time ($L_{\text{lat,wait}} \leq T_{\text{window}}$), while batch size affects compute time through GPU utilization characteristics.
 
 #### Quantitative analysis of batching {#sec-model-serving-queue-waiting-time-analysis-8d5c}
 
-For Poisson arrivals with rate $\lambda$ and batching window $T$, requests arrive uniformly within the window. A request arriving at time $t$ within the window waits $T - t$ for the batch to close. @eq-avg-wait shows that the average wait time is simply half the window:
-$$E[L_{\text{lat,wait}}] = \frac{T}{2}$$ {#eq-avg-wait}
+For Poisson arrivals with rate $\lambda$ and batching window $T_{\text{window}}$, requests arrive uniformly within the window. A request arriving at time $t$ within the window waits $T_{\text{window}} - t$ for the batch to close. @eq-avg-wait shows that the average wait time is simply half the window:
+$$E[L_{\text{lat,wait}}] = \frac{T_{\text{window}}}{2}$$ {#eq-avg-wait}
 
 ```{python}
 #| label: batching-budget-calc
@@ -3018,8 +3018,8 @@ This simple relationship has direct implications. A 20 ms batching window adds `
 
 #### Batch size distribution {#sec-model-serving-batch-size-distribution-b3d3}
 
-The number of requests collected during window $T$ follows a Poisson distribution with mean $\lambda T$. @eq-batch-distribution formalizes this relationship:
-$$\Pr(\text{batch size} = k) = \frac{(\lambda T)^k e^{-\lambda T}}{k!}$$ {#eq-batch-distribution}
+The number of requests collected during window $T_{\text{window}}$ follows a Poisson distribution with mean $\lambda T_{\text{window}}$. @eq-batch-distribution formalizes this relationship:
+$$\Pr(\text{batch size} = k) = \frac{(\lambda T_{\text{window}})^k e^{-\lambda T_{\text{window}}}}{k!}$$ {#eq-batch-distribution}
 
 @tbl-batch-variability quantifies this variability, showing how batch size fluctuates for different traffic levels with a fixed 10 ms window:
 
@@ -3462,7 +3462,7 @@ class PracticalConfigCalc:
 - Expected batch size: `{python} PracticalConfigCalc.pc_expected_batch_str`
 - p99 batch size under Poisson arrivals: `{python} PracticalConfigCalc.pc_p99_batch_str`
 - Maximum batch size: `{python} PracticalConfigCalc.pc_mem_limit_batch_str` (memory limit)
-- Configuration: $T$ = `{python} PracticalConfigCalc.pc_config_window_ms_str` ms, $B_{\text{max}}$ = `{python} PracticalConfigCalc.pc_config_batch_str`
+- Configuration: $T_{\text{window}}$ = `{python} PracticalConfigCalc.pc_config_window_ms_str` ms, $B_{\text{max}}$ = `{python} PracticalConfigCalc.pc_config_batch_str`
 - Predicted p99 latency: `{python} PracticalConfigCalc.pc_predicted_p99_ms_str` ms (within SLO)
 - Predicted peak capacity: `{python} PracticalConfigCalc.pc_predicted_throughput_str` img/s
 - Served throughput at stated traffic: `{python} PracticalConfigCalc.pc_qps_str` img/s (arrival-limited; batch-32 cap handles bursts)
@@ -3523,9 +3523,9 @@ The optimal batching strategy depends critically on how requests arrive. Differe
 
 #### Server traffic (poisson arrivals) {#sec-model-serving-server-traffic-poisson-arrivals-5d26}
 
-Cloud APIs\index{Server Traffic!Poisson process} and web services typically receive requests following a Poisson process,[^fn-poisson-serving] where arrivals are independent and uniformly distributed over time. @eq-poisson-batch expresses the expected batch size for Poisson arrivals with rate $\lambda$ and batching window $T$:
+Cloud APIs\index{Server Traffic!Poisson process} and web services typically receive requests following a Poisson process,[^fn-poisson-serving] where arrivals are independent and uniformly distributed over time. @eq-poisson-batch expresses the expected batch size for Poisson arrivals with rate $\lambda$ and batching window $T_{\text{window}}$:
 \index{Poisson Process!serving arrivals}
-$$E[\text{batch size}] = \lambda \cdot T$$ {#eq-poisson-batch}
+$$E[\text{batch size}] = \lambda \cdot T_{\text{window}}$$ {#eq-poisson-batch}
 
 [^fn-poisson-serving]: **Poisson Process**: Named after French mathematician Simeon Denis Poisson (1781--1840), this stochastic model describes events occurring continuously and independently at a constant average rate. The key property for serving: variance equals the mean, so batch sizes fluctuate significantly at moderate traffic---with $\lambda=200$ req/s and a 10 ms window, expected batch size is two but roughly 14 percent of windows will be empty (wasted GPU cycles). This variance is why batching windows must be tuned probabilistically rather than set from average traffic alone.
 
