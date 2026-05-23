@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 book-index-anti-patterns hook.
 
 Fails (exit 1) if the corpus contains any \index{} anti-pattern from

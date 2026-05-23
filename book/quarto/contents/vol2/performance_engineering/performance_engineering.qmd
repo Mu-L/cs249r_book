@@ -72,7 +72,7 @@ Those objectives connect directly to fleet design: scheduling decides where a re
 
 ::: {#psp-performance-engineering-fleet-stack-connection .callout-perspective title="Fleet stack connection"}
 
-Performance Engineering is the **Optimization Layer** of the fleet stack. While Inference at Scale (@sec-inference-scale) defines the serving architecture and scheduling policies, Performance Engineering optimizes the individual operations that execute within each serving node. In the **Fleet Stack** shown in @fig-fleet-stack, this chapter belongs to the Serving Layer while reaching downward into the Distribution and Infrastructure layers that determine how hardware actually executes work. Every technique here targets the same goal: closing the gap between theoretical hardware peak and achieved throughput, turning the iron law\index{Iron Law} from a speed limit into a speedometer that reads closer to maximum.
+Performance Engineering is the **Optimization Layer** of the fleet stack. While Inference at Scale (@sec-inference-scale) defines the serving architecture and scheduling policies, Performance Engineering optimizes the individual operations that execute within each serving node. In the **Fleet Stack** shown in @fig-fleet-stack, this chapter belongs to the Serving Layer while reaching downward into the Distribution and Infrastructure layers that determine how hardware actually executes work. Every technique here targets the same goal: closing the gap between theoretical hardware peak and achieved throughput, turning the iron law from a speed limit into a speedometer that reads closer to maximum.
 
 :::
 
@@ -84,7 +84,7 @@ Part II established the distributed logic of the fleet: partitioning workloads, 
 
 ### The iron law of ML performance {#sec-performance-engineering-efficiency-frontier}
 
-Performance engineering operates within a constrained optimization space defined by the iron law of ML system performance:
+Performance engineering operates within a constrained optimization space defined by the iron law of ML system performance\index{Iron Law}:
 
 $$
 T = \frac{D_{\text{vol}}}{\text{BW}} + \frac{O}{R_{\text{peak}} \cdot \eta_{\text{hw}}} + L_{\text{lat}}
@@ -134,6 +134,18 @@ The same diagnostic process can be codified as a decision flowchart, mapping eac
 :::
 
 The central lesson of @fig-iron-law-flowchart is that profiling must precede optimization: applying operator fusion to a compute-bound workload, or precision engineering to an overhead-bound one, yields zero improvement regardless of implementation quality.
+
+::: {#ws-performance-engineering-cloudflare-regex-outage .callout-war-story title="The regex that saturated the edge"}
+
+**Context**: Cloudflare's Web Application Firewall runs on edge machines that process HTTP and HTTPS traffic across the global network [@cloudflare2019outage].
+
+**Failure**: On July 2, 2019, a newly deployed managed WAF rule caused excessive CPU consumption on every HTTP/HTTPS-handling core across Cloudflare's network.
+
+**Consequence**: Cloudflare reported losing most of its traffic until the team identified the WAF as the cause and used a global disable mechanism to restore service.
+
+**Systems lesson**: Performance engineering includes algorithmic complexity and rollout design. A small rule change can become a global outage when it is deployed everywhere before bounded-runtime checks, canaries, and kill switches catch the cost. ML deployments follow the same pattern: a new model, a recalibrated threshold, or a retrained feature can ship a worst-case latency cliff into production that no unit test catches, which is why canarying, request shadowing, and per-request kill switches are first-class ML serving infrastructure.
+
+:::
 
 The **efficiency frontier**\index{Efficiency Frontier!definition}\index{Efficiency!frontier} is the Pareto-optimal curve of model quality vs. system throughput. A model on the frontier cannot improve throughput without sacrificing quality, or vice versa [@thompson2021]. The techniques in this chapter push the frontier outward by making each quality level achievable at higher throughput, or equivalently, by making each throughput level achievable at higher quality. An organization's goal is not merely to reach the frontier but to find the point on it that best matches their latency, throughput, cost, and quality requirements.
 
@@ -297,7 +309,7 @@ $$
 I_{\text{ridge}} = \frac{R_{\text{peak}}}{\text{BW}}
 $$ {#eq-ridge-point}
 
-Workloads with $I < I_{\text{ridge}}$ are memory-bound: their performance is limited by how fast data can be loaded, not how fast it can be processed. Workloads with $I > I_{\text{ridge}}$ are compute-bound: the arithmetic units are the bottleneck. @fig-roofline-model illustrates this relationship graphically.
+Workloads with $I < I_{\text{ridge}}$ are memory-bound\index{Memory-Bound}: their performance is limited by how fast data can be loaded, not how fast it can be processed. Workloads with $I > I_{\text{ridge}}$ are compute-bound: the arithmetic units are the bottleneck. @fig-roofline-model illustrates this relationship graphically.
 
 ::: {#fig-roofline-model fig-env="figure" fig-pos="htb" fig-cap="**The Roofline Model**: Achievable performance (y-axis) as a function of arithmetic intensity (x-axis) on a log-log plot. The sloped line represents the memory bandwidth ceiling; the flat line represents the compute ceiling at the labeled precision (FP8 tensor-core throughput on H100, approximately 2,000 TFLOP/s); their intersection is the ridge point at roughly 600 FLOP/byte for FP8. Most transformer inference operations fall in the memory-bound region (left of the ridge point), while large batched GEMMs fall in the compute-bound region (right). The corresponding FP16 ridge point is roughly 295 FLOP/byte (989 TFLOP/s divided by 3.35 TB/s)." fig-alt="Log-log roofline plot with diagonal memory-bandwidth ceiling and horizontal compute ceiling labeled at FP8 throughput around 2,000 TFLOP/s. Ridge point around 600 FLOP/byte. Workload markers: LLM decode and element-wise ops on the left (memory-bound), large GEMM on the right (compute-bound)."}
 ![](images/svg/roofline-model.svg)
@@ -610,9 +622,9 @@ The continuous batching systems introduced in @sec-inference-scale-continuous-ba
 
 A critical enabler for large batch sizes is **paged KV cache management**[^fn-paged-attention-os], introduced by vLLM [@kwon2023]. Traditional KV cache implementations preallocate contiguous memory for each request's maximum possible sequence length.
 
-[^fn-paged-attention-os]: **PagedAttention**\index{PagedAttention}: Named by direct analogy to OS virtual memory paging, where the OS maps noncontiguous physical pages to contiguous virtual addresses. The insight, presented at SOSP 2023, was that the same mechanism eliminates internal fragmentation in KV caches, recovering the 60--80 percent of GPU memory wasted by worst-case preallocation. This single abstraction transformed LLM serving economics by enabling 2--4$\times$ larger batch sizes without any change to model weights or precision. \index{PagedAttention!memory management}
+[^fn-paged-attention-os]: **PagedAttention**: Named by direct analogy to OS virtual memory paging, where the OS maps noncontiguous physical pages to contiguous virtual addresses. The insight, presented at SOSP 2023, was that the same mechanism eliminates internal fragmentation in KV caches, recovering the 60--80 percent of GPU memory wasted by worst-case preallocation. This single abstraction transformed LLM serving economics by enabling 2--4$\times$ larger batch sizes without any change to model weights or precision. \index{PagedAttention!memory management}
 
-If the maximum is 4,096 tokens but the average is 500, approximately 88 percent of the allocated memory is wasted. **PagedAttention**\index{PagedAttention} divides the KV cache into fixed-size blocks (pages), allocated on demand as the sequence grows. This eliminates memory fragmentation and enables near-100 percent utilization of the KV cache memory budget. The performance impact is indirect but substantial: by reducing memory waste, PagedAttention enables 2--4$\times$ larger effective batch sizes, which in turn improve throughput and GPU utilization through the batch size mechanism described earlier.
+If the maximum is 4,096 tokens but the average is 500, approximately 88 percent of the allocated memory is wasted. **PagedAttention** divides the KV cache into fixed-size blocks (pages), allocated on demand as the sequence grows. This eliminates memory fragmentation and enables near-100 percent utilization of the KV cache memory budget. The performance impact is indirect but substantial: by reducing memory waste, PagedAttention enables 2--4$\times$ larger effective batch sizes, which in turn improve throughput and GPU utilization through the batch size mechanism described earlier.
 
 PagedAttention and KV cache quantization interact multiplicatively. PagedAttention reduces memory *waste* (from fragmentation), while quantization reduces memory *usage* (from precision). Together, they increase the effective batch size by 8--16$\times$ compared to a baseline system with preallocated FP16 KV caches, fundamentally changing the economics of LLM serving.
 
@@ -887,7 +899,7 @@ class FlashAttentionSavings:
     flash_savings_factor_str = fmt(savings_ratio, precision=0, commas=False)
 ```
 
-FlashAttention [@dao2022] reformulates attention as a **tiled** computation. Instead of materializing the full $S{\times}S$ attention matrix, it processes $Q$, $K$, and $V$ in small blocks that fit in on-chip SRAM. The algorithm loads tiles of $Q$, $K$, and $V$, computes partial attention scores, and maintains running statistics (online softmax) to produce the exact result without ever storing the full attention matrix in HBM.
+FlashAttention\index{FlashAttention} [@dao2022] reformulates attention as a **tiled** computation. Instead of materializing the full $S{\times}S$ attention matrix, it processes $Q$, $K$, and $V$ in small blocks that fit in on-chip SRAM. The algorithm loads tiles of $Q$, $K$, and $V$, computes partial attention scores, and maintains running statistics (online softmax) to produce the exact result without ever storing the full attention matrix in HBM.
 
 The reduction in materialized attention state is dramatic. For a sequence length of `{python} FlashAttentionSavings.head_n_str`, 32 heads, and head dimension `{python} FlashAttentionSavings.head_d_str` in FP16, the naive implementation materializes and revisits approximately `{python} FlashAttentionSavings.naive_mb_str` MB of HBM-resident tensors for the full layer, or `{python} FlashAttentionSavings.naive_head_traffic_mb_str` MB per head. FlashAttention avoids the quadratic score and probability tensors; its persistent HBM-visible tensors are dominated by $Q$, $K$, $V$, and output $Y$, totaling approximately `{python} FlashAttentionSavings.flash_mb_str` MB for the full layer, or `{python} FlashAttentionSavings.flash_head_traffic_mb_str` MB per head. This simplified accounting excludes schedule-dependent tile reloads inside a particular kernel, but it captures the important scaling result: a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in materialized attention state for this configuration.
 
@@ -1227,7 +1239,7 @@ A graph compiler transforms a high-level model definition (Python code) into opt
 
 In the **graph capture** stage, the compiler traces the model's execution to construct a computational graph, a directed acyclic graph where nodes represent operations and edges represent tensor dependencies. For the FFN block, this results in a graph with four primary nodes plus their associated parameter tensors. Dynamic Python control flow (loops, conditionals) must be handled by either tracing through a representative execution path or by using compiler-specific annotations to mark dynamic dimensions.
 
-During **graph-level optimization**\index{Optimization!graph-level}, the compiler applies algebraic simplifications and operation rewriting. It identifies that the bias addition in the first `Linear` layer can be folded into the matrix multiplication kernel. It also recognizes that the `GELU` activation is an element-wise operation that depends only on the output of the first `Linear`. These standard compiler optimizations can reduce graph size by 10--30 percent before any hardware-specific work begins.
+During **graph-level optimization**\index{Graph Compilation!graph-level optimization}, the compiler applies algebraic simplifications and operation rewriting. It identifies that the bias addition in the first `Linear` layer can be folded into the matrix multiplication kernel. It also recognizes that the `GELU` activation is an element-wise operation that depends only on the output of the first `Linear`. These standard compiler optimizations can reduce graph size by 10--30 percent before any hardware-specific work begins.
 
 The operator fusion pass is the most critical for performance. It identifies sequences of operations that can be combined into single kernels to reduce memory traffic. For the FFN block, the compiler fuses the `GELU` activation into the tail of the first `Linear` kernel (if supported as an epilogue) or fuses the `GELU` and the subsequent `LayerNorm` into a single kernel. Instead of writing the intermediate result of the first `Linear` to HBM and reading it back for `GELU`, the fused kernel keeps the data in the GPU's SRAM or registers. This typically reduces the number of HBM accesses by 30--50 percent, directly alleviating the memory bandwidth bottleneck.
 
@@ -1241,7 +1253,7 @@ PyTorch's `torch.compile` (introduced in PyTorch 2.0) brings graph compilation t
 
 TorchDynamo operates at the Python bytecode level[^fn-torchdynamo-bytecode], a design choice that distinguishes it from earlier tracing approaches.
 
-[^fn-torchdynamo-bytecode]: **TorchDynamo Bytecode Interception**\index{TorchDynamo Bytecode Interception}: By hooking CPython's frame evaluation function (`PEP 523`, added in Python 3.6), TorchDynamo captures the computation graph at the lowest level of the Python interpreter, below any source-level abstractions. This is why it can trace through decorators, closures, and third-party libraries that defeated earlier tracing approaches. The trade-off is tight coupling to CPython internals: TorchDynamo must be updated for each new Python version, and it cannot run on alternative interpreters like PyPy. \index{TorchDynamo!bytecode tracing}
+[^fn-torchdynamo-bytecode]: **TorchDynamo Bytecode Interception**: By hooking CPython's frame evaluation function (`PEP 523`, added in Python 3.6), TorchDynamo captures the computation graph at the lowest level of the Python interpreter, below any source-level abstractions. This is why it can trace through decorators, closures, and third-party libraries that defeated earlier tracing approaches. The trade-off is tight coupling to CPython internals: TorchDynamo must be updated for each new Python version, and it cannot run on alternative interpreters like PyPy. \index{TorchDynamo!bytecode tracing}
 
 Previous tracing methods (torch.jit.trace, torch.fx) operated at the Python source or abstract syntax tree (AST) level, requiring users to avoid unsupported Python constructs. TorchDynamo intercepts the bytecode interpreter itself, capturing a computational graph without requiring the user to modify their model code. When TorchDynamo encounters Python constructs it cannot trace (data-dependent control flow, unsupported operations), it inserts a *graph break*\index{Graph Break} that splits the trace into multiple subgraphs, each compiled independently. The goal is to capture as large a subgraph as possible while gracefully handling dynamic Python behavior.
 
@@ -1277,7 +1289,7 @@ In this example, `torch.compile` will fuse the GELU activation with surrounding 
 
 ### XLA and TPU optimization {#sec-performance-engineering-xla}
 
-XLA (Accelerated Linear Algebra\index{Accelerated Linear Algebra}) is Google's graph compiler, used as the backend for JAX and TensorFlow. Unlike TorchInductor, which generates Triton code targeting NVIDIA GPUs, XLA generates HLO (High-Level Operations) intermediate representation that targets multiple backends, including Google Tensor Processing Units (TPUs), NVIDIA GPUs, and CPUs. Its architecture is fundamentally different from `torch.compile`: while PyTorch prioritizes flexibility by allowing graph breaks for unsupported Python features, XLA enforces **whole-program compilation**\index{Whole-Program Compilation}, tracing the entire computation as a single static graph and enabling global optimizations that span across layers and even across the forward and backward passes.
+XLA (Accelerated Linear Algebra\index{XLA!Accelerated Linear Algebra}) is Google's graph compiler, used as the backend for JAX and TensorFlow. Unlike TorchInductor, which generates Triton code targeting NVIDIA GPUs, XLA generates HLO (High-Level Operations) intermediate representation that targets multiple backends, including Google Tensor Processing Units (TPUs), NVIDIA GPUs, and CPUs. Its architecture is fundamentally different from `torch.compile`: while PyTorch prioritizes flexibility by allowing graph breaks for unsupported Python features, XLA enforces **whole-program compilation**\index{Whole-Program Compilation}, tracing the entire computation as a single static graph and enabling global optimizations that span across layers and even across the forward and backward passes.
 
 The global view enables XLA's most distinctive capability: the **GSPMD (General Partitioner for SPMD)**\index{GSPMD}. In distributed training, GSPMD automatically partitions the computation graph across thousands of TPU cores based on a few high-level user annotations. While a PyTorch user must manually wrap models with `DistributedDataParallel` or `FullyShardedDataParallel`, an XLA user defines the computation for a single device and allows the compiler to infer the necessary communication primitives (AllReduce, AllGather) and insert them into the graph. This allows for complex hybrid sharding strategies that are difficult to implement manually.
 
@@ -1787,9 +1799,9 @@ Model FLOPs Utilization (MFU) measures what fraction of the hardware's theoretic
 
 Hardware FLOPs Utilization (HFU) is the simpler metric: total arithmetic operations executed (including overhead like activation recomputation) divided by peak FLOP/s. HFU is usually at least as high as MFU because it counts recomputed operations that do not directly advance the model's computation. The gap between HFU and MFU quantifies the "wasted" compute from techniques like activation checkpointing.
 
-Time-to-first-token (TTFT) measures the latency from when a request arrives to when the first output token is generated. TTFT includes queue waiting time, prefill computation, and any initialization overhead. For interactive applications, TTFT below 500 ms is generally acceptable; below 200 ms feels responsive.
+Time-to-first-token (TTFT)\index{TTFT} measures the latency from when a request arrives to when the first output token is generated. TTFT includes queue waiting time, prefill computation, and any initialization overhead. For interactive applications, TTFT below 500 ms is generally acceptable; below 200 ms feels responsive.
 
-Inter-token latency (ITL) measures the time between consecutive output tokens during the decode phase. ITL directly determines the perceived generation speed. For a comfortable reading experience, ITL should be below 50 ms (20 tokens/second); for real-time speech synthesis, ITL below 25 ms may be required.
+Inter-token latency (ITL)\index{ITL} measures the time between consecutive output tokens during the decode phase. ITL directly determines the perceived generation speed. For a comfortable reading experience, ITL should be below 50 ms (20 tokens/second); for real-time speech synthesis, ITL below 25 ms may be required.
 
 Throughput (tokens/second for the system, or tokens/second/GPU for per-device efficiency) measures aggregate production capacity. Throughput is maximized by large batch sizes and high utilization, often at the expense of increased per-request latency. The fundamental trade-off between throughput and latency is captured by queuing theory, as explored in @sec-inference-scale-queuing-theory-batched-inference-bbf0.
 
@@ -1853,7 +1865,7 @@ The resulting trace, viewable in TensorBoard or Chrome's trace viewer, shows:
 
 ### Nsight systems: Reading the timeline {#sec-performance-engineering-nsight-systems}
 
-NVIDIA Nsight Systems is the primary tool for trace-level profiling. Understanding how to read its timeline view is an essential skill for performance engineers. The tool captures every GPU kernel launch, CUDA memory operation, NCCL communication, and CPU thread activity onto a unified timeline.
+NVIDIA Nsight Systems\index{Nsight Systems} is the primary tool for trace-level profiling. Understanding how to read its timeline view is an essential skill for performance engineers. The tool captures every GPU kernel launch, CUDA memory operation, NCCL communication, and CPU thread activity onto a unified timeline.
 
 A typical Nsight Systems workflow begins with capturing a trace of a few training or inference iterations:
 
@@ -1910,7 +1922,7 @@ A full decode trace shows how several of these smaller bottlenecks can combine i
 
 **Problem**: A 7B parameter LLM runs on a single H100 and shows 45 tokens/second during autoregressive generation at batch size 1. The pure FP16 weight-read roofline is higher, but after budgeting roughly 35 GB of total per-token traffic for weights, KV-cache reads, sampling, synchronization, and launch overhead, the bandwidth-limited full-decode ceiling is approximately 96 tokens/second. Where is the remaining 53 percent of realizable decode-step performance hiding?
 
-**Investigation**\index{Investigation}:
+**Investigation**:
 
 Step 1: Kernel-level analysis. Run Nsight Compute on the dominant GEMM kernel. Result: achieves 2.8 TB/s effective bandwidth out of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak. Efficiency: 84 percent. This kernel is performing well.
 
@@ -2031,8 +2043,8 @@ With MFU defined as useful work rather than raw busyness, the next calculation s
 
 **Scenario**: Training a **`{python} FleetEfficiencyCalc.fleet_params_b_str`** parameter model across a cluster of **`{python} FleetEfficiencyCalc.fleet_nodes_str` H100 GPUs**.
 
-*   **Local node baseline**\index{Local Node Baseline}: A single 8-GPU node achieves **`{python} FleetEfficiencyCalc.fleet_local_mfu_str` percent MFU**.
-*   **Fleet performance**\index{Fleet Performance}: At 128 GPUs, the step time increases to **`{python} FleetEfficiencyCalc.fleet_t_step_ms_str` ms**, dropping MFU to **`{python} FleetEfficiencyCalc.fleet_global_mfu_str` percent**.
+*   **Local node baseline**\index{Model FLOPs Utilization!local node baseline}: A single 8-GPU node achieves **`{python} FleetEfficiencyCalc.fleet_local_mfu_str` percent MFU**.
+*   **Fleet performance**\index{Model FLOPs Utilization!fleet performance}: At 128 GPUs, the step time increases to **`{python} FleetEfficiencyCalc.fleet_t_step_ms_str` ms**, dropping MFU to **`{python} FleetEfficiencyCalc.fleet_global_mfu_str` percent**.
 
 **Systems insight**: The **`{python} FleetEfficiencyCalc.fleet_scaling_tax_str` percent scaling tax** represents the cost of inter-node communication (InfiniBand latency) and synchronization barriers. In a healthy fleet, this tax should remain stable; a sudden increase in the scaling tax signals a **Scaling Regression**\index{Scaling!regression}—typically caused by a misaligned parallelization strategy or a "gray failure" in the network fabric.
 
@@ -2046,15 +2058,15 @@ At scale, the system is nonlinear. A code change that introduces a minor memory 
 2.  **Fleet Baseline Comparison**\index{Fleet Baseline Comparison}: Continuously comparing every production run's MFU against the gold-standard baseline for that model architecture.
 3.  **Gray Failure Detection**\index{Gray Failure Detection}: Monitoring the distribution of step times across the fleet. A single "straggler" node that is 10 percent slower due to thermal throttling can reduce the entire cluster's MFU by 10 percent in a synchronous data-parallel workload.
 
-::: {#wrn-performance-engineering-benchmark-vs-reality-hero-run-tax .callout-warning title="Benchmark vs. reality: The hero run tax"}
+::: {.callout-warning title="Benchmark vs. reality: The hero run tax"}
 
 Industry benchmarks like **MLPerf**\index{MLPerf} are often "hero runs"—highly tuned configurations where logging is disabled, safety checks are bypassed, and the hardware is freshly rebooted.
 
 In production, achieved MFU typically sits **10--20 percent lower** than these hero numbers. Essential operational overhead consumes the difference:
 
-*   **Observability**\index{Observability}: Metrics collection and logging.
-*   **Reliability**\index{Reliability}: Checkpointing and health heartbeats.
-*   **Entropy**\index{Entropy}: Thermal throttling, memory fragmentation, and multi-tenant network noise.
+*   **Observability**: Metrics collection and logging.
+*   **Reliability**: Checkpointing and health heartbeats.
+*   **Entropy**: Thermal throttling, memory fragmentation, and multi-tenant network noise.
 
 When planning capacity, engineers must budget for the reality tax. If a benchmark projects 30 days of training, the production plan should assume 35--40 days.
 
@@ -2070,13 +2082,13 @@ Consider a raw, unoptimized 70-billion parameter PyTorch model that must serve 1
 
 When approaching a new ML workload for optimization, follow this sequence:
 
-1. **Baseline Measurement**\index{Baseline Measurement}: Measure end-to-end throughput (tokens/second for LLMs, samples/second for training) and collect a Nsight Systems trace. Compute the Model FLOPs Utilization (MFU)\index{Nsight Systems} as established in @sec-performance-engineering-measurement-scale. An MFU below 30 percent indicates substantial optimization opportunity; above 50 percent is good; above 60 percent is excellent for large models.
+1. **Baseline Measurement**\index{Baseline Measurement}: Measure end-to-end throughput (tokens/second for LLMs, samples/second for training) and collect a Nsight Systems trace. Compute the Model FLOPs Utilization (MFU) as established in @sec-performance-engineering-measurement-scale. An MFU below 30 percent indicates substantial optimization opportunity; above 50 percent is good; above 60 percent is excellent for large models.
 
 2. **Roofline Classification**\index{Roofline Classification}: For the dominant kernels, compute the arithmetic intensity and plot on the roofline. This immediately identifies whether the workload is compute-bound or memory-bound, which determines the entire optimization strategy.
 
-3. **Selecting the Primary Bottleneck**\index{Selecting the Primary Bottleneck}: The primary bottleneck falls into one of three categories, each with a different optimization path:
+3. **Selecting the Primary Bottleneck**\index{Bottleneck!primary selection}: The primary bottleneck falls into one of three categories, each with a different optimization path:
 
-For **memory-bound workloads**\index{Memory-Bound Workloads} (the common case for inference):
+For **memory-bound workloads**\index{Memory-Bound!optimization path} (the common case for inference):
 
 1. Apply precision reduction (FP16 $\rightarrow$ FP8 or INT4) to increase effective bandwidth.
 2. Apply operator fusion (FlashAttention, fused LayerNorm/GELU) to eliminate intermediate HBM traffic.
@@ -2106,7 +2118,7 @@ The most performant production systems combine multiple techniques simultaneousl
 - **FlashAttention-2** or **FlashAttention-3** for memory-efficient attention computation
 - **INT4 weight quantization** (GPTQ or AWQ) with FP16 dequantization during GEMM
 - **INT8 KV cache compression** with per-channel scaling
-- **torch.compile**\index{torch.compile} or **TensorRT**\index{TensorRT} for element-wise fusion and kernel selection
+- **torch.compile**\index{torch.compile!kernel fusion} or **TensorRT**\index{TensorRT!kernel selection} for element-wise fusion and kernel selection
 - Speculative decoding for latency reduction at low batch sizes
 - Continuous batching\index{Continuous Batching} with dynamic sequence grouping for high throughput
 - Tensor parallelism\index{Tensor Parallelism} across GPUs with overlapped AllReduce
@@ -2119,7 +2131,7 @@ A practical heuristic for sequencing optimizations is to apply them in order of 
 
 1. torch.compile (1 line of code, 10--40 percent speedup): Apply first when input shapes are stable and graph breaks are limited. Verify with profiling, since compilation latency, recompilation on dynamic shapes, and reduced optimization for symbolic shapes can erode the gain.
 2. **Weight quantization** (INT4/FP8, hours of calibration, 2--4$\times$ throughput): Apply second. Frees memory for batching.
-3. FlashAttention\index{FlashAttention} (library swap, 2--32$\times$ for attention): Apply third. Usually a configuration flag.
+3. FlashAttention (library swap, 2--32$\times$ for attention): Apply third. Usually a configuration flag.
 4. **KV cache compression** (INT8, library support, 2$\times$ cache reduction): Apply fourth. Enables larger batches.
 5. Speculative decoding (requires draft model, engineering effort): Apply last, only if latency target not met. Most complex to deploy.
 
@@ -2144,8 +2156,8 @@ To illustrate how the diagnostic sequence and combining principles work in pract
 
 The initial deployment uses FP16 weights, standard PyTorch eager execution, and tensor parallelism across 8 GPUs. The 70B model in FP16 requires 140 GB of weight storage, distributed as approximately 17.5 GB per GPU. The baseline performance metrics are:
 
-- **TTFT**\index{TTFT}: 1,200 ms (well above the 500 ms target)
-- **ITL**\index{ITL}: 85 ms (above the 50 ms target)
+- **TTFT**: 1,200 ms (well above the 500 ms target)
+- **ITL**: 85 ms (above the 50 ms target)
 - **Throughput**: 280 tokens/second (below the 1,000 token/second target)
 - **Maximum batch size**\index{Batch Size!maximum}: 4 (limited by KV cache memory)
 
@@ -2168,7 +2180,7 @@ Simultaneously, applying INT8 quantization to the KV cache reduces per-request c
 Postoptimization metrics at batch size 1:
 
 - **ITL**: 48 ms (meets the 50 ms target)
-- **Throughput at batch size 32**\index{Throughput!at batch size 32}: 720 tokens/second (still below target)
+- **Throughput at batch size 32**: 720 tokens/second (still below target)
 
 The Nsight Systems trace shows that GEMM time decreased by approximately 45 percent due to reduced weight reads, but attention and element-wise operations remain unchanged. The bottleneck has partially shifted.
 
@@ -2296,7 +2308,7 @@ The unifying principle is that performance engineering is not about making hardw
 * **Graph compilation**\index{Graph Compilation!graph capture}\index{Graph Compilation!memory planning}\index{Graph Compilation!kernel selection}: Graph compilers (torch.compile, XLA, TensorRT) automate known optimizations across the entire model graph, but cannot discover algorithmic innovations like FlashAttention or speculative decoding.
 * **Speculative decoding**: Trading abundant compute for scarce bandwidth, parallel verification of draft tokens reduces latency for memory-bound decode without changing precision or batch size.
 * **Mixture of experts**: Enables parameter scaling without proportional compute scaling, but introduces AllToAll communication patterns and load balancing challenges that require careful system engineering.
-* **Always profile before optimizing**\index{Always Profile Before Optimizing}: The dominant bottleneck is often not where intuition suggests, and applying the wrong optimization wastes engineering effort while leaving the actual bottleneck untouched.
+* **Always profile before optimizing**: The dominant bottleneck is often not where intuition suggests, and applying the wrong optimization wastes engineering effort while leaving the actual bottleneck untouched.
 
 :::
 

@@ -99,9 +99,9 @@ Machine learning on a single accelerator is governed by local memory hierarchy a
 
 The scale moment is the physical and operational transformation that occurs *when* models cross the **three fundamental walls**. As we move from a single GPU to a Machine Learning Fleet\index{Machine Learning Fleet} comprising thousands of nodes, the binding constraints shift:
 
-1.  **From processor to network**\index{From Processor to Network}: The **network wall**\index{Network Wall} (bisection bandwidth and speed of light) replaces the local memory wall as the primary performance bottleneck.
-2.  **From exception to certainty**\index{From Exception to Certainty}: The reliability gap makes hardware failure a routine event rather than a rare exception.
-3.  **From output to impact**\index{From Output to Impact}: Serving billions of users hits the **energy wall**\index{Energy Wall}, making thermodynamic efficiency a first-order engineering requirement.
+1.  **From processor to network**\index{Scale Moment!processor-to-network shift}: The **network wall**\index{Network Wall} (bisection bandwidth and speed of light) replaces the local memory wall as the primary performance bottleneck.
+2.  **From exception to certainty**\index{Scale Moment!failure certainty}: The reliability gap makes hardware failure a routine event rather than a rare exception.
+3.  **From output to impact**\index{Scale Moment!output-to-impact shift}: Serving billions of users hits the **energy wall**\index{Energy Wall}, making thermodynamic efficiency a first-order engineering requirement.
 
 This volume is dedicated to the engineering of this fleet: mastering the physics, logic, and governance of machine learning at the limits of modern infrastructure.
 
@@ -171,10 +171,24 @@ Consider a GPT-4-class training scenario using a hypothetical **`{python} Gpt4Tr
 **Math**:
 
 1. **System MTBF**\index{MTBF!system}: For $N$ independent GPUs, $\text{MTBF}_{\text{system}} = \text{MTBF}_{\text{component}} / N =$ `{python} Gpt4TrainingScenario.gpu_mtbf_str` $/$ `{python} Gpt4TrainingScenario.gpt4_gpus_str` $\approx$ **`{python} Gpt4TrainingScenario.mtbf_hours_str` hours**.
-2. **Daily failure rate**\index{Daily Failure Rate}: $24 \text{ hours} /$ `{python} Gpt4TrainingScenario.mtbf_hours_str` $\text{ hours} \approx$ **`{python} Gpt4TrainingScenario.cluster_fail_day_str` failures per day**.
-3. **Total annual failures**\index{Total Annual Failures}: `{python} Gpt4TrainingScenario.gpt4_gpus_str` GPUs $\times$ (8{,}760 hours $/$ `{python} Gpt4TrainingScenario.gpu_mtbf_str` hours) $\approx$ **`{python} Gpt4TrainingScenario.annual_fails_str` failures per year**.
+2. **Daily failure rate**\index{Failure Rate!daily}: $24 \text{ hours} /$ `{python} Gpt4TrainingScenario.mtbf_hours_str` $\text{ hours} \approx$ **`{python} Gpt4TrainingScenario.cluster_fail_day_str` failures per day**.
+3. **Total annual failures**\index{Failure Rate!annualized count}: `{python} Gpt4TrainingScenario.gpt4_gpus_str` GPUs $\times$ (8{,}760 hours $/$ `{python} Gpt4TrainingScenario.gpu_mtbf_str` hours) $\approx$ **`{python} Gpt4TrainingScenario.annual_fails_str` failures per year**.
 
 **Systems insight**: In this regime, the system is always in a state of partial failure. Traditional software recovery (manual restart) collapses; the system must be architected for fault tolerance as a first-class citizen. Hardware can no longer be treated as a reliable abstraction; it is a probabilistic resource that requires constant, automated state preservation (checkpointing).
+
+:::
+
+Meta's published Llama 3 training run shows the same reliability arithmetic in a real frontier-scale system.
+
+::: {#ws-vol2-introduction-llama3-failure-cadence .callout-war-story title="The training run that failed every few hours"}
+
+**Context**: Meta trained Llama 3 405B on 16,384 H100 GPUs for a 54-day final training run [@dubey2024llama].
+
+**Failure**: At that scale, failures were not rare disruptions. The run experienced 419 unexpected interruptions, averaging one interruption every few hours.
+
+**Consequence**: Training at frontier scale became an exercise in continuous recovery: checkpointing, automated diagnosis, and restart workflows determined whether the cluster produced useful model progress or burned time waiting for humans.
+
+**Systems lesson**: The scale moment turns reliability from a hardware specification into a distributed-systems design requirement. A fleet-scale model is trained by the recovery machinery as much as by the optimizer.
 
 :::
 
@@ -378,7 +392,7 @@ As systems scale beyond a single node, a fundamental physical constraint emerges
 
 On a single GPU, training proceeds deterministically: the same code, data, and random seed produce identical results. At the scale of thousands of GPUs, new phenomena emerge. Network partitions can split clusters into groups that train independently, causing model divergence. Stragglers (workers that process data slower than peers due to hardware variation or thermal throttling) can bottleneck entire training runs. Hardware failures that occur once per machine-year become daily events *when* operating 10,000 machines[^fn-failure-rates-fleet]. Systems must checkpoint frequently enough that losing a day's progress becomes acceptable rather than catastrophic.
 
-[^fn-failure-rates-fleet]: **Hardware Failure Rates at Scale**\index{Hardware Failure Rates at Scale}: Individual GPUs fail at 1--2 percent annually under typical conditions, but rates exceed 9 percent under intensive training workloads. Multiply by fleet size and failure becomes routine: Meta reported 419 unexpected interruptions during Llama 3's 54-day training on 16,384 H100s, roughly one every three hours, with GPU and HBM3 faults causing over half. Automated checkpointing and recovery maintained over 90 percent effective training time, illustrating that at fleet scale the engineering challenge shifts from preventing failure to minimizing recovery latency. \index{Failure Rate!fleet scale}
+[^fn-failure-rates-fleet]: **Hardware Failure Rates at Scale**: Individual GPUs fail at 1--2 percent annually under typical conditions, but rates exceed 9 percent under intensive training workloads. Multiply by fleet size and failure becomes routine: Meta reported 419 unexpected interruptions during Llama 3's 54-day training on 16,384 H100s, roughly one every three hours, with GPU and HBM3 faults causing over half. Automated checkpointing and recovery maintained over 90 percent effective training time, illustrating that at fleet scale the engineering challenge shifts from preventing failure to minimizing recovery latency. \index{Failure Rate!fleet scale}
 
 ```{python}
 #| label: infiniband-scenario
@@ -437,8 +451,7 @@ The scale moment establishes the *why*: exponential growth in compute demand for
 ::: {#sec-vol2-introduction-breed-apart}
 :::
 
-\index{Engineering Crux!hierarchy of scale}
-Apache Spark [@zaharia2016] processes independent data partitions; a web microservice handles isolated requests. The Machine Learning Fleet does neither. Its workload requires synchronous state updates across thousands of accelerators every few hundred milliseconds, a coupling intensity that existing distributed frameworks were never designed to sustain. The workload characteristics of ML systems differ fundamentally from traditional distributed systems, even though the underlying hardware (network, compute, storage) is identical. To reason about these differences systematically, we formalize a four-layer stack throughout Volume II: the **Engineering Crux**, which transforms raw cluster resources into global-scale AI applications.
+Apache Spark [@zaharia2016] processes independent data partitions; a web microservice handles isolated requests. The Machine Learning Fleet does neither. Its workload requires synchronous state updates across thousands of accelerators every few hundred milliseconds, a coupling intensity that existing distributed frameworks were never designed to sustain. The workload characteristics of ML systems differ fundamentally from traditional distributed systems, even though the underlying hardware (network, compute, storage) is identical. To reason about these differences systematically, we formalize a four-layer stack throughout Volume II: the **Engineering Crux**\index{Engineering Crux!hierarchy of scale}, which transforms raw cluster resources into global-scale AI applications.
 
 @fig-vol2-system-scaling-regimes visualizes the transition from single-node to fleet. The left side of the diagram summarizes the single-node regime: 1–8 accelerators connected by shared memory, where the binding constraint is the memory wall\index{Memory Wall}. This volume crosses the scaling arrow into the distributed fleet regime, where thousands of nodes coordinate across a high-speed switch fabric and the bottleneck shifts to the **bisection bandwidth wall**\index{Bisection Bandwidth!wall}: network congestion and message-passing latency dominate.
 
@@ -830,7 +843,7 @@ The Machine Learning Fleet, by contrast, operates under **Synchronous Tight Coup
 2.  **Barrier Synchronization**\index{Barrier Synchronization}: In a synchronous training step, 10,000 GPUs must wait for the slowest worker to finish before any can proceed. The fleet is therefore hypersensitive to stragglers: a 10 percent performance drop on one node can reduce the entire cluster's throughput by 10 percent.
 3.  **Bisection Bandwidth Dominance**\index{Bisection Bandwidth!dominance}: A web service is often latency-bound (waiting for the user). An ML training job is bandwidth-bound. It needs to move gigabytes of gradient data across the entire network every second. This requires non-blocking network topologies that traditional data centers rarely implement.
 
-@fig-traditional-vs-ml-fleet illustrates this contrast directly: in MapReduce, workers write independently to shared storage and a straggler delays only its own partition, whereas in the ML Fleet, every worker must arrive at an AllReduce barrier before the training step can proceed.\index{Barrier Synchronization vs. Independent Tasks}
+@fig-traditional-vs-ml-fleet illustrates this contrast directly: in MapReduce, workers write independently to shared storage and a straggler delays only its own partition, whereas in the ML Fleet, every worker must arrive at an AllReduce barrier before the training step can proceed.\index{Barrier Synchronization!vs. independent tasks}
 
 ::: {#fig-traditional-vs-ml-fleet fig-env="figure" fig-pos="htb" fig-cap="**Barrier Synchronization vs. Independent Tasks**: MapReduce workers (left) operate independently, writing results to shared storage without coordination. A straggler delays only its own output. ML Fleet workers (right) must synchronize gradients at an AllReduce barrier every training step, meaning a single 10\\% straggler slows the entire cluster by 10\\%." fig-alt="Left panel shows three MapReduce workers writing independently to shared storage. Right panel shows three GPU workers converging on an AllReduce barrier, with one straggler blocking all."}
 
@@ -978,7 +991,7 @@ The pattern extends beyond language models. In computer vision, doubling neural 
 
 The scaling hypothesis underlies this progress: larger models capture more intricate data patterns, yielding improved accuracy and generalization. This trajectory, however, introduces critical resource constraints. Training GPT-3 required approximately $3.14 \times 10^{23}$ floating-point operations, equivalent to running a modern gaming PC continuously for hundreds of years, at substantial financial and environmental costs.
 
-These resource demands reveal *why* scaling laws are necessary for efficient resource allocation. @fig-compute-trends traces *how* computational demands of training frontier models have escalated at an unsustainable rate, growing faster than Moore's Law improvements in hardware.\index{Model Training Compute Trends}
+These resource demands reveal *why* scaling laws are necessary for efficient resource allocation. @fig-compute-trends traces *how* computational demands of training frontier models have escalated at an unsustainable rate, growing faster than Moore's Law improvements in hardware.\index{Training!compute trends}
 
 ::: {#fig-compute-trends fig-env="figure" fig-pos="htb" fig-cap="**Model Training Compute Trends**: Training compute has grown exponentially, accelerating dramatically in the deep learning era. Between 2012 and 2019, compute requirements doubled approximately every 3.4 months, far exceeding Moore's Law (~2 years). This trajectory explains *why* efficiency has become a strategic imperative rather than an optional optimization." fig-alt="Scatter plot of training compute from 1950 to 2020 on log scale. Points show exponential growth accelerating after 2012, with compute doubling every 3.4 months vs. Moore's Law at 2 years."}
 
@@ -1002,7 +1015,7 @@ Empirical studies of large language models (LLMs) reveal a key insight. For any 
 
 [^fn-tokens-bpe]: **Tokens**\index{Token!vocabulary size trade-off}: Subword units produced by algorithms like Byte-Pair Encoding\index{Byte-Pair Encoding} (BPE), which iteratively merges the most frequent character pairs in a corpus. Token vocabulary size creates a direct systems trade-off: larger vocabularies can reduce sequence length for some languages and domains, but they expand the embedding table roughly in proportion to vocabulary size. GPT-3 used a 50,257-token vocabulary; moving to 100K+ tokens in newer models therefore trades tokenization efficiency against additional embedding memory.
 
-@fig-compute-optimal illustrates this principle through three related views. The left panel shows IsoFLOP curves\index{IsoFLOP Curve} where each curve corresponds to a constant number of floating-point operations (FLOPs[^fn-flops-work-vs.-rate]) during transformer training. The valleys in these curves identify the most efficient model size for each computational budget. The center and right panels reveal how the optimal number of parameters and tokens scales predictably as computational budgets increase, confirming that coordinated scaling maximizes resource utilization.\index{Optimal Compute Allocation}
+@fig-compute-optimal illustrates this principle through three related views. The left panel shows IsoFLOP curves\index{IsoFLOP Curve} where each curve corresponds to a constant number of floating-point operations (FLOPs[^fn-flops-work-vs.-rate]) during transformer training. The valleys in these curves identify the most efficient model size for each computational budget. The center and right panels reveal how the optimal number of parameters and tokens scales predictably as computational budgets increase, confirming that coordinated scaling maximizes resource utilization.\index{Compute-Optimal Training!resource allocation}
 
 [^fn-flops-work-vs.-rate]: **FLOPs vs. FLOP/s**\index{FLOP/s vs. FLOPs}: A critical distinction: FLOPs denotes total computational *work* (operations performed), while FLOP/s denotes hardware *throughput* (operations per second). Confusing the two leads to incorrect cost estimates. GPT-3 required `{python} Gpt3StatsScenario.gpt3_training_ops_str` FLOPs of work; an A100 delivers `{python} Gpt3StatsScenario.a100_fp16_tflops_str` TFLOP/s of throughput. Dividing work by peak throughput gives ideal wall-clock time; actual time is approximately $\text{work}/(\eta_{\text{hw}} R_{\text{peak}})$, so utilization below one multiplies ideal time by $1/\eta_{\text{hw}}$. \index{FLOP/s!work vs. throughput}
 
@@ -1042,7 +1055,7 @@ where loss $\mathcal{L}$ decreases as resource quantity $X$ increases, following
 
 :::
 
-These predictions find strong empirical support across multiple model configurations. @fig-loss-vs-n-d shows *how* early-stopped test loss varies predictably with both dataset size and model size, confirming that learning curves across configurations align through appropriate parameterization.\index{Loss vs. Dataset Size Across Model Scales}
+These predictions find strong empirical support across multiple model configurations. @fig-loss-vs-n-d shows *how* early-stopped test loss varies predictably with both dataset size and model size, confirming that learning curves across configurations align through appropriate parameterization.\index{Scaling Laws!loss curves}
 
 #### Resource-constrained scaling regimes {#sec-vol2-intro-resourceconstrained-scaling-regimes-062d}
 
@@ -1312,11 +1325,11 @@ Large models also require extensive, high-quality datasets to reach their potent
 
 Financial and environmental costs compound these challenges. Training runs for large foundation models incur millions of dollars in computational expenses, and their carbon footprints[^fn-carbon-grid] have drawn increasing scrutiny. Published estimates suggest that training large language models emits $10^2$ to $10^3$ tons of CO$_2$ equivalent, though estimates vary widely with hardware, utilization, and electricity mix. These costs limit accessibility to frontier research and exacerbate disparities in access to advanced AI systems.
 
-[^fn-carbon-grid]: **Carbon Intensity of Training**\index{Training!carbon intensity of}: The same training run can differ by roughly 40$\times$ in CO$_2$ emissions depending on grid location: Quebec (hydropower, ~20 g CO$_2$/kWh) vs. Poland (coal, ~800 g CO$_2$/kWh). GPT-3 training emitted an estimated 552 tons of CO$_2$. This makes data-center siting and job scheduling (shifting workloads to low-carbon hours) first-order infrastructure decisions for fleet operators, not afterthoughts. \index{Carbon Emissions!grid intensity}
+[^fn-carbon-grid]: **Carbon Intensity of Training**\index{Training!carbon intensity}: The same training run can differ by roughly 40$\times$ in CO$_2$ emissions depending on grid location: Quebec (hydropower, ~20 g CO$_2$/kWh) vs. Poland (coal, ~800 g CO$_2$/kWh). GPT-3 training emitted an estimated 552 tons of CO$_2$. This makes data-center siting and job scheduling (shifting workloads to low-carbon hours) first-order infrastructure decisions for fleet operators, not afterthoughts. \index{Carbon Emissions!grid intensity}
 
 Scaling laws do not guarantee unbounded improvement. Each incremental performance gain must be weighed against its resource cost. As systems approach practical scaling limits, the emphasis shifts from *scaling alone* to *efficient scaling*: balancing performance, cost, energy consumption, and environmental impact.[^fn-scaling-saturation-qualifier]
 
-[^fn-scaling-saturation-qualifier]: **Scaling Law Saturation**\index{Scaling!law saturation}: While power-law relationships suggest unbounded gain, empirical evidence identifies **Semantic Saturation**\index{Power-Law Relationship}\index{Semantic Saturation} points where adding data or parameters yields negligible improvement in downstream utility. This "diminishing returns" regime forces systems engineers to pivot from brute-force scale to data efficiency\index{Data Efficiency} and model compression to extract further value within fixed power budgets. \index{Scaling Laws!saturation}
+[^fn-scaling-saturation-qualifier]: **Scaling Law Saturation**: While power-law relationships\index{Power-Law Relationship} suggest unbounded gain, empirical evidence identifies **Semantic Saturation**\index{Semantic Saturation} points where adding data or parameters yields negligible improvement in downstream utility. This "diminishing returns" regime forces systems engineers to pivot from brute-force scale to data efficiency\index{Data Efficiency} and model compression to extract further value within fixed power budgets. \index{Scaling Laws!saturation}
 
 ### Scaling law breakdown conditions {#sec-vol2-intro-scaling-law-breakdown-conditions-1f8c}
 
@@ -1369,7 +1382,6 @@ The Machine Learning Fleet operates under three categories of irreducible constr
 
 ### The reliability gap {#sec-vol2-introduction-reliability-gap}
 
-\index{Reliability Gap}
 Machine learning systems already face the **Verification Gap**\index{Verification Gap}: the impossibility of testing a high-dimensional model against every possible input. At fleet scale, a more physical challenge emerges: the **reliability gap**\index{Reliability Gap!definition}.
 
 In traditional software, we treat hardware as a reliable abstraction. A single server typically has an availability of "four nines" (99.99 percent), meaning it fails for roughly 53 minutes a year. The Machine Learning Fleet, however, operates at a scale where this abstraction collapses. *When* a fleet coordinates 25,000 GPUs, @eq-reliability-gap multiplies the individual component probabilities to give the probability that the entire system is healthy ($R_{\text{system}}(t)$):
@@ -1428,10 +1440,9 @@ The exponential decay in @fig-reliability-gap-collapse makes the architectural c
 
 ### Communication intensity (the CI ratio) {#sec-vol2-introduction-ci-ratio}
 
-\index{Communication Intensity}
 If the iron law\index{Iron Law} governs *how* a system executes, the **communication-computation ratio**\index{CI Ratio} governs *where* it stalls. On a single accelerator, the roofline model\index{Roofline Model} determines whether a kernel is compute-bound or memory-bound. At fleet scale, this analysis elevates to the network.
 
-@eq-ci-ratio defines **communication intensity** $(\text{CI})$ as the ratio of data moved across the network to the operations performed locally:
+@eq-ci-ratio defines **communication intensity**\index{Communication Intensity} $(\text{CI})$ as the ratio of data moved across the network to the operations performed locally:
 
 $$\text{CI} = \frac{\text{Bytes Transferred (Network)}}{\text{FLOPs Executed (Local)}}$$ {#eq-ci-ratio}
 
@@ -1444,7 +1455,7 @@ Every optimization in this volume, from gradient sparsification to 3D parallelis
 
 Before proceeding, verify your understanding of the "Scale Mindset":
 
-- [ ] Can you explain why **scaling efficiency**\index{Scaling Efficiency} decreases as you add more nodes ($N$)?
+- [ ] Can you explain why **scaling efficiency** decreases as you add more nodes ($N$)?
 - [ ] Do you understand the reliability gap: why a 10,000-GPU cluster is never "perfectly healthy"?
 - [ ] Can you distinguish arithmetic intensity\index{Arithmetic Intensity} (local memory) from communication intensity (global network)?
 
@@ -1456,7 +1467,7 @@ Scale forces distribution: no single machine provides the compute required for f
 
 #### The CAP theorem reality {#sec-introduction-cap-theorem-reality-f3b0}
 
-The **CAP Theorem**[^fn-cap-theorem-ml]\index{CAP Theorem} establishes that distributed systems can provide at most two of three properties: **Consistency**\index{Consistency}, **Availability**, and **Partition Tolerance**. The ML fleet encounters all three constraints, forcing explicit trade-offs.
+The **CAP Theorem**[^fn-cap-theorem-ml]\index{CAP Theorem} establishes that distributed systems can provide at most two of three properties: **Consistency**\index{CAP Theorem!consistency}, **Availability**, and **Partition Tolerance**. The ML fleet encounters all three constraints, forcing explicit trade-offs.
 
 [^fn-cap-theorem-ml]: **CAP Theorem** (Brewer's Theorem): Formulated by @brewer2000, the CAP theorem proves that in the face of a network partition (P), a system must choose between absolute Consistency (C) and high Availability (A). For the ML Fleet, this manifests as a choice between **Synchronous Training** (Consistency prioritized; the job stalls if a node fails) and **Asynchronous Training** (Availability prioritized; training continues but with stale gradients). \index{CAP Theorem!ML trade-off}
 
@@ -1490,9 +1501,9 @@ Beyond legal compliance, the Machine Learning Fleet carries ethical obligations.
 
 *When* a machine learning system grows from a single accelerator to a fleet of thousands, the engineering challenges change in kind. The **Single-Machine Foundation** for performance analysis begins with three interdependent components formalized as the **Data · Algorithm · Machine (D·A·M) taxonomy**\index{D·A·M Taxonomy} (see @sec-dam-taxonomy for the full diagnostic framework):
 
-1.  **Data**\index{Data}: The information the system learns from. Performance is often **Data-bound** when the I/O pipeline cannot feed the processor fast enough.
+1.  **Data**\index{D·A·M Taxonomy!data}: The information the system learns from. Performance is often **Data-bound** when the I/O pipeline cannot feed the processor fast enough.
 2.  **Algorithm**: The mathematical logic being executed. Performance is **Compute-bound** when the processor's arithmetic units are the limiting factor.
-3.  **Machine**\index{Machine}: The physical hardware substrate. Performance is **Memory-bound** when the memory bandwidth or capacity limits throughput.
+3.  **Machine**\index{D·A·M Taxonomy!machine}: The physical hardware substrate. Performance is **Memory-bound** when the memory bandwidth or capacity limits throughput.
 
 Scaling from one machine to a fleet introduces three new fundamental resources that compete for wall-clock time. The **C$^3$ Taxonomy**\index{C³ Taxonomy} extends the D·A·M lens to the fleet, identifying the physical and logical boundaries of the Machine Learning Fleet. Every engineering decision in this volume revolves around balancing these three anchor points:
 
@@ -1534,7 +1545,7 @@ Google's **ML Productivity Goodput**\index{Goodput!program}\index{Goodput!runtim
 ![](images/svg/c3-taxonomy.svg)
 :::
 
-To reason about performance at scale, we must distinguish between the efficiency of a single component and the efficiency of the entire system. On a single machine, execution time is often governed by the iron law of performance: $T \approx D_{\text{vol}}/\text{BW} + O/(R_{\text{peak}}\eta_{\text{hw}}) + L_{\text{lat}}$. At production scale, this law undergoes a transformation. We no longer care merely about the performance of a single machine; we care about the **Efficiency of the Fleet**\index{Efficiency!distributed} across two primary dimensions: **Time** and **Energy**\index{Energy}.
+To reason about performance at scale, we must distinguish between the efficiency of a single component and the efficiency of the entire system. On a single machine, execution time is often governed by the iron law of performance: $T \approx D_{\text{vol}}/\text{BW} + O/(R_{\text{peak}}\eta_{\text{hw}}) + L_{\text{lat}}$. At production scale, this law undergoes a transformation. We no longer care merely about the performance of a single machine; we care about the **Efficiency of the Fleet**\index{Efficiency!distributed} across two primary dimensions: **Time** and **Energy**\index{Energy}\index{Efficiency!energy dimension}.
 
 ### The law of distributed efficiency {#sec-introduction-law-distributed-efficiency-e440}
 
@@ -1557,7 +1568,7 @@ $$ \rho_{\text{energy}} = \frac{O_{\text{useful}}}{E_{\text{compute}} + E_{\text
 
 where $O_{\text{useful}}$ is useful work in FLOPs and $E_{\text{network}}$ often becomes a nonnegligible fraction of the total budget as we move terabytes across optical fabrics. Mastery of scale requires optimizing for the Pareto frontier\index{Pareto Frontier} of both laws: minimizing $T_{\text{step}}$ while maximizing $\rho_{\text{energy}}$.
 
-The scaling efficiency ($\eta_{\text{scaling}}$) of the fleet is the ratio of ideal parallel step time to actual step time:
+The scaling efficiency\index{Scaling Efficiency} ($\eta_{\text{scaling}}$) of the fleet is the ratio of ideal parallel step time to actual step time:
 $$ \eta_{\text{scaling}} = \frac{T_1}{N \times T_N} $$
 where $T_1$ is the single-device time for the same work and $T_N = T_{\text{step}}(N)$ is the step time on $N$ devices.
 
@@ -1914,13 +1925,13 @@ MobileNet is a family of efficient convolutional neural networks designed for on
 
 @tbl-vol2-lighthouse-archetypes summarizes the three canonical workloads tracked throughout this volume.
 
-| **Archetype**\index{Archetype}                                              | **C$^3$ Dominant Constraint**        | **Fleet Challenge**                                                                                                                                                                                             |
+| **Archetype**                                                               | **C$^3$ Dominant Constraint**        | **Fleet Challenge**                                                                                                                                                                                             |
 |:----------------------------------------------------------------------------|:-------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Archetype A (GPT-4/Llama-3)**\index{Llama-3!lighthouse archetype}         | Communication (fleet-wide)           | Partition hundreds of billions of parameters, and potentially larger proprietary models, across thousands to tens of thousands of GPUs using 3D Parallelism without the network becoming the bottleneck.        |
 | **Archetype B (DLRM at Scale)**                                             | Coordination (routing and placement) | Shard 10 TB+ embedding tables across hundreds of nodes; process millions of QPS with <100 ms tail latency while managing sparse feature routing, shard placement, and $\mathcal{O}(N^2)$ all-to-all contention. |
 | **Archetype C (Federated MobileNet)**\index{MobileNet!lighthouse archetype} | Compute (per-device envelope)        | Coordinate learning across millions of compute-constrained, unreliable edge devices using Federated updates; raw data cannot leave the device.                                                                  |
 
-: **Lighthouse Archetypes at Scale**\index{Lighthouse Archetypes at Scale}: The three canonical workloads tracked throughout this volume, with their dominant constraint and the fleet-scale challenge each raises. {#tbl-vol2-lighthouse-archetypes}
+: **Lighthouse Archetypes at Scale**: The three canonical workloads tracked throughout this volume, with their dominant constraint and the fleet-scale challenge each raises. {#tbl-vol2-lighthouse-archetypes}
 
 ## The Structure of This Textbook {#sec-vol2-introduction-structure}
 
