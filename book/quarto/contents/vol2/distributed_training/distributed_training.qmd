@@ -176,7 +176,7 @@ In the Fleet Stack framework shown in @fig-fleet-stack, Distributed Training rep
 
 Three concrete signals indicate when distributed training becomes necessary rather than merely beneficial. First, **memory exhaustion** occurs when model parameters, optimizer states, and activation storage exceed single-device capacity. For full mixed-precision training with Adam, the parameter, gradient, and optimizer-state budget alone can exceed an 80 GB accelerator at roughly 5 billion parameters before activations; larger 10--20B models require sharding, offload, or other memory-saving techniques [@rajbhandari2020].
 
-Second, **unacceptable training duration** emerges when single-device training would require weeks or months to converge. Training GPT-3 on a single V100 GPU would require approximately 355 years [@brown2020language], making distributed approaches not optional but essential.
+Second, **unacceptable training duration** emerges when single-device training would require weeks or months to converge. GPT-3's 175B-parameter training run used a cluster of V100 GPUs [@brown2020language], illustrating why wall-clock training time becomes a distributed-systems constraint at this scale.
 
 Third, **dataset scale** exceeds single-machine storage when training data reaches multiple terabytes, as occurs in large-scale vision or language modeling tasks.
 
@@ -286,7 +286,7 @@ The simplest approach gives each GPU a complete, identical copy of the model and
 
 1.  **Significance (quantitative)**: With $N$ workers each processing batch size $B$, the effective global batch size is $N \times B$, scaling throughput linearly while keeping per-worker memory constant. For a 1B-parameter model at 2 GB in BF16, 1,024 workers achieve 1,024$\times$ the single-GPU throughput—until the gradient AllReduce (2 GB per step at ring-optimal $2(N-1)/N$ per worker) exceeds backward compute time and creates the communication bottleneck.
 2.  **Distinction (durable)**: Unlike model parallelism, where parameters are partitioned so no single worker holds the full model, data parallelism requires every worker to have sufficient memory capacity to store the complete model state—making it inapplicable for models larger than a single accelerator's memory without combining it with model sharding (ZeRO, FSDP).
-3.  **Common pitfall**: A frequent misconception is that data parallelism scales indefinitely with worker count. Scaling the effective batch size $B$ beyond the critical batch size (roughly 8,192 for ResNet-50, ~4M tokens for LLM pretraining) degrades statistical efficiency, requiring more training steps to reach target loss and eroding the throughput gains from adding more workers [@Shallue2019measuring].
+3.  **Common pitfall**: A frequent misconception is that data parallelism scales indefinitely with worker count. Scaling the effective batch size $B$ beyond the workload-dependent critical batch size degrades statistical efficiency, requiring more training steps to reach target loss and eroding the throughput gains from adding more workers [@Shallue2019measuring].
 
 :::
 
@@ -499,7 +499,7 @@ The analysis demonstrates how the Fleet Stack layers interact: Physical constrai
 
 :::
 
-@fig-coll-comm contrasts three high-level synchronization topologies: the centralized Parameter Server, the bandwidth-optimal Ring AllReduce, and the low-latency Tree AllReduce. While Parameter Servers were common in early distributed systems, modern synchronous training relies almost exclusively on AllReduce variants to maximize bandwidth utilization across dense GPU clusters [@gibiansky2017baidu].
+@fig-coll-comm contrasts three high-level synchronization topologies: the centralized Parameter Server, the bandwidth-optimal Ring AllReduce, and the low-latency Tree AllReduce. In dense synchronous data-parallel settings, ring AllReduce can avoid a single reducer bottleneck by distributing traffic evenly across participating links, as Baidu's implementation illustrates [@gibiansky2017baidu].
 
 ::: {#fig-coll-comm fig-env="figure" fig-pos="htb" fig-cap="**Gradient Synchronization Topologies**: Visual comparison of communication patterns. (A) Parameter Server uses a central node, creating bandwidth bottlenecks at the server. (B) Ring AllReduce distributes bandwidth evenly across all links but has linear latency scaling. (C) Tree AllReduce reduces latency to logarithmic time but may congest links near the root." fig-alt="Three communication topology diagrams. A: Parameter Server with central PS node connected to 4 workers creating bottleneck. B: Ring AllReduce with 4 GPUs in circular topology. C: Tree AllReduce with root R and hierarchical structure."}
 
@@ -1375,7 +1375,7 @@ The fundamental trade-off in distributed training is between communication effic
 
 Several techniques occupy different positions on this trade-off curve:
 
-Gradient compression\index{Gradient Compression!bandwidth reduction} reduces communication volume by 10--100$\times$ through quantization or sparsification, with 2--5 percent convergence degradation [@bernstein2018signsgd; @lin2018deep; @vogels2020powersgd]. Techniques like QSGD [@alistarh2017qsgd] and Top-k sparsification [@aji2017] maintain convergence guarantees with bounded compression error.
+Gradient compression\index{Gradient Compression!bandwidth reduction} reduces communication volume by transmitting compressed gradient information through quantization, sparsification, or low-rank approximation. Examples include sign-based updates [@bernstein2018signsgd], Deep Gradient Compression [@lin2018deep], PowerSGD [@vogels2020powersgd], QSGD quantization with convergence analysis [@alistarh2017qsgd], and empirical sparse gradient dropping for neural machine translation [@aji2017].
 
 Local SGD\index{Local SGD!communication frequency} takes a different approach: workers perform $H$ local updates before synchronizing, reducing communication frequency by factor $H$. Convergence analysis shows that for smooth, strongly convex objectives, Local SGD achieves the same asymptotic rate as synchronous SGD with appropriately tuned learning rates [@stich2019local].
 
@@ -1751,7 +1751,7 @@ Tensor parallelism (intra-layer) splits individual operations (matrix multiplies
 
 **Pipeline Parallelism** (inter-layer) assigns complete layers to different devices, communicating only at stage boundaries. These boundary activations are much smaller than gradient tensors, so InfiniBand-class bandwidth (~25–50 GB/s) is sufficient between nodes.
 
-Megatron-LM [@shoeybi2019megatron] popularized the resulting hybrid: tensor parallelism within each node (8 GPUs on NVLink) and pipeline parallelism across nodes (InfiniBand). The individual definitions for each strategy appear in @sec-distributed-training-systems-systems-tensor-parallelism-d76e and @sec-distributed-training-systems-systems-pipeline-parallelism-8748.
+Megatron-LM popularized tensor model parallelism within transformer layers [@shoeybi2019megatron]. This bandwidth pattern creates the design pressure for a hybrid: use tensor parallelism for bandwidth-intensive intra-layer splits and pipeline parallelism for coarser inter-layer splits. The individual definitions for each strategy appear in @sec-distributed-training-systems-systems-tensor-parallelism-d76e and @sec-distributed-training-systems-systems-pipeline-parallelism-8748.
 
 :::
 
@@ -1798,7 +1798,7 @@ Tensor parallelism scaling degrades rapidly beyond 8-way parallelism because:
 - Computation per GPU decreases (less work to hide communication latency)
 - NVLink bandwidth becomes saturated
 
-Published systems such as Llama 3 405B use TP=8 within NVLink-connected H100 nodes, and similar node-local tensor parallelism is a common design pattern for frontier LLM training [@jiang2024megascale].
+Published systems such as Llama 3 405B use TP=8 within NVLink-connected H100 nodes [@dubey2024llama3], and similar node-local tensor parallelism is a common design pattern for frontier LLM training [@jiang2024megascale].
 
 ##### Ring attention for extreme sequences {#sec-distributed-training-systems-systems-ring-attention}
 
@@ -2612,9 +2612,9 @@ The parallelism strategies examined throughout this chapter (gradient averaging,
 
 ### Data parallel abstractions {#sec-distributed-training-systems-systems-data-parallel-framework-apis-f549}
 
-The simplest distributed training abstraction wraps a model so that the framework automatically replicates it across available accelerators, splits each batch, and averages gradients after the backward pass. This parameter-server approach[^fn-parameter-server] [@li2014] requires minimal changes to a single-device training loop but creates a communication bottleneck at the central server node: with $N$ workers pushing dense gradient streams simultaneously, the server's inbound bandwidth becomes the chokepoint. For dense models beyond 4--8 GPUs, this centralized design collapses.
+The simplest distributed training abstraction wraps a model so that the framework automatically replicates it across available accelerators, splits each batch, and averages gradients after the backward pass. Historically, parameter-server systems[^fn-parameter-server] organized this work with server nodes that store shared parameters while workers push and pull updates [@li2014]. This abstraction requires minimal changes to a single-device training loop, but dense synchronous training often prefers decentralized collectives because they spread gradient bandwidth across workers rather than concentrating it in a server tier.
 
-[^fn-parameter-server]: **Parameter Server**: Formalized by @li2014 at CMU/Google, this architecture dedicates server nodes to storing parameters while workers push gradients and pull updates. The fundamental bottleneck: with $N$ workers, server inbound bandwidth must handle $N$ gradient streams simultaneously, making the server the communication chokepoint. For dense models beyond 4--8 GPUs, decentralized AllReduce (where each worker sends and receives at its own link rate) achieves $N$-fold higher aggregate bandwidth, which is why production systems replaced the parameter server design with decentralized AllReduce.
+[^fn-parameter-server]: **Parameter Server**: Formalized by @li2014 at CMU/Google, this architecture dedicates server nodes to storing parameters while workers push gradients and pull updates. The fundamental bottleneck: with $N$ workers, server inbound bandwidth must handle $N$ gradient streams simultaneously, making the server the communication chokepoint. For dense models beyond 4--8 GPUs, decentralized AllReduce (where each worker sends and receives at its own link rate) achieves $N$-fold higher aggregate bandwidth, which is why production systems replaced the parameter server design with decentralized AllReduce. \index{Parameter Server!architecture}
 
 Production-scale data parallelism eliminates this bottleneck by replacing the central server with decentralized AllReduce. Each worker participates symmetrically in the reduction: every device both sends and receives gradient chunks at its own link rate, distributing the bandwidth load across all nodes rather than concentrating it. The framework initializes a process group that maps workers to the physical topology, selects the optimal collective algorithm (ring, tree, or hierarchical) based on the detected interconnect, and inserts gradient synchronization hooks into the backward pass automatically. Gradient bucketing further improves efficiency by grouping small tensors into larger messages before transmission, and computation-communication overlap allows the AllReduce for early layers to proceed while later layers are still computing gradients. These optimizations collectively achieve 90 percent+ parallel efficiency at moderate scale—not because the API is simple, but because the underlying runtime makes topology-aware decisions that a manual implementation would require thousands of lines to replicate.
 
@@ -2785,13 +2785,13 @@ Throughout this chapter, we applied these partitioning strategies to our Lightho
 
 The "optimal point" in the 3D Parallelism Cube shifts depending on the system's primary bottleneck:
 
-| **Archetype**                                                   | **Primary Partitioning Strategy** | **The Logic**                                                                                                                            |
-|:----------------------------------------------------------------|:----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
-| **Archetype A (GPT-4/Llama-3)**                                 | Hybrid 3D Parallelism             | Combine Tensor (width), Pipeline (depth), and Data (throughput) to fit `{python} DistTrainConstants.gpt4_mem_tb_str` TB of weights.      |
-| **Archetype B (DLRM at Scale)**                                 | Embedding Sharding                | Partition massive `{python} DistTrainConstants.dlrm_mem_tb_str` TB+ tables across a Parameter Server fleet; use sparse AllToAll updates. |
-| **Archetype C (Federated MobileNet) [@heyndrickx2023melloddy]** | Federated Learning                | Distribute training *data* to the edge; keep *model* local; accept asynchronous, stale updates.                                          |
+| **Archetype**                                                    | **Primary Partitioning Strategy** | **The Logic**                                                                                                                            |
+|:-----------------------------------------------------------------|:----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
+| **Archetype A (GPT-4/Llama-3)**                                  | Hybrid 3D Parallelism             | Combine Tensor (width), Pipeline (depth), and Data (throughput) to fit `{python} DistTrainConstants.gpt4_mem_tb_str` TB of weights.      |
+| **Archetype B (DLRM at Scale)**                                  | Embedding Sharding                | Partition massive `{python} DistTrainConstants.dlrm_mem_tb_str` TB+ tables across a Parameter Server fleet; use sparse AllToAll updates. |
+| **Archetype C (MELLODDY Pharma QSAR) [@heyndrickx2023melloddy]** | Federated Learning                | Keep confidential assay data at participating pharmaceutical organizations while training shared QSAR models across partners.            |
 
-: **Partitioning Strategy by Archetype**: The optimal point in the 3D-parallelism cube shifts with the dominant bottleneck. Dense transformers combine tensor, pipeline, and data parallelism to fit the weight footprint; recommender systems shard massive embedding tables across parameter servers; federated learning distributes data instead of the model. {#tbl-partitioning-archetypes}
+: **Partitioning Strategy by Archetype**: The optimal point in the 3D-parallelism cube shifts with the dominant bottleneck. Dense transformers combine tensor, pipeline, and data parallelism to fit the weight footprint; recommender systems shard massive embedding tables across parameter servers; federated learning keeps data distributed rather than partitioning the model. {#tbl-partitioning-archetypes}
 
 :::
 

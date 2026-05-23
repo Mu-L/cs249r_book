@@ -95,8 +95,6 @@ class TrainingScenarios:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     gpt2_cost_2019   = 50_000
     gpt4_cost_est    = 100 * MILLION
-    gpt3_gpu_years   = 355
-    gpt3_cost        = 4.6 * MILLION
     gpt2_fwd_flops   = 3e9
     gpt2_total_flops = 1e19
     adam_example_params_b = 7
@@ -123,8 +121,6 @@ class TrainingScenarios:
     gpt4_training_cost_est_str  = fmt(gpt4_cost_est/MILLION, precision=0, commas=False)
     gpt2_fwd_flops_str          = fmt_sci(gpt2_fwd_flops)
     gpt2_total_flops_str        = fmt_sci(gpt2_total_flops)
-    gpt3_gpu_years_str          = fmt(gpt3_gpu_years, precision=0, commas=True)
-    gpt3_compute_cost_str       = fmt(gpt3_cost/MILLION, precision=1, commas=False)
     adam_example_params_b_str   = fmt(adam_example_params_b, precision=0, commas=False)
     adam_inference_gb_str       = fmt(adam_inference_gb, precision=0, commas=False)
     adam_grad_gb_str            = fmt(adam_grad_gb, precision=0, commas=False)
@@ -248,7 +244,7 @@ Training speed is governed by the utilization of hardware peaks.
 :::
 
 \index{Transformer!training evolution}
-The iron law provides a static framework for reasoning about training performance, but the history of deep learning reveals how the *binding constraint* has shifted over time as hardware and algorithms co-evolved. In 1986, backpropagation was formalized [@rumelhart1986], and training a three-layer network on toy datasets required days on CPU workstations---the bottleneck was raw compute throughput $(R_{\text{peak}})$. In 2012, AlexNet demonstrated GPU training [@krizhevsky2012imagenet], reducing ImageNet training from weeks to days and launching the deep learning era. By 2017, transformers [@vaswani2017] and NVIDIA Volta Tensor Cores enabled mixed-precision training with a further 5$\times$ speedup. GPT-3 in 2020 consumed about $3.14 \times 10^{23}$ FLOPs; one widely cited estimate put a single-run compute cost near \$`{python} TrainingScenarios.gpt3_compute_cost_str`M, equivalent to roughly `{python} TrainingScenarios.gpt3_gpu_years_str` V100 GPU-years [@brown2020language], making utilization $(\eta_{\text{hw}})$ critical. By 2023, training efficiency improved through the techniques examined in this chapter: FlashAttention reduces memory traffic while improving $\eta_{\text{hw}}$; gradient checkpointing trades additional $O$ for memory capacity; mixed precision increases $R_{\text{peak}}$. Each innovation was motivated by a specific iron law bottleneck.
+The iron law provides a static framework for reasoning about training performance, but the history of deep learning reveals how the *binding constraint* has shifted over time as hardware and algorithms co-evolved. In 1986, backpropagation was formalized [@rumelhart1986], and training a three-layer network on toy datasets required days on CPU workstations---the bottleneck was raw compute throughput $(R_{\text{peak}})$. In 2012, AlexNet demonstrated GPU training [@krizhevsky2012imagenet], reducing ImageNet training from weeks to days and launching the deep learning era. By 2017, transformers [@vaswani2017] shifted attention toward large-scale sequence modeling and high-throughput accelerator kernels. GPT-3 in 2020 consumed about $3.14 \times 10^{23}$ FLOPs [@brown2020language], making utilization $(\eta_{\text{hw}})$ critical. By 2023, training efficiency improved through the techniques examined in this chapter: FlashAttention reduces memory traffic while improving $\eta_{\text{hw}}$; gradient checkpointing trades additional $O$ for memory capacity; mixed precision increases $R_{\text{peak}}$. Each innovation was motivated by a specific iron law bottleneck.
 
 ```{python}
 #| label: gpt2-lighthouse-hardware-calc
@@ -359,7 +355,7 @@ These scaling challenges share a common thread: every bottleneck traces back to 
 
 \index{Training!mathematical foundations}\index{Training!computational cost}@sec-neural-computation established *what* neural network operations compute and *why* they enable learning. The question for a systems engineer is *what they cost*---the FLOPs consumed, the memory required, and the bandwidth demanded when these conceptually simple operations execute at scale. A matrix multiplication is just $C = AB$ in notation, but training GPT-2 requires executing that operation billions of times with matrices too large to fit in fast memory. The activation function $f(x) = \max(0, x)$ appears trivial, yet the choice between rectified linear unit (ReLU) and sigmoid determines whether Tensor Cores can accelerate computation.
 
-Four dimensions structure this cost analysis. First, FLOP counts of matrix operations that dominate training, accounting for 60--90 percent of training time [@he2016]. Second, memory requirements for storing activations and optimizer states simultaneously. Third, bandwidth demands that determine whether operations are compute bound or memory bound. Fourth, arithmetic intensity classifications that guide optimization strategy selection. Together, these dimensions provide the vocabulary for analyzing the computational intensity, memory pressure, and data dependencies introduced in @sec-model-training-training-systems-fundamentals-05d2.
+Four dimensions structure this cost analysis. First, FLOP counts of the matrix operations that dominate dense neural-network training. Second, memory requirements for storing activations and optimizer states simultaneously. Third, bandwidth demands that determine whether operations are compute bound or memory bound. Fourth, arithmetic intensity classifications that guide optimization strategy selection. Together, these dimensions provide the vocabulary for analyzing the computational intensity, memory pressure, and data dependencies introduced in @sec-model-training-training-systems-fundamentals-05d2.
 
 ### Neural network computation {#sec-model-training-neural-network-computation-5660}
 
@@ -368,7 +364,7 @@ Neural network training consists of repeated matrix operations and nonlinear tra
 
 [^fn-backprop-provenance]: **Backpropagation Provenance**: The algorithm was independently derived by @linnainmaa1970representation for automatic differentiation of computer programs and by @werbos1974beyond in a Harvard PhD thesis on economic modeling—over a decade before @rumelhart1986 popularized it for neural networks. This delay between derivation and broad adoption recurs in ML systems history: attention mechanisms predated transformers by decades, but the 2017 Transformer showed that attention-heavy models could train efficiently on contemporary GPU systems; later TPU and GPU clusters enabled much larger deployments. Every modern framework's `backward()` call implements Linnainmaa's reverse-mode AD, not textbook chain rule—the difference is that graph-reverse topological traversal enables parallel gradient computation across independent subgraphs. \index{Backpropagation!provenance}
 
-[^fn-blas-training]: **BLAS**: Standardized by @lawson1979, BLAS defines three levels: Level 1 (vector-vector, $O(n)$ work), Level 2 (matrix-vector, $O(n^2)$), and Level 3 (matrix-matrix, $O(n^3)$ work on $O(n^2)$ data). Training is dominated by Level 3 operations precisely because their high arithmetic intensity---$O(n)$ FLOPs per byte---saturates hardware compute units rather than starving on memory bandwidth. cuBLAS and oneDNN implement these as the kernel layer beneath every framework's matrix multiplication. \index{BLAS!training compute hierarchy}
+[^fn-blas-training]: **BLAS**: The original BLAS specification standardized reusable Fortran-callable vector operations [@lawson1979]. Later BLAS extensions added matrix-vector and matrix-matrix routines, giving the familiar Level 1, Level 2, and Level 3 hierarchy [@dongarra1988]. Training is dominated by Level 3 operations precisely because their high arithmetic intensity---$O(n)$ FLOPs per byte---saturates hardware compute units rather than starving on memory bandwidth. cuBLAS and oneDNN implement these as the kernel layer beneath every framework's matrix multiplication. \index{BLAS!training compute hierarchy}
 
 #### Mathematical operations in neural networks {#sec-model-training-mathematical-operations-neural-networks-ddac}
 
@@ -722,7 +718,7 @@ Our GPT-2 Lighthouse Model illustrates these trade-offs through its use of GELU,
 ::: {#nbk-training-gpt-2-gelu-activation-function .callout-notebook title="GPT-2 GELU activation function"}
 
 \index{GELU!Gaussian Error Linear Unit}
-Beyond the foundational activation functions covered in @sec-neural-computation (Sigmoid, Tanh, ReLU), modern architectures increasingly adopt smoother alternatives. GPT-2 uses a GELU activation [@hendrycks2016gaussian], implemented in practice with the common tanh-based approximation. The exact mathematical definition is:
+Beyond the foundational activation functions covered in @sec-neural-computation (Sigmoid, Tanh, ReLU), modern architectures increasingly adopt smoother alternatives. GPT-2 uses a GELU activation [@radford2019language], the Gaussian Error Linear Unit introduced by @hendrycks2016gaussian and often implemented with the common tanh-based approximation. The exact mathematical definition is:
 $$
 \text{GELU}(x) = x \cdot \Phi(x) = x \cdot \frac{1}{2}\left[1 + \text{erf}\left(\frac{x}{\sqrt{2}}\right)\right]
 $$
@@ -1982,7 +1978,7 @@ A single training iteration involves three subsystems executing in sequence: a *
 
 #### Data pipeline {#sec-model-training-data-pipeline-8b50}
 
-The data pipeline manages the ingestion, preprocessing, and batching of data for training. Raw data is loaded from storage and transformed dynamically during training, with image datasets undergoing preprocessing steps like normalization, resizing, and augmentation [@lecun2012]. Once processed, the data is packaged into batches and handed off to the training loop.
+The data pipeline manages the ingestion, preprocessing, and batching of data for training. Raw data is loaded from storage and transformed dynamically during training, with image datasets undergoing preprocessing steps like resizing, augmentation, and normalization; input normalization is a long-standing training aid [@lecun2012]. Once processed, the data is packaged into batches and handed off to the training loop.
 
 #### Training loop {#sec-model-training-training-loop-7fc8}
 
@@ -3466,11 +3462,11 @@ Profiling tools reveal which bottleneck dominates a given workload. @fig-tf-bott
 
 **Scenario**: A team writes its data loading pipeline in standard Python, using a simple loop to read images, augment them, and feed the GPU.
 
-**Failure mode**: Python expert David Beazley demonstrated that the Global Interpreter Lock (GIL) ensures only one thread executes Python bytecode at a time. A CPU-bound threaded data loader can therefore pin one core while accelerators wait for the next batch.
+**The failure**: Python expert David Beazley demonstrated that the Global Interpreter Lock (GIL) ensures only one thread executes Python bytecode at a time [@beazley2010understanding]. In this illustrative failure mode, the data loader runs as a serialized CPU bottleneck: it processes one image, the GPU consumes it quickly, and then the GPU waits for the next item. The CPU can appear busy on one core while the accelerator fleet spends long intervals idle.
 
 **Consequence**: The accelerator trace shows white space: the GPU is healthy, but it is starved by the input pipeline.
 
-**Systems lesson**: Amdahl's Law is brutal. A serial data pipeline renders a parallel accelerator useless. High-performance training requires multiprocessing (to bypass the GIL) or offloading preprocessing to the accelerator (like NVIDIA DALI) to keep the compute units fed [@beazley2010understanding].
+**The systems lesson**: Amdahl's Law is brutal. A serial data pipeline renders a parallel accelerator useless. High-performance training requires multiprocessing to bypass Python-side serialization or offloading preprocessing to the accelerator, as in systems such as NVIDIA DALI, to keep the compute units fed.
 
 :::
 
@@ -3498,39 +3494,16 @@ In practice, the characteristic signatures from @tbl-dam-training-bottlenecks ar
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ PIPELINE OPTIMIZATION SCENARIOS
 # ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: §Pipeline Optimizations (utilization gap), §Systematic
-# │          Optimization Framework (profiling split), §Data Prefetching
-# │          (sequential vs overlapped pipeline times).
+# │ Context: §Systematic Optimization Framework (profiling split),
+# │          §Data Prefetching (sequential vs overlapped pipeline times).
 # │
-# │ Goal: Provide utilization-gap figures and profiling/pipeline timing data.
-# │ Show: GPU advertised vs real TFLOPS; profiling time breakdown;
-# │       sequential vs overlapped pipeline speedup.
+# │ Goal: Provide profiling/pipeline timing data.
+# │ Show: Profiling time breakdown; sequential vs overlapped pipeline speedup.
 # │ How:  Hard-coded scenario values.
 # │
 # │ Imports: (none—uses existing TrainingDimensions, TrainingScenarios)
-# │ Exports: UtilizationGap.{util_gap,gpu,cluster}_*_str;
-# │          ProfilingScenarios.{gpt2_attn,profile,pipeline}_*_str
+# │ Exports: ProfilingScenarios.{gpt2_attn,profile,pipeline}_*_str
 # └─────────────────────────────────────────────────────────────────────────────
-
-# ── Utilization Gap ─────────────────────────────────────────────────────────
-class UtilizationGap:
-    # ┌── 1. LOAD ──────────────────────────────────────────────────────────────
-    util_gap_min          = 50
-    util_gap_max          = 70
-    gpu_advertised_tflops = 300
-    gpu_real_tflops_min   = 90
-    gpu_real_tflops_max   = 150
-    cluster_agg_tflops    = 1000
-    cluster_real_tflops   = 500
-
-    # ┌── 4. OUTPUT ────────────────────────────────────────────────────────────
-    util_gap_min_str          = fmt(util_gap_min, precision=0, commas=False)
-    util_gap_max_str          = fmt(util_gap_max, precision=0, commas=False)
-    gpu_advertised_tflops_str = fmt(gpu_advertised_tflops, precision=0, commas=False)
-    gpu_real_tflops_min_str   = fmt(gpu_real_tflops_min, precision=0, commas=False)
-    gpu_real_tflops_max_str   = fmt(gpu_real_tflops_max, precision=0, commas=False)
-    cluster_agg_tflops_str    = fmt(cluster_agg_tflops, precision=0, commas=False)
-    cluster_real_tflops_str   = fmt(cluster_real_tflops, precision=0, commas=False)
 
 # ── Profiling + Pipeline Timing ─────────────────────────────────────────────
 class ProfilingScenarios:
@@ -3561,7 +3534,7 @@ class ProfilingScenarios:
 
 \index{Training Optimization!systematic framework}\index{Training Optimization!technique selection}Profiling reveals *where* the training system underperforms; the D·A·M taxonomy (@sec-dam-taxonomy) classifies *what kind* of bottleneck limits throughput. The remaining question is *how* to close the gap. Four optimization techniques, each targeting a specific bottleneck category, together with a systematic framework for composing them, provide the answer.
 
-Even well-designed pipeline architectures rarely achieve optimal performance without targeted optimization. The gap between theoretical hardware capability and realized training throughput often reaches `{python} UtilizationGap.util_gap_min_str`--`{python} UtilizationGap.util_gap_max_str` percent: GPUs advertised at `{python} UtilizationGap.gpu_advertised_tflops_str` TFLOPS may deliver only `{python} UtilizationGap.gpu_real_tflops_min_str`--`{python} UtilizationGap.gpu_real_tflops_max_str` TFLOPS for training workloads, and distributed systems with aggregate `{python} UtilizationGap.cluster_agg_tflops_str` TFLOPS capacity frequently achieve under `{python} UtilizationGap.cluster_real_tflops_str` TFLOPS effective throughput [@wang2019superneurons]. This efficiency gap stems from systematic bottlenecks that optimization techniques can address.
+Even well-designed pipeline architectures rarely achieve optimal performance without targeted optimization. Memory pressure, data movement, kernel inefficiency, and communication overhead all widen the gap between theoretical hardware capability and realized training throughput. Systems such as SuperNeurons show one version of this problem: memory-management bottlenecks can prevent larger networks from training efficiently unless the runtime actively optimizes activation storage and transfer [@wang2019superneurons]. This efficiency gap stems from systematic bottlenecks that optimization techniques can address.
 
 @tbl-optimization-roadmap extends the D·A·M-based bottleneck classification from @tbl-dam-training-bottlenecks by mapping each bottleneck to the specific optimization technique that addresses it:
 
@@ -4212,7 +4185,7 @@ The choice between formats depends on model characteristics. Models with gradien
 
 :::
 
-Modern hardware architectures are specifically designed to accelerate reduced precision computations. GPUs from NVIDIA include Tensor Cores optimized for FP16 and bfloat16 operations [@nvidia_tensors_fp16_2017]. Google's TPUs natively support bfloat16, as this format was specifically designed for machine learning workloads. These architectural optimizations typically enable an order of magnitude higher computational throughput for reduced precision operations compared to FP32, making mixed-precision training particularly efficient on modern hardware.
+Modern hardware architectures are specifically designed to accelerate reduced precision computations. NVIDIA Tensor Cores were introduced for FP16 mixed-precision operations [@nvidia_tensors_fp16_2017], and later A100-class Tensor Cores added BF16 support [@NVIDIA2020]. Google's TPUs natively support bfloat16, as this format was specifically designed for machine learning workloads [@google_bfloat16]. These architectural optimizations typically enable substantially higher computational throughput for reduced precision operations compared to FP32, making mixed-precision training particularly efficient on modern hardware.
 
 #### FP16 computation {#sec-model-training-fp16-computation-374c}
 
@@ -4809,7 +4782,7 @@ def flash_attn_2(q, k, v):
 
 #### Benchmark results {#sec-model-training-benchmark-results-2c3f}
 
-The benefits of Flash Attention become concrete when measured on real hardware. The reference benchmarks in @dao2022 train a GPT-2 Small-scale transformer on an NVIDIA A100 GPU (12 layers, 768 hidden dim, 12 heads, smaller than the XL lighthouse model so the standard-attention runs fit on a single GPU) with varying sequence lengths and report the per-call timing and memory in @tbl-flashattention-benchmarks. The pattern recurs in independent reproductions on similar hardware:
+The benefits of Flash Attention become concrete when measured on real hardware. @dao2022 reports end-to-end GPT-style training speedups and separate attention-kernel benchmarks showing that IO-aware attention reduces memory traffic and improves runtime. @tbl-flashattention-benchmarks uses an illustrative A100-style scenario to show the same systems pattern; its timings and memory values are representative chapter numbers, not values reported verbatim by Dao et al.
 
 ::: {tbl-colwidths="[14,14,14,15,14,15,14]"}
 
@@ -4820,7 +4793,7 @@ The benefits of Flash Attention become concrete when measured on real hardware. 
 |         4096        |         OOM          |       32 ms       |          OOM          |       85 ms        |         >40 GB        |       12 GB        |
 |         8192        |         OOM          |       68 ms       |          OOM          |       180 ms       |         >80 GB        |       24 GB        |
 
-: **FlashAttention Benchmark Comparison**: Per-call timing and peak memory for standard attention vs. FlashAttention on a 40 GB A100 across sequence lengths, as reported in [@dao2022]. OOM marks configurations where standard attention exceeds the 40 GB memory budget; the 8192-token row also shows that standard attention would exceed 80 GB. {#tbl-flashattention-benchmarks}
+: **FlashAttention Benchmark Comparison**: Illustrative per-call timing and peak memory for standard attention vs. FlashAttention on a 40 GB A100-style configuration across sequence lengths. OOM marks configurations where standard attention exceeds the 40 GB memory budget; the 8192-token row also shows that standard attention would exceed 80 GB. {#tbl-flashattention-benchmarks}
 
 :::
 
@@ -4870,7 +4843,7 @@ class FlashAttentionSpeedup:
 # Export for prose
 ```
 
-Standard attention runs out of memory beyond 2048 tokens on a 40 GB A100, while Flash Attention trains sequences up to 8192 tokens. Even at 2048 tokens where both fit, Flash Attention achieves `{python} FlashAttentionSpeedup.flash_fwd_speedup_str`$\times$ forward pass speedup and `{python} FlashAttentionSpeedup.flash_bwd_speedup_str`$\times$ backward pass speedup.
+In this illustrative 40 GB A100-style scenario, standard attention runs out of memory beyond 2048 tokens, while Flash Attention fits sequences up to 8192 tokens. Even at 2048 tokens where both fit, Flash Attention achieves `{python} FlashAttentionSpeedup.flash_fwd_speedup_str`$\times$ forward pass speedup and `{python} FlashAttentionSpeedup.flash_bwd_speedup_str`$\times$ backward pass speedup.
 
 \index{FlashAttention!2, improved parallelism}\index{FlashAttention!3, FP8 tensor cores}
 Subsequent versions have continued improving performance: FlashAttention-2 [@dao2023flashattention2] achieved 1.5--2$\times$ additional speedup through better parallelism and register allocation, while FlashAttention-3 [@shah2024flashattention3] exploits FP8 tensor cores and asynchronous memory operations on Hopper GPUs and reports reaching approximately 740 TFLOPS on H100, around 75 percent of theoretical peak.

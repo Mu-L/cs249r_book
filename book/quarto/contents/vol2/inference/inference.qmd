@@ -462,7 +462,7 @@ plt.show()
 
 :::
 
-The cost ratios in @tbl-cost-ratios tell a *static* story, but the *dynamics* of cost accumulation reveal an even more striking pattern. @fig-serving-cost-crossover plots cumulative total deployment cost over a 36-month window for three representative scenarios: a small model with low traffic, a 70B LLM serving one million daily active users, and a recommendation system serving 100 million users. The vertical crossover markers show when cumulative serving spend equals the original training cost; because the plotted curves include both training and serving, the total-cost curve is at roughly twice the training baseline at that marker. For recommendation systems, serving dominates within days; for high-traffic LLMs, within roughly six weeks. Only small models with expensive training and low traffic see training cost dominate for extended periods. This temporal view reinforces why inference optimization yields the highest return on engineering investment for any model that reaches production scale [@patel2024].
+The cost ratios in @tbl-cost-ratios tell a *static* story, but the *dynamics* of cost accumulation reveal an even more striking pattern. @fig-serving-cost-crossover plots cumulative total deployment cost over a 36-month window for three representative scenarios: a small model with low traffic, a 70B LLM serving one million daily active users, and a recommendation system serving 100 million users. The vertical crossover markers show when cumulative serving spend equals the original training cost; because the plotted curves include both training and serving, the total-cost curve is at roughly twice the training baseline at that marker. For recommendation systems, serving dominates within days; for high-traffic LLMs, within roughly six weeks. Only small models with expensive training and low traffic see training cost dominate for extended periods. This temporal view reinforces why inference optimization deserves early engineering attention at production scale. For generative LLM services, serving-specific designs can translate directly into throughput, cost, and power gains [@patel2024].
 
 ::: {#fig-serving-cost-crossover fig-env="figure" fig-pos="htb" fig-cap="**The Serving Cost Crossover**: Cumulative total deployment cost (initial training plus ongoing serving) for three scenarios. Vertical markers indicate when the serving portion equals the one-time training cost. For high-traffic LLMs, serving cost matches training cost within weeks. For recommendation systems at 100M daily active users, serving dominates within days. Only low-traffic, expensive-to-train models see training cost dominate for extended periods." fig-alt="Area chart showing cumulative total deployment cost over 36 months for three scenarios with crossover points marked"}
 
@@ -674,7 +674,7 @@ The most consequential architectural decision in a serving system is how it form
 
 **Static batching**\index{Static Batching} collects a fixed number of requests before dispatching them to the accelerator. For vision models processing fixed-size inputs, this approach maximizes GPU utilization because all requests in the batch execute identical computation graphs with predictable memory access patterns. A ResNet-50 inference server can batch 32 or 64 images with near-linear throughput scaling because weight sharing across the batch amortizes model loading cost.
 
-Autoregressive language models break this assumption. Each request generates a different number of output tokens, so static batching forces all requests to wait for the longest generation in the batch. The resulting GPU idle time can waste 60--80 percent of available compute. Continuous batching[^fn-vllm-etymology] solves this by allowing requests to enter and exit the batch at each decoding step. When one request finishes generation, a new request immediately fills its slot. Systems like vLLM [@kwon2023] pioneered this approach, achieving 2--4$\times$ throughput over static batching for LLM workloads by eliminating the "padding waste" inherent in fixed-size batches.
+Autoregressive language models break this assumption. Each request generates a different number of output tokens, so static batching forces all requests to wait for the longest generation in the batch and can leave accelerator capacity idle after shorter requests finish. Continuous batching[^fn-vllm-etymology] solves this by allowing requests to enter and exit the batch at each decoding step, an iteration-level scheduling approach introduced by Orca [@yu2022orca]. When one request finishes generation, a new request immediately fills its slot. Systems like vLLM combine this scheduling style with PagedAttention-based KV-cache management, achieving 2--4$\times$ throughput gains over prior LLM serving systems by reducing memory waste [@kwon2023].
 
 [^fn-vllm-etymology]: **vLLM (Virtual LLM)**: The name signals its core design: applying OS-style virtual memory to KV cache management, decoupling logical sequence addresses from physical GPU memory. Developed at UC Berkeley (2023), vLLM achieved 2--4$\times$ throughput over FasterTransformer and up to 24$\times$ over HuggingFace Transformers by eliminating the 60--80 percent memory fragmentation that capped batch sizes in prior serving systems. \index{vLLM!etymology}
 
@@ -1457,7 +1457,7 @@ As @tbl-inference-continuous-batching-throughput shows, the 3$\times$ throughput
 
 ## The Logic Wall: Test-Time Compute Scaling {#sec-inference-logic-wall}
 
-As models transition from "Fast Thinking" (instant pattern matching) to "Slow Thinking" (deliberative reasoning), the bottleneck shifts from HBM Bandwidth to **Test-Time Compute**\index{Test-Time Compute} [@wei2022emergent; @schaeffer2023mirage]. This is the **Logic Wall**\index{Logic Wall}: the realization that for complex problems, the fleet must scale compute *per request* proportional to the difficulty of the task, often through search or "Chain-of-Thought" (CoT) unrolling.
+Large-model capability work describes emergent behaviors [@wei2022emergent], while later analysis cautions that some apparent emergence can be an artifact of metric choice [@schaeffer2023mirage]. From a serving-systems perspective, models that transition from "Fast Thinking" (instant pattern matching) to "Slow Thinking" (deliberative reasoning) shift pressure from HBM Bandwidth toward **Test-Time Compute**\index{Test-Time Compute}. This is the **Logic Wall**\index{Logic Wall}: the realization that for complex problems, the fleet must scale compute *per request* proportional to the difficulty of the task, often through search or "Chain-of-Thought" (CoT) unrolling.
 
 ```{python}
 #| label: logic-scaling-calc
@@ -3773,7 +3773,7 @@ Production systems monitor routing statistics and may retrain or fine-tune gatin
 
 ### Embedding sharding for recommendation systems {#sec-inference-scale-embedding-sharding-recommendation-systems-afde}
 
-Recommendation systems typically contain embedding tables that dwarf model weights in size. Meta's DLRM-scale models [@naumov2019deep] have embedding tables exceeding 100 TB, requiring sharding strategies distinct from tensor or pipeline parallelism.
+Recommendation systems typically contain embedding tables that dwarf dense model weights in size. Meta's DLRM reference architecture uses model parallelism over embedding tables to mitigate memory constraints while scaling dense layers separately [@naumov2019deep]. At production scale, this embedding-heavy structure requires sharding strategies distinct from tensor or pipeline parallelism.
 
 Row-wise sharding partitions embedding tables by row (entity ID):
 
@@ -5515,10 +5515,10 @@ Quantization reduces numerical precision of model weights and activations, decre
 
 Large language models present unique quantization challenges distinct from vision or recommendation models. The outlier activation problem occurs because certain attention heads produce activation magnitudes orders of magnitude larger than typical values. Naive quantization clips these outliers, causing significant quality degradation.
 
-Consider a Llama-70B layer where most activations fall within [-10, 10] [@touvron2023llama] but specific channels reach magnitudes of 1000+. Symmetric INT8 quantization with range [-127, 127] must choose:
+Consider a large language-model layer where most activation values are modest but specific channels produce much larger outliers [@xiao2023smoothquant]. Symmetric INT8 quantization with range [-127, 127] must choose:
 
-- **Wide range** [-1000, 1000]: Most values map to 0, losing information
-- **Narrow range** [-10, 10]: Outliers clip, causing large errors
+- **Wide range**: Most typical values collapse into a small number of bins, losing information
+- **Narrow range**: Outliers clip, causing large errors
 
 The outlier distribution motivates the specialized quantization methods that follow.
 
