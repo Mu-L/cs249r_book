@@ -34,7 +34,7 @@ sys.path.insert(0, _book_dir)
 
 from mlsysim.core.constants import *
 from mlsysim.core.formulas import *
-from mlsysim.fmt import fmt, fmt_sci
+from mlsysim.fmt import fmt, fmt_sci, fmt_unit
 
 FAILURES = []
 
@@ -358,12 +358,24 @@ def test_ridge_points():
 # ── 16. Formula Helper Functions ─────────────────────────────────────
 
 def test_formula_helpers():
-    """Verify fmt() and fmt_sci() produce correct formatted strings."""
+    """Verify fmt(), fmt_unit(), and fmt_sci() produce correct formatted strings."""
     ok = True
 
     # fmt()
     ok &= check("fmt GB/s", float(fmt(A100_MEM_BW, "GB/s", precision=0, commas=False)), 2039.0)
     ok &= check("fmt ms", float(fmt(RESNET50_FLOPs / A100_FLOPS_FP16_TENSOR, "ms", 3, commas=False)), 0.013, tol=0.1)
+
+    # fmt_unit()
+    if fmt_unit(A100_FLOPS_FP16_TENSOR) != "TFLOP/s":
+        FAILURES.append(
+            f"  ✗ fmt_unit() FLOP rate notation: got '{fmt_unit(A100_FLOPS_FP16_TENSOR)}', expected 'TFLOP/s'"
+        )
+        ok = False
+    if fmt_unit(1 * GFLOPs) != "GFLOPs":
+        FAILURES.append(
+            f"  ✗ fmt_unit() FLOP count notation: got '{fmt_unit(1 * GFLOPs)}', expected 'GFLOPs'"
+        )
+        ok = False
 
     # fmt_sci() - check format, not value
     result = fmt_sci(RESNET50_FLOPs)
