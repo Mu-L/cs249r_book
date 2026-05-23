@@ -330,7 +330,7 @@ class TinyHardware(Registry):
         release_year=2018,
         # MLPerf Tiny reference platform. Cortex-M4F @ 64 MHz.
         compute=ComputeCore(
-            peak_flops=0.000064 * ureg.TFLOPs/ureg.s,  # ~64 MFLOPS (single-precision)
+            peak_flops=0.000064 * ureg.TFLOPs/ureg.s,  # ~64 MFLOP/s (single-precision)
             precision_flops={"int8": 0.000128 * ureg.TOPS}  # ~128 MOPS INT8
         ),
         memory=MemoryHierarchy(

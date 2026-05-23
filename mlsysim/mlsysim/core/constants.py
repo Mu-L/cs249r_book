@@ -67,9 +67,9 @@ B200_TDP = 1000 * watt
 # This is a full rack containing 72 Blackwell GPUs and 36 Grace CPUs.
 # We model the aggregate resources of the rack for macro-scale simulation.
 NVL72_GPUs = 72 * count
-NVL72_FLOPS_FP16_TENSOR = 162 * PFLOPs / second  # 72 * 2.25 PFLOPS FP16 dense
-NVL72_FLOPS_FP4_TENSOR = 720 * PFLOPs / second  # 72 * 10 PFLOPS FP4 dense (NVIDIA marketing headline)
-NVL72_FLOPS_FP8_TENSOR = 324 * PFLOPs / second  # 72 * 4.5 PFLOPS FP8 dense
+NVL72_FLOPS_FP16_TENSOR = 162 * PFLOPs / second  # 72 * 2.25 PFLOP/s FP16 dense
+NVL72_FLOPS_FP4_TENSOR = 720 * PFLOPs / second  # 72 * 10 PFLOP/s FP4 dense (NVIDIA marketing headline)
+NVL72_FLOPS_FP8_TENSOR = 324 * PFLOPs / second  # 72 * 4.5 PFLOP/s FP8 dense
 NVL72_MEM_CAPACITY = 13.8 * TB                  # 72 * 192 GB
 NVL72_MEM_BW = 576 * TB / second                # 72 * 8 TB/s
 NVL72_NVLINK_BW = 130 * TB / second             # Full bisection (bidirectional)
