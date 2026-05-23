@@ -270,7 +270,7 @@ Although modern frameworks abstract away much of the complexity through sharded 
 
 :::
 
-The distributed training process itself involves splitting the dataset into nonoverlapping subsets, assigning each subset to a different GPU, and performing forward and backward passes independently on each device. Once gradients are computed on each GPU, they are synchronized and aggregated before updating the model parameters, ensuring that all devices learn in a consistent manner. The coordinated flow of data splitting, computation, and gradient synchronization (@fig-dist-train-data-parallelism) forms the foundation of distributed training, with each GPU processing its batch independently before synchronization brings all gradients together.
+Despite this complexity, the core workflow is mechanically straightforward; the engineering challenge is making it fast and reliable at scale. The distributed training process involves splitting the dataset into nonoverlapping subsets, assigning each subset to a different GPU, and performing forward and backward passes independently on each device. Once gradients are computed on each GPU, they are synchronized and aggregated before updating the model parameters, ensuring that all devices learn in a consistent manner. The coordinated flow of data splitting, computation, and gradient synchronization (@fig-dist-train-data-parallelism) forms the foundation of distributed training, with each GPU processing its batch independently before synchronization brings all gradients together.
 
 Distributed training systems must orchestrate multi-machine computation by splitting the work, managing communication between machines, and maintaining synchronization throughout training. The AllReduce operations that aggregate gradients across devices consume 10--40 percent of total training time even with optimal implementation, and this overhead compounds as systems scale.
 
@@ -411,7 +411,7 @@ The backward pass mirrors this independence but introduces the system's primary 
 
 #### Gradient synchronization {#sec-distributed-training-systems-systems-gradient-synchronization-614b}
 
-To maintain consistency across the distributed system, the gradients computed by each device must be synchronized. This coordination represents a distributed systems challenge in achieving global consensus while minimizing communication complexity.
+To maintain consistency across the distributed system, the gradients computed by each device must be synchronized. This coordination represents a distributed systems challenge in achieving global consensus while minimizing communication complexity, one significant enough to warrant its own chapter.
 
 ::: {#psp-distributed-training-cross-reference-communication-algorithms .callout-perspective title="Cross-reference: Communication algorithms"}
 
@@ -848,7 +848,7 @@ To understand the scale of memory savings ZeRO provides, consider the concrete m
 
 ::: {#nbk-distributed-training-zero-memory-savings .callout-notebook title="ZeRO memory savings"}
 
-**Scenario**: Training a 7B parameter Llama 2 model using Mixed Precision (FP16).
+**Problem**: Training a 7B parameter Llama-2 model in mixed precision requires 16 bytes per parameter for weights, gradients, and optimizer state. Does the full training state fit on a single A100-80 GB, and how does ZeRO Stage 3 with 64 GPUs change the per-device memory requirement?
 
 **Baseline: Standard DDP (Replicated State)**
 Per-Parameter Memory Cost:
@@ -1354,7 +1354,7 @@ class ScalingWorkers:
 | **64 GPU BSP**       |          1,720 |                45% |           40.1$\times$ |                   91% |
 | **64 GPU SSP**       |          2,100 |                25% |           38.1$\times$ |                   74% |
 
-: **Scaling SGD Across Cluster Sizes**: Iteration count, communication overhead, wall-clock speedup, and sample efficiency for the same training job at 1, 8, and 64 GPUs. BSP remains slightly faster in this worked example; SSP reduces communication overhead but pays for staleness through lower sample efficiency and more iterations. {#tbl-scaling-bsp-ssp}
+: **Scaling SGD Across Cluster Sizes**: Iteration count, communication overhead, wall-clock speedup, and sample efficiency for the same training job at 1, 8, and 64 GPUs. {#tbl-scaling-bsp-ssp}
 
 The 64-GPU BSP configuration achieves 40$\times$ speedup despite only 91 percent sample efficiency because the communication overhead (45 percent) is offset by the massive parallelism. SSP provides comparable wall-clock time with lower communication overhead but requires more total samples.
 
@@ -2548,7 +2548,7 @@ class RLHFBudget:
 
 ::: {#nbk-distributed-training-rlhf-infrastructure-budget-ppo-vs-dpo .callout-notebook title="RLHF infrastructure budget: PPO vs. DPO"}
 
-**Scenario**: Aligning a 70B parameter policy model. Reference model: 70B (frozen). Reward model (PPO only): 13B (frozen). Value model (PPO only): 13B (training).
+**Problem**: Aligning a 70B policy model requires co-locating it with a 70B reference model and, for PPO, a 13B reward model and a 13B value model. Under 3D parallelism (TP=8, PP=4, DP=8), how much per-GPU memory does each approach consume, and how much headroom does DPO free by eliminating the reward model, value model, and generation-phase KV cache?
 
 **PPO Memory Budget (per-GPU, with TP=8, PP=4, DP=8 for policy)**
 
@@ -2575,7 +2575,7 @@ PPO's two-phase design (generate then train) introduces a fundamental throughput
 | **Effective training MFU** | 15--25%                                           | 40--55%                                           |
 | **Data pipeline**          | Online generation                                 | Static preference pairs                           |
 
-: **PPO vs DPO Memory and MFU**: PPO requires four resident models and a sequential generation phase, halving the effective training MFU. DPO collapses to a two-model standard training loop and recovers pretraining-class hardware utilization on the same accelerator budget. {#tbl-ppo-vs-dpo}
+: **PPO vs DPO Memory and MFU**: Per-GPU memory and effective training MFU for PPO and DPO on the same accelerator budget. {#tbl-ppo-vs-dpo}
 
 **Systems insight**: In this 13B reward/value-model scenario, DPO reduces static parameter memory by `{python} RLHFBudget.dpo_reduction_pct_str` percent and doubles the effective compute utilization by eliminating the reward model, value model, and autoregressive generation phase. The choice between PPO and DPO is not only a modeling preference but an infrastructure constraint: organizations with limited GPU budgets often adopt DPO because it restores the workload to a standard fixed-data training loop. If the PPO value model is policy-sized rather than 13B, the memory reduction approaches the larger 2,406 GB to 1,260 GB comparison discussed earlier.
 
@@ -2795,7 +2795,7 @@ The "optimal point" in the 3D Parallelism Cube shifts depending on the system's 
 | **Archetype B (DLRM at Scale)**                                  | Embedding Sharding                | Partition massive `{python} DistTrainConstants.dlrm_mem_tb_str` TB+ tables across a Parameter Server fleet; use sparse AllToAll updates. |
 | **Archetype C (MELLODDY Pharma QSAR) [@heyndrickx2023melloddy]** | Federated Learning                | Keep confidential assay data at participating pharmaceutical organizations while training shared QSAR models across partners.            |
 
-: **Partitioning Strategy by Archetype**: The optimal point in the 3D-parallelism cube shifts with the dominant bottleneck. Dense transformers combine tensor, pipeline, and data parallelism to fit the weight footprint; recommender systems shard massive embedding tables across parameter servers; federated learning keeps data distributed rather than partitioning the model. {#tbl-partitioning-archetypes}
+: **Partitioning Strategy by Archetype**: The optimal point in the 3D-parallelism cube shifts with the dominant bottleneck. {#tbl-partitioning-archetypes}
 
 :::
 
