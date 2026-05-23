@@ -516,12 +516,12 @@ ML operations span three orders of magnitude in arithmetic intensity, and the po
 # │ Context: @sec-performance-engineering-workload-placement—classify ML ops
 # │
 # │ Goal: Compute arithmetic intensity (FLOP/byte) for a 4096×4096 FP16 GEMM,
-# │       a GELU element-wise op, and LLM decode at B=1 on a d_{\text{model}}=4096 model
+# │       a GELU element-wise op, and single-request LLM decode on a 4096-wide model
 # │       to show why inference is predominantly memory-bound.
 # │ Show: ~1365 FLOP/byte (GEMM, compute-bound), ~1.25 (GELU, memory-bound),
-# │       ~1 (LLM decode B=1, deeply memory-bound)—inline prose.
-# │ How: FLOP count/byte count; GEMM uses 2*M_dim*C_dim*K_dim /
-# │       (M_dim*K_dim + K_dim*C_dim + M_dim*C_dim)*bytes;
+# │       ~1 (single-request LLM decode, deeply memory-bound)—inline prose.
+# │ How: Compare FLOPs to bytes moved for each case; GEMM counts matrix multiply
+# │       work and operand traffic;
 # │       element-wise uses ~5 FLOPs per element / (load + store) bytes.
 # │
 # │ Imports: mlsysim.core.constants (BYTES_FP16), mlsysim.book (check)
@@ -542,7 +542,7 @@ class WorkloadIntensityCalc:
     # Element-wise (e.g., GELU): ~5 ops per element
     elem_flops_per_val = 5
     elem_count = M_dim * K_dim
-    # LLM decode: B=1, d_{\text{model}}=4096
+    # LLM decode: one request, 4096-wide hidden state
     decode_batch = 1
     decode_hidden = 4096
 
@@ -557,7 +557,7 @@ class WorkloadIntensityCalc:
     elem_bytes = 2 * elem_count * bytes_per_elem  # load + store
     elem_intensity = elem_flops/elem_bytes
 
-    # LLM decode step: B=1, weight matrix is d_{\text{model}} * d_{\text{model}}
+    # LLM decode step: one request times a square hidden-state weight matrix
     decode_flops_val = 2 * decode_batch * decode_hidden * decode_hidden
     decode_bytes_val = (decode_hidden * decode_hidden + decode_batch * decode_hidden) * bytes_per_elem
     decode_intensity_val = decode_flops_val/decode_bytes_val
@@ -728,9 +728,9 @@ Each unfused kernel must also materialize its output in HBM. Consider a sequence
 # │          tensor traffic example.
 # │
 # │ Goal: Compute the per-layer HBM traffic caused by materializing two FP16
-# │       intermediates for d_{\text{model}}=4096 and B=2048.
+# │       intermediates for hidden width 4096 and batch size 2048.
 # │ Show: 16 MB per tensor, 32 MB materialized, 64 MB write/read traffic.
-# │ How: tensor_bytes = d_{\text{model}} * B * bytes_fp16; each intermediate is written
+# │ How: Compute tensor bytes from hidden width, batch size, and FP16 element size; each intermediate is written
 # │      once and read once before the next kernel consumes it.
 # │
 # │ Imports: mlsysim.core.constants (MB, GB, byte), mlsysim.fmt (check)
@@ -826,9 +826,9 @@ Standard self-attention computes $\text{Softmax}(QK^T / \sqrt{d_k})V$, where $Q$
 # │ Context: @sec-performance-engineering-flashattention FlashAttention prose
 # │
 # │ Goal: Quantify materialized attention-state reduction from tiling attention for a 32-head,
-# │       S=8192, d_{\text{head}}=128, FP16 configuration.
-# │ Show: ~65x reduction in materialized quadratic state by avoiding SxS tensors.
-# │ How: Naive materializes A and A_prob plus Q/K/V/Y; Flash keeps only linear Q/K/V/Y
+# │       8192-token sequence and 128-wide attention head, FP16 configuration.
+# │ Show: ~65x reduction in materialized quadratic state by avoiding sequence-by-sequence tensors.
+# │ How: Naive materializes score/probability matrices plus Q/K/V/output; Flash keeps only linear Q/K/V/output
 # │      as persistent HBM-visible tensors. Kernel tile reload traffic is schedule
 # │      dependent and is intentionally not counted here.
 # │
@@ -853,7 +853,7 @@ class FlashAttentionSavings:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Step 1: Naive attention materialized state per head:
-    # Read Q, K, V once; write/read A; write/read A_prob; write Y once.
+    # Read Q, K, V once; write/read score and probability matrices; write output once.
     # Step 2: Quadratic intermediates dominate for long sequences.
     naive_attn_bytes_per_head = (
         4 * seq_len * seq_len * bytes_per_elem
@@ -862,8 +862,8 @@ class FlashAttentionSavings:
     naive_attn_bytes_total = naive_attn_bytes_per_head * num_heads
 
     # FlashAttention persistent HBM-visible tensors per head:
-    # Read Q, K, V once (3 * S * d_{\text{head}} * bytes), write Y once (S * d_{\text{head}} * bytes)
-    # Step 3: No SxS materialization
+    # Read Q, K, V once and write output once.
+    # Step 3: No sequence-by-sequence materialization
     flash_attn_bytes_per_head = (3 + 1) * seq_len * head_dim * bytes_per_elem
     flash_attn_bytes_total = flash_attn_bytes_per_head * num_heads
 
@@ -1123,7 +1123,7 @@ The choice depends on the operational regime. For memory-bound inference (small 
 # │       at FP16, then derive max batch sizes before/after quantization.
 # │ Show: total FP16 KV cache (~1.34 GB), sharded FP16 (~0.34 GB/GPU),
 # │       sharded INT8 (~0.17 GB/GPU), and max batch FP16 vs INT8.
-# │ How: 2 * N_L * H_{\text{KV}} * d_{\text{head}} * S * bytes.
+# │ How: Compute KV cache bytes from layers, KV heads, head width, sequence length, and element size.
 # │
 # │ Imports: mlsysim.fmt (check), mlsysim.core.constants (byte, GB)
 # │ Exports: kv_fp16_gb_str, max_batch_fp16_str, max_batch_int8_str,
@@ -1577,7 +1577,7 @@ class OverlapCalc:
     # Backward pass compute: ~2 * forward FLOPs (gradient computation)
     # Forward FLOPs ≈ 2 * P * tokens_per_gpu, where tokens_per_gpu = S * B_per_gpu
     # Simplified: backward ≈ 4 * P * tokens_per_gpu
-    tokens_per_gpu = 2048        # S * B_{\text{per GPU}}
+    tokens_per_gpu = 2048        # sequence length * per-GPU batch
     forward_flops = 2 * model_params * tokens_per_gpu
     backward_flops = 2 * forward_flops  # backward is ~2x forward
     h100_fp16_tflops = H100_FLOPS_FP16_TENSOR.m_as(flop/second)  # Tensor core TFLOP/s
@@ -1979,7 +1979,7 @@ While Hardware Utilization reports how often GPUs are busy, it fails to distingu
 # │
 # │ Goal: Calculate MFU for a 70B model distributed across a 128-GPU cluster.
 # │ Show: How the "Scaling Tax" reduces MFU from a 65% local peak to 48% fleet avg.
-# │ How: MFU = (6 * P * D) / (N * R_peak * T).
+# │ How: Compute useful training FLOPs and divide by peak cluster FLOPs over wall time.
 # │
 # │ Imports: mlsysim.core.constants (BILLION, TRILLION, H100_FLOPS_FP16_TENSOR, LLAMA2_70B_PARAMS)
 # │ Exports: fleet_params_b_str, fleet_nodes_str, fleet_t_step_ms_str,
@@ -2003,11 +2003,11 @@ class FleetEfficiencyCalc:
     t_fleet_step_ms = 245.0  # 128-GPU cluster observed
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # Step 1: Useful FLOPs per step = 6 * P * D_{\text{step}}
+    # Step 1: Useful FLOPs per step from parameters and tokens processed
     local_flops_per_step = 6 * p_params * local_tokens_per_step
     fleet_flops_per_step = 6 * p_params * fleet_tokens_per_step
 
-    # Step 2: MFU = useful_flops / (N * R_peak * T)
+    # Step 2: MFU is useful FLOPs divided by peak cluster FLOPs over wall time
     local_mfu = local_flops_per_step / (8 * r_peak_per_gpu * (t_local_step_ms * ms).m_as(second))
     global_mfu = fleet_flops_per_step / (n_gpus * r_peak_per_gpu * (t_fleet_step_ms * ms).m_as(second))
 
