@@ -25,8 +25,9 @@ __all__ = [
     "HOURS_PER_YEAR", "MS_PER_SEC", "US_PER_MS", "NS_PER_US", "NS_PER_MS", "NS_PER_SEC",
     # Data size scalars
     "BITS_PER_BYTE", "KIB_TO_BYTES", "MIB_TO_BYTES", "GIB_TO_BYTES",
-    # FLOPs units
+    # FLOPs and operation-rate units
     "flop", "KFLOPs", "MFLOPs", "GFLOP", "GFLOPs", "TFLOP", "TFLOPs", "PFLOPs", "EFLOP", "EFLOPs", "ZFLOPs",
+    "OPS", "KOPS", "MOPS", "GOPS", "TOPS",
     # Network
     "Gbps",
     # Currency
@@ -158,6 +159,19 @@ PFLOPs = ureg.PFLOPs
 EFLOP = ureg.EFLOP
 EFLOPs = ureg.EFLOPs
 ZFLOPs = ureg.ZFLOPs
+
+# --- Integer operation rates ---
+ureg.define('OPS = count / second')
+ureg.define('KOPS = 1e3 * OPS')
+ureg.define('MOPS = 1e6 * OPS')
+ureg.define('GOPS = 1e9 * OPS')
+ureg.define('TOPS = 1e12 * OPS')
+
+OPS = ureg.OPS
+KOPS = ureg.KOPS
+MOPS = ureg.MOPS
+GOPS = ureg.GOPS
+TOPS = ureg.TOPS
 
 # --- Network bandwidth unit ---
 ureg.define('Gbps = 1e9 * bit / second')
