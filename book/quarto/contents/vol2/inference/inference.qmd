@@ -897,7 +897,7 @@ The knee occurs where the variable compute cost $(B \times T_{\text{var}})$ star
 
 Translating these batch-level equations into system-wide capacity planning requires a classical result from queuing theory: **Little's Law**[^fn-littles-law], which relates concurrency, throughput, and latency in any stable system. @tbl-batching-by-model summarizes how these batching characteristics vary across model architectures.
 
-[^fn-littles-law]: **Little's Law**: From queuing theory $(N_{\text{req}} = \lambda T_{\text{lat}})$: Concurrency = Arrival Rate $\times$ Latency. For a serving fleet, this defines the **Capacity Envelope**: if a GPU can handle 32 concurrent requests and each takes 100 ms, the maximum arrival rate is 320 req/s. Beyond this, queues grow rapidly as utilization approaches 1, and tail latency $(L_{\text{lat}})$ explodes. \index{Little's Law!capacity planning}
+[^fn-littles-law]: **Little's Law**: From queuing theory $(Q_{\text{req}} = \lambda_{\text{arr}} T_{\text{lat}})$: Concurrency = Arrival Rate $\times$ Latency. For a serving fleet, this defines the **Capacity Envelope**: if a GPU can handle 32 concurrent requests and each takes 100 ms, the maximum arrival rate is 320 req/s. Beyond this, queues grow rapidly as utilization approaches 1, and tail latency $(L_{\text{lat}})$ explodes. \index{Little's Law!capacity planning}
 
 | **Model Type**    | **Batching Strategy** | **Typical Batch Size** | **Key Constraint** | **Throughput Scaling** |
 |:------------------|:----------------------|-----------------------:|:-------------------|:-----------------------|
@@ -937,16 +937,16 @@ class LittlesLawExample:
 
 ::: {#thrm-inference-littles-law-inference .callout-theorem title="Little's Law for inference"}
 
-**Concept**: In any stable queuing system, the average number of requests in the system $(N_{\text{req}})$ equals the arrival rate $(\lambda)$ multiplied by the average time a request spends in the system $(T_{\text{lat}})$.
+**Concept**: In any stable queuing system, the average number of requests in the system $(Q_{\text{req}})$ equals the arrival rate $(\lambda_{\text{arr}})$ multiplied by the average time a request spends in the system $(T_{\text{lat}})$.
 
-$$ N_{\text{req}} = \lambda \cdot T_{\text{lat}} $$
+$$ Q_{\text{req}} = \lambda_{\text{arr}} \cdot T_{\text{lat}} $$
 
 **Application: Concurrency Planning**
 
-- **Target Throughput** $(\lambda)$: 1,000 requests/sec
+- **Target Throughput** $(\lambda_{\text{arr}})$: 1,000 requests/sec
 - **Latency SLO** $(T_{\text{lat}})$: 100 ms (0.1 s)
 
-**Required Concurrency** $(N_{\text{req}})$: $N_{\text{req}} = 1000 \times 0.1 =$ **`{python} LittlesLawExample.required_concurrency_str`** concurrent requests
+**Required Concurrency** $(Q_{\text{req}})$: $Q_{\text{req}} = 1000 \times 0.1 =$ **`{python} LittlesLawExample.required_concurrency_str`** concurrent requests
 
 **Capacity Planning**\index{Capacity Planning}:
 If a single GPU replica handles batch size 8 with 80 ms latency:
@@ -970,7 +970,7 @@ The batching efficiency curve provides intuition about throughput-latency tradeo
 
 GPU inference systems can be modeled as **M/G/c/K queues**\index{M/G/c/K Queues}, a standard notation from queueing theory that captures the essential characteristics of production serving systems:
 
-- **M (Markov arrivals)**: Requests arrive according to a Poisson process with rate $\lambda$. This models the memoryless property of user requests, where arrival of one request does not predict the timing of the next.
+- **M (Markov arrivals)**: Requests arrive according to a Poisson process with rate $\lambda_{\text{arr}}$. This models the memoryless property of user requests, where arrival of one request does not predict the timing of the next.
 - **G (General service distribution)**: Service times follow a general distribution, not restricted to exponential. GPU inference times depend on batch size and exhibit deterministic components (compute) mixed with stochastic variation (memory contention, kernel scheduling).
 - **c (Number of servers)**: The system has $c$ parallel GPU workers, each capable of serving requests independently.
 - **K (Queue capacity)**: The system maintains a finite queue of capacity $K$ requests. Requests arriving to a full queue are rejected (load shedding).
@@ -983,15 +983,15 @@ Queuing theory, developed by Agner Krarup Erlang in 1909 for telephone network a
 
 :::
 
-For a batched inference system with batch size $B$, service time becomes a function of batch size. Let $S(B)$ denote the time to process a batch of $B$ requests. From the physics of batching (@sec-inference-scale-batching-strategies-scale-6733), we model this as:
+For a batched inference system with batch size $B$, service time becomes a function of batch size. Let $T_{\text{svc}}(B)$ denote the time to process a batch of $B$ requests. From the physics of batching (@sec-inference-scale-batching-strategies-scale-6733), we model this as:
 
-$$S(B) = T_{\text{fixed}} + t_{\text{req}} \cdot B$$ {#eq-service-time-batch}
+$$T_{\text{svc}}(B) = T_{\text{fixed}} + t_{\text{req}} \cdot B$$ {#eq-service-time-batch}
 
 where $T_{\text{fixed}}$ represents fixed service overhead (kernel launch, weight loading from HBM) and $t_{\text{req}}$ represents marginal per-request computation time. This linear model captures the first-order behavior observed in production systems, though actual service times may exhibit slight sublinearity due to memory bandwidth saturation at large batch sizes.
 
 The **effective service rate** for batched processing is:
 
-$$\mu_{\text{eff}}(B) = \frac{B}{S(B)} = \frac{B}{T_{\text{fixed}} + t_{\text{req}} \cdot B}$$
+$$\mu_{\text{eff}}(B) = \frac{B}{T_{\text{svc}}(B)} = \frac{B}{T_{\text{fixed}} + t_{\text{req}} \cdot B}$$
 
 The effective rate increases with batch size, approaching the asymptotic limit $1/t_{\text{req}}$ as $B \to \infty$.
 
@@ -999,23 +999,23 @@ The effective rate increases with batch size, approaching the asymptotic limit $
 
 The total response time $T$ for a request consists of three components:
 
-$$E[T] = E[W] + E[S_{\text{batch}}] + E[S_{\text{compute}}]$$
+$$E[T] = E[W] + E[T_{\text{batch}}] + E[T_{\text{svc}}]$$
 
 where:
 
 - $E[W]$ is the expected waiting time in queue before joining a batch
-- $E[S_{\text{batch}}]$ is the expected time to form a complete batch (batch accumulation delay)
-- $E[S_{\text{compute}}]$ is the expected inference time once the batch executes
+- $E[T_{\text{batch}}]$ is the expected time to form a complete batch (batch accumulation delay)
+- $E[T_{\text{svc}}]$ is the expected inference time once the batch executes
 
-For dynamic batching with maximum wait time $T_{\text{max}}$ and maximum batch size $B_{\text{max}}$, the batch formation process is bounded. Under Poisson arrivals with rate $\lambda$, the expected number of requests accumulated in time $T_{\text{max}}$ is $\lambda \cdot T_{\text{max}}$. The actual batch size $B$ follows:
+For dynamic batching with maximum wait time $T_{\text{max}}$ and maximum batch size $B_{\text{max}}$, the batch formation process is bounded. Under Poisson arrivals with rate $\lambda_{\text{arr}}$, the expected number of requests accumulated in time $T_{\text{max}}$ is $\lambda_{\text{arr}} \cdot T_{\text{max}}$. The actual batch size $B$ follows:
 
-$$E[B] = \min(B_{\text{max}}, \lambda \cdot T_{\text{max}})$$
+$$E[B] = \min(B_{\text{max}}, \lambda_{\text{arr}} \cdot T_{\text{max}})$$
 
 The batch accumulation delay depends on whether the batch fills by reaching $B_{\text{max}}$ or by timeout:
 
-$$E[S_{\text{batch}}] = \begin{cases}
-\frac{B_{\text{max}}}{2\lambda} & \text{if } \lambda \cdot T_{\text{max}} \geq B_{\text{max}} \text{ (batch fills)} \\
-\frac{T_{\text{max}}}{2} & \text{if } \lambda \cdot T_{\text{max}} < B_{\text{max}} \text{ (timeout triggers)}
+$$E[T_{\text{batch}}] = \begin{cases}
+\frac{B_{\text{max}}}{2\lambda_{\text{arr}}} & \text{if } \lambda_{\text{arr}} \cdot T_{\text{max}} \geq B_{\text{max}} \text{ (batch fills)} \\
+\frac{T_{\text{max}}}{2} & \text{if } \lambda_{\text{arr}} \cdot T_{\text{max}} < B_{\text{max}} \text{ (timeout triggers)}
 \end{cases}$$
 
 The factor of $1/2$ in both cases reflects the average wait for requests arriving uniformly throughout the batch window.
@@ -1024,35 +1024,35 @@ The factor of $1/2$ in both cases reflects the average wait for requests arrivin
 
 The optimal batch size $B$ minimizes expected response time subject to throughput requirements. We seek:
 
-$$B = \operatorname{arg\,min}_{B} E[T(B)] \quad \text{subject to} \quad \mu_{\text{eff}}(B) \geq \lambda$$
+$$B = \operatorname{arg\,min}_{B} E[T(B)] \quad \text{subject to} \quad \mu_{\text{eff}}(B) \geq \lambda_{\text{arr}}$$
 
 The constraint ensures system stability (service rate exceeds arrival rate).
 
 Substituting the response time components:
 
-$$E[T(B)] = E[W(B)] + \frac{B}{2\lambda} + S(B)$$
+$$E[T(B)] = E[W(B)] + \frac{B}{2\lambda_{\text{arr}}} + T_{\text{svc}}(B)$$
 
 For an M/G/1 queue with batch arrivals (treating each batch as a single "super-request"), the Pollaczek-Khinchine formula gives the expected waiting time:
 
-$$E[W] = \frac{\lambda \cdot E[S^2]}{2(1 - \rho)}$$
+$$E[W] = \frac{\lambda_{\text{arr}} \cdot E[T_{\text{svc}}^2]}{2(1 - \rho)}$$
 
-where $\rho = \lambda \cdot E[S] / B$ is the server utilization (arrival rate times service time per request). The second moment $E[S^2]$ captures service time variability.
+where $\rho = \lambda_{\text{arr}} \cdot E[T_{\text{svc}}] / B$ is the server utilization (arrival rate times service time per request). The second moment $E[T_{\text{svc}}^2]$ captures service time variability.
 
 For our linear service time model with deterministic service (variance zero within a batch):
 
-$$E[W(B)] = \frac{\lambda \cdot S(B)^2}{2B(1 - \lambda \cdot S(B)/B)}$$
+$$E[W(B)] = \frac{\lambda_{\text{arr}} \cdot T_{\text{svc}}(B)^2}{2B(1 - \lambda_{\text{arr}} \cdot T_{\text{svc}}(B)/B)}$$
 
-For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $S(B)=T_{\text{fixed}}+t_{\text{req}} B$, the constraint $\rho=\lambda S(B)/B \leq \rho_{\text{target}}$ gives:
+For production sizing, teams often first enforce a utilization headroom target rather than solving the full latency minimization problem. With $T_{\text{svc}}(B)=T_{\text{fixed}}+t_{\text{req}} B$, the constraint $\rho=\lambda_{\text{arr}} T_{\text{svc}}(B)/B \leq \rho_{\text{target}}$ gives:
 
-$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda T_{\text{fixed}}}{\rho_{\text{target}} - \lambda t_{\text{req}}}$$ {#eq-optimal-batch-approx}
+$$B_{\min}(\rho_{\text{target}}) = \frac{\lambda_{\text{arr}} T_{\text{fixed}}}{\rho_{\text{target}} - \lambda_{\text{arr}} t_{\text{req}}}$$ {#eq-optimal-batch-approx}
 
-where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda t_{\text{req}}$.
+where $\rho_{\text{target}}$ is the target utilization (typically 0.7--0.8 for production systems to maintain latency headroom) and $\rho_{\text{target}} > \lambda_{\text{arr}} t_{\text{req}}$.
 
 ::: {.callout-important title="Target-utilization batch sizing"}
 
 @eq-optimal-batch-approx reveals a fundamental insight: **minimum stable batch size grows with fixed overhead and arrival rate**. This means:
 
-1. **Higher traffic** $(\lambda)$: Required batch size increases
+1. **Higher traffic** $(\lambda_{\text{arr}})$: Required batch size increases
 2. **Higher fixed overhead** $(T_{\text{fixed}})$: Required batch size increases to amortize overhead
 3. **Higher target utilization** $(\rho_{\text{target}})$: Required batch size decreases, but with less latency headroom
 
@@ -1099,7 +1099,7 @@ class Gpt3Scenario:
 
 Consider serving a GPT-3 class model (`{python} Gpt3Scenario.gpt3_params_b_str`B parameters) under the following system parameters:
 
-- Arrival rate: $\lambda = 100$ requests/second
+- Arrival rate: $\lambda_{\text{arr}} = 100$ requests/second
 - Hardware: 8$\times$ A100 GPUs with tensor parallelism
 - Weight loading overhead: $T_{\text{fixed}} = 50$ ms (time to load attention matrices per forward pass)
 - Per-token compute: $t_{\text{req}} = 0.5$ ms per request (amortized across batch)
@@ -1108,7 +1108,7 @@ Consider serving a GPT-3 class model (`{python} Gpt3Scenario.gpt3_params_b_str`B
 
 For the prefill phase (processing input prompt), service time follows @eq-service-time-batch:
 
-$$S(B) = 50 + 0.5 \cdot B \text{ ms}$$
+$$T_{\text{svc}}(B) = 50 + 0.5 \cdot B \text{ ms}$$
 
 Applying @eq-optimal-batch-approx to compute the minimum batch size that preserves 75 percent utilization headroom:
 
@@ -1120,13 +1120,13 @@ Rounding up gives $B=8$ as the smallest batch size that meets the target utiliza
 
 @tbl-batch-size-comparison quantifies the tradeoffs across batch sizes from 1 to 32:
 
-| **Size B** | **S(B) (ms)** | **(req/s)** |             **$\rho$** | **E[W] (ms)** | **B/(2λ) (ms)** | **E[T] (ms)** |
-|:-----------|--------------:|------------:|-----------------------:|:--------------|----------------:|:--------------|
-| **1**      |          50.5 |        19.8 | 505 percent (unstable) | $\infty$      |             5.0 | $\infty$      |
-| **4**      |          52.0 |        76.9 | 130 percent (unstable) | $\infty$      |            20.0 | $\infty$      |
-| **8**      |          54.0 |       148.1 |           67.5 percent | 56.1          |            40.0 | 150.1         |
-| **16**     |          58.0 |       275.9 |           36.3 percent | 16.5          |            80.0 | 154.5         |
-| **32**     |          66.0 |       484.8 |           20.6 percent | 8.6           |           160.0 | 234.6         |
+| **Size $B$** | **$T_{\text{svc}}(B)$ (ms)** | **req/s** |             **$\rho$** | **E[W] (ms)** | **$B/(2\lambda_{\text{arr}})$ (ms)** | **E[T] (ms)** |
+|:-------------|-----------------------------:|----------:|-----------------------:|:--------------|-------------------------------------:|:--------------|
+| **1**        |                         50.5 |      19.8 | 505 percent (unstable) | $\infty$      |                                  5.0 | $\infty$      |
+| **4**        |                         52.0 |      76.9 | 130 percent (unstable) | $\infty$      |                                 20.0 | $\infty$      |
+| **8**        |                         54.0 |     148.1 |           67.5 percent | 56.1          |                                 40.0 | 150.1         |
+| **16**       |                         58.0 |     275.9 |           36.3 percent | 16.5          |                                 80.0 | 154.5         |
+| **32**       |                         66.0 |     484.8 |           20.6 percent | 8.6           |                                160.0 | 234.6         |
 
 : **Batch Size Impact on GPT-3 Serving Performance**: Batch sizes below 8 cannot sustain 100 QPS (utilization exceeds 100 percent). After including batch-accumulation delay, the latency minimum in this simple model occurs near $B=8$; $B=16$ has nearly the same mean latency with lower utilization, while $B=32$ leaves more headroom but pays a large accumulation-delay penalty. {#tbl-batch-size-comparison}
 
@@ -1225,11 +1225,11 @@ We can confirm these results by applying Little's Law as an internal consistency
 
 ::: {#nbk-inference-applying-littles-law-verify .callout-notebook title="Applying Little's Law to verify"}
 
-**Verification using Little's Law**\index{Little's Law!verification using}: $N_{\text{req}} = \lambda \cdot T_{\text{lat}}$
+**Verification using Little's Law**\index{Little's Law!verification using}: $Q_{\text{req}} = \lambda_{\text{arr}} \cdot T_{\text{lat}}$
 
-At $B=16$ with $\lambda = 100$ req/s and $E[T] =$ `{python} LittlesLawVerify.expected_total_str` ms:
+At $B=16$ with $\lambda_{\text{arr}} = 100$ req/s and $E[T] =$ `{python} LittlesLawVerify.expected_total_str` ms:
 
-$N_{\text{req}} = 100 \times$ `{python} LittlesLawVerify.expected_total_s_str` $=$ `{python} LittlesLawVerify.n_req_str` requests in system
+$Q_{\text{req}} = 100 \times$ `{python} LittlesLawVerify.expected_total_s_str` $=$ `{python} LittlesLawVerify.n_req_str` requests in system
 
 With batch size `{python} LittlesLawVerify.batch_size_str` and utilization `{python} GPT3ServingResults.b16_util_pct_str` percent:
 
@@ -1246,13 +1246,13 @@ Production systems must select batch size to meet Service Level Objectives (SLOs
 
 #### Step 1: Characterize service time {.unnumbered}
 
-Measure $T_{\text{fixed}}$ and $t_{\text{req}}$ empirically by profiling inference at batch sizes 1, 8, and 32. Fit the linear model $S(B) = T_{\text{fixed}} + t_{\text{req}} B$.
+Measure $T_{\text{fixed}}$ and $t_{\text{req}}$ empirically by profiling inference at batch sizes 1, 8, and 32. Fit the linear model $T_{\text{svc}}(B) = T_{\text{fixed}} + t_{\text{req}} B$.
 
 #### Step 2: Compute stability threshold {.unnumbered}
 
-Find minimum batch size $B_{\text{min}}$ such that $\mu_{\text{eff}}(B_{\text{min}}) > \lambda$:
+Find minimum batch size $B_{\text{min}}$ such that $\mu_{\text{eff}}(B_{\text{min}}) > \lambda_{\text{arr}}$:
 
-$$B_{\text{min}} = \frac{T_{\text{fixed}} \lambda}{1 - t_{\text{req}} \lambda}$$
+$$B_{\text{min}} = \frac{T_{\text{fixed}} \lambda_{\text{arr}}}{1 - t_{\text{req}} \lambda_{\text{arr}}}$$
 
 Any batch size below $B_{\text{min}}$ results in an unstable system.
 
@@ -1260,7 +1260,7 @@ Any batch size below $B_{\text{min}}$ results in an unstable system.
 
 For each candidate $B \in \{B_{\text{min}}, 2B_{\text{min}}, ..., B_{\text{max}}\}$, compute:
 
-$$E[T(B)] = \frac{\lambda \cdot S(B)^2}{2B(1 - \lambda S(B)/B)} + \frac{B}{2\lambda} + S(B)$$
+$$E[T(B)] = \frac{\lambda_{\text{arr}} \cdot T_{\text{svc}}(B)^2}{2B(1 - \lambda_{\text{arr}} T_{\text{svc}}(B)/B)} + \frac{B}{2\lambda_{\text{arr}}} + T_{\text{svc}}(B)$$
 
 #### Step 4: Account for tail latency {.unnumbered}
 
@@ -1315,7 +1315,7 @@ Vision models represent the simplest batching case because inputs have uniform s
 
 Static batching collects exactly $B$ requests before processing. This maximizes GPU utilization when request arrival is predictable but causes unbounded latency during low-traffic periods.
 
-Dynamic batching collects requests for a maximum time window $T_{\text{window}}$ or until reaching maximum batch size $B_{\text{max}}$, whichever occurs first. The expected latency under Poisson arrivals with rate $\lambda$ follows @eq-dynamic-batch-latency:
+Dynamic batching collects requests for a maximum time window $T_{\text{window}}$ or until reaching maximum batch size $B_{\text{max}}$, whichever occurs first. The expected latency under Poisson arrivals with rate $\lambda_{\text{arr}}$ follows @eq-dynamic-batch-latency:
 
 $$E[T_{\text{total}}] = E[T_{\text{queue}}] + T_{\text{batch}} + T_{\text{inference}}(B)$$ {#eq-dynamic-batch-latency}
 
@@ -1330,18 +1330,18 @@ Consider a vision classification service with the following requirements:
 - **Per-image inference time**\index{Per-Image Inference Time}: 5 ms at batch=1, 25 ms at batch=32
 - **Number of replicas**\index{Number of Replicas}: 10 (each handling 500 QPS)
 
-For a single replica with Poisson arrivals at $\lambda = 500$ QPS:
+For a single replica with Poisson arrivals at $\lambda_{\text{arr}} = 500$ QPS:
 
 **Option A: No batching (batch=1)**
 
 - Service time: 5 ms per request
-- Utilization: $\rho = \lambda \times S = 500 \times 0.005 = 2.5$ (impossible, system is overloaded)
+- Utilization: $\rho = \lambda_{\text{arr}} \times T_{\text{svc}} = 500 \times 0.005 = 2.5$ (impossible, system is overloaded)
 
 This configuration *cannot* meet demand. Batching is required.
 
 **Option B: Dynamic batching with $B_{\text{max}}=16$, $T_{\text{window}}=10 ms$**
 
-Expected requests per window: $E[B] = \lambda \times T_{\text{window}} = 500 \times 0.01 = 5$
+Expected requests per window: $E[B] = \lambda_{\text{arr}} \times T_{\text{window}} = 500 \times 0.01 = 5$
 
 With 5 requests per batch:
 
@@ -4199,7 +4199,7 @@ When servers have different capacities, naive load balancing creates imbalance. 
 
 Weighted round-robin assigns requests proportional to server capacity:
 
-$$P(\text{route to server } i) = \frac{w_i}{\sum_j w_j}$$
+$$\Pr(\text{route to server } i) = \frac{w_i}{\sum_j w_j}$$
 
 where $w_i$ is the weight (capacity) of server $i$.
 
