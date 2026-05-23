@@ -76,33 +76,27 @@ class HardwareNode(BaseModel):
     def power_budget(self) -> Optional[Quantity]:
         return self.tdp
 
-    def ridge_point(self) -> Quantity:
-        """Calculates the Roofline ridge point (Intensity threshold)."""
-        return (self.compute.peak_flops / self.memory.bandwidth).to('flop/byte')
+    def ridge_point(self, precision: Optional[str] = None) -> Quantity:
+        """
+        Calculates the Roofline ridge point (Intensity threshold).
+        
+        Args:
+            precision: Optional precision string (e.g., 'fp16', 'fp8', 'int8').
+                If provided, uses the corresponding precision flops from ComputeCore.
+                If None (default), uses the default peak_flops.
+        """
+        flops = self.compute.peak_flops
+        if precision:
+            if precision.lower() in self.compute.precision_flops:
+                flops = self.compute.precision_flops[precision.lower()]
+            else:
+                import warnings
+                warnings.warn(
+                    f"Precision '{precision}' not found in hardware '{self.name}'; "
+                    f"using default peak_flops.",
+                    stacklevel=2
+                )
+        return (flops / self.memory.bandwidth).to('flop/byte')
 
     def __repr__(self):
         return f"HardwareNode({self.name}, {self.release_year})"
-
-    # ─────────────────────────────────────────────────────────────
-    # Backward-compatibility aliases (used by older textbook code)
-    # ─────────────────────────────────────────────────────────────
-    _legacy_aliases: ClassVar[dict[str, Any]] = {
-        "peak_flops": lambda self: self.compute.peak_flops,
-        "peak_flops_fp32": lambda self: self.compute.precision_flops.get("fp32"),
-        "tf32_flops": lambda self: self.compute.precision_flops.get("tf32"),
-        "fp8_flops": lambda self: self.compute.precision_flops.get("fp8"),
-        "int8_flops": lambda self: self.compute.precision_flops.get("int8"),
-        "int4_flops": lambda self: self.compute.precision_flops.get("int4"),
-        "memory_bw": lambda self: self.memory.bandwidth,
-        "memory_capacity": lambda self: self.memory.capacity,
-        "ram": lambda self: self.memory.capacity,
-        "power_budget": lambda self: self.tdp,
-    }
-
-    def __getattr__(self, name):
-        aliases = type(self)._legacy_aliases
-        if name in aliases:
-            value = aliases[name](self)
-            if value is not None:
-                return value
-        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")

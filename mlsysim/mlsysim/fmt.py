@@ -130,7 +130,7 @@ def fmt_unit(quantity, default="-"):
     return out
 
 
-def fmt_percent(ratio, precision=1, commas=False):
+def fmt_percent(ratio, precision=1, commas=False, allow_zero=False):
     """
     Format a ratio (0.0 to 1.0) as a percentage string for display.
     Use this for compound fractions (e.g. effective utilization) to avoid

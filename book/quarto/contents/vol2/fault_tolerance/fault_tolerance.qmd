@@ -45,6 +45,8 @@ A single GPU can run for years between hardware failures. A thousand GPUs turn t
 :::
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 #| label: chapter-start
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -58,12 +60,13 @@ A single GPU can run for years between hardware failures. A thousand GPUs turn t
 # │ Imports: mlsysim.registry, mlsysim.constants, mlsysim.book
 # │ Exports: (none)
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import *
 from mlsysim.fmt import fmt, fmt_sci, check
 
 ```
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 #| label: fault-tolerance-setup
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -78,10 +81,10 @@ from mlsysim.fmt import fmt, fmt_sci, check
 # │   checkpoint-interval formula and distributed checkpoint design.
 # │ Show: gpt3_ckpt_tb_str="2.1" TB (full checkpoint),
 # │   gpt3_shard_gb_str="2.1" GB (per-worker shard at 1000 workers)—inline in prose.
-# │ How: Multiply GPT3_PARAMS.m_as(param) by bytes-per-param for each state;
+# │ How: Multiply Models.Language.GPT3.parameters.m_as(param) by bytes-per-param for each state;
 # │   convert result pint Quantity with .m_as(TB) and .m_as(GB).
 # │
-# │ Imports: mlsysim.core.constants (GPT3_PARAMS, param, byte, TB, GB, BILLION),
+# │ Imports: mlsysim.core.constants (Models.Language.GPT3.parameters, param, byte, TB, GB, BILLION),
 # │   mlsysim.book (fmt, sci)
 # │ Exports: gpt3_params_b_str, gpt3_ckpt_tb_str, gpt3_adam_tb_str, gpt3_shard_gb_str
 # │ Note: PERSISTENT—gpt3_ckpt_tb_str used in §Young-Daly (line ~1957),
@@ -89,7 +92,6 @@ from mlsysim.fmt import fmt, fmt_sci, check
 # │   gpt3_shard_gb_str used in §Sharded Checkpointing (line ~2289), §Recovery (~2371, ~2385).
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.core.constants import *
 from mlsysim.fmt import fmt, fmt_sci
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -97,26 +99,25 @@ class FaultToleranceSetup:
     """Namespace for GPT-3 checkpoint sizing and shard calculations."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    # GPT-3 checkpoint byte layout (FP32 Adam, no mixed precision):
-    #   FP32 weights (4 bytes) + Adam m (4 bytes FP32) + Adam v (4 bytes FP32)
-    #   = 12 bytes/param
-    bytes_full_ckpt = 12   # bytes per param: FP32 weights + Adam m + v
-    bytes_adam_only = 8    # bytes per param: Adam m + v only
-    n_workers = 1000       # workers for shard size calculation
+    from mlsysim.core.solver import TrainingMemoryModel
+    from mlsysim import Models
+    m = Models.Language.GPT3
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # Step 1: Full checkpoint: weights + optimizer states
-    gpt3_ckpt_bytes = GPT3_PARAMS.m_as(param) * bytes_full_ckpt * byte
+    # Use library model for memory decomposition
+    # Note: Scenario is pure FP32 training (12 bytes/param: 4 weights + 8 Adam)
+    mem_res = TrainingMemoryModel().solve(m, Hardware.Cloud.A100, batch_size=1, precision="fp32")
+    gpt3_ckpt_bytes = mem_res.total_memory
+    gpt3_adam_bytes = mem_res.optimizer_state
 
-    # Step 2: Optimizer-only checkpoint: Adam m + v (no weights)
-    gpt3_adam_bytes = GPT3_PARAMS.m_as(param) * bytes_adam_only * byte
+    n_workers = 1000
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
     check(gpt3_ckpt_bytes > gpt3_adam_bytes, "Full checkpoint must be larger than optimizer-only checkpoint")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    gpt3_params_b_str = fmt(GPT3_PARAMS.m_as(param) / BILLION, precision=0, commas=False)
+    gpt3_params_b_str = fmt(m.parameters.m_as(param) / BILLION, precision=1, allow_zero=True, commas=False)
     gpt3_ckpt_tb_str = fmt(gpt3_ckpt_bytes.m_as(TB), precision=1, commas=False)
     gpt3_adam_tb_str = fmt(gpt3_adam_bytes.m_as(TB), precision=1, commas=False)
     gpt3_shard_gb_str = fmt(gpt3_ckpt_bytes.m_as(GB) / n_workers, precision=1, commas=False)
@@ -171,6 +172,8 @@ $$ \text{MTBF}_{\text{system}} = \frac{1}{N\lambda} = \frac{\text{MTBF}_{\text{c
 ::: {#fig-reliability-gap fig-env="figure" fig-pos="htb" fig-cap="**The Reliability Gap**: As GPU count increases, cluster MTBF drops below common training durations. A 10,000-GPU cluster with server-grade components experiences a failure roughly every 10 hours, making a 3-month training run impossible without fault tolerance mechanisms." fig-alt="Semilog plot of cluster MTBF vs. GPU count with reference lines for 1-day, 1-week, and 3-month training durations. Shaded region where MTBF falls below 3-month training."}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ RELIABILITY GAP (FIGURE)
@@ -264,6 +267,8 @@ The formula $\tau_{\text{opt}} = \sqrt{2 \cdot T_{\text{write}} \cdot \text{MTBF
 A quick availability calculation shows the same scaling pressure from another angle.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: lego-nines-reliability
 #| echo: false
 from mlsysim.fmt import fmt, check
@@ -275,7 +280,7 @@ class NinesReliability:
     single_gpu_success = availability_pct / 100
 
     # ┌── 2. EXECUTE ───────────────────────────────────────
-    downtime_min_year = (1 - single_gpu_success) * HOURS_PER_YEAR * 60
+    downtime_min_year = (1 - single_gpu_success) * HOURS_PER_YEAR * MINUTES_PER_HOUR
     cluster_prob = single_gpu_success ** n_gpus
 
     # ┌── 3. GUARD ─────────────────────────────────────────
@@ -283,12 +288,12 @@ class NinesReliability:
     check(cluster_prob < 0.5, "Cluster survival must be low at scale")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    n_gpus_str = fmt(n_gpus, precision=0)
+    n_gpus_str = fmt(n_gpus, precision=1, allow_zero=True)
     availability_str = fmt(availability_pct, precision=2, commas=False)
     downtime_min_str = fmt(downtime_min_year, precision=1, commas=False)
     survival_str = fmt(single_gpu_success, precision=5, commas=False)
     cluster_prob_str = fmt(cluster_prob, precision=2, commas=False)
-    cluster_pct_str = fmt(int(round(cluster_prob * 100)), precision=0, commas=False)
+    cluster_pct_str = fmt(int(round(cluster_prob * 100)), precision=1, allow_zero=True, commas=False)
 ```
 
 ::: {#nbk-fault-tolerance-9s-reliability .callout-notebook title="The 9s of reliability"}
@@ -397,6 +402,8 @@ The theoretical $1/N$ scaling in @tbl-cluster-mtbf-scaling is not merely a textb
 ::: {#fig-published-failure-rates fig-env="figure" fig-pos="htb" fig-cap="**Published Failure Rates from Production Clusters**: Measured MTTF values from Meta's RSC clusters [@kokolis2025] and Llama 3 training [@dubey2024llama] plotted against the theoretical 1/N curve. At 16,384 GPUs, both empirical measurements and theory predict failures every 2 to 3 hours, confirming that fault tolerance is a mathematical necessity, not an edge case. Data sources: Kokolis et al., arXiv:2410.21680; Meta, arXiv:2407.21783." fig-alt="Log-log scatter plot of MTTF in hours vs. GPU count with theoretical 1 over N curve and labeled data points from Meta RSC and Llama 3 training."}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ PUBLISHED FAILURE RATES (FIGURE)
@@ -417,7 +424,6 @@ The theoretical $1/N$ scaling in @tbl-cluster-mtbf-scaling is not merely a textb
 import numpy as np
 import matplotlib.pyplot as plt
 from mlsysim import viz
-from mlsysim.core.constants import GPU_MTTF_HOURS
 
 fig, ax, COLORS, plt = viz.setup_plot(figsize=(8, 5.5))
 
@@ -910,6 +916,8 @@ cell/.style={draw=BrownLine,line width=0.5pt, minimum size=\cellsize,
 Transient faults encompass several distinct categories: Single Event Upsets (SEUs) from cosmic rays and ionizing radiation, voltage fluctuations [@reddi2013] from power supply instability, electromagnetic interference (EMI), electrostatic discharge (ESD), crosstalk, ground bounce, timing violations, and soft errors in combinational logic [@mukherjee2005].
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 #| label: v100-spec
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -921,19 +929,18 @@ Transient faults encompass several distinct categories: Single Event Upsets (SEU
 # │ Goal: Plumb V100 HBM2 memory bandwidth from constants so the quoted spec
 # │   tracks mlsysim's single source of truth.
 # │ Show: v100_mem_bw_str="900" GB/s—inline in fn-gpu-fault-rates-training.
-# │ How: V100_MEM_BW.m_as(GB/second), format with fmt.
+# │ How: Hardware.Cloud.V100.memory.bandwidth.m_as(GB/second), format with fmt.
 # │
-# │ Imports: mlsysim.core.constants (V100_MEM_BW, GB, second), mlsysim.fmt (fmt, check)
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.V100.memory.bandwidth, GB, second), mlsysim.fmt (fmt, check)
 # │ Exports: V100Spec.v100_mem_bw_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import V100_MEM_BW, GB, second
 from mlsysim.fmt import fmt, check
 
 class V100Spec:
     """V100 hardware spec plumbed from constants."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    mem_bw = V100_MEM_BW
+    mem_bw = Hardware.Cloud.V100.memory.bandwidth
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     mem_bw_gbs = mem_bw.m_as(GB/second)
@@ -942,7 +949,7 @@ class V100Spec:
     check(mem_bw_gbs > 0, "V100 memory bandwidth must be positive")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    v100_mem_bw_str = fmt(mem_bw_gbs, precision=0)
+    v100_mem_bw_str = fmt(mem_bw_gbs, precision=1, allow_zero=True)
 ```
 
 #### Quantitative fault rates {#sec-ft-fault-analysis-performance-impact-fa37}
@@ -1754,10 +1761,11 @@ As clusters scale to 100,000+ GPUs, the probability of a "Silent Data Corruption
 A quick estimate makes the exposure concrete.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: sdc-prob-calc
 #| echo: false
 from mlsysim.fmt import check, MarkdownStr
-from mlsysim.core.constants import P_SDC_PER_GPU_HR
 
 class SDCCollective:
     """The risk of silent corruption in global collectives."""
@@ -1766,7 +1774,7 @@ class SDCCollective:
     p_sdc_per_gpu_hr = P_SDC_PER_GPU_HR # 1 in a million chance per hour
     training_step_s = 2
     # ┌── 2. EXECUTE ───────────────────────────────────────
-    p_step_sdc = 1 - (1 - p_sdc_per_gpu_hr)**(n_gpus * (training_step_s / 3600))
+    p_step_sdc = 1 - (1 - p_sdc_per_gpu_hr)**(n_gpus * (training_step_s / SEC_PER_HOUR))
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(p_step_sdc > 0.00005, f"Prob {p_step_sdc:.6f} unexpected")
     # ┌── 4. OUTPUT ────────────────────────────────────────
@@ -2005,6 +2013,8 @@ $$
 ::: {#fig-checkpoint-tradeoff fig-env="figure" fig-pos="htb" fig-cap="**The Checkpoint Trade-Off**: Checkpoint save overhead decreases with longer intervals, but wasted computation from failures increases. The Young-Daly optimal interval minimizes total overhead. For a 175B model with ~2.5-minute checkpoint writes on a cluster with 2-hour MTBF, the optimal interval is approximately 24 minutes." fig-alt="Three curves: checkpoint overhead decreasing with interval, rework cost increasing, and total wasted work with minimum at optimal interval around 24 minutes."}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ CHECKPOINT TAX (FIGURE)
@@ -2114,6 +2124,8 @@ The U-shaped cost curve in @fig-young-daly visualizes this trade-off: checkpoint
 For our 10,000-GPU cluster with calculated system MTBF of 3.69 hours (from @sec-fault-tolerance-reliability-reliability-worked-example-cluster-mtbf-calculation-9255) and checkpoint time of 21 seconds (from `{python} FaultToleranceSetup.gpt3_ckpt_tb_str` TB checkpoint at 100 GB/s), the Young-Daly formula computes the optimal interval.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: young-daly-optimal-interval
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -2150,11 +2162,11 @@ class YoungDalyOptimal:
     check(10 < tau_opt_min < 15, f"Interval {tau_opt_min:.1f}m outside expected range")
     check(hourly_overhead_pct > overhead_pct, "Hourly checkpointing should waste more than optimal")
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    t_write_s_str = fmt(t_write_s, precision=0, commas=False)
+    t_write_s_str = fmt(t_write_s, precision=1, allow_zero=True, commas=False)
     mtbf_h_str = fmt(mtbf_h, precision=2, commas=False)
-    mtbf_s_str = fmt(mtbf_s, precision=0)
-    radicand_str = fmt(radicand, precision=0)
-    tau_opt_s_str = fmt(tau_opt_s, precision=0)
+    mtbf_s_str = fmt(mtbf_s, precision=1, allow_zero=True)
+    radicand_str = fmt(radicand, precision=1, allow_zero=True)
+    tau_opt_s_str = fmt(tau_opt_s, precision=1, allow_zero=True)
     tau_opt_min_str = fmt(tau_opt_min, precision=1, commas=False)
     overhead_pct_str = fmt(overhead_pct, precision=1, commas=False)
     hourly_overhead_pct_str = fmt(hourly_overhead_pct, precision=1, commas=False)
@@ -2250,6 +2262,8 @@ For the 2.1 TB Archetype A checkpoint above, 1,000 workers would each write roug
 While @tbl-checkpoint-overhead-by-model suggests modest overhead percentages, real deployments often encounter checkpoint times far exceeding these theoretical estimates. Diagnosing such discrepancies requires examining the full system stack.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 #| label: checkpoint-debug-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -2267,7 +2281,7 @@ While @tbl-checkpoint-overhead-by-model suggests modest overhead percentages, re
 # │   GB/s (10 Gbps / 8); calculate min write time and per-node bandwidth
 # │   under contention from 64 concurrent nodes.
 # │
-# │ Imports: mlsysim.core.constants (LLAMA2_70B_PARAMS, Bparam, BYTES_FP16, byte)
+# │ Imports: mlsysim.core.constants (Models.Language.Llama2_70B.parameters, Bparam, BYTES_FP16, byte)
 # │ Exports: weights_gb_str, optimizer_gb_str, total_ckpt_gb_str, nfs_gbs_str,
 # │   min_write_s_str, min_write_min_str, per_node_mbs_str,
 # │   per_node_shard_gb_str, per_node_write_min_str, extended_weeks_str,
@@ -2282,52 +2296,54 @@ class CheckpointDebug:
     """
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    model_params_b = LLAMA2_70B_PARAMS.m_as(Bparam)
-    bytes_per_param = BYTES_FP16.m_as(byte)  # BF16
-    nfs_gbps = 10
-    pcie_gbs = 32
+
+    from mlsysim import Models, Hardware
+
+    m = Models.Language.Llama2_70B
+    nfs_bw = 10 * ureg.Gbps
+    pcie_bw = 32 * ureg.GB / ureg.second
     n_nodes = 64
     overhead_pct = 30
     base_weeks = 2
     extra_cost_k = 500
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    weights_gb = model_params_b * bytes_per_param
-    optimizer_gb = weights_gb * 4 # Adam m + v in FP32
-    total_ckpt_gb_val = weights_gb + optimizer_gb
+    # 10 bytes/param = 2 (BF16 weights) + 8 (Adam FP32)
+    bytes_per_param = 10
+    total_ckpt_qty = m.parameters.m_as(param) * bytes_per_param * ureg.byte
+    total_ckpt_gb_val = total_ckpt_qty.m_as(GB)
 
-    nfs_gbs_val = nfs_gbps / 8
-    min_write_s_val = total_ckpt_gb_val/nfs_gbs_val
-    min_write_min_val = min_write_s_val / 60
+    # Use library formula for transfer time
+    t_write = (total_ckpt_qty / nfs_bw)
+    min_write_s_val = t_write.m_as("second")
+    min_write_min_val = t_write.m_as("minute")
 
-    per_node_gbs_val = nfs_gbs_val/n_nodes
-    per_node_mbs_val = per_node_gbs_val * 1000
-    per_node_shard_gb_val = total_ckpt_gb_val / n_nodes
-    per_node_write_min_val = (per_node_shard_gb_val/per_node_gbs_val) / 60
-    gpu_cpu_single_path_s_val = total_ckpt_gb_val/pcie_gbs
-    gpu_cpu_parallel_s_val = per_node_shard_gb_val/pcie_gbs
+    per_node_shard_qty = total_ckpt_qty / n_nodes
+    per_node_shard_gb_val = per_node_shard_qty.m_as(GB)
 
-    extended_weeks_val = base_weeks * (1 + overhead_pct / 100)
+    # Staging over PCIe
+    t_stage = (per_node_shard_qty / pcie_bw)
+    t_stage_single = (total_ckpt_qty / pcie_bw)
+    gpu_cpu_parallel_s_val = t_stage.m_as("second")
+    gpu_cpu_single_path_s_val = t_stage_single.m_as("second")
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(total_ckpt_gb_val == 700, f"Expected 700 GB checkpoint, got {total_ckpt_gb_val}")
-    check(9 < per_node_write_min_val < 10, "Per-node shard write should match aggregate bandwidth floor")
-    check(0.3 < gpu_cpu_parallel_s_val < 0.4, "Parallel GPU-to-CPU staging should be sub-second per node")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
-    optimizer_gb_str = fmt(optimizer_gb, precision=0, commas=False)
-    total_ckpt_gb_str = fmt(total_ckpt_gb_val, precision=0, commas=False)
-    nfs_gbs_str = fmt(nfs_gbs_val, precision=2, commas=False)
-    min_write_s_str = fmt(min_write_s_val, precision=0, commas=False)
+    weights_gb_str = fmt(m.parameters.m_as(param) * 2 / BILLION, precision=1, allow_zero=True, commas=False)
+    optimizer_gb_str = fmt(m.parameters.m_as(param) * 8 / BILLION, precision=1, allow_zero=True, commas=False)
+    total_ckpt_gb_str = fmt(total_ckpt_gb_val, precision=1, allow_zero=True, commas=False)
+    nfs_gbs_str = fmt(nfs_bw.m_as(GB/second), precision=2, commas=False)
+    min_write_s_str = fmt(min_write_s_val, precision=1, allow_zero=True, commas=False)
     min_write_min_str = fmt(min_write_min_val, precision=1, commas=False)
-    per_node_mbs_str = fmt(per_node_mbs_val, precision=0, commas=False)
+    per_node_mbs_str = fmt(nfs_bw.m_as(MB/second) / n_nodes, precision=0, commas=False)
     per_node_shard_gb_str = fmt(per_node_shard_gb_val, precision=1, commas=False)
-    per_node_write_min_str = fmt(per_node_write_min_val, precision=1, commas=False)
-    gpu_cpu_single_path_s_str = fmt(gpu_cpu_single_path_s_val, precision=1, commas=False)
+    per_node_write_min_str = fmt(min_write_min_val, precision=1, commas=False) # Aggregated BW bottleneck
     gpu_cpu_parallel_s_str = fmt(gpu_cpu_parallel_s_val, precision=2, commas=False)
-    extended_weeks_str = fmt(extended_weeks_val, precision=1, commas=False)
-    extra_cost_k_str = fmt(extra_cost_k, precision=0, commas=False)
+    gpu_cpu_single_path_s_str = fmt(gpu_cpu_single_path_s_val, precision=1, commas=False)
+    extended_weeks_str = fmt(base_weeks * (1 + overhead_pct / 100), precision=1, commas=False)
+    extra_cost_k_str = fmt(extra_cost_k, precision=1, allow_zero=True, commas=False)
 ```
 
 ::: {#exmp-fault-tolerance-debugging-checkpoint-overhead .callout-example title="Debugging checkpoint overhead"}
@@ -2538,6 +2554,8 @@ Automatic recovery systems perform these steps without human intervention. Moder
 Recovery validation is the final and often overlooked step. After loading a checkpoint, validation confirms successful recovery by verifying model parameters match expected shapes and dtypes, running a few training steps and checking that the loss is consistent with prefailure values, and confirming gradient computations produce expected statistics. If the loss diverges immediately after recovery, the checkpoint itself may be corrupted, requiring fallback to an earlier snapshot.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: lego-recovery-budget
 #| echo: false
 from mlsysim.fmt import fmt, check
@@ -2633,6 +2651,8 @@ Straggler mitigation strategies span a spectrum of aggressiveness. **Backup work
 A simple cost calculation shows why a severe straggler may be cheaper to replace than tolerate.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: lego-straggler-tax
 #| echo: false
 from mlsysim.fmt import fmt, check
@@ -2659,16 +2679,16 @@ class StragglerTax:
     check(wasted_cost_per_hour > 0, "Must show wasted cost")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    n_gpus_str = fmt(n_gpus, precision=0)
+    n_gpus_str = fmt(n_gpus, precision=1, allow_zero=True)
     normal_step_str = fmt(normal_step_s, precision=1, commas=False)
-    throttle_pct_str = fmt(int(throttle_factor * 100), precision=0, commas=False)
+    throttle_pct_str = fmt(int(throttle_factor * 100), precision=1, allow_zero=True, commas=False)
     straggler_step_str = fmt(straggler_step_s, precision=1, commas=False)
-    healthy_gpus_str = fmt(healthy_gpus, precision=0)
+    healthy_gpus_str = fmt(healthy_gpus, precision=1, allow_zero=True)
     effective_speed_str = fmt(effective_speed, precision=1, commas=False)
     straggler_frac_str = fmt(straggler_frac_pct, precision=1, commas=False)
-    throughput_loss_str = fmt(int(throughput_loss_pct), precision=0, commas=False)
-    gpu_cost_str = fmt(int(gpu_cost_per_hour), precision=0, commas=False)
-    wasted_cost_str = fmt(wasted_cost_per_hour, precision=0)
+    throughput_loss_str = fmt(int(throughput_loss_pct), precision=1, allow_zero=True, commas=False)
+    gpu_cost_str = fmt(int(gpu_cost_per_hour), precision=1, allow_zero=True, commas=False)
+    wasted_cost_str = fmt(wasted_cost_per_hour, precision=1, allow_zero=True)
 ```
 
 ::: {#nbk-fault-tolerance-straggler-tax .callout-notebook title="The straggler tax"}

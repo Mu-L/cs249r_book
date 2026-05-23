@@ -75,6 +75,7 @@ PUE_TYPICAL = TraceableConstant(
     citation="Uptime Institute (2023), Global Data Center Survey"
 )
 PUE_LEGACY = 1.58                  # Older enterprise datacenters
+PUE_STATE_OF_ART = 1.10            # Modern highly optimized datacenter benchmark
 
 # Water Usage Effectiveness (WUE) — liters per kWh
 WUE_AIR_COOLED = 0.5               # Air-cooled (minimal water)

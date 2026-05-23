@@ -28,8 +28,8 @@ def test_resnet50_h100_throughput():
     data pipeline overhead (Wall 9) or framework kernel launch tax (Wall 3).
     We accept a 50% tolerance to validate the model is in the right ballpark.
     """
-    model = Models.ResNet50
-    hardware = Hardware.H100
+    model = Models.Vision.ResNet50
+    hardware = Hardware.Cloud.H100
 
     # efficiency=0.08 calibrated to the "accelerator overkill" regime where
     # ResNet-50 kernels are too small to saturate H100 tensor cores.
@@ -53,8 +53,8 @@ def test_llama3_8b_h100_itl():
     Decode is memory-bandwidth-bound: ITL ≈ model_weights / HBM_bandwidth.
     The analytical model gives a lower bound (no framework overhead).
     """
-    model = Models.Llama3_8B
-    hardware = Hardware.H100
+    model = Models.Language.Llama3_8B
+    hardware = Hardware.Cloud.H100
 
     res = ServingModel().solve(model, hardware, seq_len=1024, batch_size=1, efficiency=0.60)
 
@@ -71,8 +71,8 @@ def test_distributed_resnet_efficiency():
     External target: >90% scaling efficiency for small DP over NVLink.
     Source: NVIDIA DGX H100 data sheet claims near-linear scaling within node.
     """
-    model = Models.ResNet50
-    h100 = Hardware.H100
+    model = Models.Vision.ResNet50
+    h100 = Hardware.Cloud.H100
 
     node = Node(
         name="H100-Node",
@@ -91,8 +91,8 @@ def test_distributed_resnet_efficiency():
 # ─── 4. DIMENSIONAL INTEGRITY ───────────────────────────────────────────────
 def test_dimensional_integrity():
     """Verify that results preserve Pint units and can be converted."""
-    model = Models.ResNet50
-    hardware = Hardware.H100
+    model = Models.Vision.ResNet50
+    hardware = Hardware.Cloud.H100
     profile = SingleNodeModel().solve(model, hardware)
 
     assert profile.latency.check('[time]')

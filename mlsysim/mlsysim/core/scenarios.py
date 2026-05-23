@@ -26,32 +26,6 @@ class Scenario(BaseModel):
     target_accuracy: Optional[float] = None
     power_budget: Optional[Quantity] = None
 
-    _legacy_aliases: ClassVar[dict[str, Any]] = {
-        "mission_goal": lambda self: self.description,
-        "critical_constraint": lambda self:
-            self.sla_latency
-            if self.sla_latency is not None
-            else self.target_accuracy
-            if self.target_accuracy is not None
-            else self.power_budget,
-        "ram": lambda self:
-            self.system.node.accelerator.ram
-            if isinstance(self.system, Fleet)
-            else self.system.ram,
-        "hardware": lambda self:
-            self.system.node.accelerator
-            if isinstance(self.system, Fleet)
-            else self.system,
-    }
-
-    def __getattr__(self, name):
-        aliases = type(self)._legacy_aliases
-        if name in aliases:
-            value = aliases[name](self)
-            if value is not None:
-                return value
-        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
-
     @property
     def is_distributed(self) -> bool:
         return isinstance(self.system, Fleet)
@@ -157,50 +131,22 @@ class Scenario(BaseModel):
             macro=l3
         )
 
-    def validate_scenario(self, batch_size: int = 1, precision: str = "fp16") -> Dict[str, Any]:
+    def validate(self, batch_size: int = 1, precision: str = "fp16") -> bool:
         """
-        Comprehensive validation of the scenario's physical and performance feasibility.
+        Authoritative validation of the scenario's physical and performance feasibility.
+        Returns True if all levels PASS, raises Exception if FAIL.
         """
-        from .solver import DistributedModel, SingleNodeModel
+        eval_res = self.evaluate(batch_size=batch_size, precision=precision)
         
-        # 1. Resolve Hardware for memory check
-        hardware = self.system.node.accelerator if self.is_distributed else self.system
-        
-        # 2. Memory Feasibility Check
-        weights = self.workload.size_in_bytes()
-        # For transformers, also check KV cache at a reasonable context (e.g., 512)
-        if isinstance(self.workload, TransformerWorkload):
-            kv_cache = self.workload.get_kv_cache_size(seq_len=512, batch_size=batch_size)
-            total_mem = weights + kv_cache
-        else:
-            total_mem = weights
+        # Level 1: Feasibility
+        if eval_res.feasibility.status == "FAIL":
+            raise OOMError(f"Feasibility Failure: {eval_res.feasibility.summary}")
             
-        if total_mem > hardware.memory.capacity:
-            raise OOMError(
-                f"Physical Failure: {self.name} requires {total_mem.to('GB')} but {hardware.name} only has {hardware.memory.capacity.to('GB')}.",
-                required_bytes=total_mem,
-                available_bytes=hardware.memory.capacity
-            )
-
-        # 3. Performance / SLA Check
-        if self.is_distributed:
-            solver = DistributedModel()
-            perf = solver.solve(self.workload, self.system, batch_size=batch_size, precision=precision)
-            actual_latency = perf.step_latency_total
-        else:
-            perf = SingleNodeModel().solve(self.workload, self.system, batch_size=batch_size, precision=precision)
-            actual_latency = perf.latency
-
-        if self.sla_latency and actual_latency > self.sla_latency:
-            raise SLAViolation(
-                f"SLA Violation: {self.name} actual latency {actual_latency} exceeds target {self.sla_latency}."
-            )
-
-        return {
-            "status": "Validated",
-            "memory_utilization": (total_mem / hardware.memory.capacity).to_base_units().magnitude,
-            "performance": perf
-        }
+        # Level 2: Performance
+        if eval_res.performance.status == "FAIL":
+            raise SLAViolation(f"Performance Failure: {eval_res.performance.summary}")
+            
+        return True
 
 class Scenarios:
     """
@@ -299,18 +245,3 @@ class Applications:
     Frontier = Scenarios.FrontierTraining
     Chatbot = Scenarios.ChatbotServing
     KWS = Scenarios.KeywordSpotting
-
-class Archetypes:
-    """
-    Backward-compatible namespace for older textbook notebooks/qmd files.
-    """
-
-    # Legacy system/application archetype aliases
-    Cloud_V100 = Scenarios.FrontierTraining
-    TinyML_M7 = Scenarios.SmartDoorbell
-
-    # Optional convenience aliases
-    Frontier = Applications.Frontier
-    AutoDrive = Applications.AutoDrive
-    Doorbell = Applications.Doorbell
-    Workstation = Applications.Workstation

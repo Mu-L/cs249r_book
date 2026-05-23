@@ -28,9 +28,8 @@ from .formulas import (
 from .constants import (
     ureg, Q_, PRECISION_MAP,
     BYTES_FP16, LATENCY_INFINIBAND, LATENCY_NVLINK,
-    GPU_MTTF_HOURS, H100_TDP,
+    GPU_MTTF_HOURS,
     CHINCHILLA_TOKENS_PER_PARAM, CHINCHILLA_COMPUTE_CONSTANT,
-    H100_FLOPS_FP16_TENSOR,
     CLOUD_ELECTRICITY_PER_KWH,
 )
 from .defaults import (
@@ -701,7 +700,7 @@ class SustainabilityModel(BaseModel):
         duration_hours = duration_days * 24
         
         # 2. Power
-        base_tdp = fleet.node.accelerator.tdp if fleet.node.accelerator.tdp else H100_TDP
+        base_tdp = fleet.node.accelerator.tdp if fleet.node.accelerator.tdp else (700 * ureg.watt)
         # Energy proportionality: Idle power is ~30% of TDP. Dynamic power scales with compute utilization (MFU).
         idle_power = base_tdp * 0.3
         dynamic_power = base_tdp * 0.7 * mfu
@@ -1792,7 +1791,7 @@ class ScalingModel(BaseModel):
         if compute_budget.dimensionality == ureg.day.dimensionality:
             # Convert GPU-days to FLOPs using H100 SXM reference
             # Source: NVIDIA H100 datasheet (989 TFLOPs FP16 dense)
-            c_flops = (compute_budget * H100_FLOPS_FP16_TENSOR * REFERENCE_MFU_SUSTAINED).to(ureg.flop)
+            c_flops = (compute_budget * (989 * ureg.TFLOPs / ureg.second) * REFERENCE_MFU_SUSTAINED).to(ureg.flop)
 
         if target_model_size:
             p_opt = target_model_size.to(ureg.count).magnitude

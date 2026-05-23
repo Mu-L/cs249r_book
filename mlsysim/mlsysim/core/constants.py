@@ -1,124 +1,55 @@
 # constants.py
 # The Analytical Engine of Machine Learning Systems
-# This file defines the single source of truth for hardware specifications,
-# constants, and conversion factors used throughout the textbook.
+# 
+# ⚠️ ARCHITECTURAL RULE ⚠️
+# This file is strictly for universal physics (e.g., speed of light), standard units,
+# and generalized economic baselines.
+# 
+# DO NOT add specific hardware numbers (like H100 memory bandwidth) or specific 
+# model definitions (like GPT-3 parameter counts) here. 
+#
+# Hardware specifications belong in: `mlsysim/hardware/registry.py`
+# Model specifications belong in: `mlsysim/models/registry.py`
 #
 # Measurement units live in units.py; tuneable simulation defaults live in
-# defaults.py. This module re-exports both for backward compatibility and
-# adds the genuine hardware/model constants that belong here.
+# defaults.py. This module re-exports both for convenience.
 
 from .units import *  # noqa: F401,F403 — re-export full unit registry
 
-# --- Hardware Specifications (The Silicon Contract) ---
-#
-# Capacity constants below use binary GiB per the physical HBM/DRAM stack spec.
-# The field's branded vocabulary (e.g. "V100 32 GB HBM2", "A100 80 GB HBM2e",
-# "ESP32-S3 512 KB RAM") rounds these to decimal-labeled names; book prose
-# displays the branded form in table cells and chip-identification labels per
-# the §7 branded-label carve-out (see .claude/rules/book-prose.md). All
-# *calculations* (memory budgets, roofline math, throughput estimates) use the
-# precise values defined here.
+# --- Legacy System Ratios / Physics ---
+# (Some derived capabilities are still here, but specific chips should live in registry.py)
 
 # NVIDIA V100 (Volta, 2017) — Source: NVIDIA V100 Data Sheet
-V100_FLOPS_FP16_TENSOR = 125 * TFLOPs / second
-V100_FLOPS_FP32 = 15.7 * TFLOPs / second
-V100_MEM_BW = 900 * GB / second           # HBM2
-V100_MEM_CAPACITY = 32 * GiB
-V100_TDP = 300 * watt                     # SXM2 variant
 
 # NVIDIA A100 (Ampere, 2020) — Source: NVIDIA A100 Data Sheet
 # NOTE: Dense (without structured sparsity) values. With 2:4 sparsity, double these.
-A100_FLOPS_FP16_TENSOR = 312 * TFLOPs / second   # Dense FP16 Tensor Core (624 with sparsity)
 A100_FLOPS_FP16_SPARSE = 624 * TFLOPs / second   # With 2:4 structured sparsity
-A100_FLOPS_TF32 = 156 * TFLOPs / second           # Dense TF32 (312 with sparsity)
-A100_FLOPS_FP32 = 19.5 * TFLOPs / second          # Standard CUDA cores (no tensor)
-A100_TOPS_INT8 = 624 * TOPS                        # Dense INT8 Tensor Core (1248 with sparsity)
-A100_MEM_BW = 2039 * GB / second           # HBM2e (SXM variant)
-A100_MEM_CAPACITY = 80 * GiB              # SXM variant (also 40 GiB PCIe)
-A100_TDP = 400 * watt                     # SXM variant
 
 # NVIDIA H100 (Hopper, 2022) — Source: NVIDIA H100 Data Sheet
-H100_FLOPS_FP16_TENSOR = 989 * TFLOPs / second
-H100_FLOPS_FP8_TENSOR = 1979 * TFLOPs / second
-H100_FLOPS_TF32 = 494 * TFLOPs / second
 H100_FLOPS_FP32_CUDA = 67 * TFLOPs / second  # FP32 on CUDA (vector) cores, no Tensor Core
-H100_TOPS_INT8 = 1979 * TOPS              # Dense. Sparse is 3958.
-H100_MEM_BW = 3.35 * TB / second          # HBM3
-H100_MEM_CAPACITY = 80 * GiB
-H100_TDP = 700 * watt                     # SXM variant
 
 # NVIDIA H200 (Hopper, 2023) — Source: NVIDIA H200 Data Sheet
 # H200 shares the Hopper compute die with H100, only memory differs
-H200_MEM_BW = 4.8 * TB / second             # HBM3e
-H200_MEM_CAPACITY = 131 * GiB              # 141 GB (NVIDIA spec) converted to GiB for consistency with other GPU constants
-H200_TDP = 700 * watt                       # Same as H100 SXM
 
 # NVIDIA B100/B200 (Blackwell, 2024) — Source: NVIDIA Blackwell Architecture
-B200_FLOPS_FP16_TENSOR = 2250 * TFLOPs / second  # Dense. Sparse is 4500.
 B200_FLOPS_FP16_SPARSE = 4500 * TFLOPs / second
-B200_FLOPS_FP8_TENSOR = 4500 * TFLOPs / second   # Dense. Sparse is 9000.
-B200_FLOPS_FP4_TENSOR = 9000 * TFLOPs / second   # Dense. Sparse is 18 PFLOP/s.
-B200_TOPS_INT4 = 9000 * TOPS                     # Dense. Sparse is 18000.
-B200_MEM_BW = 8 * TB / second             # HBM3e
-B200_MEM_CAPACITY = 192 * GiB
-B200_TDP = 1000 * watt
 
 # NVIDIA GB200 NVL72 (Rack-scale, 2024) — Source: NVIDIA Blackwell Architecture
 # This is a full rack containing 72 Blackwell GPUs and 36 Grace CPUs.
 # We model the aggregate resources of the rack for macro-scale simulation.
 NVL72_GPUs = 72 * count
-NVL72_FLOPS_FP16_TENSOR = 162 * PFLOPs / second  # 72 * 2.25 PFLOP/s FP16 dense
-NVL72_FLOPS_FP4_TENSOR = 720 * PFLOPs / second  # 72 * 10 PFLOP/s FP4 dense (NVIDIA marketing headline)
-NVL72_FLOPS_FP8_TENSOR = 324 * PFLOPs / second  # 72 * 4.5 PFLOP/s FP8 dense
-NVL72_MEM_CAPACITY = 13.8 * TB                  # 72 * 192 GB
-NVL72_MEM_BW = 576 * TB / second                # 72 * 8 TB/s
-NVL72_NVLINK_BW = 130 * TB / second             # Full bisection (bidirectional)
-NVL72_TDP = 120 * kilowatt                      # Max rack power
-NVL72_UNIT_COST = 3000000 * USD                 # Estimated $3M+ per rack
 
 # AMD Instinct MI300X (CDNA 3, 2023) — Source: AMD Instinct MI300X Data Sheet
-MI300X_FLOPS_FP16_TENSOR = 1307 * TFLOPs / second  # Dense. Sparse is 2614.
-MI300X_FLOPS_FP8 = 2614 * TFLOPs / second          # FP8 dense (same as FP16 sparse)
-MI300X_TOPS_INT8 = 2614 * TOPS                      # INT8 dense
-MI300X_FLOPS_FP32 = 163.4 * TFLOPs / second         # FP32 (Matrix Core)
-MI300X_MEM_BW = 5.3 * TB / second
-MI300X_MEM_CAPACITY = 192 * GiB
-MI300X_TDP = 750 * watt
 
 # AMD Instinct MI250X (CDNA 2, 2021) — Source: AMD MI250X Data Sheet
-MI250X_FLOPS_FP16_TENSOR = 383 * TFLOPs / second   # Dense FP16 Matrix Core (per OAM)
-MI250X_FLOPS_FP32 = 47.9 * TFLOPs / second
-MI250X_TOPS_INT8 = 383 * TOPS
-MI250X_MEM_BW = 3.2 * TB / second                   # HBM2e (2x 1.6 TB/s per GCD)
-MI250X_MEM_CAPACITY = 128 * GiB                      # 2x 64 GiB HBM2e
-MI250X_TDP = 500 * watt
 
 # Intel Gaudi 2 (2022) — Source: Intel Gaudi 2 White Paper
-GAUDI2_FLOPS_BF16 = 432 * TFLOPs / second           # BF16 Tensor (MME)
-GAUDI2_FLOPS_FP8 = 865 * TFLOPs / second            # FP8
-GAUDI2_MEM_BW = 2.45 * TB / second                   # HBM2e
-GAUDI2_MEM_CAPACITY = 96 * GiB
-GAUDI2_TDP = 600 * watt
 
 # Intel Gaudi 3 (2024) — Source: Intel Gaudi 3 Architecture White Paper
-GAUDI3_FLOPS_BF16 = 1835 * TFLOPs / second          # BF16 Tensor
-GAUDI3_FLOPS_FP8 = 3670 * TFLOPs / second           # FP8
-GAUDI3_MEM_BW = 3.7 * TB / second                    # HBM2e
-GAUDI3_MEM_CAPACITY = 128 * GiB
-GAUDI3_TDP = 900 * watt
 
 # AWS Trainium 2 (2024) — Source: AWS re:Invent 2023 announcements
-TRAINIUM2_FLOPS_BF16 = 380 * TFLOPs / second        # BF16 (estimated from 4x Trainium 1)
-TRAINIUM2_FLOPS_FP8 = 760 * TFLOPs / second         # FP8 (estimated)
-TRAINIUM2_MEM_BW = 2.4 * TB / second                 # HBM (estimated)
-TRAINIUM2_MEM_CAPACITY = 96 * GiB
-TRAINIUM2_TDP = 500 * watt                           # Estimated
 
 # NVIDIA T4 (Turing, 2018) — Source: NVIDIA T4 Data Sheet
-T4_FLOPS_FP16_TENSOR = 65 * TFLOPs / second
-T4_TOPS_INT8 = 130 * TOPS
-T4_MEM_BW = 320 * GB / second
-T4_TDP = 70 * watt
 
 # Google TPU v1 — Source: Jouppi et al. (2017)
 TPUV1_TOPS_INT8 = 92 * TOPS
@@ -135,20 +66,11 @@ TPUV3_MEM_BW = 900 * GB / second
 TPUV3_MEM_CAPACITY = 32 * GiB
 
 # Google TPU v4 — Source: Google TPUv4 paper (Jouppi et al., 2023)
-TPUV4_FLOPS_BF16 = 275 * TFLOPs / second
-TPUV4_MEM_BW = 1200 * GB / second
 
 # Google TPU v5p — Source: Google Cloud Documentation (2024)
-TPUV5P_FLOPS_BF16 = 459 * TFLOPs / second
-TPUV5P_TOPS_INT8 = 918 * TOPS                      # INT8 (2x BF16)
-TPUV5P_MEM_BW = 2.76 * TB / second
-TPUV5P_MEM_CAPACITY = 95 * GiB
 TPUV5P_ICI_BW = 1200 * GB / second        # Bidirectional Inter-Chip Interconnect
 
 # Google TPU v6e (Trillium) — Source: Google Cloud Documentation
-TPUV6_FLOPS_BF16 = 918 * TFLOPs / second
-TPUV6_MEM_BW = 1600 * GB / second
-TPUV6_MEM_CAPACITY = 32 * GiB
 
 # Cerebras Wafer-Scale Engine (WSE) — Source: Cerebras Whitepapers
 WSE1_CORES = 400000 * count
@@ -164,15 +86,12 @@ WSE2_TDP = 15000 * watt
 WSE2_FLOPS_FP16 = 38 * PFLOPs / second  # Estimated
 
 WSE3_CORES = 900000 * count
-WSE3_MEM_CAPACITY = 44 * GB
-WSE3_MEM_BW = 21 * PB / second
-WSE3_TDP = 23000 * watt
-WSE3_FLOPS_FP16 = 125 * PFLOPs / second
 
 # High-end Desktop CPU (Reference)
 CPU_FLOPS_FP32 = 1 * TFLOPs / second
 
 # --- Latency Hierarchy (2025 Reference) ---
+LATENCY_REGISTER_REF = 0.3 * NS
 LATENCY_L1_REGISTER = 1 * NS
 LATENCY_L2_CACHE = 4 * NS
 LATENCY_HBM3 = 300 * NS
@@ -182,9 +101,13 @@ LATENCY_INFINIBAND = 5000 * NS
 LATENCY_NVME_SSD = 100000 * NS
 
 # Mobile NPU
-MOBILE_NPU_TOPS_INT8 = 50 * TOPS
 MOBILE_FLAGSHIP_NPU_TOPS_INT8 = 100 * TOPS
-MOBILE_NPU_MEM_BW = 100 * GB / second
+MOBILE_INFERENCE_TDP_HIGH = 4 * watt
+
+# Edge accelerators
+JETSON_AGX_ORIN_TOPS_INT8 = 275 * TOPS
+JETSON_AGX_ORIN_TDP_MIN = 15 * watt
+JETSON_AGX_ORIN_TDP_MAX = 60 * watt
 
 # --- Datasets ---
 IMAGENET_IMAGES = 1_281_167 * count
@@ -201,11 +124,21 @@ COLOR_DEPTH_8BIT = 256
 NETWORK_10G_BW = 10 * Gbps
 NETWORK_100G_BW = 100 * Gbps
 NETWORK_5G_ENERGY_PER_MB_MJ = 100 * ureg.millijoule / MB
+FEC_LATENCY_LOW = 100 * NS
+FEC_LATENCY_HIGH = 200 * NS
+FABRIC_ALPHA_NDR = 1.5 * US
+FABRIC_ALPHA_ROCE = 5.0 * US
+FABRIC_HOP_LATENCY = 0.6 * US
 
 # Optical Interconnects (2025-2026 Reference)
 OPTICS_POWER_PLUGGABLE_400G_W = 20 * watt
 OPTICS_POWER_CPO_400G_W = 10 * watt
 OPTICS_POWER_LPO_400G_W = 12 * watt       # Linear Pluggable Optics
+ETHERNET_400G_BW = 400 * Gbps
+ETHERNET_800G_BW = 800 * Gbps
+ETHERNET_1P6T_BW = 1600 * Gbps
+SWITCH_ASIC_51T2_BW = 51_200 * Gbps
+SWITCH_ASIC_102T4_BW = 102_400 * Gbps
 
 # Intra-node interconnects
 NVLINK_V100_BW = 300 * GB / second        # NVLink 2.0 (V100, 6 links × 50 GB/s)
@@ -255,6 +188,7 @@ SPEED_OF_LIGHT_FIBER_KM_S = 200000 * ureg.kilometer / second
 # --- Cloud Pricing ---
 CLOUD_EGRESS_PER_GB = 0.09 * USD / GB  # AWS data transfer out (2024 baseline)
 CLOUD_ELECTRICITY_PER_KWH = 0.12 * USD / ureg.kilowatt_hour
+KG_PER_METRIC_TON = 1000
 
 # Storage Pricing (2024 baseline)
 STORAGE_COST_S3_STD = 23 * USD / TB / ureg.month
@@ -279,6 +213,9 @@ LABELING_COST_MEDICAL_HIGH = 200 * USD
 CLOUD_GPU_TRAINING_PER_HOUR = 4.0 * USD / hour
 CLOUD_GPU_INFERENCE_PER_HOUR = 2.5 * USD / hour
 TPU_V4_PER_HOUR = 4.0 * USD / hour
+FLEET_GPU_HOUR_COST_REF = 2.0 * USD / hour
+FLEET_SPOT_GPU_HOUR_COST_REF = 0.70 * USD / hour
+FLEET_INTERNAL_CHARGEBACK_PER_HOUR = 2.50 * USD / hour
 
 # --- Carbon (Scenario Baseline) ---
 CARBON_PER_GPU_HR_KG = 0.16 * ureg.kilogram
@@ -302,94 +239,53 @@ VIDEO_FPS_STANDARD = Q_(30, 'Hz')
 # --- Models & Workloads ---
 
 # GPT-2 (1.5B) — used in training chapter worked examples
-GPT2_PARAMS = 1.5e9 * param
-GPT2_LAYERS = 48
-GPT2_HIDDEN_DIM = 1600
-GPT2_HEADS = 25
 
 # GPT-3 (175B)
-GPT3_PARAMS = 175e9 * param
-GPT3_LAYERS = 96
-GPT3_HIDDEN_DIM = 12288
-GPT3_HEADS = 96
-GPT3_TRAINING_OPS = 3.14e23 * flop
 GPT3_TRAINING_TOKENS = 300e9 * count
+GPT3_TRAINING_ACCELERATORS_REF = 1024 * count
 GPT3_TRAINING_DAYS_REF = 25 * day # Days on 1024 A100s
 GPT3_TRAINING_ENERGY_MWH = 1287 # MWh, estimated per Patterson et al. (2021)
 
 # GPT-4 (Reference) - Note: Unofficial public estimates
-GPT4_EST_PARAMS = 1.76e12 * param
-GPT4_LAYERS = 120
-GPT4_HIDDEN_DIM = 16384
-GPT4_HEADS = 128
+GPT4_CLASS_PUBLIC_ESTIMATE_GPU_COUNT_REF = 25_000 * count
+GPT4_CLASS_PUBLIC_ESTIMATE_TRAINING_DAYS_REF = 90 * day
+GPT4_CLASS_PUBLIC_ESTIMATE_HARDWARE_LABEL = "A100-class"
 GPT4_TRAINING_GPU_DAYS = 2.5e6 # A100 days
 
 # Llama-2 (70B) — Source: Touvron et al. (2023)
-LLAMA2_70B_PARAMS = 70e9 * param
-LLAMA2_70B_LAYERS = 80
-LLAMA2_70B_HIDDEN_DIM = 8192
-LLAMA2_70B_HEADS = 64
 LLAMA2_70B_KV_HEADS = 8                       # Grouped-Query Attention (GQA)
 
 # Llama 3.1
-LLAMA3_8B_PARAMS = 8.03e9 * param
-LLAMA3_8B_LAYERS = 32
-LLAMA3_8B_HIDDEN_DIM = 4096
-LLAMA3_8B_HEADS = 32
-LLAMA3_8B_KV_HEADS = 8
-LLAMA3_70B_PARAMS = 70.6e9 * param
-LLAMA3_70B_LAYERS = 80
-LLAMA3_70B_HIDDEN_DIM = 8192
-LLAMA3_70B_HEADS = 64
-LLAMA3_70B_KV_HEADS = 8
 LLAMA3_405B_PARAMS = 405e9 * param
 
 # BERT-Base — Source: Devlin et al. (2018)
-BERT_BASE_PARAMS = 110e6 * param
-BERT_BASE_LAYERS = 12
-BERT_BASE_HIDDEN_DIM = 768
-BERT_BASE_HEADS = 12
 BERT_BASE_FLOPs = 22e9 * flop              # Per inference (seq_len=512)
 
 # BERT-Large — Source: Devlin et al. (2018)
-BERT_LARGE_PARAMS = 340e6 * param
-BERT_LARGE_LAYERS = 24
-BERT_LARGE_HIDDEN_DIM = 1024
-BERT_LARGE_HEADS = 16
 BERT_LARGE_FLOPs = 72e9 * flop             # Per inference (seq_len=512)
 
 # AlexNet (Reference)
-ALEXNET_PARAMS = 60e6 * param
 ALEXNET_FLOPs = 1.5e9 * flop               # Estimated per inference
 
+# ResNet-18
+RESNET18_PARAMS = 11.7e6 * param
+
 # YOLOv8-nano — Source: Ultralytics (2023)
-YOLOV8_NANO_PARAMS = 3.2e6 * param
 YOLOV8_NANO_FLOPs = 8.7e9 * flop  # 640x640
-YOLOV8_NANO_LAYERS = 225
 
 # WakeVision (Doorbell) — Source: Banbury et al. (2021)
-WAKEVISION_PARAMS = 0.25e6 * param
 WAKEVISION_FLOPs = 25e6 * flop
 
 # Mamba-130M — Source: Gu & Dao (2023)
-MAMBA_130M_PARAMS = 130e6 * param
-MAMBA_130M_LAYERS = 24
-MAMBA_130M_HIDDEN_DIM = 768
-MAMBA_130M_STATE_SIZE = 16
 
 # Mamba-2.8B — Source: Gu & Dao (2023)
-MAMBA_2_8B_PARAMS = 2.8e9 * param
-MAMBA_2_8B_LAYERS = 64
-MAMBA_2_8B_HIDDEN_DIM = 2560
-MAMBA_2_8B_STATE_SIZE = 16
 
 # Stable Diffusion v1.5 — Source: Rombach et al. (2022)
-STABLE_DIFFUSION_V1_5_PARAMS = 860e6 * param
-STABLE_DIFFUSION_V1_5_RESOLUTION = 512
-STABLE_DIFFUSION_V1_5_STEPS = 50
 STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP = 20e9 * flop
 
 # Reference model/dataset dimensions
+TRANSFORMER_DECODE_FLOPS_PER_PARAM = 2
+TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN = 6
 TRANSFORMER_HIDDEN_DIM_EXAMPLE = 768
 TRANSFORMER_SEQ_LEN_EXAMPLE = 512
 TRANSFORMER_HEADS_EXAMPLE = 12
@@ -399,6 +295,8 @@ FP32_BITS = 32
 INT8_BITS = 8
 MNIST_IMAGE_WIDTH = 28
 MNIST_IMAGE_HEIGHT = 28
+MNIST_NUM_CLASSES = 10
+MNIST_TRAINING_EXAMPLES = 60_000 * count
 
 # Synthetic Data Constraints
 SYNTHETIC_PROVENANCE_OVERHEAD = 0.4
@@ -409,6 +307,15 @@ LOGIC_WALL_REASONING_STEPS_EXAMPLE = 128
 
 # Statistics
 KS_TEST_COEFFICIENT = 1.36
+PSI_WARN_THRESHOLD = 0.10
+PSI_REVIEW_THRESHOLD = 0.20
+PSI_CRITICAL_THRESHOLD = 0.25
+
+# ML workflow lifecycle stages
+ML_WORKFLOW_STAGE_PROBLEM_DEFINITION = 1
+ML_WORKFLOW_STAGE_DEPLOYMENT = 5
+ML_WORKFLOW_STAGE_MONITORING = 6
+ML_WORKFLOW_CONSTRAINT_COST_BASE = 2
 
 # --- Deployment Tiers (Reference Envelopes) ---
 CLOUD_LATENCY_RANGE_MS = "100-500"
@@ -436,48 +343,39 @@ GOOGLE_SEARCHES_PER_DAY = 8.5e9
 GMAIL_EMAILS_PER_DAY = 121e9
 
 # ResNet-50
-RESNET50_PARAMS = 25.6e6 * param
 RESNET50_FLOPs = 4.1e9 * flop
 
 # MobileNetV2
-MOBILENETV2_PARAMS = 3.5e6 * param
 MOBILENETV2_FLOPs = 0.3e9 * flop
 
 # MobileNetV1
 MOBILENET_V1_PARAMS = 4.2e6 * param
 
 # KWS DS-CNN (Keyword Spotting Depthwise Separable CNN)
-KWS_DSCNN_PARAMS = 200e3 * param
 KWS_DSCNN_FLOPs = 20e6 * flop
 
 # DLRM (Deep Learning Recommendation Model) — Meta benchmark
 DLRM_EMBEDDING_ENTRIES = 25e9  # 25 Billion entries (dimensionless count)
 DLRM_EMBEDDING_DIM = 128
-DLRM_MODEL_SIZE_FP32 = 100 * GB  # Approximate total model size
 
 # --- Hardware Unit Costs (Approximate, 2024 baseline) ---
-V100_UNIT_COST = 10000 * USD
-A100_UNIT_COST = 15000 * USD
-H100_UNIT_COST = 30000 * USD
-H200_UNIT_COST = 35000 * USD
-B200_UNIT_COST = 40000 * USD
-MI300X_UNIT_COST = 15000 * USD
-T4_UNIT_COST = 2500 * USD
-CEREBRAS_CS3_UNIT_COST = 2000000 * USD      # Approx. system cost
 
 # --- Hardware TDP (where not already defined above) ---
-TPUV5P_TDP = 300 * watt
 
 # --- Storage (I/O Bandwidth) ---
+NVME_GEN3_SEQUENTIAL_BW = 3.5 * GB / second
 NVME_SEQUENTIAL_BW = 7.0 * GB / second    # NVMe SSD sequential read (Gen 4)
+NVME_GEN5_SEQUENTIAL_BW = 14.0 * GB / second
 SYSTEM_MEMORY_BW = 50 * GB / second        # DDR4/DDR5 typical
+HOST_DRAM_BW = 200 * GB / second
+LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count
+LOCAL_NVME_DRIVE_CAPACITY_REF = 7.68 * TB
 
 # --- Case Studies ---
 WAYMO_DATA_PER_HOUR_LOW = 1 * TB / hour
 WAYMO_DATA_PER_HOUR_HIGH = 19 * TB / hour
 
 # --- Anomaly Detection Case Study ---
-ANOMALY_MODEL_PARAMS = 270e3 * param
 ANOMALY_MODEL_LATENCY = 10.4 * ureg.ms
 ANOMALY_MODEL_AUC = 0.86
 ANOMALY_MODEL_ENERGY = 516 * ureg.microjoule
@@ -505,6 +403,22 @@ DGX_PRICE_MAX = 5000 * USD
 TPU_POD_CHIPS = 4096
 TPU_POD_MEM = 131 * TB
 TPU_POD_POWER = 3 * ureg.megawatt
+
+# Hardware security and cache references
+IMAGENET_NUM_CLASSES = 1000
+H100_L2_CACHE = 50 * MB
+TPUV5P_L2_SRAM = 100 * MB
+SGX_EPC_CAPACITY = 128 * MB
+SGX_BASE_LATENCY = 5 * ms
+SGX_OVERFLOW_LATENCY = 150 * ms
+
+# Reliability and diagnostic thresholds
+MEMORY_BIT_ERROR_RATE_PER_BIT = 1e-17
+DAM_IO_OVERHEAD_WARN_THRESHOLD = 0.10
+DAM_ACTIVE_PARAMETER_SPARSE_THRESHOLD = 0.01
+DAM_MFU_LOW_THRESHOLD = 0.30
+DAM_LOW_UTILIZATION_THRESHOLD = 0.50
+DAM_HIGH_UTILIZATION_THRESHOLD = 0.80
 
 # --- Shared Precision Map ---
 # Used by Engine, ServingModel, SynthesisSolver to map precision strings to byte widths.

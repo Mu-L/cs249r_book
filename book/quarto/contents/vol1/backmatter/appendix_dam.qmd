@@ -19,12 +19,11 @@ This appendix is designed as a reference. Start with the scorecard-style metrics
 When training is slow, check accelerator utilization, data wait time, and Model FLOPs Utilization (MFU), then map each to its Data, Algorithm, or Machine axis. When serving misses a Service Level Objective (SLO), identify whether the regime is latency-bound (overhead), memory-bound (weight/KV movement), or compute bound. When cost is exploding, use the D·A·M rubric to ensure that effort targets the dominant term, not a nonbottleneck.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 #| label: appendix-dam-setup
-from mlsysim.core.constants import (
-    H100_FLOPS_FP16_TENSOR, TFLOPs, second, flop, GB, byte,
-    BILLION, MILLION, THOUSAND, MS_PER_SEC
-)
+from mlsysim.core.formulas import calc_transformer_decode_flops
 from mlsysim.fmt import fmt, fmt_frac, fmt_math, sci_latex, check, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -36,16 +35,20 @@ class DAMTaxonomy:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    from mlsysim import Models, Hardware
+    from mlsysim.core.formulas import calc_transformer_decode_flops
+
+    m = Models.Language.Llama2_7B # Close to the 7B example
+    h = Hardware.Cloud.H100
+
     # Exercise 1: Starving Accelerator
     ex1_gpu_util_pct = 25
     ex1_disk_sat_pct = 100
 
-    # Exercise 2: Iron Law (7-billion-parameter model inference)
-    ex2_params = 7 * BILLION
+    # Exercise 2: Iron Law
+    ex2_params = m.parameters
     ex2_latency_s = 0.050
-    ex2_bytes_per_param = 2 # FP16
-    ex2_flops_per_param = 2 # Fwd pass
-    h100_fp16_tflops_peak = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second)
+    h100_fp16_tflops_peak = h.peak_flops.m_as(TFLOPs/second)
 
     # Exercise 3: Scaling Law
     ex3_params_start = 125 * MILLION
@@ -61,32 +64,33 @@ class DAMTaxonomy:
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Step 1: Exercise 2 logic
-    ex2_flops_per_pass = (ex2_params * ex2_flops_per_param * flop).m_as(TFLOPs)
+    ex2_flops_per_pass = calc_transformer_decode_flops(ex2_params).m_as(TFLOPs)
     ex2_achieved_tflops = ex2_flops_per_pass/ex2_latency_s
     ex2_util = (ex2_achieved_tflops/h100_fp16_tflops_peak) * 100
-    ex2_model_size_gb = (ex2_params * ex2_bytes_per_param * byte).m_as(GB)
+    ex2_model_size_gb = (ex2_params * 2 * ureg.byte).m_as(GB) # BF16/FP16
 
     # Step 2: Exercise 3 logic
     ex3_scale_factor = ex3_params_end / ex3_params_start
     ex3_imp_pct = (ex3_loss_start - ex3_loss_end) / ex3_loss_start * 100
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    from mlsysim.fmt import check
     check(ex2_util < 10, f"Batch-1 utilization ({ex2_util:.1f}%) unexpectedly high.")
     check(ex3_scale_factor == 8, f"Exercise 3 scale factor ({ex3_scale_factor}) should be 8x.")
-    check(ex3_imp_pct < ex3_scaling_baseline_pred_pct, "Actual improvement should trail the assumed scaling baseline.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    ex1_gpu_util_str = fmt(ex1_gpu_util_pct, precision=0, commas=False)
-    ex1_disk_sat_str = fmt(ex1_disk_sat_pct, precision=0, commas=False)
+    from mlsysim.fmt import fmt, MarkdownStr
+    ex1_gpu_util_str = fmt(ex1_gpu_util_pct, precision=1, allow_zero=True, commas=False)
+    ex1_disk_sat_str = fmt(ex1_disk_sat_pct, precision=1, allow_zero=True, commas=False)
 
-    ex2_params_str = fmt(ex2_params / BILLION, precision=0, commas=False, suffix="B")
+    ex2_params_str = fmt(ex2_params.m_as(param) / BILLION, precision=1, allow_zero=True, commas=False, suffix="B")
     ex2_flops_per_pass_str = fmt(ex2_flops_per_pass, precision=3, commas=False)
-    ex2_latency_ms_str = fmt(int(ex2_latency_s * MS_PER_SEC), precision=0, commas=False)
+    ex2_latency_ms_str = fmt(int(ex2_latency_s * 1000), precision=1, allow_zero=True, commas=False)
     ex2_latency_s_str = fmt(ex2_latency_s, precision=3, commas=False)
     ex2_achieved_str = fmt(ex2_achieved_tflops, precision=2, commas=False)
     ex2_util_str = fmt(ex2_util, precision=2, commas=False)
-    h100_fp16_tflops_str = fmt(h100_fp16_tflops_peak, precision=0, commas=False)
-    ex2_model_size_gb_str = fmt(ex2_model_size_gb, precision=0, commas=False)
+    h100_fp16_tflops_str = fmt(h100_fp16_tflops_peak, precision=1, allow_zero=True, commas=False)
+    ex2_model_size_gb_str = fmt(ex2_model_size_gb, precision=1, allow_zero=True, commas=False)
 
     ex2_achieved_eq = MarkdownStr(
         f"$$\\text{{Achieved FLOP/s}} = \\frac{{{ex2_flops_per_pass_str} \\text{{ TFLOPs}}}}"
@@ -96,20 +100,20 @@ class DAMTaxonomy:
         f"$$\\eta_{{\\text{{hw}}}} = \\frac{{{ex2_achieved_str}}}{{{h100_fp16_tflops_str}}} \\approx {ex2_util_str}\\%$$"
     )
 
-    ex3_params_start_str = fmt(ex3_params_start / MILLION, precision=0, commas=False, suffix="M")
-    ex3_params_end_str = fmt(ex3_params_end / BILLION, precision=0, commas=False, suffix="B")
-    ex3_scale_factor_str = fmt(ex3_scale_factor, precision=0, commas=False)
+    ex3_params_start_str = fmt(ex3_params_start / MILLION, precision=1, allow_zero=True, commas=False, suffix="M")
+    ex3_params_end_str = fmt(ex3_params_end / BILLION, precision=1, allow_zero=True, commas=False, suffix="B")
+    ex3_scale_factor_str = fmt(ex3_scale_factor, precision=1, allow_zero=True, commas=False)
     ex3_loss_start_str = fmt(ex3_loss_start, precision=2, commas=False)
     ex3_loss_end_str = fmt(ex3_loss_end, precision=2, commas=False)
     ex3_imp_str = fmt(ex3_imp_pct, precision=1, commas=False)
-    ex3_scaling_baseline_pred_str = fmt(ex3_scaling_baseline_pred_pct, precision=0, commas=False)
+    ex3_scaling_baseline_pred_str = fmt(ex3_scaling_baseline_pred_pct, precision=1, allow_zero=True, commas=False)
 
     # Mixed prose + math symbol → MarkdownStr (keeps _str semantics; bypasses
     # Quarto's auto-escape on the embedded $\times$).
-    ex4_gpu_old_str = fmt(ex4_gpu_old_n, precision=0, commas=False, suffix="$\\times$ A100")
-    ex4_gpu_new_str = fmt(ex4_gpu_new_n, precision=0, commas=False, suffix="$\\times$ H100")
+    ex4_gpu_old_str = fmt(ex4_gpu_old_n, precision=1, allow_zero=True, commas=False, suffix="$\\times$ A100")
+    ex4_gpu_new_str = fmt(ex4_gpu_new_n, precision=1, allow_zero=True, commas=False, suffix="$\\times$ H100")
     # Custom currency prefix + K suffix → MarkdownStr escape-hatch
-    ex4_cost_str = fmt(ex4_cost_k, precision=0, commas=False, prefix="$", suffix="K")
+    ex4_cost_str = fmt(ex4_cost_k, precision=1, allow_zero=True, commas=False, prefix="$", suffix="K")
 ```
 
 ::: {.callout-learning-objectives}

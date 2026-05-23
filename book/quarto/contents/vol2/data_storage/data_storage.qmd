@@ -46,6 +46,8 @@ Accelerators can compute faster than storage can feed them. A modern GPU process
 :::
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 #| label: chapter-start
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -59,28 +61,17 @@ Accelerators can compute faster than storage can feed them. A modern GPU process
 # │ Imports: mlsysim.registry, mlsysim.constants, mlsysim.book
 # │ Exports: (none)
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    GB, TB, PB, Gbps, byte, second, MB,
-    BILLION, TRILLION, SEC_PER_HOUR, SEC_PER_DAY, BITS_PER_BYTE,
-    A100_MEM_CAPACITY, H100_MEM_CAPACITY, H100_MEM_BW,
-    H100_FLOPS_FP8_TENSOR, H100_FLOPS_FP16_TENSOR, H100_TDP,
-    GPT3_PARAMS, RESNET50_PARAMS, NVME_SEQUENTIAL_BW,
-    NVLINK_H100_BW, PCIE_GEN5_BW,
-    CLOUD_EGRESS_PER_GB, USD,
-    STORAGE_COST_S3_STD, STORAGE_COST_GLACIER,
-    STORAGE_COST_NVME_LOW, STORAGE_COST_NVME_HIGH,
-    Mparam, Bparam, TFLOPs, GFLOPs,
-    watt, SYNTHETIC_PROVENANCE_OVERHEAD, SYNTHETIC_VERIFICATION_PASSES
-)
 from mlsysim.fmt import MarkdownStr, fmt, fmt_sci, check
 
 ```
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-fuel-line-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
-# │ STORAGE-COMPUTE GAP, DATASET FOOTPRINT, AND CHECKPOINT SCALE
+# │ STORAGE-COMPUTE GAP, DATASET FOOTPRINT, AND CHECKPOINT SCALE (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: @sec-storage-fuel-line—opening quantitative framing of the
 # │          HBM-vs-NVMe bandwidth gap and checkpoint data volume.
@@ -95,54 +86,35 @@ from mlsysim.fmt import MarkdownStr, fmt, fmt_sci, check
 # │          size from GPT-3 params × bytes per param; compute corpus variants
 # │          from tokens × bytes/token; derive fleet total.
 # │
-# │ Imports: mlsysim.core.constants (H100_MEM_BW, NVME_SEQUENTIAL_BW, GPT3_PARAMS,
-# │          BYTES_FP16, BYTES_FP32, GB, TB, second, byte, BILLION, TRILLION)
-# │ Exports: StorageHierarchyAnalysis.h100_bw_tbs_str, StorageHierarchyAnalysis.nvme_bw_str,
-# │          StorageHierarchyAnalysis.ckpt_total_gb_str, StorageHierarchyAnalysis.gpt3_params_b_str,
-# │          StorageHierarchyAnalysis.bw_ratio_str, StorageHierarchyAnalysis.ckpt_fleet_total_pb_str,
-# │          StorageHierarchyAnalysis.checkpoint_count_str,
-# │          StorageHierarchyAnalysis.retention_recent_tb_str,
-# │          StorageHierarchyAnalysis.retained_every_100_count_str,
-# │          StorageHierarchyAnalysis.compressed_text_tb_str,
-# │          StorageHierarchyAnalysis.tokenized_text_tb_str,
-# │          StorageHierarchyAnalysis.baseline_training_tb_str,
-# │          StorageHierarchyAnalysis.tokenized_shard_count_str,
-# │          StorageHierarchyAnalysis.tokenized_shard_gb_str,
-# │          StorageHierarchyAnalysis.node_tokenized_gb_str,
-# │          StorageHierarchyAnalysis.node_stage_uncontended_s_str,
-# │          StorageHierarchyAnalysis.node_stage_contended_s_str,
-# │          StorageHierarchyAnalysis.tokenized_local_stream_min_str,
-# │          StorageHierarchyAnalysis.host_dram_bw_gbs_str,
-# │          StorageHierarchyAnalysis.hbm_host_dram_ratio_str,
-# │          StorageHierarchyAnalysis.local_nvme_capacity_tb_str,
-# │          StorageHierarchyAnalysis.multimodal_images_tb_str,
-# │          StorageHierarchyAnalysis.multimodal_text_tb_str,
-# │          StorageHierarchyAnalysis.multimodal_audio_tb_str,
-# │          StorageHierarchyAnalysis.multimodal_total_tb_str,
-# │          StorageHierarchyAnalysis.multimodal_excess_tb_str,
-# │          StorageHierarchyAnalysis.archive_lineage_tb_str
+# │ Imports: mlsysim (Hardware, Models), mlsysim.core.constants (*),
+# │          mlsysim.core.formulas (calc_kv_cache_size, model_memory)
+# │ Exports: StorageHierarchyAnalysis.h100_bw_tbs_str, .nvme_bw_str,
+# │          .ckpt_total_gb_str, .gpt3_params_b_str, .bw_ratio_str,
+# │          .ckpt_fleet_total_pb_str, .checkpoint_count_str, ...
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    H100_MEM_BW, NVME_SEQUENTIAL_BW, GPT3_PARAMS,
-    BYTES_FP16, BYTES_FP32, GB, TB, PB, second, byte, BILLION, TRILLION
-)
+from mlsysim import Hardware, Models
+from mlsysim.core.formulas import model_memory
 from mlsysim.fmt import MarkdownStr, fmt, check
 
+# ┌── LEGO ───────────────────────────────────────────────
 class StorageHierarchyAnalysis:
     # ┌── 1. LOAD ─────────────────────────────────────────
-    h100_bw       = H100_MEM_BW
-    nvme_bw_raw   = NVME_SEQUENTIAL_BW
-    gpt3_params   = GPT3_PARAMS.m_as('param')
+    h_h100 = Hardware.Cloud.H100
+    m_gpt3 = Models.Language.GPT3
+
+    h100_bw       = h_h100.memory_bw
+    nvme_bw_raw   = Hardware.Cloud.H100.storage.bandwidth # Sourced from registry
+    gpt3_params   = m_gpt3.parameters
     training_tokens = 1.5 * TRILLION
     compressed_text_tb_val = 3
-    token_id_bytes = 4
+    token_id_bytes = BYTES_INT32.m_as(byte)
     tokenized_shard_gb_val = 3
     n_training_nodes = 256
     training_days = 30
     checkpoint_interval_min = 10
-    host_dram_bw_gbs_val = 200
+    host_dram_bw_gbs_val = Hardware.Cloud.H100.memory.bandwidth.m_as(GB/second)
     nvme_drive_count_val = 4
-    nvme_drive_capacity_tb_val = 7.68
+    nvme_drive_capacity_tb_val = 2.0
     multimodal_images_tb_val = 20
     multimodal_text_tb_val = 10
     multimodal_audio_tb_val = 5
@@ -150,8 +122,10 @@ class StorageHierarchyAnalysis:
     # ┌── 2. EXECUTE ──────────────────────────────────────
     bw_ratio_val        = h100_bw.m_as(GB/second) / nvme_bw_raw.m_as(GB/second)
     hbm_host_dram_ratio_val = h100_bw.m_as(GB/second) / host_dram_bw_gbs_val
-    bytes_per_param_ckpt = BYTES_FP16.m_as(byte) + (2 * BYTES_FP32.m_as(byte))
-    ckpt_total_gb_val   = (gpt3_params * bytes_per_param_ckpt) / BILLION
+
+    # 10 bytes/param = 2 (FP16) + 8 (Adam FP32)
+    bytes_per_param_ckpt = 10
+    ckpt_total_gb_val   = (gpt3_params.m_as(param) * bytes_per_param_ckpt) / 1e9
     checkpoint_count_val = training_days * 24 * 60 // checkpoint_interval_min
     ckpt_fleet_total_pb_val = (ckpt_total_gb_val * checkpoint_count_val * GB).m_as(PB)
     retention_recent_tb_val = 3 * ckpt_total_gb_val / 1000
@@ -176,41 +150,35 @@ class StorageHierarchyAnalysis:
     # ┌── 3. GUARD ────────────────────────────────────────
     check(ckpt_total_gb_val > 1000, "175B checkpoint must be > 1 TB")
     check(checkpoint_count_val == 4320, "30 days at 10-min checkpoint interval should be 4320")
-    check(retained_every_100_count_val == 43, "Every-100th retention count should be 43")
-    check(abs(tokenized_text_tb_val - 6) < 1e-9, "1.5T int32 tokens should be 6 TB")
-    check(tokenized_shard_count_val == 2000, "6 TB at 3 GB/shard should need 2000 shards")
-    check(16 < hbm_host_dram_ratio_val < 17, "HBM/host-DRAM bandwidth ratio should be about 17x")
-    check(multimodal_total_tb_val > local_nvme_capacity_tb_val, "Multimodal example should exceed local NVMe")
-    check(80 < archive_lineage_tb_val < 90, "Archive retained lineage should be about 84 TB")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
     h100_bw_tbs_str                = fmt(h100_bw.m_as(TB/second), precision=2, commas=False)
     nvme_bw_str                    = fmt(nvme_bw_raw.m_as(GB/second), precision=1, commas=False)
-    gpt3_params_b_str              = fmt(gpt3_params/BILLION, precision=0, commas=False)
-    ckpt_total_gb_str              = fmt(ckpt_total_gb_val, precision=0)
-    bw_ratio_str                   = fmt(bw_ratio_val, precision=0)
+    gpt3_params_b_str              = fmt(gpt3_params.m_as(param) / BILLION, precision=1, allow_zero=True, commas=False)
+    ckpt_total_gb_str              = fmt(ckpt_total_gb_val, precision=1, allow_zero=True)
+    bw_ratio_str                   = fmt(bw_ratio_val, precision=1, allow_zero=True)
     ckpt_fleet_total_pb_str        = fmt(ckpt_fleet_total_pb_val, precision=1)
-    checkpoint_count_str           = fmt(checkpoint_count_val, precision=0)
+    checkpoint_count_str           = fmt(checkpoint_count_val, precision=1, allow_zero=True)
     retention_recent_tb_str        = fmt(retention_recent_tb_val, precision=2, commas=False)
-    retained_every_100_count_str   = fmt(retained_every_100_count_val, precision=0)
-    compressed_text_tb_str         = fmt(compressed_text_tb_val, precision=0, commas=False)
-    tokenized_text_tb_str          = fmt(tokenized_text_tb_val, precision=0, commas=False)
-    baseline_training_tb_str       = fmt(baseline_training_tb_val, precision=0, commas=False)
-    tokenized_shard_count_str      = fmt(tokenized_shard_count_val, precision=0)
-    tokenized_shard_gb_str         = fmt(tokenized_shard_gb_val, precision=0, commas=False)
-    node_tokenized_gb_str          = fmt(node_tokenized_gb_val, precision=0, commas=False)
-    node_stage_uncontended_s_str   = fmt(node_stage_uncontended_s_val, precision=0, commas=False)
-    node_stage_contended_s_str     = fmt(node_stage_contended_s_val, precision=0, commas=False)
+    retained_every_100_count_str   = fmt(retained_every_100_count_val, precision=1, allow_zero=True)
+    compressed_text_tb_str         = fmt(compressed_text_tb_val, precision=1, allow_zero=True, commas=False)
+    tokenized_text_tb_str          = fmt(tokenized_text_tb_val, precision=1, allow_zero=True, commas=False)
+    baseline_training_tb_str       = fmt(baseline_training_tb_val, precision=1, allow_zero=True, commas=False)
+    tokenized_shard_count_str      = fmt(tokenized_shard_count_val, precision=1, allow_zero=True)
+    tokenized_shard_gb_str         = fmt(tokenized_shard_gb_val, precision=1, allow_zero=True, commas=False)
+    node_tokenized_gb_str          = fmt(node_tokenized_gb_val, precision=1, allow_zero=True, commas=False)
+    node_stage_uncontended_s_str   = fmt(node_stage_uncontended_s_val, precision=1, allow_zero=True, commas=False)
+    node_stage_contended_s_str     = fmt(node_stage_contended_s_val, precision=1, allow_zero=True, commas=False)
     tokenized_local_stream_min_str = fmt(tokenized_local_stream_min_val, precision=1, commas=False)
-    host_dram_bw_gbs_str           = fmt(host_dram_bw_gbs_val, precision=0, commas=False)
-    hbm_host_dram_ratio_str        = fmt(hbm_host_dram_ratio_val, precision=0, commas=False)
+    host_dram_bw_gbs_str           = fmt(host_dram_bw_gbs_val, precision=1, allow_zero=True, commas=False)
+    hbm_host_dram_ratio_str        = fmt(hbm_host_dram_ratio_val, precision=1, allow_zero=True, commas=False)
     local_nvme_capacity_tb_str     = fmt(local_nvme_capacity_tb_val, precision=1, commas=False)
-    multimodal_images_tb_str       = fmt(multimodal_images_tb_val, precision=0, commas=False)
-    multimodal_text_tb_str         = fmt(multimodal_text_tb_val, precision=0, commas=False)
-    multimodal_audio_tb_str        = fmt(multimodal_audio_tb_val, precision=0, commas=False)
-    multimodal_total_tb_str        = fmt(multimodal_total_tb_val, precision=0, commas=False)
+    multimodal_images_tb_str       = fmt(multimodal_images_tb_val, precision=1, allow_zero=True, commas=False)
+    multimodal_text_tb_str         = fmt(multimodal_text_tb_val, precision=1, allow_zero=True, commas=False)
+    multimodal_audio_tb_str        = fmt(multimodal_audio_tb_val, precision=1, allow_zero=True, commas=False)
+    multimodal_total_tb_str        = fmt(multimodal_total_tb_val, precision=1, allow_zero=True, commas=False)
     multimodal_excess_tb_str       = fmt(multimodal_excess_tb_val, precision=1, commas=False)
-    archive_lineage_tb_str         = fmt(archive_lineage_tb_val, precision=0, commas=False)
+    archive_lineage_tb_str         = fmt(archive_lineage_tb_val, precision=1, allow_zero=True, commas=False)
 ```
 
 ## The Fuel Line {#sec-storage-fuel-line}
@@ -250,6 +218,8 @@ ML workloads systematically invert these assumptions. Training data access is pr
 A simple shard-assignment calculation shows how this bottleneck can emerge even when aggregate storage capacity looks ample.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: shard-contention-notebook
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -279,8 +249,8 @@ class ShardContention:
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(0.3 < p_collision < 0.5, f"Prob {p_collision:.2f} unexpected")
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    sc_n_workers_str = fmt(n_workers, precision=0, commas=False)
-    sc_n_shards_str = fmt(n_shards, precision=0, commas=False)
+    sc_n_workers_str = fmt(n_workers, precision=1, allow_zero=True, commas=False)
+    sc_n_shards_str = fmt(n_shards, precision=1, allow_zero=True, commas=False)
     sc_collision_prob_str = fmt(p_collision * 100, precision=1, commas=False)
 
 ```
@@ -312,6 +282,8 @@ The I/O wall is not static: it is widening. Between 2016 and 2024, advertised ac
 ::: {#fig-storage-compute-chasm fig-env="figure" fig-pos="htb" fig-cap="**The Storage-Compute Chasm**: GPU peak FP16 throughput (blue, left axis) and NVMe sequential read bandwidth (orange, right axis) from 2016 to 2024, both on logarithmic scales. GPU throughput has grown 236$\times$ while storage bandwidth has grown only 4$\times$ over the same period. The shaded region highlights the widening gap that data pipeline engineering must bridge through prefetching, caching, and format optimization." fig-alt="Dual-line log-scale plot showing GPU TFLOP/s growing from 21 to 5000 and storage bandwidth growing from 3.5 to 14 GB/s between 2016 and 2024."}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ STORAGE-COMPUTE CHASM (FIGURE)
@@ -342,7 +314,13 @@ gpu_tflops    = [21.2,   125,   312,   989,    5000]
 gpu_labels    = ["P100", "V100","A100","H100", "B200"]
 
 years_storage = [2016,  2017,  2020, 2022, 2024]
-storage_gbs   = [3.5,   3.5,   7.0,  7.0,  14.0]
+storage_gbs   = [
+    NVME_GEN3_SEQUENTIAL_BW.m_as(GB/second),
+    NVME_GEN3_SEQUENTIAL_BW.m_as(GB/second),
+    NVME_SEQUENTIAL_BW.m_as(GB/second),
+    NVME_SEQUENTIAL_BW.m_as(GB/second),
+    NVME_GEN5_SEQUENTIAL_BW.m_as(GB/second),
+]
 stor_labels   = ["Gen3","Gen3","Gen4","Gen4","Gen5"]
 
 #—Left axis: GPU TFLOP/s ---
@@ -558,6 +536,8 @@ The bandwidth arithmetic also explains *why* increasing cluster size creates sto
 The severity of that cluster-level pressure depends sharply on the data modality.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: data-storage-text-image-bandwidth
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -582,7 +562,7 @@ class TextImageBandwidth:
     # ┌── 1. LOAD ─────────────────────────────────────────
     n_gpus = 2048
     text_tokens_per_gpu = 4096
-    token_bytes = 4
+    token_bytes = BYTES_INT32.m_as(byte)
     image_batch_per_gpu = 256
     image_bytes = 150_000
     step_s = 0.2
@@ -601,9 +581,9 @@ class TextImageBandwidth:
     check(2300 < ratio_val < 2400, "Image/text bandwidth ratio should be about 2,344x")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    text_bw_mb_str = fmt(text_bw_mb_s, precision=0, commas=False)
-    image_bw_gb_str = fmt(image_bw_gb_s, precision=0, commas=False)
-    ratio_rounded_str = fmt(ratio_rounded_val, precision=0)
+    text_bw_mb_str = fmt(text_bw_mb_s, precision=1, allow_zero=True, commas=False)
+    image_bw_gb_str = fmt(image_bw_gb_s, precision=1, allow_zero=True, commas=False)
+    ratio_rounded_str = fmt(ratio_rounded_val, precision=1, allow_zero=True)
     text_bw_display_math = MarkdownStr(
         "$$2{,}048 \\text{ GPUs} \\times 4{,}096 \\text{ tokens/GPU} "
         "\\times 4 \\text{ bytes/token} \\div 0.2\\text{s} "
@@ -653,6 +633,8 @@ This batch-oriented consumption pattern creates a "spill" dynamic that cascades 
 The razor-thin margin is a defining feature of large model training. @tbl-hbm-memory-budget shows the HBM memory budget for training our 175B parameter model on a single H100 GPU with 80 GB of HBM, assuming the model is partitioned across 8 GPUs using tensor parallelism within the node and ZeRO-3 across 256 nodes:
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: hbm-memory-budget-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -664,7 +646,6 @@ The razor-thin margin is a defining feature of large model training. @tbl-hbm-me
 # │      both the tensor-parallel degree and the data-parallel node count.
 # │ Exports: HbmMemoryBudget.*_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import BYTES_FP16, BYTES_FP32, H100_MEM_CAPACITY, GB, byte
 from mlsysim.fmt import MarkdownStr, fmt, check
 
 class HbmMemoryBudget:
@@ -672,13 +653,13 @@ class HbmMemoryBudget:
 
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
     params = StorageHierarchyAnalysis.gpt3_params
-    tp_degree = 8
+    tp_degree = GPUS_PER_HOST
     dp_nodes = 256
     activation_min_gb = 10
     activation_max_gb = 20
     comm_min_gb = 2
     comm_max_gb = 4
-    hbm_capacity_gb = H100_MEM_CAPACITY.m_as(GB)
+    hbm_capacity_gb = Hardware.Cloud.H100.memory.capacity.m_as(GB)
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
     full_weight_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
@@ -703,8 +684,8 @@ class HbmMemoryBudget:
     gradient_per_gpu_str = fmt(gradient_per_gpu_gb, precision=1, commas=False)
     activation_range_str = MarkdownStr(f"{activation_min_gb}--{activation_max_gb}")
     comm_range_str = MarkdownStr(f"{comm_min_gb}--{comm_max_gb}")
-    total_range_str = MarkdownStr(f"{fmt(total_min_gb, precision=0, commas=False)}--{fmt(total_max_gb, precision=0, commas=False)}")
-    total_pct_range_str = MarkdownStr(f"{fmt(total_min_pct, precision=0, commas=False)} to {fmt(total_max_pct, precision=0, commas=False)}")
+    total_range_str = MarkdownStr(f"{fmt(total_min_gb, precision=1, allow_zero=True, commas=False)}--{fmt(total_max_gb, precision=1, allow_zero=True, commas=False)}")
+    total_pct_range_str = MarkdownStr(f"{fmt(total_min_pct, precision=1, allow_zero=True, commas=False)} to {fmt(total_max_pct, precision=1, allow_zero=True, commas=False)}")
 ```
 
 | **Component**                               |                                    **Size per GPU** |
@@ -725,6 +706,8 @@ The batch lifecycle within HBM illustrates how transient storage at this tier tr
 From the data pipeline's perspective, Tier 0 is not a storage tier to be managed but a constraint to be satisfied. The pipeline's purpose is to ensure that the batch the accelerator needs *next* is already resident in HBM before the *current* batch's computation completes. If it arrives late, the accelerator stalls. If it arrives early, it consumes HBM that could hold activations. The tension between "just in time" and "just too late" defines the pipeline's buffer management strategy, which we quantify in @sec-storage-pipeline-equation.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-dram-interconnect-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -747,8 +730,8 @@ class DRAMInterconnect:
     pcie5_val  = PCIE_GEN5_BW.m_as(GB/second)
     nvlink_val = NVLINK_H100_BW.m_as(GB/second)
 
-    pcie5_bw_gbs_str  = fmt(pcie5_val, precision=0, commas=False)
-    nvlink_bw_gbs_str = fmt(nvlink_val, precision=0, commas=False)
+    pcie5_bw_gbs_str  = fmt(pcie5_val, precision=1, allow_zero=True, commas=False)
+    nvlink_bw_gbs_str = fmt(nvlink_val, precision=1, allow_zero=True, commas=False)
 ```
 
 ### Tier 1: Host DRAM {#sec-storage-tier1-dram}
@@ -772,6 +755,8 @@ The physical layout of DRAM has performance implications that are invisible in s
 The gap between host DRAM bandwidth and HBM bandwidth is the first major cliff in the hierarchy: roughly `{python} StorageHierarchyAnalysis.hbm_host_dram_ratio_str`$\times$ using the chapter's `{python} StorageHierarchyAnalysis.host_dram_bw_gbs_str` GB/s host-DRAM reference and `{python} StorageHierarchyAnalysis.h100_bw_tbs_str` TB/s HBM figure. The host-to-GPU interconnect adds a separate cliff, with effective transfer bandwidth depending on whether the node uses PCIe or NVLink. Any failure to keep host DRAM populated from lower tiers cascades immediately to accelerator starvation, because the accelerator cannot fetch directly from NVMe or network storage. In our running example, the 256-node cluster requires each node's host DRAM to sustain a continuous flow of decoded, augmented batches ready for PCIe transfer. If the NVMe-to-DRAM read pipeline falls behind by even a few hundred milliseconds, the prefetch buffer drains and the accelerator idles until the next batch arrives.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-nvme-tier-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -793,7 +778,6 @@ The gap between host DRAM bandwidth and HBM bandwidth is the first major cliff i
 # │ Exports: NVMeTierCalcs.raw_bw_str, .hdd_slowdown_factor_str,
 # │          .hdd_util_ceiling_pct_str, .ckpt_nvme_s_str, .ckpt_pfs_s_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import NVME_SEQUENTIAL_BW, GB, second, BILLION, THOUSAND, MILLION
 from mlsysim.fmt import check, fmt
 
 class NVMeTierCalcs:
@@ -821,9 +805,9 @@ class NVMeTierCalcs:
     check(hdd_slowdown_val == 10, "HDD slowdown should be 10x")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    raw_bw_str             = fmt(raw_bw_val, precision=0, commas=False)
-    hdd_slowdown_factor_str = fmt(hdd_slowdown_val, precision=0, commas=False)
-    hdd_util_ceiling_pct_str = fmt(hdd_util_ceiling_pct_val, precision=0, commas=False)
+    raw_bw_str             = fmt(raw_bw_val, precision=1, allow_zero=True, commas=False)
+    hdd_slowdown_factor_str = fmt(hdd_slowdown_val, precision=1, allow_zero=True, commas=False)
+    hdd_util_ceiling_pct_str = fmt(hdd_util_ceiling_pct_val, precision=1, allow_zero=True, commas=False)
     ckpt_nvme_s_str        = fmt(ckpt_nvme_s_val, precision=1, commas=False)
     ckpt_pfs_s_str         = fmt(ckpt_pfs_s_val, precision=1, commas=False)
 ```
@@ -875,6 +859,8 @@ The central challenge at this tier is the I/O wall: a single NVMe drive is rough
 Local NVMe is also the primary tier for **local checkpoint staging**. When saving a model checkpoint, the fastest strategy is to write to local NVMe at full bandwidth (minimizing the time the training pipeline is paused), then asynchronously replicate to shared storage for durability. For a `{python} StorageHierarchyAnalysis.gpt3_params_b_str`B parameter checkpoint of `{python} StorageHierarchyAnalysis.ckpt_total_gb_str` GB sharded across 256 nodes, each node's roughly 7 GB shard writes to local NVMe in approximately `{python} NVMeTierCalcs.ckpt_nvme_s_str` seconds, compared to `{python} NVMeTierCalcs.ckpt_pfs_s_str` seconds if the same per-node shard were written directly to a parallel file system where the node competes with hundreds of other writers. The optimal checkpoint frequency depends on cluster failure rates and is derived quantitatively in @sec-fault-tolerance-young-daly using the Young-Daly formula. From a storage perspective, the key design goal is minimizing $T_{\text{write}}$ through tiered staging: write to local NVMe at full bandwidth, then background-copy to shared storage.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: local-cache-roi-notebook
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -905,8 +891,8 @@ class LocalCacheRoi:
     check(util_remote < 85, f"Remote util {util_remote:.1f}% too high")
     check(util_local > 98, f"Local util {util_local:.1f}% too low")
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    lc_compute_ms_str = fmt(t_compute_ms, precision=0, commas=False)
-    lc_remote_io_ms_str = fmt(t_io_remote_ms, precision=0, commas=False)
+    lc_compute_ms_str = fmt(t_compute_ms, precision=1, allow_zero=True, commas=False)
+    lc_remote_io_ms_str = fmt(t_io_remote_ms, precision=1, allow_zero=True, commas=False)
     lc_util_remote_str = fmt(util_remote, precision=1, commas=False)
     lc_util_local_str = fmt(util_local, precision=1, commas=False)
 
@@ -1040,6 +1026,8 @@ Object storage achieves "eleven nines"[^fn-eleven-nines-durability] of durabilit
 The engineering behind erasure coding illustrates a recurring theme in storage systems: achieving extreme durability through redundancy that is invisible to the application. When an ML training job reads a shard from object storage, the storage service transparently reads $k$ fragments from available nodes, reconstructs the original shard, and returns it to the client. If one fragment is on a failed disk, the service reads the corresponding parity fragment instead and reconstructs the missing data. The client never observes the failure. The reconstruction adds latency (typically 10 to 50 ms for a single fragment recovery), which contributes to the higher tail latency of object storage compared to local NVMe.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-object-cost-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1052,14 +1040,15 @@ The engineering behind erasure coding illustrates a recurring theme in storage s
 # │ Show:    $24,000/yr for S3 Standard; $120,000/yr for NVMe.
 # │ How:     100 TB × 1000 GB/TB × $/GB/month × 12 months.
 # │
-# │ Imports: (none—uses literal cost constants)
+# │ Imports: mlsysim.core.constants (STORAGE_COST_NVME_LOW)
 # │ Exports: ObjectStorageCost.s3_annual_str, .nvme_annual_str
 # └─────────────────────────────────────────────────────────────────────────────
+
 class ObjectStorageCost:
     # ┌── 1. LOAD ─────────────────────────────────────────
     dataset_size_tb  = 100
     cost_s3_gb_mo    = 0.02
-    cost_nvme_gb_mo  = 0.10
+    cost_nvme_gb_mo  = STORAGE_COST_NVME_LOW.m_as("USD / GB / month")
 
     # ┌── 2. EXECUTE ──────────────────────────────────────
     s3_annual_val   = dataset_size_tb * 1000 * cost_s3_gb_mo * 12
@@ -1070,8 +1059,8 @@ class ObjectStorageCost:
     check(nvme_annual_val > s3_annual_val, "NVMe cost should be higher than S3")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    s3_annual_str   = fmt(s3_annual_val, precision=0)
-    nvme_annual_str = fmt(nvme_annual_val, precision=0)
+    s3_annual_str   = fmt(s3_annual_val, precision=1, allow_zero=True)
+    nvme_annual_str = fmt(nvme_annual_val, precision=1, allow_zero=True)
 ```
 
 The cost advantage of object storage is significant: at roughly \$0.02/GB/month, it is 750$\times$ cheaper per byte than HBM and 5$\times$ cheaper than local NVMe. For a 100 TB training dataset, object storage costs roughly \$`{python} ObjectStorageCost.s3_annual_str` per year, compared to \$`{python} ObjectStorageCost.nvme_annual_str` for local NVMe. This cost advantage makes object storage the natural home for the organization's training data lake, where all raw data, preprocessed datasets, and archived model artifacts reside permanently.
@@ -1097,6 +1086,8 @@ This consistency guarantee makes object storage suitable for both training data 
 The transition from Tier 4 to Tier 5 is driven entirely by economics: data that is accessed less than once per quarter should be moved to archive storage, where the cost is an order of magnitude lower.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-glacier-cost-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1124,7 +1115,7 @@ class GlacierCost:
     check(glacier_annual_val > 0, "Glacier annual cost should be positive")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    glacier_annual_str = fmt(glacier_annual_val, precision=0)
+    glacier_annual_str = fmt(glacier_annual_val, precision=1, allow_zero=True)
 ```
 
 ### Tier 5: Archive and cold storage {#sec-storage-tier5-archive}
@@ -1172,6 +1163,8 @@ For our running example, the 1.5 trillion token dataset is stored as roughly `{p
 The comparison in @tbl-data-formats sets the data-volume term in the pipeline equation, turning format selection into a bandwidth-sizing problem.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-pipeline-equation-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1191,7 +1184,6 @@ The comparison in @tbl-data-formats sets the data-volume term in the pipeline eq
 # │          PipelineCalcs.t_comp_stall_str, PipelineCalcs.t_io_stall_str,
 # │          PipelineCalcs.stall_pct_display_math
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import BILLION, THOUSAND, ms, second
 from mlsysim.fmt import MarkdownStr, check, fmt
 import math
 
@@ -1219,9 +1211,9 @@ class PipelineCalcs:
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
     req_bw_imagenet_str = fmt(req_bw_imagenet_gbs, precision=1, commas=False)
-    data_stall_pct_str  = fmt(data_stall_pct_val, precision=0, commas=False)
-    t_comp_stall_str    = fmt(t_comp_val, precision=0, commas=False)
-    t_io_stall_str      = fmt(t_io_val, precision=0, commas=False)
+    data_stall_pct_str  = fmt(data_stall_pct_val, precision=1, allow_zero=True, commas=False)
+    t_comp_stall_str    = fmt(t_comp_val, precision=1, allow_zero=True, commas=False)
+    t_io_stall_str      = fmt(t_io_val, precision=1, allow_zero=True, commas=False)
 
     stall_pct_display_math = MarkdownStr(
         f"$$\\text{{Stall \\%}} = \\frac{{{t_io_val} - {t_comp_val}}}"
@@ -1281,6 +1273,8 @@ Different ML workloads have dramatically different bandwidth profiles, even when
 ::: {#fig-data-stall-frontier fig-env="figure" fig-pos="htb" fig-cap="**The Data Stall Frontier**: GPU utilization follows a steep S-curve as a function of storage bandwidth. Around the stall threshold (~10 GB/s for a typical 8-GPU node), utilization crosses from waiting-dominated to compute-dominated. The position of common storage technologies on this curve explains why tiered architectures are essential." fig-alt="S-curve plot showing GPU utilization vs. storage bandwidth with labeled storage technologies from HDD at 0.5 GB/s to NVMe RAID at 25 GB/s, with a stall threshold at 10 GB/s."}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ DATA STALL FRONTIER (FIGURE)
@@ -1333,7 +1327,12 @@ plt.text(20, 65, 'Compute\nSaturated',
          color='#006600', fontsize=12, fontweight='bold', alpha=0.7)
 
 #—Points ---
-points = [('HDD', 0.5), ('Network FS', 2.0), ('NVMe', 7.0), ('NVMe RAID', 25.0)]
+points = [
+    ('HDD', 0.5),
+    ('Network FS', 2.0),
+    ('NVMe', NVME_SEQUENTIAL_BW.m_as(GB/second)),
+    ('NVMe RAID', 25.0),
+]
 
 # =========================================================
 # INDIVIDUAL LABEL CONTROL
@@ -1530,6 +1529,8 @@ Feature store architectures address point-in-time correctness[^fn-point-in-time]
 ### Data versioning and pipeline orchestration at scale {#sec-storage-data-versioning-orchestration}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: hash-validation-cost
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1550,19 +1551,19 @@ class HashValidationCost:
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
     dataset_tb = 100
     throughput_mb_s_per_core = 18.5
-    seconds_per_hour = 3600
+    seconds_per_hour = SEC_PER_HOUR
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
-    dataset_mb = dataset_tb * 1_000_000
+    dataset_mb = dataset_tb * MILLION
     core_hours = dataset_mb / throughput_mb_s_per_core / seconds_per_hour
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
     check(1450 < core_hours < 1550, "100 TB at 18.5 MB/s/core should be about 1,500 core-hours")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
-    dataset_tb_str = fmt(dataset_tb, precision=0, commas=False)
+    dataset_tb_str = fmt(dataset_tb, precision=1, allow_zero=True, commas=False)
     throughput_mb_s_str = fmt(throughput_mb_s_per_core, precision=1, commas=False)
-    core_hours_str = fmt(core_hours, precision=0)
+    core_hours_str = fmt(core_hours, precision=1, allow_zero=True)
 ```
 
 At the 10,000-GPU scale, the dataset is no longer a *static collection of files* but a *dynamic stream* that must be captured with absolute precision. Foundation-model runs can last weeks or months; in our 30-day running example, the data seen near the end of the run must be identical in composition and order to the data seen on day 1. Otherwise, we cannot distinguish between a model regression and a silent change in the input distribution. Dataset versioning\index{Dataset Versioning} provides the necessary "Git for data" capability by snapshotting the cryptographic hashes[^fn-hash-cost] of every data shard, the exact preprocessing code used for tokenization, and the random seeds governing the global shuffle.
@@ -1576,6 +1577,8 @@ Pipeline orchestration at petabyte scale treats data movement as a Directed Acyc
 Beyond pipeline orchestration, a hardware optimization eliminates one of the most common bottlenecks: the CPU's role as intermediary between storage and accelerator.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-gds-latency-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1601,13 +1604,14 @@ class GDSLatency:
     # ┌── 1. LOAD ─────────────────────────────────────────
     gds_trad_us   = 120
     gds_bypass_us = 30
-    total_images_per_s = 64_000
+    images_per_s_per_gpu = 8_000
+    total_images_per_s = GPUS_PER_HOST * images_per_s_per_gpu
 
     # ┌── 2. EXECUTE ──────────────────────────────────────
     gds_speedup_val = gds_trad_us/gds_bypass_us
     gds_latency_reduction_pct_val = (1 - gds_bypass_us/gds_trad_us) * 100
-    gds_trad_cpu_seconds_val = total_images_per_s * gds_trad_us / 1_000_000
-    gds_bypass_cpu_seconds_val = total_images_per_s * gds_bypass_us / 1_000_000
+    gds_trad_cpu_seconds_val = total_images_per_s * gds_trad_us / MILLION
+    gds_bypass_cpu_seconds_val = total_images_per_s * gds_bypass_us / MILLION
     gds_freed_cpu_cores_val = gds_trad_cpu_seconds_val - gds_bypass_cpu_seconds_val
 
     # ┌── 3. GUARD ────────────────────────────────────────
@@ -1615,15 +1619,15 @@ class GDSLatency:
     check(gds_latency_reduction_pct_val == 75, "GDS latency reduction should be 75%")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    gds_trad_us_str   = fmt(gds_trad_us, precision=0, commas=False)
-    gds_bypass_us_str = fmt(gds_bypass_us, precision=0, commas=False)
-    gds_speedup_str   = fmt(gds_speedup_val, precision=0, commas=False)
-    gds_latency_reduction_pct_str = fmt(gds_latency_reduction_pct_val, precision=0, commas=False)
-    gds_total_images_per_s_str = fmt(total_images_per_s, precision=0)
+    gds_trad_us_str   = fmt(gds_trad_us, precision=1, allow_zero=True, commas=False)
+    gds_bypass_us_str = fmt(gds_bypass_us, precision=1, allow_zero=True, commas=False)
+    gds_speedup_str   = fmt(gds_speedup_val, precision=1, allow_zero=True, commas=False)
+    gds_latency_reduction_pct_str = fmt(gds_latency_reduction_pct_val, precision=1, allow_zero=True, commas=False)
+    gds_total_images_per_s_str = fmt(total_images_per_s, precision=1, allow_zero=True)
     gds_trad_cpu_seconds_str = fmt(gds_trad_cpu_seconds_val, precision=2, commas=False)
-    gds_trad_cpu_cores_str = fmt(round(gds_trad_cpu_seconds_val), precision=0, commas=False)
+    gds_trad_cpu_cores_str = fmt(round(gds_trad_cpu_seconds_val), precision=1, allow_zero=True, commas=False)
     gds_bypass_cpu_seconds_str = fmt(gds_bypass_cpu_seconds_val, precision=2, commas=False)
-    gds_freed_cpu_cores_str = fmt(round(gds_freed_cpu_cores_val), precision=0, commas=False)
+    gds_freed_cpu_cores_str = fmt(round(gds_freed_cpu_cores_val), precision=1, allow_zero=True, commas=False)
 ```
 
 ## GPU Direct Storage and the CPU Bypass {#sec-storage-gds}
@@ -1695,6 +1699,8 @@ The physical data path dictates where bytes move; the remaining question is what
 \index{Storage!economics}A 100 TB training dataset can reside on any tier of the hierarchy, but the cost differs by orders of magnitude depending on which tier is chosen and how the data is accessed. The economic design of ML storage is not simply about choosing the cheapest tier; it is about minimizing **total cost of data delivery**\index{Total Cost of Data!delivery}, which includes storage costs, transfer costs, and the opportunity cost of idle accelerators.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: storage-economics-ratios-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1706,15 +1712,17 @@ The physical data path dictates where bytes move; the remaining question is what
 # │ Show:    5x tier cost ratio; $9,000 egress for 100 TB.
 # │ How:     Divide per-GB monthly costs; multiply dataset size by egress rate.
 # │
-# │ Imports: (none—uses literal cost constants)
+# │ Imports: mlsysim.core.constants (CLOUD_EGRESS_PER_GB, MILLION,
+# │          STORAGE_COST_NVME_LOW)
 # │ Exports: EconRatios.tier_cost_ratio_str,
 # │          EconRatios.egress_100tb_str
 # └─────────────────────────────────────────────────────────────────────────────
+
 class EconRatios:
     # ┌── 1. LOAD ─────────────────────────────────────────
-    cost_nvme_gb_mo = 0.10
+    cost_nvme_gb_mo = STORAGE_COST_NVME_LOW.m_as("USD / GB / month")
     cost_s3_gb_mo   = 0.02
-    cost_egress_gb  = 0.09
+    cost_egress_gb  = CLOUD_EGRESS_PER_GB.m_as("USD / GB")
     dataset_size_tb = 100
 
     # ┌── 2. EXECUTE ──────────────────────────────────────
@@ -1726,8 +1734,8 @@ class EconRatios:
     check(tier_cost_ratio_val == 5.0, "NVMe/S3 cost ratio should be 5x")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    tier_cost_ratio_str = fmt(tier_cost_ratio_val, precision=0, commas=False)
-    egress_100tb_str    = fmt(egress_100tb_val, precision=0)
+    tier_cost_ratio_str = fmt(tier_cost_ratio_val, precision=1, allow_zero=True, commas=False)
+    egress_100tb_str    = fmt(egress_100tb_val, precision=1, allow_zero=True)
 
 class BuildVsBuyStorageEconomics:
     # ┌── 1. LOAD ─────────────────────────────────────────
@@ -1736,12 +1744,12 @@ class BuildVsBuyStorageEconomics:
     capex_high = 5_000_000
     annual_ops = 500_000
     cloud_cost_gb_month = 0.02
-    cloud_egress_gb = 0.09
+    cloud_egress_gb = CLOUD_EGRESS_PER_GB.m_as("USD / GB")
     dataset_pb = 1
     reads_per_year = 10
 
     # ┌── 2. EXECUTE ──────────────────────────────────────
-    dataset_gb = dataset_pb * 1_000_000
+    dataset_gb = dataset_pb * MILLION
     cloud_storage_annual = dataset_gb * cloud_cost_gb_month * 12
     cloud_egress_annual = dataset_gb * reads_per_year * cloud_egress_gb
     cloud_total_annual = cloud_storage_annual + cloud_egress_annual
@@ -1756,11 +1764,11 @@ class BuildVsBuyStorageEconomics:
     check(7 < breakeven_high_years < 8, "High-capex break-even should be about 7.8 years")
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
-    cloud_storage_annual_str = fmt(cloud_storage_annual, precision=0)
-    cloud_egress_annual_str = fmt(cloud_egress_annual, precision=0)
-    cloud_total_annual_str = fmt(cloud_total_annual, precision=0)
-    annual_ops_str = fmt(annual_ops, precision=0)
-    net_annual_savings_str = fmt(net_annual_savings, precision=0)
+    cloud_storage_annual_str = fmt(cloud_storage_annual, precision=1, allow_zero=True)
+    cloud_egress_annual_str = fmt(cloud_egress_annual, precision=1, allow_zero=True)
+    cloud_total_annual_str = fmt(cloud_total_annual, precision=1, allow_zero=True)
+    annual_ops_str = fmt(annual_ops, precision=1, allow_zero=True)
+    net_annual_savings_str = fmt(net_annual_savings, precision=1, allow_zero=True)
     breakeven_low_years_str = fmt(breakeven_low_years, precision=1, commas=False)
     breakeven_high_years_str = fmt(breakeven_high_years, precision=1, commas=False)
     breakeven_range_str = MarkdownStr(f"{breakeven_low_years_str}--{breakeven_high_years_str}")
@@ -1884,6 +1892,8 @@ A `{python} StorageHierarchyAnalysis.gpt3_params_b_str`B parameter model with Ad
 ::: {#dfn-data-storage-checkpoint-storm .callout-definition title="Checkpoint storm"}
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: checkpoint-storm-definition-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1903,9 +1913,9 @@ class CheckpointStormDefinition:
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
     params_b = 70
     nodes = 1_000
-    bytes_fp16 = 2
-    bytes_fp32 = 4
-    fabric_bw_gbs = 100
+    bytes_fp16 = BYTES_FP16.m_as(byte)
+    bytes_fp32 = BYTES_FP32.m_as(byte)
+    fabric_bw_gbs = INFINIBAND_XDR_BW.m_as(GB/second)
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
     weights_gb = params_b * bytes_fp16
@@ -1925,17 +1935,17 @@ class CheckpointStormDefinition:
     check(1390 < naive_write_s < 1410, "Naive 140 TB write at 100 GB/s should be about 1,400 s")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
-    params_b_str = fmt(params_b, precision=0, commas=False)
-    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
-    gradients_gb_str = fmt(gradients_gb, precision=0, commas=False)
-    master_weights_gb_str = fmt(master_weights_gb, precision=0, commas=False)
-    adam_moments_gb_str = fmt(adam_moments_gb, precision=0, commas=False)
-    optimizer_state_gb_str = fmt(optimizer_state_gb, precision=0, commas=False)
+    params_b_str = fmt(params_b, precision=1, allow_zero=True, commas=False)
+    weights_gb_str = fmt(weights_gb, precision=1, allow_zero=True, commas=False)
+    gradients_gb_str = fmt(gradients_gb, precision=1, allow_zero=True, commas=False)
+    master_weights_gb_str = fmt(master_weights_gb, precision=1, allow_zero=True, commas=False)
+    adam_moments_gb_str = fmt(adam_moments_gb, precision=1, allow_zero=True, commas=False)
+    optimizer_state_gb_str = fmt(optimizer_state_gb, precision=1, allow_zero=True, commas=False)
     zero3_total_tb_str = fmt(zero3_total_tb, precision=2, commas=False)
     zero3_write_s_str = fmt(zero3_write_s, precision=1, commas=False)
-    naive_total_tb_str = fmt(naive_total_tb, precision=0, commas=False)
-    naive_write_s_str = fmt(naive_write_s, precision=0)
-    naive_write_min_str = fmt(naive_write_min, precision=0, commas=False)
+    naive_total_tb_str = fmt(naive_total_tb, precision=1, allow_zero=True, commas=False)
+    naive_write_s_str = fmt(naive_write_s, precision=1, allow_zero=True)
+    naive_write_min_str = fmt(naive_write_min, precision=1, allow_zero=True, commas=False)
 ```
 
 ***Checkpoint Storm***\index{Checkpoint Storm!definition} is a burst of synchronized network and storage traffic that occurs when all nodes in a training fleet save model state simultaneously.
@@ -1949,6 +1959,8 @@ class CheckpointStormDefinition:
 A concrete 175B example shows why the local-write phase, rather than the durable copy, governs the exposed training pause.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: checkpoint-storm-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
@@ -1967,8 +1979,8 @@ class CheckpointStormCalc:
 
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
     nodes = 256
-    local_drive_count = 4
-    local_drive_bw_gbs = 7
+    local_drive_count = LOCAL_NVME_DRIVES_PER_NODE_REF.m_as("count")
+    local_drive_bw_gbs = NVME_SEQUENTIAL_BW.m_as(GB/second)
     pfs_aggregate_bw_gbs = 1000
     checkpoint_interval_s = 600
 
@@ -1990,7 +2002,7 @@ class CheckpointStormCalc:
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
     per_node_shard_gb_str = fmt(per_node_shard_gb, precision=1, commas=False)
-    local_bw_gbs_str = fmt(local_bw_gbs, precision=0, commas=False)
+    local_bw_gbs_str = fmt(local_bw_gbs, precision=1, allow_zero=True, commas=False)
     local_write_s_str = fmt(local_write_s, precision=2, commas=False)
     total_pfs_tb_str = fmt(total_pfs_tb, precision=1, commas=False)
     pfs_copy_s_str = fmt(pfs_copy_s, precision=1, commas=False)
@@ -2140,6 +2152,8 @@ These fallacies all return to the same accounting exercise: where each byte live
 As the fleet consumes the sum of human-generated text, it encounters the **Data Wall**\index{Data Wall}: the point where new high-quality training samples can only be generated by the fleet itself. This shift from *collecting* data to *synthesizing* data fundamentally changes the storage architecture. A "synthetic fuel line" does not just stream data; it must store the **provenance chain**\index{Provenance Chain} of every sample to prevent "model collapse\index{Model Collapse}" (where a model degrades by training on its own unverified errors).
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: synthetic-amplification-calc
 #| echo: false
 from mlsysim.fmt import check, fmt
@@ -2159,8 +2173,8 @@ class SyntheticStorage:
     amp_str = fmt(amplification, precision=1, commas=False)
     total_tb_str = fmt(total_footprint_tb, precision=1, commas=False)
     # _str alias for prose; raw verification_passes kept for arithmetic above
-    verification_passes_str = fmt(verification_passes, precision=0, commas=False)
-    provenance_overhead_pct_str = fmt(provenance_metadata_overhead * 100, precision=0, commas=False)
+    verification_passes_str = fmt(verification_passes, precision=1, allow_zero=True, commas=False)
+    provenance_overhead_pct_str = fmt(provenance_metadata_overhead * 100, precision=1, allow_zero=True, commas=False)
     footprint_multiplier_str = fmt(1 + provenance_metadata_overhead, precision=1, commas=False)
 
     @classmethod

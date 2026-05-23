@@ -69,12 +69,12 @@ def esp32():
 
 @pytest.fixture(scope="session")
 def resnet():
-    return Models.ResNet50
+    return Models.Vision.ResNet50
 
 
 @pytest.fixture(scope="session")
 def gpt3():
-    return Models.GPT3
+    return Models.Language.GPT3
 
 
 @pytest.fixture(scope="session")

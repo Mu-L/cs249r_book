@@ -99,6 +99,8 @@ ResNet-50 taught compute-bound optimization, showing how batch size transforms m
 Together, these five workloads span the full deployment spectrum from data center to microcontroller, probing every bottleneck the invariants predict and testing every optimization strategy the book has taught. The systems thinking we developed by tracing these Lighthouses across chapters, from architecture design through training, optimization, and deployment, is the integrated perspective that distinguishes ML systems engineering from isolated algorithm development.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-mobilenet-journey-math
 #| echo: false
 #| output: false
@@ -124,7 +126,6 @@ Together, these five workloads span the full deployment spectrum from data cente
 # │          MobileNetJourneyMath.int8_fp16_reduction_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Models
-from mlsysim.core.constants import BYTES_FP32, BYTES_FP16, BYTES_INT8
 from mlsysim.fmt import fmt, check
 
 class MobileNetJourneyMath:
@@ -151,8 +152,8 @@ class MobileNetJourneyMath:
     # OUTPUT
     depthwise_reduction_str = fmt(standard_to_depthwise, precision=1, commas=False)
     resnet_ops_reduction_str = fmt(resnet_to_mobilenet.m_as(""), precision=1, commas=False)
-    int8_fp32_reduction_str = fmt(int8_vs_fp32.m_as(""), precision=0, commas=False)
-    int8_fp16_reduction_str = fmt(int8_vs_fp16.m_as(""), precision=0, commas=False)
+    int8_fp32_reduction_str = fmt(int8_vs_fp32.m_as(""), precision=1, allow_zero=True, commas=False)
+    int8_fp16_reduction_str = fmt(int8_vs_fp16.m_as(""), precision=1, allow_zero=True, commas=False)
 ```
 
 @tbl-lighthouse-journey-mobilenet traces this journey for a single model, MobileNetV2, demonstrating how every chapter's principles converge on a single engineering artifact. The table walks through seven phases (from foundational constraints through architecture, training, compression, acceleration, serving, and operations) showing how each phase's decisions propagate forward to shape what becomes possible in subsequent phases.
@@ -177,6 +178,8 @@ The table reveals a pattern: every row's decisions constrain the next row's opti
 Throughout this book, each Part introduced quantitative principles that govern ML system behavior. The principles are not rules of thumb or best practices that evolve with fashion. They are invariants: constraints rooted in physics, information theory, and statistics. @tbl-thirteen-principles collects all thirteen in one place, organized by the four Parts that revealed them. The first two columns identify each principle, the third locates where it was introduced, and the final two columns capture its mathematical essence and predictive power.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-energy-movement-math
 #| echo: false
 #| output: false
@@ -199,7 +202,6 @@ Throughout this book, each Part introduced quantitative principles that govern M
 # │ Exports: EnergyMovementMath.dram_vs_fp32_str,
 # │          EnergyMovementMath.dram_vs_fp16_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import ENERGY_DRAM_ACCESS_PJ, ENERGY_FLOP_FP32_PJ, ENERGY_FLOP_FP16_PJ
 from mlsysim.fmt import fmt, check
 
 class EnergyMovementMath:
@@ -217,8 +219,8 @@ class EnergyMovementMath:
     check(100 <= dram_vs_fp16.m_as("") <= 1000, "DRAM/FP16 energy ratio left expected range.")
 
     # OUTPUT
-    dram_vs_fp32_str = fmt(dram_vs_fp32.m_as(""), precision=0, commas=False)
-    dram_vs_fp16_str = fmt(dram_vs_fp16.m_as(""), precision=0, commas=False)
+    dram_vs_fp32_str = fmt(dram_vs_fp32.m_as(""), precision=1, allow_zero=True, commas=False)
+    dram_vs_fp16_str = fmt(dram_vs_fp16.m_as(""), precision=1, allow_zero=True, commas=False)
 ```
 
 | **#**                           | **Principle**               | **Part**       | **Core Equation/Statement**                                                                                                                                                    | **What It Predicts**                                                           |
@@ -602,6 +604,8 @@ A colleague proposes quantizing your model from FP32 to INT8 to reduce serving c
 The same diagnostic habit applies when the bottleneck is not an optimization proposal but the cost of serving a single generated token.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-roofline-setup
 #| echo: false
 #| output: false
@@ -622,7 +626,7 @@ The same diagnostic habit applies when the bottleneck is not an optimization pro
 # │          ratio_str, t_mem_eq, t_comp_eq
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware, Models
-from mlsysim.core.constants import BYTES_FP16, flop
+from mlsysim.core.formulas import calc_transformer_decode_flops
 from mlsysim.fmt import fmt, fmt_math, MarkdownStr, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -633,13 +637,13 @@ class ConclusionRoofline:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    gpu = Hardware.H100
+    gpu = Hardware.Cloud.H100
     model = Models.Language.Llama2_70B
     precision_bytes = BYTES_FP16
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     d_vol = model.size_in_bytes(precision_bytes)
-    compute_req = model.parameters.to("count").magnitude * 2 * flop  # 2 FLOPs per param per token
+    compute_req = calc_transformer_decode_flops(model.parameters)
 
     t_mem = d_vol/gpu.memory_bw
     t_comp = compute_req/gpu.peak_flops
@@ -650,17 +654,18 @@ class ConclusionRoofline:
     check(ratio >= 10, f"LLM Inference should be heavily memory bound. Ratio is only {ratio:.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    llama_params_count_str = MarkdownStr("70 billion")
-    llama_params_prose_str = MarkdownStr("70-billion-parameter")
-    llama_dvol_gb_str = fmt(d_vol.m_as('GB'), precision=0, commas=False)
-    llama_compute_gflops_str = fmt(compute_req.m_as('GFLOPs'), precision=0, commas=False)
+    llama_params_b = fmt(model.parameters.to("count").magnitude / BILLION, precision=1, allow_zero=True, commas=False)
+    llama_params_count_str = MarkdownStr(f"{llama_params_b} billion")
+    llama_params_prose_str = MarkdownStr(f"{llama_params_b}-billion-parameter")
+    llama_dvol_gb_str = fmt(d_vol.m_as('GB'), precision=1, allow_zero=True, commas=False)
+    llama_compute_gflops_str = fmt(compute_req.m_as('GFLOPs'), precision=1, allow_zero=True, commas=False)
 
     h100_bw_tb_str = fmt(gpu.memory_bw.m_as('TB/s'), precision=2, commas=False)
-    h100_peak_tflops_str = fmt(gpu.peak_flops.m_as('TFLOP/s'), precision=0, commas=False)
+    h100_peak_tflops_str = fmt(gpu.peak_flops.m_as('TFLOP/s'), precision=1, allow_zero=True, commas=False)
 
     t_mem_ms_str = fmt(t_mem.m_as('ms'), precision=1, commas=False)
     t_comp_ms_str = fmt(t_comp.m_as('ms'), precision=2, commas=False)
-    ratio_str = fmt(ratio.m_as(''), precision=0, commas=False)
+    ratio_str = fmt(ratio.m_as(''), precision=1, allow_zero=True, commas=False)
 
     # LaTeX equations
     h100_bw_gb_val = gpu.memory_bw.m_as('GB/s')
@@ -710,6 +715,8 @@ Training systems (@sec-model-training) demonstrated the iron law in action: data
 Building and optimizing a model, however, is only half the engineering challenge. The other half begins the moment the model leaves the training cluster and enters production, where a new set of invariants governs behavior and where the optimizations that worked on the bench must survive the unpredictability of real-world traffic.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-tail-latency-ratio
 #| echo: false
 #| output: false
@@ -745,7 +752,7 @@ class TailLatencyRatio:
     check(ratio >= 10, f"P99 tail latency ({ratio:.1f}x) is not significant enough.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    conclusion_tail_ratio_str = fmt(ratio, precision=0, commas=False)
+    conclusion_tail_ratio_str = fmt(ratio, precision=1, allow_zero=True, commas=False)
 ```
 
 ### Navigating production reality { .unnumbered}
@@ -767,6 +774,8 @@ As ML systems move beyond research labs, four deployment paradigms test differen
 Cloud deployment prioritizes throughput and scalability. Dense workloads such as ResNet-50 chase GPU utilization through kernel fusion, mixed precision training, and gradient compression, while DLRM-style recommendation systems must also manage embedding-table capacity, placement, and sparse access patterns. @sec-model-compression and @sec-model-training explored these techniques, demonstrating how they combine to balance performance optimization with cost efficiency at scale.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-edge-reference-ratios
 #| echo: false
 #| output: false
@@ -783,28 +792,27 @@ Cloud deployment prioritizes throughput and scalability. Dense workloads such as
 # │ How:     Divide H100 INT8 TOPS, TDP, and memory capacity by the
 # │          corresponding mobile constants (TOPS, mobile TDP, smartphone RAM).
 # │
-# │ Imports: mlsysim (Hardware), mlsysim.core.constants (H100_TOPS_INT8,
-# │          MOBILE_NPU_TOPS_INT8, MOBILE_TDP_W, SMARTPHONE_RAM_GB),
+# │ Imports: mlsysim (Hardware), mlsysim.core.constants (Hardware.Cloud.H100.compute.precision_flops["int8"],
+# │          Hardware.Mobile.iPhone15Pro.compute.peak_flops, MOBILE_TDP_W, SMARTPHONE_RAM_GB),
 # │          mlsysim.fmt (fmt, check)
 # │ Exports: EdgeReferenceRatios.int8_peak_ratio_str,
 # │          EdgeReferenceRatios.power_ratio_str,
 # │          EdgeReferenceRatios.memory_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim import Hardware
-from mlsysim.core.constants import H100_TOPS_INT8, MOBILE_NPU_TOPS_INT8, MOBILE_TDP_W, SMARTPHONE_RAM_GB
 from mlsysim.fmt import fmt, check
 
 class EdgeReferenceRatios:
     # LOAD
-    h100 = Hardware.H100
-    mobile_int8_peak = MOBILE_NPU_TOPS_INT8
+    h_h100 = Hardware.Cloud.H100
+    mobile_int8_peak = Hardware.Mobile.iPhone15Pro.compute.peak_flops
     mobile_power = MOBILE_TDP_W
     phone_ram = SMARTPHONE_RAM_GB
 
     # EXECUTE
-    int8_peak_ratio = H100_TOPS_INT8 / mobile_int8_peak
-    power_ratio = h100.tdp / mobile_power
-    memory_ratio = h100.memory_capacity / phone_ram
+    int8_peak_ratio = Hardware.Cloud.H100.compute.precision_flops["int8"] / mobile_int8_peak
+    power_ratio = h_h100.tdp / mobile_power
+    memory_ratio = h_h100.memory_capacity / phone_ram
 
     # GUARD
     check(int8_peak_ratio.m_as("") > 10, "Mobile edge example should be far below H100 throughput.")
@@ -812,9 +820,9 @@ class EdgeReferenceRatios:
     check(power_ratio.m_as("") > 100, "Mobile edge example should have a much smaller power envelope.")
 
     # OUTPUT
-    int8_peak_ratio_str = fmt(int8_peak_ratio.m_as(""), precision=0, commas=False)
-    power_ratio_str = fmt(power_ratio.m_as(""), precision=0, commas=False)
-    memory_ratio_str = fmt(memory_ratio.m_as(""), precision=0, commas=False)
+    int8_peak_ratio_str = fmt(int8_peak_ratio.m_as(""), precision=1, allow_zero=True, commas=False)
+    power_ratio_str = fmt(power_ratio.m_as(""), precision=1, allow_zero=True, commas=False)
+    memory_ratio_str = fmt(memory_ratio.m_as(""), precision=1, allow_zero=True, commas=False)
 ```
 
 \index{AI Democratization!edge deployment}
@@ -887,6 +895,8 @@ The question confronting our generation is not whether increasingly capable AI w
 Exercising that responsibility at the scale these applications demand, however, requires moving beyond the single machine. The principles we have established govern individual systems; the next frontier applies them to thousands of machines working as one.
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-fleet-failure-math
 #| echo: false
 #| output: false
@@ -911,7 +921,6 @@ Exercising that responsibility at the scale these applications demand, however, 
 # │          FleetFailureMath.gpu_mtbf_years_str,
 # │          FleetFailureMath.cluster_mtbf_hours_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import DAYS_PER_YEAR, HOURS_PER_DAY, ureg
 from mlsysim.core.defaults import GPU_MTTF_HOURS
 from mlsysim.core.formulas import calc_mtbf_cluster
 from mlsysim.fmt import fmt, check
@@ -930,9 +939,9 @@ class FleetFailureMath:
     check(cluster_mtbf.m_as("hour") < 100, "Thousand-GPU MTBF should read as hours.")
 
     # OUTPUT
-    gpu_count_str = fmt(gpu_count, precision=0)
+    gpu_count_str = fmt(gpu_count, precision=1, allow_zero=True)
     gpu_mtbf_years_str = fmt(gpu_mtbf_years, precision=1, commas=False)
-    cluster_mtbf_hours_str = fmt(cluster_mtbf.m_as("hour"), precision=0, commas=False)
+    cluster_mtbf_hours_str = fmt(cluster_mtbf.m_as("hour"), precision=1, allow_zero=True, commas=False)
 ```
 
 ### Node to fleet { .unnumbered}
@@ -982,6 +991,8 @@ The statistical drift invariant (Principle \ref{pri-statistical-drift}) guarante
 **Pitfall**: *Optimizing a single pipeline stage without profiling the full system.*
 
 ```{python}
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: conclusion-amdahl-pitfall
 #| echo: false
 #| output: false
@@ -1020,8 +1031,8 @@ class AmdahlPitfallMath:
     check(system_speedup < 1.2, "Amdahl example should remain bottlenecked by preprocessing.")
 
     # OUTPUT
-    local_speedup_str = fmt(local_speedup, precision=0, commas=False)
-    serial_percent_str = fmt(serial_fraction * 100, precision=0, commas=False)
+    local_speedup_str = fmt(local_speedup, precision=1, allow_zero=True, commas=False)
+    serial_percent_str = fmt(serial_fraction * 100, precision=1, allow_zero=True, commas=False)
     system_speedup_str = fmt(system_speedup, precision=1, commas=False)
 ```
 

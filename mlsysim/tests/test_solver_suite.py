@@ -61,75 +61,75 @@ class TestSingleNodeModel:
     @pytest.mark.smoke
     def test_resnet_high_batch_is_compute_bound(self):
         """ResNet-50 at large batch should be compute-bound (high arithmetic intensity)."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         perf = SingleNodeModel().solve(resnet, a100, batch_size=256)
         assert perf.feasible is True
         assert perf.bottleneck == "Compute"
 
     def test_llm_batch1_is_memory_bound(self):
         """A large LLM at batch 1 should be memory-bound (weight streaming dominates)."""
-        gpt3 = Models.GPT3
-        h100 = Hardware.H100
+        gpt3 = Models.Language.GPT3
+        h100 = Hardware.Cloud.H100
         perf = SingleNodeModel().solve(gpt3, h100, batch_size=1, raise_errors=False)
         # GPT-3 175B at FP16 = 350 GB, H100 has 80 GiB => infeasible,
         # but the bottleneck analysis still runs.
         # Use a model that fits: Llama3_8B
-        llama = Models.Llama3_8B
+        llama = Models.Language.Llama3_8B
         perf = SingleNodeModel().solve(llama, h100, batch_size=1)
         assert perf.feasible is True
         assert perf.bottleneck == "Memory"
 
     def test_oom_detection_huge_model_tiny_hardware(self):
         """GPT-4 on ESP32 must be infeasible."""
-        gpt4 = Models.GPT4
+        gpt4 = Models.Language.GPT4
         esp32 = Hardware.ESP32
         perf = SingleNodeModel().solve(gpt4, esp32, batch_size=1, raise_errors=False)
         assert perf.feasible is False
 
     def test_oom_raises_when_requested(self):
         """OOMError should be raised when raise_errors=True."""
-        gpt4 = Models.GPT4
+        gpt4 = Models.Language.GPT4
         esp32 = Hardware.ESP32
         with pytest.raises(OOMError):
             SingleNodeModel().solve(gpt4, esp32, batch_size=1, raise_errors=True)
 
     def test_precision_switching_affects_latency(self):
         """FP32 inference should be slower than FP16 on the same hardware."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         perf_fp16 = SingleNodeModel().solve(resnet, a100, batch_size=1, precision="fp16")
         perf_fp32 = SingleNodeModel().solve(resnet, a100, batch_size=1, precision="fp32")
         assert perf_fp32.latency > perf_fp16.latency
 
     def test_precision_switching_changes_peak_flops(self):
         """Peak flops under FP32 should be lower than FP16 tensor core."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         perf_fp16 = SingleNodeModel().solve(resnet, a100, batch_size=1, precision="fp16")
         perf_fp32 = SingleNodeModel().solve(resnet, a100, batch_size=1, precision="fp32")
         assert perf_fp32.peak_flops_actual < perf_fp16.peak_flops_actual
 
     def test_throughput_increases_with_batch_size(self):
         """Throughput (samples/s) should increase with larger batch sizes."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         perf_b1 = SingleNodeModel().solve(resnet, a100, batch_size=1)
         perf_b64 = SingleNodeModel().solve(resnet, a100, batch_size=64)
         assert perf_b64.throughput > perf_b1.throughput
 
     def test_small_model_on_big_hardware_is_feasible(self):
         """MobileNetV2 on H100 should trivially fit."""
-        mobile = Models.MobileNetV2
-        h100 = Hardware.H100
+        mobile = Models.Vision.MobileNetV2
+        h100 = Hardware.Cloud.H100
         perf = SingleNodeModel().solve(mobile, h100, batch_size=1)
         assert perf.feasible is True
         assert perf.latency.magnitude > 0
 
     def test_performance_profile_has_all_fields(self):
         """PerformanceProfile should contain all required fields."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         perf = SingleNodeModel().solve(resnet, a100, batch_size=1)
         assert hasattr(perf, "latency")
         assert hasattr(perf, "throughput")
@@ -151,16 +151,16 @@ class TestServingModel:
     @pytest.mark.smoke
     def test_prefill_is_compute_bound(self):
         """Time-to-first-token (prefill) should be dominated by compute."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1)
         # Prefill latency should be > 0
         assert result.ttft.magnitude > 0
 
     def test_decode_is_memory_bound(self):
         """Inter-token latency (decode) should be limited by memory bandwidth."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1)
         # ITL is model_bytes / memory_bw => memory-bandwidth limited
         assert result.itl.magnitude > 0
@@ -170,8 +170,8 @@ class TestServingModel:
 
     def test_kv_cache_grows_with_sequence_length(self):
         """KV cache should increase with longer sequences."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result_short = ServingModel().solve(llama, h100, seq_len=512, batch_size=1)
         result_long = ServingModel().solve(llama, h100, seq_len=4096, batch_size=1)
         kv_short = result_short.kv_cache_size.to("GB").magnitude
@@ -180,8 +180,8 @@ class TestServingModel:
 
     def test_kv_cache_grows_with_batch_size(self):
         """KV cache should scale linearly with batch size."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result_b1 = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1)
         result_b4 = ServingModel().solve(llama, h100, seq_len=2048, batch_size=4)
         kv_b1 = result_b1.kv_cache_size.to("GB").magnitude
@@ -190,29 +190,29 @@ class TestServingModel:
 
     def test_feasibility_model_too_large(self):
         """GPT-3 175B in FP16 = ~350 GB; should not fit on a single H100 (80 GiB)."""
-        gpt3 = Models.GPT3
-        h100 = Hardware.H100
+        gpt3 = Models.Language.GPT3
+        h100 = Hardware.Cloud.H100
         result = ServingModel().solve(gpt3, h100, seq_len=2048, batch_size=1)
         assert result.feasible is False
 
     def test_feasibility_model_fits(self):
         """Llama-3.1-8B in FP16 ~ 16 GB; should fit on H100."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1)
         assert result.feasible is True
 
     def test_memory_utilization_bounded(self):
         """Memory utilization for a feasible model should be between 0 and 1."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1)
         assert 0 < result.memory_utilization < 1.0
 
     def test_int8_reduces_model_size(self):
         """INT8 serving should halve the model weights vs FP16."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result_fp16 = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1, precision="fp16")
         result_int8 = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1, precision="int8")
         fp16_size = result_fp16.model_weights_size.to("GB").magnitude
@@ -221,8 +221,8 @@ class TestServingModel:
 
     def test_prefill_chunking_is_optional(self):
         """Default serving analysis should remain unchunked."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = ServingModel().solve(llama, h100, seq_len=2048, batch_size=1)
         assert result.prefill_chunks == 1
         assert result.prefill_chunk_time is None
@@ -230,8 +230,8 @@ class TestServingModel:
 
     def test_prefill_chunking_bounds_decode_stall(self):
         """Chunked prefills reduce the largest prefill stall while preserving total work."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         solver = ServingModel()
 
         single_chunk = solver.solve(llama, h100, seq_len=4096, batch_size=1, prefill_chunk_tokens=4096)
@@ -247,8 +247,8 @@ class TestServingModel:
 
     def test_prefill_chunking_reports_slowest_chunk_not_average(self):
         """For a partial final chunk, the stall bound should be the slowest full chunk."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         baseline = ServingModel().solve(llama, h100, seq_len=4097, batch_size=1)
         chunked = ServingModel().solve(llama, h100, seq_len=4097, batch_size=1, prefill_chunk_tokens=512)
 
@@ -259,8 +259,8 @@ class TestServingModel:
 
     def test_prefill_chunking_rejects_non_positive_size(self):
         """Chunk sizes must be positive."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         with pytest.raises(ValueError, match="prefill_chunk_tokens"):
             ServingModel().solve(llama, h100, seq_len=2048, batch_size=1, prefill_chunk_tokens=0)
 
@@ -279,8 +279,8 @@ class TestServingModel:
     )
     def test_serving_rejects_invalid_inputs(self, kwargs, message):
         """Serving inputs should fail early with clear validation errors."""
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         params = {"seq_len": 2048, "batch_size": 1}
         params.update(kwargs)
         with pytest.raises(ValueError, match=message):
@@ -291,8 +291,8 @@ class TestTrainingMemoryModel:
     """Tests for per-accelerator training memory accounting."""
 
     def test_training_memory_breakdown_sums_to_total(self):
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = TrainingMemoryModel().solve(llama, h100, batch_size=8, seq_len=1024)
 
         total = (
@@ -307,8 +307,8 @@ class TestTrainingMemoryModel:
         assert result.optimizer_state.to("GB").magnitude > result.gradients.to("GB").magnitude
 
     def test_zero_stage_reduces_model_state_memory(self):
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         baseline = TrainingMemoryModel().solve(llama, h100, batch_size=8, seq_len=1024, dp_size=8, zero_stage=0)
         zero3 = TrainingMemoryModel().solve(llama, h100, batch_size=8, seq_len=1024, dp_size=8, zero_stage=3)
 
@@ -318,8 +318,8 @@ class TestTrainingMemoryModel:
         assert zero3.total_memory < baseline.total_memory
 
     def test_activation_checkpointing_reduces_activations(self):
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         none = TrainingMemoryModel().solve(
             llama, h100, batch_size=8, seq_len=2048, activation_checkpointing="none"
         )
@@ -331,8 +331,8 @@ class TestTrainingMemoryModel:
         assert full.total_memory < none.total_memory
 
     def test_training_memory_rejects_invalid_options(self):
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         with pytest.raises(ValueError, match="zero_stage"):
             TrainingMemoryModel().solve(llama, h100, batch_size=8, zero_stage=4)
         with pytest.raises(ValueError, match="optimizer"):
@@ -343,8 +343,8 @@ class TestServingCapacityModel:
     """Tests for serving capacity planning."""
 
     def test_capacity_planner_finds_required_replicas(self):
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = ServingCapacityModel().solve(
             llama,
             h100,
@@ -362,8 +362,8 @@ class TestServingCapacityModel:
         assert result.estimated_p99_latency <= result.target_p99_latency
 
     def test_capacity_replicas_increase_with_qps(self):
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         low = ServingCapacityModel().solve(
             llama, h100, qps=1.0, target_p99_latency_ms=2_000, seq_len=512, output_tokens=32, max_replicas=64
         )
@@ -375,8 +375,8 @@ class TestServingCapacityModel:
         assert high.qps_capacity >= high.qps_target
 
     def test_capacity_planner_reports_infeasible_model(self):
-        gpt3 = Models.GPT3
-        h100 = Hardware.H100
+        gpt3 = Models.Language.GPT3
+        h100 = Hardware.Cloud.H100
         result = ServingCapacityModel().solve(
             gpt3,
             h100,
@@ -527,7 +527,7 @@ class TestDataModel:
     @pytest.mark.smoke
     def test_stall_when_demand_exceeds_supply(self):
         """Pipeline should stall when data demand > hardware supply."""
-        h100 = Hardware.H100
+        h100 = Hardware.Cloud.H100
         # Demand far exceeds NVMe bandwidth (7 GB/s)
         huge_demand = Q_("100 GB/s")
         solver = DataModel()
@@ -537,7 +537,7 @@ class TestDataModel:
 
     def test_no_stall_when_supply_adequate(self):
         """Pipeline should not stall when supply easily meets demand."""
-        h100 = Hardware.H100
+        h100 = Hardware.Cloud.H100
         modest_demand = Q_("1 GB/s")
         solver = DataModel()
         result = solver.solve(modest_demand, h100)
@@ -546,7 +546,7 @@ class TestDataModel:
 
     def test_margin_positive_when_no_stall(self):
         """Margin (supply - demand) should be positive when not stalled."""
-        h100 = Hardware.H100
+        h100 = Hardware.Cloud.H100
         modest_demand = Q_("1 GB/s")
         solver = DataModel()
         result = solver.solve(modest_demand, h100)
@@ -554,7 +554,7 @@ class TestDataModel:
 
     def test_margin_negative_when_stalled(self):
         """Margin should be negative when demand exceeds supply."""
-        h100 = Hardware.H100
+        h100 = Hardware.Cloud.H100
         huge_demand = Q_("100 GB/s")
         solver = DataModel()
         result = solver.solve(huge_demand, h100)
@@ -562,7 +562,7 @@ class TestDataModel:
 
     def test_bottleneck_identified(self):
         """Solver should identify whether storage or interconnect is the bottleneck."""
-        h100 = Hardware.H100
+        h100 = Hardware.Cloud.H100
         demand = Q_("1 GB/s")
         solver = DataModel()
         result = solver.solve(demand, h100)
@@ -570,7 +570,7 @@ class TestDataModel:
 
     def test_missing_storage_does_not_zero_valid_interconnect(self):
         """Absent storage metadata should not erase a modeled I/O path."""
-        a100 = Hardware.A100  # has PCIe interconnect but no StorageHierarchy
+        a100 = Hardware.Cloud.A100  # has PCIe interconnect but no StorageHierarchy
         demand = Q_("1 GB/s")
         solver = DataModel()
         result = solver.solve(demand, a100)
@@ -705,16 +705,16 @@ class TestCompressionModel:
     @pytest.mark.smoke
     def test_int8_compression_ratio_is_4x(self):
         """INT8 quantization from FP32 baseline should yield 4x compression."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert result.compression_ratio == pytest.approx(4.0, rel=0.01)
 
     def test_int4_compression_ratio_is_8x(self):
         """INT4 quantization from FP32 baseline should yield 8x compression."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="quantization", target_bitwidth=4)
         assert result.compression_ratio == pytest.approx(8.0, rel=0.01)
@@ -723,21 +723,21 @@ class TestCompressionModel:
     def test_accuracy_delta_is_negative(self, bitwidth):
         """Quantization should always degrade accuracy (negative delta)."""
         solver = CompressionModel()
-        result = solver.solve(Models.ResNet50, Hardware.A100, method="quantization", target_bitwidth=bitwidth)
+        result = solver.solve(Models.Vision.ResNet50, Hardware.Cloud.A100, method="quantization", target_bitwidth=bitwidth)
         assert result.estimated_accuracy_delta < 0
 
     def test_int8_accuracy_drop_small(self):
         """INT8 should have a small accuracy drop (~0.5%)."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert abs(result.estimated_accuracy_delta) < 0.01
 
     def test_int4_accuracy_drop_larger_than_int8(self):
         """INT4 should have larger accuracy drop than INT8."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result_8 = solver.solve(resnet, a100, method="quantization", target_bitwidth=8)
         result_4 = solver.solve(resnet, a100, method="quantization", target_bitwidth=4)
@@ -745,16 +745,16 @@ class TestCompressionModel:
 
     def test_pruning_zero_sparsity_minimal_loss(self):
         """Pruning at 0% sparsity should have minimal accuracy loss."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="pruning", sparsity=0.0)
         assert abs(result.estimated_accuracy_delta) < 0.01
 
     def test_pruning_high_sparsity_larger_loss(self):
         """Pruning at 90% sparsity should have larger accuracy loss than 10%."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result_low = solver.solve(resnet, a100, method="pruning", sparsity=0.1)
         result_high = solver.solve(resnet, a100, method="pruning", sparsity=0.9)
@@ -762,8 +762,8 @@ class TestCompressionModel:
 
     def test_compressed_size_less_than_original(self):
         """Compressed model should always be smaller than original."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="quantization", target_bitwidth=8)
         orig = result.original_size_gb.magnitude
@@ -772,8 +772,8 @@ class TestCompressionModel:
 
     def test_memory_savings_percentage(self):
         """Memory savings for INT8 should be 75% (1 - 1/4)."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert result.memory_savings_pct == pytest.approx(75.0, rel=0.01)
@@ -783,44 +783,12 @@ class TestCompressionModel:
 # 8. Constants & Module Import Tests
 # ======================================================================
 
-class TestConstantsImports:
-    """Tests that units.py, defaults.py, constants.py all import correctly
-    and backward compatibility is maintained."""
-
-    @pytest.mark.smoke
-    def test_units_module_imports(self):
-        """Core unit definitions should be importable from units.py."""
-        from mlsysim.core.units import ureg, Q_, GB, TB, MS, NS, flop, TFLOPs, USD
-        assert ureg is not None
-        assert Q_ is not None
-        assert GB is not None
-        assert flop is not None
-
-    def test_defaults_module_imports(self):
-        """Tuneable defaults should be importable from defaults.py."""
-        from mlsysim.core.defaults import (
-            GPU_MTTF_HOURS,
-            PUE_LIQUID_COOLED,
-            PUE_LEGACY,
-            CHINCHILLA_TOKENS_PER_PARAM,
-            CHINCHILLA_COMPUTE_CONSTANT,
-            ANNUAL_MAINTENANCE_RATIO,
-        )
-        assert GPU_MTTF_HOURS == 50_000
-        assert CHINCHILLA_TOKENS_PER_PARAM == 20
-        assert CHINCHILLA_COMPUTE_CONSTANT == 6
-        assert PUE_LIQUID_COOLED == 1.06
-        assert PUE_LEGACY == 1.58
-
-    def test_constants_backward_compat(self):
         """Importing from constants.py should still work (re-exports from units + defaults)."""
         from mlsysim.core.constants import (
             ureg, Q_,
             BYTES_FP16, BYTES_FP32, BYTES_INT8, BYTES_INT4,
             GPU_MTTF_HOURS,
             CHINCHILLA_TOKENS_PER_PARAM,
-            H100_FLOPS_FP16_TENSOR,
-            H100_MEM_BW,
         )
         assert BYTES_FP16.magnitude == 2
         assert BYTES_FP32.magnitude == 4
@@ -851,44 +819,44 @@ class TestEngine:
     @pytest.mark.smoke
     def test_engine_returns_performance_profile(self):
         """Engine.solve should return a PerformanceProfile instance."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = Engine.solve(resnet, a100, batch_size=1)
         assert isinstance(result, PerformanceProfile)
 
     def test_engine_energy_positive(self):
         """Energy estimate should be positive for hardware with TDP."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = Engine.solve(resnet, a100, batch_size=1)
         assert result.energy.magnitude > 0
 
     def test_engine_mfu_bounded(self):
         """MFU should be between 0 and 1."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = Engine.solve(resnet, a100, batch_size=64)
         assert 0 <= result.mfu <= 1.0
 
     def test_engine_hfu_bounded(self):
         """HFU should be between 0 and 1."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = Engine.solve(resnet, a100, batch_size=64)
         assert 0 <= result.hfu <= 1.0
 
     def test_engine_efficiency_scales_flops(self):
         """Higher efficiency should yield lower latency (faster)."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result_low = Engine.solve(resnet, a100, batch_size=64, efficiency=0.2)
         result_high = Engine.solve(resnet, a100, batch_size=64, efficiency=0.8)
         assert result_high.latency < result_low.latency
 
     def test_engine_summary_string(self):
         """PerformanceProfile.summary() should return a non-empty string."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = Engine.solve(resnet, a100, batch_size=1)
         summary = result.summary()
         assert isinstance(summary, str)
@@ -907,7 +875,7 @@ class TestDistributedModel:
     def test_scaling_efficiency_between_0_and_1(self):
         """Scaling efficiency must be in (0, 1]."""
         solver = DistributedModel()
-        gpt3 = Models.GPT3
+        gpt3 = Models.Language.GPT3
         cluster = Systems.Clusters.Research_256
         result = solver.solve(gpt3, cluster, batch_size=32)
         assert 0 < result.scaling_efficiency <= 1.0
@@ -915,7 +883,7 @@ class TestDistributedModel:
     def test_communication_latency_positive(self):
         """Communication latency should be positive for multi-node clusters."""
         solver = DistributedModel()
-        gpt3 = Models.GPT3
+        gpt3 = Models.Language.GPT3
         cluster = Systems.Clusters.Research_256
         result = solver.solve(gpt3, cluster, batch_size=32)
         assert result.communication_latency.magnitude > 0
@@ -923,7 +891,7 @@ class TestDistributedModel:
     def test_pipeline_parallelism_creates_bubble(self):
         """PP > 1 should introduce a non-zero pipeline bubble."""
         solver = DistributedModel()
-        gpt3 = Models.GPT3
+        gpt3 = Models.Language.GPT3
         cluster = Systems.Clusters.Research_256
         result = solver.solve(gpt3, cluster, batch_size=256, pp_size=4, microbatch_count=8)
         assert result.pipeline_bubble_latency.magnitude > 0
@@ -932,7 +900,7 @@ class TestDistributedModel:
     def test_no_pipeline_bubble_when_pp_1(self):
         """PP = 1 should have zero pipeline bubble."""
         solver = DistributedModel()
-        gpt3 = Models.GPT3
+        gpt3 = Models.Language.GPT3
         cluster = Systems.Clusters.Research_256
         result = solver.solve(gpt3, cluster, batch_size=32, pp_size=1)
         assert result.pipeline_bubble_latency.magnitude == 0
@@ -948,7 +916,7 @@ class TestNetworkRooflineModel:
 
     def test_returns_valid_performance_profile(self):
         solver = NetworkRooflineModel()
-        result = solver.solve(Models.Llama3_8B, Systems.Clusters.Research_256)
+        result = solver.solve(Models.Language.Llama3_8B, Systems.Clusters.Research_256)
         assert result.feasible is True
         assert result.latency.magnitude > 0
         assert result.throughput.magnitude > 0
@@ -1053,8 +1021,8 @@ class TestEfficiencyModel:
     @pytest.mark.smoke
     def test_ffn_mfu_higher_than_attention(self):
         """FFN layers (compute-dense GEMM) should achieve higher MFU than standard attention."""
-        resnet = Models.ResNet50
-        h100 = Hardware.H100
+        resnet = Models.Vision.ResNet50
+        h100 = Hardware.Cloud.H100
         solver = EfficiencyModel()
         result_ffn = solver.solve(resnet, h100, workload_type="ffn")
         result_attn = solver.solve(resnet, h100, workload_type="attention", use_flash_attention=False)
@@ -1062,8 +1030,8 @@ class TestEfficiencyModel:
 
     def test_flash_attention_boosts_mfu(self):
         """FlashAttention should yield higher MFU than standard attention."""
-        resnet = Models.ResNet50
-        h100 = Hardware.H100
+        resnet = Models.Vision.ResNet50
+        h100 = Hardware.Cloud.H100
         solver = EfficiencyModel()
         result_std = solver.solve(resnet, h100, workload_type="attention", use_flash_attention=False)
         result_flash = solver.solve(resnet, h100, workload_type="attention", use_flash_attention=True)
@@ -1074,21 +1042,21 @@ class TestEfficiencyModel:
     def test_mfu_bounded_zero_one(self, wtype, eff):
         """MFU must be clamped to [0, 1] for all workload types and efficiency levels."""
         solver = EfficiencyModel()
-        result = solver.solve(Models.ResNet50, Hardware.H100, workload_type=wtype, efficiency=eff)
+        result = solver.solve(Models.Vision.ResNet50, Hardware.Cloud.H100, workload_type=wtype, efficiency=eff)
         assert 0.0 <= result.mfu <= 1.0
 
     def test_achievable_flops_positive(self):
         """Achievable FLOPS should always be positive."""
-        resnet = Models.ResNet50
-        h100 = Hardware.H100
+        resnet = Models.Vision.ResNet50
+        h100 = Hardware.Cloud.H100
         solver = EfficiencyModel()
         result = solver.solve(resnet, h100, workload_type="ffn")
         assert result.achievable_flops.magnitude > 0
 
     def test_overhead_breakdown_present(self):
         """Overhead breakdown should contain expected keys."""
-        resnet = Models.ResNet50
-        h100 = Hardware.H100
+        resnet = Models.Vision.ResNet50
+        h100 = Hardware.Cloud.H100
         solver = EfficiencyModel()
         result = solver.solve(resnet, h100, workload_type="ffn")
         assert "occupancy_loss" in result.overhead_breakdown
@@ -1226,8 +1194,8 @@ class TestInferenceScalingModel:
     def test_total_time_greater_than_ttft(self):
         """Total reasoning time must exceed TTFT (there is decode work after prefill)."""
         solver = InferenceScalingModel()
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result = solver.solve(llama, h100, reasoning_steps=8, context_length=2048)
         total = result.total_reasoning_time.to("ms").magnitude
         ttft = result.ttft.to("ms").magnitude
@@ -1236,8 +1204,8 @@ class TestInferenceScalingModel:
     def test_more_steps_more_time(self):
         """More reasoning steps should increase total reasoning time."""
         solver = InferenceScalingModel()
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         result_few = solver.solve(llama, h100, reasoning_steps=2, context_length=2048)
         result_many = solver.solve(llama, h100, reasoning_steps=16, context_length=2048)
         t_few = result_few.total_reasoning_time.to("ms").magnitude
@@ -1248,18 +1216,18 @@ class TestInferenceScalingModel:
         """Feasibility should be passed through from the ServingModel."""
         solver = InferenceScalingModel()
         # Llama3_8B fits on H100
-        result_fit = solver.solve(Models.Llama3_8B, Hardware.H100, reasoning_steps=4)
+        result_fit = solver.solve(Models.Language.Llama3_8B, Hardware.Cloud.H100, reasoning_steps=4)
         assert result_fit.feasible is True
         # GPT-3 175B does not fit on a single H100
-        result_nofit = solver.solve(Models.GPT3, Hardware.H100, reasoning_steps=4)
+        result_nofit = solver.solve(Models.Language.GPT3, Hardware.Cloud.H100, reasoning_steps=4)
         assert result_nofit.feasible is False
 
     def test_tokens_generated_correct(self):
         """tokens_generated should equal reasoning_steps * tokens_per_step."""
         solver = InferenceScalingModel()
         from mlsysim.core.defaults import TOKENS_PER_REASONING_STEP
-        llama = Models.Llama3_8B
-        h100 = Hardware.H100
+        llama = Models.Language.Llama3_8B
+        h100 = Hardware.Cloud.H100
         steps = 5
         result = solver.solve(llama, h100, reasoning_steps=steps)
         assert result.tokens_generated == steps * TOKENS_PER_REASONING_STEP
@@ -1276,16 +1244,16 @@ class TestSensitivitySolver:
     def test_binding_constraint_identified(self):
         """Solver should identify a binding constraint from the sensitivity dict."""
         solver = SensitivitySolver()
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = solver.solve(resnet, a100, precision="fp16")
         assert result.binding_constraint in ["peak_flops", "memory_bandwidth", "memory_capacity"]
 
     def test_sensitivities_have_correct_keys(self):
         """Sensitivity dict should contain all three hardware parameters."""
         solver = SensitivitySolver()
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = solver.solve(resnet, a100)
         sens = result.sensitivities
         assert "peak_flops" in sens
@@ -1295,8 +1263,8 @@ class TestSensitivitySolver:
     def test_sensitivity_signs(self):
         """Increasing peak_flops or memory_bandwidth should not increase latency (sensitivity <= 0)."""
         solver = SensitivitySolver()
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = solver.solve(resnet, a100)
         sens = result.sensitivities
         # More FLOPS or BW => same or lower latency => sensitivity <= 0
@@ -1306,8 +1274,8 @@ class TestSensitivitySolver:
     def test_baseline_latency_positive(self):
         """Baseline latency should be positive."""
         solver = SensitivitySolver()
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = solver.solve(resnet, a100)
         assert result.baseline_latency.magnitude > 0
 
@@ -1335,21 +1303,21 @@ class TestSynthesisSolver:
     def test_required_bw_positive(self):
         """Required bandwidth should always be positive."""
         solver = SynthesisSolver()
-        resnet = Models.ResNet50
+        resnet = Models.Vision.ResNet50
         result = solver.solve(resnet, target_latency=Q_("10 ms"))
         assert result.required_bw.magnitude > 0
 
     def test_required_memory_gte_model_size(self):
         """Required memory must be at least the model weight size."""
         solver = SynthesisSolver()
-        resnet = Models.ResNet50
+        resnet = Models.Vision.ResNet50
         result = solver.solve(resnet, target_latency=Q_("10 ms"))
         assert result.required_memory.to("GB").magnitude >= result.model_size.to("GB").magnitude - 1e-9
 
     def test_tighter_sla_requires_more_bw(self):
         """A tighter latency SLA should require higher bandwidth."""
         solver = SynthesisSolver()
-        resnet = Models.ResNet50
+        resnet = Models.Vision.ResNet50
         result_loose = solver.solve(resnet, target_latency=Q_("100 ms"))
         result_tight = solver.solve(resnet, target_latency=Q_("1 ms"))
         assert result_tight.required_bw.magnitude > result_loose.required_bw.magnitude
@@ -1357,14 +1325,14 @@ class TestSynthesisSolver:
     def test_required_flops_positive(self):
         """Required FLOPS should always be positive."""
         solver = SynthesisSolver()
-        resnet = Models.ResNet50
+        resnet = Models.Vision.ResNet50
         result = solver.solve(resnet, target_latency=Q_("10 ms"))
         assert result.required_flops.magnitude > 0
 
     def test_compute_memory_ratio_positive(self):
         """Compute-to-memory ratio should be positive."""
         solver = SynthesisSolver()
-        resnet = Models.ResNet50
+        resnet = Models.Vision.ResNet50
         result = solver.solve(resnet, target_latency=Q_("10 ms"))
         assert result.compute_memory_ratio.magnitude > 0
 
@@ -1424,15 +1392,15 @@ class TestCheckpointModel:
         solver = CheckpointModel()
         small = Models.Vision.ResNet50
         large = Models.Language.Llama3_8B
-        res_small = solver.solve(small, Hardware.A100)
-        res_large = solver.solve(large, Hardware.A100)
+        res_small = solver.solve(small, Hardware.Cloud.A100)
+        res_large = solver.solve(large, Hardware.Cloud.A100)
         assert res_large.checkpoint_size > res_small.checkpoint_size
 
     def test_adam_checkpoint_larger_than_sgd(self):
         """Adam requires 14 bytes/param (master + momentum + variance + weights), SGD requires 4."""
         solver = CheckpointModel()
-        model = Models.ResNet50
-        hw = Hardware.A100
+        model = Models.Vision.ResNet50
+        hw = Hardware.Cloud.A100
         res_adam = solver.solve(model, hw, optimizer="adam")
         res_sgd = solver.solve(model, hw, optimizer="sgd")
         assert res_adam.checkpoint_size > res_sgd.checkpoint_size
@@ -1440,20 +1408,20 @@ class TestCheckpointModel:
     def test_write_time_positive(self):
         """Checkpoint write time must be positive for any non-trivial model."""
         solver = CheckpointModel()
-        result = solver.solve(Models.GPT3, Hardware.H100)
+        result = solver.solve(Models.Language.GPT3, Hardware.Cloud.H100)
         assert result.write_time_seconds.magnitude > 0
 
     def test_mfu_penalty_bounded(self):
         """MFU penalty should be between 0 and 1 for reasonable intervals."""
         solver = CheckpointModel()
-        result = solver.solve(Models.ResNet50, Hardware.A100, checkpoint_interval_hours=4.0)
+        result = solver.solve(Models.Vision.ResNet50, Hardware.Cloud.A100, checkpoint_interval_hours=4.0)
         assert 0.0 <= result.mfu_penalty_pct <= 1.0
 
     def test_shorter_interval_higher_penalty(self):
         """Checkpointing more frequently should incur a higher MFU penalty."""
         solver = CheckpointModel()
-        model = Models.GPT3
-        hw = Hardware.H100
+        model = Models.Language.GPT3
+        hw = Hardware.Cloud.H100
         res_long = solver.solve(model, hw, checkpoint_interval_hours=8.0)
         res_short = solver.solve(model, hw, checkpoint_interval_hours=1.0)
         assert res_short.mfu_penalty_pct > res_long.mfu_penalty_pct
@@ -1461,7 +1429,7 @@ class TestCheckpointModel:
     def test_storage_bottleneck_flag(self):
         """Very large models should trigger the storage bottleneck flag (write > 60s)."""
         solver = CheckpointModel()
-        result = solver.solve(Models.GPT3, Hardware.H100)
+        result = solver.solve(Models.Language.GPT3, Hardware.Cloud.H100)
         # GPT-3 is 175B params * 14 bytes/param = 2.45TB; at 1 GB/s default = ~2450s
         assert result.storage_bottleneck is True
 
@@ -1478,7 +1446,7 @@ class TestContinuousBatchingModel:
         """A small LLM on a large GPU should be feasible."""
         solver = ContinuousBatchingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.H100,
+            Models.Language.Llama3_8B, Hardware.Cloud.H100,
             seq_len=1024, max_batch_size=32, page_size=16,
         )
         assert result.feasible is True
@@ -1488,7 +1456,7 @@ class TestContinuousBatchingModel:
         """A model that does not fit in memory should return feasible=False."""
         solver = ContinuousBatchingModel()
         result = solver.solve(
-            Models.GPT3, Hardware.Cloud.T4,
+            Models.Language.GPT3, Hardware.Cloud.T4,
             seq_len=2048, max_batch_size=1, page_size=16,
         )
         assert result.feasible is False
@@ -1498,7 +1466,7 @@ class TestContinuousBatchingModel:
         """Active requests cannot exceed what KV cache memory allows."""
         solver = ContinuousBatchingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.H100,
+            Models.Language.Llama3_8B, Hardware.Cloud.H100,
             seq_len=1024, max_batch_size=256, page_size=16,
         )
         assert result.max_active_requests <= 256
@@ -1508,7 +1476,7 @@ class TestContinuousBatchingModel:
         """Memory fragmentation percentage must be in [0, 100]."""
         solver = ContinuousBatchingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.H100,
+            Models.Language.Llama3_8B, Hardware.Cloud.H100,
             seq_len=512, max_batch_size=16, page_size=16,
         )
         assert 0.0 <= result.memory_fragmentation_pct <= 100.0
@@ -1517,7 +1485,7 @@ class TestContinuousBatchingModel:
         """Continuous batching should be at least as fast as static batching."""
         solver = ContinuousBatchingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.H100,
+            Models.Language.Llama3_8B, Hardware.Cloud.H100,
             seq_len=1024, max_batch_size=32, page_size=16,
         )
         assert result.speedup_vs_static >= 1.0
@@ -1526,7 +1494,7 @@ class TestContinuousBatchingModel:
         """Smaller pages reduce internal fragmentation."""
         solver = ContinuousBatchingModel()
         model = Models.Language.Llama3_8B
-        hw = Hardware.H100
+        hw = Hardware.Cloud.H100
         res_large = solver.solve(model, hw, seq_len=1024, max_batch_size=16, page_size=64)
         res_small = solver.solve(model, hw, seq_len=1024, max_batch_size=16, page_size=4)
         assert res_small.memory_fragmentation_pct <= res_large.memory_fragmentation_pct
@@ -1690,8 +1658,8 @@ class TestBoundaryConditions:
 
     def test_compression_pruning_sparsity_one(self):
         """Pruning at sparsity=1.0 should yield maximum compression (capped at 100x)."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         solver = CompressionModel()
         result = solver.solve(resnet, a100, method="pruning", sparsity=1.0)
         # sparsity=1.0 => 1/(1-1.0) triggers the guard: capped at 100.0
@@ -1708,30 +1676,30 @@ class TestCompressionInferenceSpeedup:
 
     def test_quantization_has_speedup(self):
         """INT8 quantization should report inference speedup > 1."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = CompressionModel().solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert hasattr(result, "inference_speedup")
         assert result.inference_speedup >= 1.0
 
     def test_unstructured_pruning_no_compute_speedup(self):
         """Unstructured pruning should have inference_speedup = 1.0 (storage only)."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = CompressionModel().solve(resnet, a100, method="pruning", sparsity=0.5, sparsity_type="unstructured")
         assert result.inference_speedup == pytest.approx(1.0)
 
     def test_structured_pruning_has_compute_speedup(self):
         """Structured pruning should yield inference speedup > 1."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = CompressionModel().solve(resnet, a100, method="pruning", sparsity=0.5, sparsity_type="structured")
         assert result.inference_speedup > 1.0
 
     def test_fp8_quantization(self):
         """FP8 quantization (8-bit) should yield 4x compression over FP32."""
-        resnet = Models.ResNet50
-        a100 = Hardware.A100
+        resnet = Models.Vision.ResNet50
+        a100 = Hardware.Cloud.A100
         result = CompressionModel().solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert result.compression_ratio == pytest.approx(4.0)  # 32/8 = 4x
 

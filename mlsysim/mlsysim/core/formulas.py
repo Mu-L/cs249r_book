@@ -4,7 +4,10 @@
 
 import math
 import pint
-from .constants import ureg, Q_, SPEED_OF_LIGHT_FIBER_KM_S, MB
+from .constants import (
+    ureg, Q_, SPEED_OF_LIGHT_FIBER_KM_S, MB,
+    TRANSFORMER_DECODE_FLOPS_PER_PARAM, TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN,
+)
 from ._validation import validate_positive, validate_at_least, validate_range
 
 def _ensure_unit(val, expected_unit, param_name="Value"):
@@ -301,7 +304,62 @@ def calc_transformer_training_flops(n_params, n_tokens):
     """
     p = _ensure_unit(n_params, ureg.param, "n_params").to(ureg.count).magnitude
     d = _ensure_unit(n_tokens, ureg.count, "n_tokens").magnitude
-    return (6 * p * d) * ureg.flop
+    return (TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN * p * d) * ureg.flop
+
+
+def calc_transformer_decode_flops(n_params, n_tokens=1):
+    """
+    Estimate autoregressive Transformer decode FLOPs using the 2P rule.
+
+    The rule covers one forward/decode token per parameter count. Pass
+    n_tokens > 1 for a generated-token sequence.
+    """
+    p = _ensure_unit(n_params, ureg.param, "n_params").to(ureg.count).magnitude
+    t = _ensure_unit(n_tokens, ureg.count, "n_tokens").magnitude
+    return (TRANSFORMER_DECODE_FLOPS_PER_PARAM * p * t) * ureg.flop
+
+
+def calc_population_stability_index(expected, actual, epsilon=1e-12):
+    """
+    Population Stability Index for two aligned probability distributions.
+
+    Args:
+        expected: Baseline distribution fractions.
+        actual: Observed distribution fractions.
+        epsilon: Lower bound to avoid log(0).
+
+    Returns:
+        float: PSI value, sum((actual - expected) * ln(actual / expected)).
+    """
+    if len(expected) != len(actual):
+        raise ValueError("expected and actual distributions must have the same length")
+
+    total = 0.0
+    for exp, act in zip(expected, actual):
+        exp = max(float(exp), epsilon)
+        act = max(float(act), epsilon)
+        total += (act - exp) * math.log(act / exp)
+    return total
+
+
+def calc_two_proportion_sample_size(baseline_rate, detectable_lift, z_alpha=1.96, z_beta=0.84):
+    """
+    Per-arm sample size for a two-proportion A/B test.
+
+    Uses the equal-variance normal approximation used in the book:
+    n = 2(z_alpha + z_beta)^2 p(1-p) / delta^2.
+    """
+    p = float(baseline_rate)
+    delta = float(detectable_lift)
+    variance = p * (1 - p)
+    return 2 * (float(z_alpha) + float(z_beta)) ** 2 * variance / delta ** 2
+
+
+def calc_constraint_propagation_factor(stage_from, stage_to, base=2):
+    """Cost multiplier for finding a workflow constraint at a later lifecycle stage."""
+    if stage_to < stage_from:
+        raise ValueError("stage_to must be greater than or equal to stage_from")
+    return int(base ** (stage_to - stage_from))
 
 
 def calc_activation_memory(n_layers, seq_len, batch_size, hidden_dim, n_heads=None,

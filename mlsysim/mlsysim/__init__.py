@@ -11,26 +11,16 @@ from . import models
 from . import infra
 from . import systems
 from . import sim
-from . import fmt
-from . import show
 
-from .core.scenarios import Scenarios, Applications, Archetypes
+# AUTHORITATIVE API ENTRY POINTS
+from .core.engine import Engine
+from .core.scenarios import Scenario, Scenarios, Applications
+from .hardware.registry import Hardware
+from .models.registry import Models
+from .systems.registry import Systems, Tiers
+from .infra.registry import Infra
 
-# backward compatibility
-from .core import constants
-from .systems.registry import Tiers
-
-# Export primary API objects for convenience
-from .hardware.types import HardwareNode
-from .models.types import Workload, TransformerWorkload, SparseTransformerWorkload, CNNWorkload
-from .systems.types import Fleet, Node, NetworkFabric, DeploymentTier
-from .core.evaluation import SystemEvaluator, SystemEvaluation
-from .core.scenarios import Scenario
-from .core.config import SimulationConfig, load_config
-from .core.engine import PerformanceProfile, Engine
-
-# Solver classes — available as mlsysim.SingleNodeModel etc. for backward compat,
-# but also accessible via the mlsysim.core.solver module directly.
+# AUTHORITATIVE SOLVERS
 from .core.solver import (
     SingleNodeModel,
     DistributedModel,
@@ -40,77 +30,67 @@ from .core.solver import (
     ServingModel,
     TrainingMemoryModel,
     ServingCapacityModel,
-    MoERoutingModel,
-    ContinuousBatchingModel,
-    WeightStreamingModel,
-    TailLatencyModel,
-    CheckpointModel,
     DataModel,
-    ScalingModel,
-    OrchestrationModel,
-    CompressionModel,
-    EfficiencyModel,
-    TransformationModel,
-    TopologyModel,
-    InferenceScalingModel,
-    SensitivitySolver,
-    SynthesisSolver,
-    ResponsibleEngineeringModel,
-    ParallelismOptimizer,
-    BatchingOptimizer,
     PlacementOptimizer,
 )
 
-# Export Registries
-from .hardware.registry import Hardware
-from .models.registry import Models
-from .infra.registry import Infra
-from .systems.registry import Systems
+# AUTHORITATIVE MEASUREMENT (UNITS)
+from .core.constants import (
+    ureg, Q_,
+    # Common units
+    byte, bit, second, ms, US, NS, hour, day, count,
+    KB, MB, GB, TB, PB,
+    Gbps,
+    BYTES_FP32, BYTES_FP16, BYTES_INT8, BYTES_INT4, BYTES_INT32, BYTES_ADAM_STATE,
+    flop, MFLOPs, GFLOPs, TFLOPs, PFLOPs, EFLOPs, ZFLOPs,
+    watt, milliwatt, kilowatt,
+    joule,
+    # Common scaling constants
+    THOUSAND, MILLION, BILLION, TRILLION,
+    param, Kparam, Mparam, Bparam, Tparam,
+    GPT3_TRAINING_DAYS_REF, GPT3_TRAINING_ACCELERATORS_REF, CLOUD_ELECTRICITY_PER_KWH,
+    HOURS_PER_DAY,
+)
 
-# Export unit registry for custom workload definitions
-from .core.constants import ureg, Q_
-
+# AUTHORITATIVE FORMATTING
+from .core.formulas import *
+from .fmt import fmt, check, MarkdownStr
 
 def plot_evaluation_scorecard(*args, **kwargs):
-    """Render a system evaluation scorecard.
-
-    Matplotlib is imported lazily so importing ``mlsysim`` remains safe in
-    headless environments such as CI, notebooks running in browser sandboxes,
-    and macOS shells without a GUI session.
-    """
+    """Render a system evaluation scorecard."""
     from .viz.plots import plot_evaluation_scorecard as _plot_evaluation_scorecard
-
     return _plot_evaluation_scorecard(*args, **kwargs)
 
-
 def plot_roofline(*args, **kwargs):
-    """Render a Roofline plot, importing matplotlib only when needed."""
+    """Render a Roofline plot."""
     from .viz.plots import plot_roofline as _plot_roofline
-
     return _plot_roofline(*args, **kwargs)
 
 __all__ = [
-    # Core API (the 5-line happy path)
-    "Engine", "Hardware", "Models", "Scenarios", "ureg", "Q_",
-    # Types (for type annotations and custom workloads)
-    "HardwareNode", "Workload", "TransformerWorkload", "SparseTransformerWorkload", "CNNWorkload",
-    "Fleet", "Node", "NetworkFabric", "PerformanceProfile",
-    # Evaluation
-    "SystemEvaluator", "SystemEvaluation", "SimulationConfig", "load_config",
-    "Scenario", "Applications", "Archetypes",
-    # Registries
-    "Systems", "Tiers", "Infra", "constants",
+    # Core API
+    "Engine", "Hardware", "Models", "Systems", "Tiers", "Infra",
+    "Scenario", "Scenarios", "Applications",
+    "fmt", "check", "MarkdownStr",
     # Solvers
-    "SingleNodeModel", "DistributedModel", "ReliabilityModel", "SustainabilityModel",
-    "EconomicsModel", "ServingModel", "TrainingMemoryModel", "ServingCapacityModel",
-    "MoERoutingModel", "ContinuousBatchingModel", "WeightStreamingModel",
-    "TailLatencyModel", "CheckpointModel", "DataModel", "ScalingModel",
-    "OrchestrationModel", "CompressionModel", "EfficiencyModel", "TransformationModel",
-    "TopologyModel", "InferenceScalingModel", "SensitivitySolver", "SynthesisSolver",
-    "ResponsibleEngineeringModel", "ParallelismOptimizer", "BatchingOptimizer",
+    "SingleNodeModel", "DistributedModel", "ReliabilityModel",
+    "SustainabilityModel", "EconomicsModel", "ServingModel",
+    "TrainingMemoryModel", "ServingCapacityModel", "DataModel",
     "PlacementOptimizer",
-    # Submodules (for advanced use)
-    "core", "hardware", "models", "infra", "systems", "sim", "fmt", "show",
-    # Visualization
-    "plot_evaluation_scorecard", "plot_roofline",
+    # Units
+    "ureg", "Q_",
+    "byte", "bit", "second", "ms", "US", "NS", "hour", "day", "count",
+    "KB", "MB", "GB", "TB", "PB",
+    "Gbps",
+    "BYTES_FP32", "BYTES_FP16", "BYTES_INT8", "BYTES_INT4", "BYTES_INT32", "BYTES_ADAM_STATE",
+    "flop", "MFLOPs", "GFLOPs", "TFLOPs", "PFLOPs", "EFLOPs", "ZFLOPs",
+    "watt", "milliwatt", "kilowatt",
+    "joule",
+    "THOUSAND", "MILLION", "BILLION", "TRILLION",
+    "param", "Kparam", "Mparam", "Bparam", "Tparam",
+    "GPT3_TRAINING_DAYS_REF", "GPT3_TRAINING_ACCELERATORS_REF", "CLOUD_ELECTRICITY_PER_KWH",
+    "HOURS_PER_DAY",
+    # Viz
+    "viz", "plot_evaluation_scorecard", "plot_roofline",
+    # Internal Namespaces
+    "core", "hardware", "models", "infra", "systems", "sim",
 ]
