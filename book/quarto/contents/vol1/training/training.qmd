@@ -171,7 +171,7 @@ A single forward pass through GPT-2 requires roughly `{python} TrainingScenarios
 :::
 
 \index{Training!computational intensity}\index{Training!memory pressure}
-Three characteristics distinguish training workloads from general-purpose computing. First, *computational intensity*: that `{python} TrainingScenarios.gpt2_total_flops_str` operation budget spread over days of wall-clock time demands sustained petaFLOP/s-scale throughput from hardware that rarely exceeds 30 to 70 percent utilization. Second, *memory pressure*: storing `{python} TrainingModels.gpt2_params_b_str` billion weights requires `{python} TrainingModels.gpt2_params_gb_fp32_str` GB in FP32; the Adam optimizer adds two additional state tensors per parameter, consuming another `{python} TrainingModels.gpt2_adam_gb_str` GB; and activation storage across `{python} TrainingModels.gpt2_layers_str` transformer layers can double or triple this total, easily exceeding a single accelerator's memory capacity. Third, *data dependencies*: each gradient update depends on the result of the previous one, creating sequential bottlenecks that limit how much parallelism the system can exploit.
+Three characteristics distinguish training workloads from general-purpose computing. First, *computational intensity*: that `{python} TrainingScenarios.gpt2_total_flops_str` operation budget spread over days of wall-clock time demands sustained PFLOP/s-scale throughput from hardware that rarely exceeds 30 to 70 percent utilization. Second, *memory pressure*: storing `{python} TrainingModels.gpt2_params_b_str` billion weights requires `{python} TrainingModels.gpt2_params_gb_fp32_str` GB in FP32; the Adam optimizer adds two additional state tensors per parameter, consuming another `{python} TrainingModels.gpt2_adam_gb_str` GB; and activation storage across `{python} TrainingModels.gpt2_layers_str` transformer layers can double or triple this total, easily exceeding a single accelerator's memory capacity. Third, *data dependencies*: each gradient update depends on the result of the previous one, creating sequential bottlenecks that limit how much parallelism the system can exploit.
 
 Each of these challenges opens a corresponding optimization pathway. Computational intensity can be addressed through hardware acceleration (@sec-hardware-acceleration) and the BF16/FP8 mixed-precision techniques developed later in @sec-model-training-mixedprecision-training-9218. Memory pressure responds to techniques like gradient checkpointing[^fn-checkpointing-training], a specific application of *rematerialization* (discarding and recomputing intermediate values to save memory, from @sec-ml-frameworks) that trades recomputation for reduced activation storage, and mixed-precision training[^fn-mixed-precision-training], which halves the memory footprint of weights and activations. Data dependencies motivate pipeline designs that overlap computation with data movement, heavily relying on the data loading throughput optimized in @sec-data-engineering, so the accelerator never sits idle waiting for the next batch. The current chapter focuses on single-machine and single-node multi-GPU training; scaling to hundreds of machines across network boundaries introduces communication and fault tolerance challenges beyond our current scope.
 
@@ -524,11 +524,11 @@ A single GPT-2 layer makes the scale of these computations concrete.
 
 ::: {#nbk-training-gpt-2-attention-layer-computation .callout-notebook title="GPT-2 attention layer computation"}
 
-Each GPT-2 layer performs attention computations that exemplify dense matrix multiplication demands. For one GPT-2 transformer layer (all heads combined) with batch_size = `{python} GPT2Compute.batch_str`, sequence_length = `{python} GPT2Compute.seq_len_str`, hidden_dim = `{python} GPT2Compute.hidden_str`:
+Each GPT-2 layer performs attention computations that exemplify dense matrix multiplication demands. For one GPT-2 transformer layer (all heads combined) with batch size $B$ = `{python} GPT2Compute.batch_str`, sequence length $S$ = `{python} GPT2Compute.seq_len_str`, and hidden dimension $d$ = `{python} GPT2Compute.hidden_str`:
 
 **Query, Key, Value Projections** (the three linear transformations that create attention inputs—3 separate matrix multiplications):
 $$
-\text{FLOPs} = `{python} GPT2Compute.mac_factor_str` \times `{python} GPT2Compute.n_projections_str` \times (\text{batch} \times \text{seq} \times \text{hidden} \times \text{hidden})
+\text{FLOPs} = `{python} GPT2Compute.mac_factor_str` \times `{python} GPT2Compute.n_projections_str` \times (B \times S \times d \times d)
 $$
 $$
 = `{python} GPT2Compute.mac_factor_str` \times `{python} GPT2Compute.n_projections_str` \times (`{python} GPT2Compute.batch_str` \times `{python} GPT2Compute.seq_len_str` \times `{python} GPT2Compute.hidden_str` \times `{python} GPT2Compute.hidden_str`) \approx `{python} GPT2Compute.qkv_billion_str` \text{ billion FLOPs}
@@ -536,20 +536,20 @@ $$
 
 **Attention Score Computation** (Q $\times$ K^T):
 \begin{gather*}
-\text{FLOPs} = `{python} GPT2Compute.mac_factor_str` \times \text{batch} \times \text{heads} \times \text{seq} \times \text{seq} \times \text{hidden/heads}
+\text{FLOPs} = `{python} GPT2Compute.mac_factor_str` \times B \times N_{\text{heads}} \times S \times S \times d_{\text{head}}
 \\
 = `{python} GPT2Compute.mac_factor_str` \times `{python} GPT2Compute.batch_str` \times `{python} GPT2Compute.n_heads_str` \times `{python} GPT2Compute.seq_len_str` \times `{python} GPT2Compute.seq_len_str` \times `{python} GPT2Compute.head_dim_str` = `{python} GPT2Compute.attn_billion_str` \text{ billion FLOPs}
 \end{gather*}
 
 **Feed-Forward Network** (Two linear transformations with expansion factor 4):
 $$
-\text{FLOPs} \approx `{python} GPT2Compute.ffn_coeff_str` \times \text{batch} \times \text{seq} \times \text{hidden}^2
+\text{FLOPs} \approx `{python} GPT2Compute.ffn_coeff_str` \times B \times S \times d^2
 $$
 **Computation Scale**
 
 - Total for one transformer layer (Attention + FFN): ~`{python} GPT2Compute.total_layer_str` B FLOPs forward pass
 - With `{python} GPT2Compute.n_layers_gpt2_str` layers in GPT-2: ~`{python} GPT2Compute.per_step_t_str` trillion FLOPs per training step
-- At `{python} GPT2Compute.training_steps_str` training steps: ~`{python} GPT2Compute.total_peta_str` petaFLOPs total training computation
+- At `{python} GPT2Compute.training_steps_str` training steps: ~`{python} GPT2Compute.total_peta_str` PFLOPs total training computation
 
 **Systems insight**: A V100 GPU (`{python} TrainingHardware.v100_tflops_fp16_str` TFLOP/s peak FP16 with Tensor Cores, `{python} TrainingHardware.v100_tflops_fp32_str` TFLOP/s FP32 without) would require `{python} GPT2Compute.v100_time_str` seconds for the modeled attention-plus-FFN training-step estimate at 100 percent utilization (theoretical peak; practical throughput would be lower). Actual training steps take 180 to 220 ms, requiring 8 to 32 GPUs to achieve this throughput depending on utilization and interconnect efficiency.
 
@@ -2484,7 +2484,7 @@ class GPT2DataPipeline:
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     batch_size = 32
     seq_len = 1024
-    token_rate = 500_000 # tokens/sec/core
+    token_rate = 500_000 # tokens/s/core
     workers = 8
 
     pcie_bw = PCIE_GEN3_BW.m_as(GB/second)
@@ -2527,7 +2527,7 @@ Training language models like GPT-2 requires a specialized data pipeline optimiz
 
    - BPE (Byte-Pair Encoding) tokenizer (50,257 vocabulary) converts text to token IDs
    - BPE segments text into subword units (for example, "unbreakable" → ["un", "break", "able"])
-   - Processing rate: ~500K tokens/second per CPU core
+   - Processing rate: ~500K tokens/s per CPU core
    - For batch_size = 32, seq_len = 1024: need `{python} GPT2DataPipeline.tokens_per_batch_str` tokens/batch
    - Single core: `{python} GPT2DataPipeline.tokens_per_batch_str` tokens ÷ 500K tokens/s = `{python} GPT2DataPipeline.tokenization_ms_str` ms per batch
    - Bottleneck: GPU forward pass only takes 80 ms
@@ -5017,7 +5017,7 @@ In PyTorch, gradient accumulation is usually implemented by dividing each microb
 
 Gradient accumulation produces mathematically identical results to training with larger batches. For an effective batch size $B = k \times b$ where $k$ is the number of accumulation steps and $b$ is the micro-batch size, @eq-gradient-accumulation-equivalence confirms that the accumulated gradient equals the true batch gradient:
 $$
-\nabla \mathcal{L}_B = \frac{1}{B}\sum_{i=1}^{B} \nabla \mathcal{L}_i = \frac{1}{k}\sum_{j=1}^{k}\left(\frac{1}{b}\sum_{i \in \text{batch}_j} \nabla \mathcal{L}_i\right)
+\nabla \mathcal{L}_B = \frac{1}{B}\sum_{i=1}^{B} \nabla \mathcal{L}_i = \frac{1}{k}\sum_{j=1}^{k}\left(\frac{1}{b}\sum_{i \in \mathcal{B}_j} \nabla \mathcal{L}_i\right)
 $$ {#eq-gradient-accumulation-equivalence}
 
 This equivalence holds because gradients are linear operators. The right-hand side shows that averaging $k$ micro-batch gradients (each computed over $b$ examples) produces the same result as computing the gradient over all $B = kb$ examples at once. The optimizer receives identical update directions regardless of whether the batch is processed in one pass or accumulated over multiple passes.
@@ -5451,7 +5451,7 @@ After optimization:
 |:----------------------------|:------------------------------------------------:|:------------------------------------------------:|:---------------------------------------------------------------------:|
 | **Memory**                  | `{python} GPT2WalkthroughCalc.total_fp32_str` GB | `{python} GPT2WalkthroughCalc.total_ckpt_str` GB | `{python} GPT2WalkthroughCalc.memory_reduction_str`$\times$ reduction |
 | **Accelerator utilization** |                       N/A                        |                    85 percent                    |                               Trainable                               |
-| **Throughput**              |                       N/A                        |                 1,200 tokens/sec                 |                                   —                                   |
+| **Throughput**              |                       N/A                        |                  1,200 tokens/s                  |                                   —                                   |
 | **Time per epoch**          |                       N/A                        |                    8.3 hours                     |                                   —                                   |
 
 : **GPT-2 Optimization Final Profile**: Naive vs. optimized memory, accelerator utilization, throughput, and per-epoch time after composing mixed precision, gradient checkpointing, and data prefetching, marking the shift from infeasible to compute-bound. {#tbl-training-gpt2-final-profile}

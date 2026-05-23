@@ -2202,7 +2202,7 @@ This relationship holds regardless of arrival distribution, service time distrib
 
 $N_{\text{req}}$ = `{python} CapacityPlanning.littles_lambda_str` $\times$ `{python} CapacityPlanning.littles_w_str` = **`{python} CapacityPlanning.littles_l_str` concurrent requests**
 
-**Systems insight**: The server must have enough RAM to hold `{python} CapacityPlanning.littles_l_str` requests simultaneously across batch and queue state. If the GPU runs out of memory at batch size 32, the system physically *cannot* hit 1,000 QPS at 50 ms latency; the only options are to reduce latency $(T_{\text{lat}})$ or add more memory $(N_{\text{req}})$.
+**Systems insight**: The server must have enough RAM to hold `{python} CapacityPlanning.littles_l_str` requests simultaneously across batch and queue state. If the GPU runs out of memory at batch size 32, the system physically *cannot* hit 1,000 QPS at 50 ms latency; the only options are to reduce latency $(T_{\text{lat}})$ or add enough memory for a larger resident $N_{\text{req}}$.
 
 :::
 
@@ -2359,7 +2359,7 @@ The queuing model and tail latency analysis provide the inputs for capacity plan
 # │ Exports: cp_* and mm1_* formatted strings
 # └─────────────────────────────────────────────────────────────────────────────
 import math
-from mlsysim.fmt import fmt
+from mlsysim.fmt import fmt, fmt_math
 
 class CapacityPlanningCalc:
     """ResNet-50 capacity planning: GPUs needed for 5000 QPS at 50 ms p99 with N+1 redundancy."""
@@ -2401,9 +2401,19 @@ class CapacityPlanningCalc:
     cp_n_plus_2_headroom_str = fmt(cp_n_plus_2_headroom_value, precision=0, commas=False)
     cp_peak_qps_str = fmt(cp_peak_qps_value, precision=0)
     cp_v100_throughput_str = fmt(cp_v100_throughput_value, precision=0)
+    cp_service_ms_str = fmt(cp_service_ms_value, precision=0, commas=False)
+    cp_p99_target_ms_str = fmt(cp_p99_target_ms_value, precision=0, commas=False)
     cp_rho_safe_str = fmt(cp_rho_safe_value, precision=2, commas=False)
     cp_rho_safe_pct_str = fmt(cp_rho_safe_value * 100, precision=0, commas=False)
     mm1_p99_factor_str = fmt(mm1_p99_factor_value, precision=1, commas=False)
+    cp_rho_safe_math = fmt_math(
+        f"\\rho \\leq 1 - ({mm1_p99_factor_str} \\times {cp_service_ms_str})/"
+        f"{cp_p99_target_ms_str} = {cp_rho_safe_str}"
+    )
+    cp_mu_required_math = fmt_math(
+        f"\\mu_{{\\text{{required}}}} = {cp_peak_qps_str} / {cp_rho_safe_str} "
+        f"= {cp_mu_required_str} \\text{{ requests/s}}"
+    )
 ```
 
 Applying Little's Law to ResNet-50 makes the capacity constraint concrete.
@@ -2417,10 +2427,10 @@ Consider designing a ResNet-50 serving system with these requirements:
 - **Service time** (TensorRT FP16): 5 ms
 
 **Step 1**: Find safe utilization.
-From @eq-p99-latency, $W_{\text{p99}} \approx$ `{python} CapacityPlanningCalc.mm1_p99_factor_str` $\times$ service time / $(1 - \rho)$. Setting $W_{\text{p99}} \leq 50$ ms with 5 ms service time gives $\rho \leq 1 - ($ `{python} CapacityPlanningCalc.mm1_p99_factor_str` $\times 5)/50 = `{python} CapacityPlanningCalc.cp_rho_safe_str` (`{python} CapacityPlanningCalc.cp_rho_safe_pct_str` percent maximum utilization). This uses the conservative M/M/1 p99 bound from the displayed equation rather than applying an average-wait M/D/1 adjustment to a tail-latency SLO.
+From @eq-p99-latency, $W_{\text{p99}} \approx$ `{python} CapacityPlanningCalc.mm1_p99_factor_str` $\times$ service time / $(1 - \rho)$. Setting $W_{\text{p99}} \leq 50$ ms with 5 ms service time gives `{python} CapacityPlanningCalc.cp_rho_safe_math` (`{python} CapacityPlanningCalc.cp_rho_safe_pct_str` percent maximum utilization). This uses the conservative M/M/1 p99 bound from the displayed equation rather than applying an average-wait M/D/1 adjustment to a tail-latency SLO.
 
 **Step 2**: Calculate required service rate.
-\(\mu_{\text{required}} = `{python} CapacityPlanningCalc.cp_peak_qps_str` / `{python} CapacityPlanningCalc.cp_rho_safe_str` = `{python} CapacityPlanningCalc.cp_mu_required_str` \text{ requests/second}\)
+`{python} CapacityPlanningCalc.cp_mu_required_math`
 
 **Step 3**: Determine GPU count.
 Single V100 throughput at $B = 16$: `{python} CapacityPlanningCalc.cp_v100_throughput_str` images/second
@@ -2957,7 +2967,7 @@ Dynamic batching introduces a quantifiable tension between throughput optimizati
 
 ::: {#nbk-model-serving-why-latency-spikes-under-load .callout-notebook title="Why latency spikes under load"}
 
-**Recall** from @sec-model-serving-littles-law-9352: Little's Law $(N_{\text{req}} = \lambda T_{\text{lat}})$ governs all stable queues. When hardware is saturated (throughput $\lambda$ is maxed out), any increase in traffic increases queue depth $(N_{\text{req}})$. Since $\lambda$ cannot grow, **latency $(T_{\text{lat}})$ must grow linearly with queue depth**. This is why **admission control** (rejecting requests when $L_{\text{lat}}$ exceeds a threshold) is the only way to preserve latency during overload.
+**Recall** from @sec-model-serving-littles-law-9352: Little's Law $(N_{\text{req}} = \lambda T_{\text{lat}})$ governs all stable queues. When hardware is saturated, the service rate $\mu$ is maxed out; if the arrival rate $\lambda$ grows beyond that capacity, queue depth $(N_{\text{req}})$ increases. Since $\mu$ cannot grow, **latency $(T_{\text{lat}})$ must grow with queue depth**. This is why **admission control** (rejecting requests when $T_{\text{lat}}$ exceeds a threshold) is the only way to preserve latency during overload.
 
 :::
 
@@ -3809,8 +3819,8 @@ These two metrics capture distinct user experience aspects.
 A production-grade LLM service typically targets the following SLOs:
 
 - **TTFT**: < 500 ms (for a 1000-token prompt)
-- **TPOT**: < 50 ms (equivalent to ~20 tokens/second, faster than human reading speed)
-- **Throughput**: > 1000 tokens/second aggregate across all users
+- **TPOT**: < 50 ms (equivalent to ~20 tokens/s, faster than human reading speed)
+- **Throughput**: > 1000 tokens/s aggregate across all users
 
 :::
 
@@ -3905,7 +3915,7 @@ class CarbonCostCalc:
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     cc_concurrent_req_value = 114                     # concurrent requests per H100
-    cc_tokens_per_sec_req_value = 7.5                 # tokens/sec per request (decode phase)
+    cc_tokens_per_sec_req_value = 7.5                 # tokens/s per request (decode phase)
     cc_host_overhead_w_value = 300                    # host server power overhead (W)
     cc_response_tokens_value = 500                    # typical response length
     cc_low_util_pct_value = 10                        # poor utilization scenario (%)
@@ -4590,7 +4600,7 @@ The end-to-end request latency is governed by the two-phase execution model of a
 
 ##### Prefill phase (time to first token) {.unnumbered}
 
-The model processes the 1,000-token prompt in parallel\index{Prefill Phase!compute-bound}\index{Prefill Phase!parallel processing}. On an H100, this compute-bound operation achieves approximately 10,000 tokens per second: $T_{\text{prefill}} = 1000 \text{ tokens} / 10{,}000 \text{ tokens/s} = 100 \text{ ms}$. Accounting for 20 ms of system overhead (network ingress, tokenization), the TTFT is 120 ms, comfortably within the 200 ms SLO.
+The model processes the 1,000-token prompt in parallel\index{Prefill Phase!compute-bound}\index{Prefill Phase!parallel processing}. On an H100, this compute-bound operation achieves approximately 10,000 tokens/s: $T_{\text{prefill}} = 1000 \text{ tokens} / 10{,}000 \text{ tokens/s} = 100 \text{ ms}$. Accounting for 20 ms of system overhead (network ingress, tokenization), the TTFT is 120 ms, comfortably within the 200 ms SLO.
 
 ##### Decode phase (time per output token) {.unnumbered}
 
