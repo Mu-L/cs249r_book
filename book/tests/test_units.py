@@ -34,7 +34,7 @@ sys.path.insert(0, _book_dir)
 
 from mlsysim.core.constants import *
 from mlsysim.core.formulas import *
-from mlsysim.fmt import fmt, fmt_sci
+from mlsysim.fmt import fmt, fmt_sci, fmt_unit
 
 FAILURES = []
 
@@ -109,13 +109,14 @@ def test_flop_units():
     ok &= check("1 GFLOPs -> GFLOPs", (1 * GFLOPs).to(GFLOPs).magnitude, 1.0)
     ok &= check("1 TFLOPs -> TFLOPs", (1 * TFLOPs).to(TFLOPs).magnitude, 1.0)
     ok &= check("1 TFLOPs -> GFLOPs", (1 * TFLOPs).to(GFLOPs).magnitude, 1000.0)
+    ok &= check("1 TOPS -> TOPS", (1 * TOPS).to(TOPS).magnitude, 1.0)
 
     # Hardware specs
     ok &= check("A100 312 TFLOPs/s", A100_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 312.0)
     ok &= check("V100 125 TFLOPs/s", V100_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 125.0)
     ok &= check("H100 989 TFLOPs/s", H100_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 989.0)
     ok &= check("T4 65 TFLOPs/s", T4_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 65.0)
-    ok &= check("Mobile 50 TFLOPs/s", MOBILE_NPU_TOPS_INT8.to(TFLOPs / second).magnitude, 50.0)
+    ok &= check("Mobile 50 TOPS", MOBILE_NPU_TOPS_INT8.to(TOPS).magnitude, 50.0)
 
     # Model FLOPs
     ok &= check("ResNet 4.1 GFLOPs", RESNET50_FLOPs.to(GFLOPs).magnitude, 4.1)
@@ -252,12 +253,12 @@ def test_extended_gpu_specs():
     # A100 full spec sheet
     ok &= check("A100 FP32", A100_FLOPS_FP32.to(TFLOPs / second).magnitude, 19.5)
     ok &= check("A100 TF32", A100_FLOPS_TF32.to(TFLOPs / second).magnitude, 156.0)
-    ok &= check("A100 INT8", A100_FLOPS_INT8.to(TFLOPs / second).magnitude, 624.0)
+    ok &= check("A100 INT8", A100_TOPS_INT8.to(TOPS).magnitude, 624.0)
     ok &= check("A100 TDP", A100_TDP.to(watt).magnitude, 400.0)
 
     # H100 full spec sheet (Dense values; Sparse is 2x)
     ok &= check("H100 TF32", H100_FLOPS_TF32.to(TFLOPs / second).magnitude, 494.0)
-    ok &= check("H100 INT8", H100_FLOPS_INT8.to(TFLOPs / second).magnitude, 1979.0)
+    ok &= check("H100 INT8", H100_TOPS_INT8.to(TOPS).magnitude, 1979.0)
     ok &= check("H100 TDP", H100_TDP.to(watt).magnitude, 700.0)
 
     # V100
@@ -311,7 +312,7 @@ def test_energy_specs():
     # FP32 > FP16 > INT8 (energy ordering)
     fp32 = ENERGY_FLOP_FP32_PJ.magnitude
     fp16 = ENERGY_FLOP_FP16_PJ.magnitude
-    int8 = ENERGY_FLOP_INT8_PJ.magnitude
+    int8 = ENERGY_OP_INT8_PJ.m_as(ureg.picojoule / count)
     if not (fp32 > fp16 > int8):
         FAILURES.append(f"  ✗ Energy ordering: FP32={fp32} > FP16={fp16} > INT8={int8}")
         ok = False
@@ -357,12 +358,24 @@ def test_ridge_points():
 # ── 16. Formula Helper Functions ─────────────────────────────────────
 
 def test_formula_helpers():
-    """Verify fmt() and fmt_sci() produce correct formatted strings."""
+    """Verify fmt(), fmt_unit(), and fmt_sci() produce correct formatted strings."""
     ok = True
 
     # fmt()
     ok &= check("fmt GB/s", float(fmt(A100_MEM_BW, "GB/s", precision=0, commas=False)), 2039.0)
     ok &= check("fmt ms", float(fmt(RESNET50_FLOPs / A100_FLOPS_FP16_TENSOR, "ms", 3, commas=False)), 0.013, tol=0.1)
+
+    # fmt_unit()
+    if fmt_unit(A100_FLOPS_FP16_TENSOR) != "TFLOP/s":
+        FAILURES.append(
+            f"  ✗ fmt_unit() FLOP rate notation: got '{fmt_unit(A100_FLOPS_FP16_TENSOR)}', expected 'TFLOP/s'"
+        )
+        ok = False
+    if fmt_unit(1 * GFLOPs) != "GFLOPs":
+        FAILURES.append(
+            f"  ✗ fmt_unit() FLOP count notation: got '{fmt_unit(1 * GFLOPs)}', expected 'GFLOPs'"
+        )
+        ok = False
 
     # fmt_sci() - check format, not value
     result = fmt_sci(RESNET50_FLOPs)

@@ -84,7 +84,7 @@ from mlsysim.fmt import fmt, fmt_sci, check
 # │
 # │ Goal: Establish cluster economics, scale, and hardware baselines.
 # │ Show: 10,000-GPU cluster; ~$480k/day operating cost; fragmentation metrics.
-# │ How: GPU_Count * hourly_rate * 24; pint .m_as() for hardware specs.
+# │ How: Multiply GPU count, GPU-hour cost, and 24 hours; pint .m_as() for hardware specs.
 # │
 # │ Imports: mlsysim.core.constants, mlsysim.book
 # │ Exports: cluster_size_str, daily_cost_str, total_gpus_str, ...
@@ -154,7 +154,7 @@ In the Fleet Stack shown in @fig-fleet-stack, orchestration operates at the Dist
 # │
 # │ Goal: Provide cluster scale and economic statistics for orchestration.
 # │ Show: 10,000-GPU cluster; ~$480k/day operating cost.
-# │ How: GPU_Count * hourly_rate * 24.
+# │ How: Multiply GPU count, GPU-hour cost, and 24 hours.
 # │
 # │ Imports: mlsysim.core.constants (GPUS_PER_HOST, A100_MEM_CAPACITY, H100_MEM_CAPACITY,
 # │          GiB), mlsysim.book (fmt, check)
@@ -222,7 +222,7 @@ ML workloads present scheduling challenges that distinguish them fundamentally f
 # │
 # │ Goal: Quantify the risk of cluster deadlock without gang scheduling.
 # │ Show: deadlock_prob_pct ≈ 100%—inline in notebook result.
-# │ How: P(allocation) = (Free_Gpus/Req_Gpus)^N_Jobs. (Conceptual)
+# │ How: Estimate allocation probability from free GPUs, requested GPUs, and job count. (Conceptual)
 # │
 # │ Imports: mlsysim.fmt (check)
 # │ Exports: gs_n_gpus_str, gs_n_jobs_str, gs_waste_m_str
@@ -329,7 +329,7 @@ Consider a 64-GPU scheduling run for our 175B model. From a throughput perspecti
 # │
 # │ Goal: Compute Pollaczek-Khinchine waiting-time multipliers for uniform
 # │       vs heavy-tailed ML workloads.
-# │ How: W_q_mult = rho/(1-rho) * (1+Cs^2)/2
+# │ How: Compute the waiting-time multiplier from utilization and service-time variability.
 # │
 # │ Imports: mlsysim.book (fmt, check)
 # │ Exports: wq_uniform_str, wq_ml_str
@@ -354,11 +354,11 @@ class QueuingTheory:
 
 ::: {#nbk-fleet-orchestration-queuing-theory-gpu-clusters .callout-notebook title="The queuing theory of GPU clusters"}
 
-A GPU cluster can be modeled as an M/G/1 queue, where jobs arrive according to a Poisson process $(\lambda)$ and service times follow a general distribution $(G)$ with mean $1/\mu$ and standard deviation $\sigma$. The Pollaczek-Khinchine formula defines the expected waiting time in the queue $(W_q)$:
+A GPU cluster can be modeled as an M/G/1 queue, where jobs arrive according to a Poisson process $(\lambda_{\text{job}})$ and service times follow a general distribution $(G)$ with mean $1/\mu$ and standard deviation $\sigma$. The Pollaczek-Khinchine formula defines the expected waiting time in the queue $(W_q)$:
 
 $$ \frac{W_q}{1/\mu} = \frac{\rho}{1-\rho} \cdot \frac{1+C_s^2}{2} $$
 
-Here, $\rho = \lambda/\mu$ represents cluster utilization, $1/\mu$ is the average job duration, and $C_s = \sigma \mu$ is the **coefficient of variation** of job duration. The right-hand side is therefore the waiting time expressed as a multiple of the average job duration.
+Here, $\rho = \lambda_{\text{job}}/\mu$ represents cluster utilization, $1/\mu$ is the average job duration, and $C_s = \sigma \mu$ is the **coefficient of variation** of job duration. The right-hand side is therefore the waiting time expressed as a multiple of the average job duration.
 
 In standard web serving, request service times are well approximated by an exponential distribution, yielding $C_s \approx 1$. In ML clusters, job durations follow a heavy-tailed distribution: a vast number of short debugging jobs (minutes) mixed with a few massive training runs (weeks). This extreme variance typically yields $C_s$ values between 3 and 5. The impact on wait times is multiplicative.
 
@@ -384,7 +384,7 @@ Backfill scheduling allows smaller jobs to fill gaps while larger jobs wait for 
 
 Periodic **defragmentation**\index{Defragmentation} migrates or preempts low-priority jobs to consolidate free resources into contiguous blocks, analogous to memory compaction in operating systems. The scheduler identifies nodes where partial allocations leave stranded resources, preempts the jobs occupying those resources, and re-schedules them on nodes where they can be packed more efficiently. The cost of defragmentation (preempting running work, which wastes compute between the last checkpoint and the preemption event) must be weighed against the benefit (enabling large jobs to start sooner, improving overall throughput). Production systems typically run defragmentation during low-demand periods (late night, weekends) when the impact of preemption is minimal.
 
-A third strategy, **over-subscription**\index{Over-Subscription}, allows more jobs to be admitted than strictly fit, relying on statistical multiplexing to avoid simultaneous peak usage across all resource dimensions. If each job's GPU utilization averages 70 percent (alternating between compute-intensive and data-loading phases), the cluster can support approximately 1.4$\times$ as many jobs as the strict GPU count would allow. Over-subscription works well when resource utilization is genuinely bursty and jobs' peak usage periods are uncorrelated, but can cause severe performance degradation (thrashing, memory pressure, network congestion) when multiple jobs peak simultaneously. The key to safe over-subscription is monitoring actual utilization in real time and throttling admission when contention is detected. @fig-fragmentation-problem illustrates this fragmentation problem.
+A third strategy, **over-subscription**\index{Over-Subscription}, allows more jobs to be admitted than strictly fit, relying on statistical multiplexing to avoid simultaneous peak usage across all resource dimensions. If each job's GPU utilization averages 70 percent (alternating between compute-intensive and data-loading phases), the cluster can support approximately 1.4$\times$ as many jobs as the strict GPU count would allow. Over-subscription works well when resource utilization is genuinely bursty and jobs' peak usage periods are uncorrelated, but can cause severe performance degradation (thrashing, memory pressure, network congestion) when multiple jobs peak simultaneously. The key to safe over-subscription is monitoring actual utilization in real time and throttling admission when contention is detected. @fig-fragmentation-problem shows the combined effect: although 19 GPUs (roughly 30 percent of the cluster) sit idle, no single node has a contiguous block of eight, so a full-node job cannot be placed.
 
 ::: {#fig-fragmentation-problem fig-env="figure" fig-pos="htb" fig-cap="**The Fragmentation Problem**: The heatmap shows a snapshot of an 8-node cluster (rows) with 8 GPUs each (columns). Different colors represent distinct active jobs, while gray slots represent free GPUs. Although 19 GPUs (~30 percent of capacity) are available globally, they are fragmented across nodes. A new job requiring 8 contiguous GPUs (a full node) cannot be scheduled because no single row is completely empty, illustrating how bin-packing inefficiencies reduce effective cluster capacity." fig-alt="8-by-8 heatmap of cluster GPU allocation. Rows are nodes, columns are GPU slots. Colored cells show jobs; gray shows free. Status panel indicates 19 free GPUs but no contiguous block of 8."}
 
@@ -496,7 +496,7 @@ Partial allocation of multi-GPU jobs creates a failure mode unique to ML cluster
 
 :::
 
-Gang scheduling addresses the most distinctive aspect of ML workload scheduling: the requirement for atomic, all-or-nothing resource allocation. The term comes from the idea that all members of a "gang" (the workers in a distributed training job) must be present before any useful work can begin. Gang scheduling ensures that all $N$ workers for a distributed training job start simultaneously. Without this guarantee, a job requesting 1,024 GPUs might receive 768 immediately while waiting indefinitely for the remaining 256, wasting the already-allocated resources. Worse, if two such jobs each receive partial allocations, neither can proceed, creating a classic **hold-and-wait deadlock**[^fn-deadlock-scheduling].
+Gang scheduling addresses the most distinctive aspect of ML workload scheduling: the requirement for atomic, all-or-nothing resource allocation. The term comes from the idea that all members of a "gang" (the workers in a distributed training job) must be present before any useful work can begin. Gang scheduling ensures that all workers for a distributed training job start simultaneously. Without this guarantee, a job requesting 1,024 GPUs might receive 768 immediately while waiting indefinitely for the remaining 256, wasting the already-allocated resources. Worse, if two such jobs each receive partial allocations, neither can proceed, creating a classic **hold-and-wait deadlock**[^fn-deadlock-scheduling].
 
 [^fn-deadlock-scheduling]: **Hold-and-Wait Deadlock**: One of the four classical conditions jointly sufficient for deadlock in resource-allocation systems. In GPU clusters, this condition is uniquely expensive: two jobs each holding 500 GPUs while waiting for 200 more strand 1,000 GPUs indefinitely, burning approximately \$2,000/hour. Gang scheduling eliminates hold-and-wait by construction, requiring atomic all-or-nothing allocation at the cost of reduced packing flexibility. \index{Deadlock!hold-and-wait}
 
@@ -545,7 +545,7 @@ For large-scale fleets, detection is computationally nontrivial. A cluster with 
 
 ### Heterogeneous gang scheduling {#sec-fleet-orchestration-heterogeneous-gang}
 
-The traditional gang scheduling model assumes a homogeneous Bulk Synchronous Parallel (BSP) workload: $N$ identical workers executing the exact same compute graph. However, advanced training paradigms fundamentally break this assumption. Reinforcement Learning from Human Feedback (RLHF) requires running four models of different sizes simultaneously: an Actor model (training), a Critic model (training), a Reference model (inference), and a Reward model (inference).
+The traditional gang scheduling model assumes a homogeneous Bulk Synchronous Parallel (BSP) workload: $W$ identical workers executing the exact same compute graph. However, advanced training paradigms fundamentally break this assumption. Reinforcement Learning from Human Feedback (RLHF) requires running four models of different sizes simultaneously: an Actor model (training), a Critic model (training), a Reference model (inference), and a Reward model (inference).
 
 ::: {#psp-fleet-orchestration-routing-over-synchrony .callout-perspective title="Routing over synchrony"}
 
@@ -582,7 +582,7 @@ A typical ML cluster configuration defines partitions by accelerator type and in
 
 : **Slurm Partition Configuration**\index{Slurm!partition configuration}: Partitions organize heterogeneous accelerators into logical pools matched to workload characteristics. NVLink-connected partitions support tensor parallelism, while PCIe partitions serve workloads that rely primarily on data parallelism. Separating inference and debug partitions prevents experimental workloads from impacting production serving. {#tbl-fleet-orchestration-slurm-partitions}
 
-As @tbl-fleet-orchestration-slurm-partitions shows, GPU allocation strategies significantly impact utilization, and Slurm provides several mechanisms for controlling GPU placement. The `--gres=gpu:N` flag requests N GPUs per node, while `--gpus=N` requests a total GPU count for the job. Naive allocation can fragment nodes: if jobs request 6 GPUs on 8-GPU nodes, each job wastes 2 GPUs per node, reducing effective capacity to 75 percent. Slurm's `select/cons_tres` plugin enables GPU-aware consumable-resource scheduling, tracking individual GPUs rather than treating nodes as indivisible units. The `--gpus-per-node` flag requests a fixed GPU count on each allocated node when NVLink communication patterns make partial-node allocation counterproductive, while `--gpus-per-task` distributes GPUs evenly across tasks for data-parallel workloads.
+As @tbl-fleet-orchestration-slurm-partitions shows, GPU allocation strategies significantly impact utilization, and Slurm provides several mechanisms for controlling GPU placement. The `--gres=gpu:N` flag requests `N` GPUs per node, while `--gpus=N` requests a total GPU count for the job. Naive allocation can fragment nodes: if jobs request 6 GPUs on 8-GPU nodes, each job wastes 2 GPUs per node, reducing effective capacity to 75 percent. Slurm's `select/cons_tres` plugin enables GPU-aware consumable-resource scheduling, tracking individual GPUs rather than treating nodes as indivisible units. The `--gpus-per-node` flag requests a fixed GPU count on each allocated node when NVLink communication patterns make partial-node allocation counterproductive, while `--gpus-per-task` distributes GPUs evenly across tasks for data-parallel workloads.
 
 The interaction between GPU allocation and node selection creates subtleties that affect both performance and utilization. A job requesting `--gpus=16 --gpus-per-node=8` will always receive exactly 2 complete nodes, ensuring all 8 GPUs within each node communicate via NVLink. The same job requesting `--gpus=16` without the per-node constraint might receive GPUs spread across 3 or 4 partially occupied nodes, degrading intra-node communication performance. For training jobs using tensor parallelism, the per-node constraint is essential; for data-parallel jobs that communicate only through AllReduce, the flexibility of unconstrained placement improves the scheduler's ability to find valid allocations and reduces fragmentation.
 
@@ -939,7 +939,7 @@ Migration is not free; it requires a coordinated checkpoint, a job kill, a resch
 
 **Consequence**: If the scheduler relies on a static topology map, it continues to schedule communication-intensive jobs onto a degraded rack, assuming full bandwidth that no longer exists.
 
-**Systems lesson**: Binary health checks (up/down) are insufficient. Schedulers need **performance-aware topology monitoring**\index{Performance-Aware Topology Monitoring} that incorporates switch counters, retransmission rates, and collective bandwidth tests. Nodes connected to a "limping" switch should be dynamically **tainted**\index{Taint!topology monitoring} until the hardware is repaired.
+**Systems insight**: Binary health checks (up/down) are insufficient. Schedulers need **performance-aware topology monitoring**\index{Performance-Aware Topology Monitoring} that incorporates switch counters, retransmission rates, and collective bandwidth tests. Nodes connected to a "limping" switch should be dynamically **tainted**\index{Taint!topology monitoring} until the hardware is repaired.
 
 :::
 
@@ -953,7 +953,7 @@ In that adaptive view, resource allocation becomes a contract that can change du
 
 ***Elastic Training***\index{Training!elastic, definition} is the capability of a distributed training job to dynamically adjust its worker count during execution without requiring a full restart.
 
-1.  **Significance (quantitative)**: It maximizes the **System Duty Cycle** $(\eta_{\text{hw}})$ by allowing training to continue through node failures and by absorbing idle capacity in the cluster. It requires **Learning Rate Recalibration** and gradient accumulation adjustment to maintain mathematical consistency as the global batch size changes.
+1.  **Significance (quantitative)**: It maximizes the **system duty cycle** by allowing training to continue through node failures and by absorbing idle capacity in the cluster. It requires **Learning Rate Recalibration** and gradient accumulation adjustment to maintain mathematical consistency as the global batch size changes.
 2.  **Distinction (durable)**: Unlike **Standard Fault Tolerance** (which relies on checkpoint-restart), Elastic Training is **Always-Live**\index{Always-Live}: the optimization loop never stops, it only changes its parallel width.
 3.  **Common pitfall**: A frequent misconception is that elasticity is "automatic." In reality, it is a **Distributed Coordination Problem**\index{Distributed Coordination Problem}: the training framework, the data loader, and the orchestrator must all synchronize their state to ensure that no data samples are lost or double-counted during worker scaling.
 
@@ -977,11 +977,11 @@ Scale-down (removing workers) is conceptually the reverse but operationally more
 
 Worker replacement (substituting failed workers) combines scale-down and scale-up atomically, removing the failed worker and adding a replacement without changing the total worker count. This operation is the most common in practice and is the foundation of fault-tolerant training, connecting directly to the elastic recovery concepts introduced in @sec-fault-tolerance-reliability. Worker replacement must handle the additional complexity that the failed worker may not have completed its most recent communication, requiring the remaining workers to detect the incomplete operation (through timeouts) and reinitialize the communication group before adding the replacement.
 
-The mathematical implications of elastic scaling interact with the optimization dynamics of stochastic gradient descent in ways that affect convergence. The effective batch size changes with worker count according to $B_{\text{effective}} = B_{\text{per\_worker}} \times N_{\text{workers}}$. Changing $N_{\text{workers}}$ mid-training alters the gradient noise level, which can affect convergence speed and final model quality. Two strategies handle this tension, each with distinct trade-offs.
+The mathematical implications of elastic scaling interact with the optimization dynamics of stochastic gradient descent in ways that affect convergence. The effective batch size changes with worker count according to $B_{\text{effective}} = B_{\text{per-worker}} \times W$, where $W$ is the active worker count. Changing $W$ mid-training alters the gradient noise level, which can affect convergence speed and final model quality. Two strategies handle this tension, each with distinct trade-offs.
 
-The first approach, constant batch size scaling, adjusts $B_{\text{per\_worker}}$ inversely with $N_{\text{workers}}$ to maintain $B_{\text{effective}}$ at its original value. When workers are added, each worker processes fewer samples per step; when workers are removed, each processes more. This approach preserves the optimization dynamics exactly (the gradient noise level is unchanged), but changes per-worker compute and memory requirements. If $B_{\text{per\_worker}}$ becomes too small after aggressive scale-up, per-GPU utilization drops because the batch cannot saturate the GPU's compute units. If $B_{\text{per\_worker}}$ becomes too large after scale-down, it may exceed per-GPU memory capacity.
+The first approach, constant batch size scaling, adjusts $B_{\text{per-worker}}$ inversely with $W$ to maintain $B_{\text{effective}}$ at its original value. When workers are added, each worker processes fewer samples per step; when workers are removed, each processes more. This approach preserves the optimization dynamics exactly (the gradient noise level is unchanged), but changes per-worker compute and memory requirements. If $B_{\text{per-worker}}$ becomes too small after aggressive scale-up, per-GPU utilization drops because the batch cannot saturate the GPU's compute units. If $B_{\text{per-worker}}$ becomes too large after scale-down, it may exceed per-GPU memory capacity.
 
-The alternative, adaptive batch size scaling, keeps $B_{\text{per\_worker}}$ constant and adjusts the learning rate using scaling rules like the linear scaling rule of @goyal2017accurate, which increases the learning rate proportionally with batch size. This approach accepts changed optimization dynamics (larger batch sizes produce lower-variance gradient estimates, which may require different learning rate schedules) in exchange for simpler worker management (each worker's compute and memory requirements remain constant regardless of group size). For many practical workloads, adaptive batch size with linear learning rate scaling produces equivalent convergence outcomes, but the interaction between batch size scaling and other training hyperparameters (warmup schedule, weight decay, momentum) requires careful tuning.
+The alternative, adaptive batch size scaling, keeps $B_{\text{per-worker}}$ constant and adjusts the learning rate using scaling rules like the linear scaling rule of @goyal2017accurate, which increases the learning rate proportionally with batch size. This approach accepts changed optimization dynamics (larger batch sizes produce lower-variance gradient estimates, which may require different learning rate schedules) in exchange for simpler worker management (each worker's compute and memory requirements remain constant regardless of group size). For many practical workloads, adaptive batch size with linear learning rate scaling produces equivalent convergence outcomes, but the interaction between batch size scaling and other training hyperparameters (warmup schedule, weight decay, momentum) requires careful tuning.
 
 ### Framework support {#sec-fleet-orchestration-elastic-frameworks}
 
@@ -1140,7 +1140,7 @@ The placement and elasticity mechanisms discussed so far address individual job 
 
 ## Cost Optimization {#sec-fleet-orchestration-cost-optimization}
 
-A 10,000-GPU cluster represents a capital investment of roughly \$300 million and consumes millions more in monthly power and cooling. If poor scheduling leaves 20 percent of those GPUs idling in fragmentation gaps or waiting for data, roughly \$60 million in deployed capital sits unused, and at cloud-equivalent rates the same idleness burns approximately \$35 million per year in operating cost (@fig-cost-idle-gpus). Cost optimization forces the fleet orchestrator to treat the cluster as a massive financial asset whose ROI must be maximized.
+A 10,000-GPU cluster represents a capital investment of roughly \$300 million and consumes millions more in monthly power and cooling. If poor scheduling leaves 20 percent of those GPUs idling in fragmentation gaps or waiting for data, roughly \$60 million in deployed capital sits unused, and at cloud-equivalent rates the same idleness burns approximately \$35 million per year in operating cost. Cost optimization forces the fleet orchestrator to treat the cluster as a massive financial asset whose ROI must be maximized.
 
 @fig-cost-idle-gpus makes this waste concrete by plotting annual wasted cost as a function of cluster size and utilization level. At 10,000 GPUs with 50 percent utilization, the annual waste exceeds \$87 million. Published measurements from production clusters suggest this is not hypothetical: Microsoft's Philly cluster study [@jeon2019analysis] measured mean GPU utilization of approximately 52 percent, and @li2023 found that 50 percent of jobs on NERSC's Perlmutter supercomputer used less than 25 percent of allocated GPU memory. The gap between 30 percent and 70 percent utilization, shaded in the figure, represents the operational reality for most organizations. Moving from 50 percent to 70 percent utilization on a 10,000-GPU cluster saves over \$35 million annually without purchasing a single additional GPU.
 
@@ -1156,7 +1156,7 @@ A 10,000-GPU cluster represents a capital investment of roughly \$300 million an
 # │ Goal: Plot annual wasted cost vs cluster size for 30/50/70/90% utilization;
 # │       show $87.6M at 10K GPUs/50%; Microsoft Philly data point.
 # │ Show: Four curves; shaded 30–70% typical range; annotations.
-# │ How: waste = N*(1-util)*cost*HOURS_PER_YEAR; viz.setup_plot().
+# │ How: Convert idle GPU capacity into annual wasted cost; viz.setup_plot().
 # │
 # │ Imports: numpy (np), matplotlib.pyplot (plt), mlsysim.core.viz (viz),
 # │          mlsysim.constants (HOURS_PER_YEAR)
@@ -1312,7 +1312,7 @@ The same need for contingency planning becomes acute when spot interruptions are
 
 **Consequence**: Checkpointing handles isolated interruptions; it does not solve fleet-wide preemption when every retry targets the same exhausted pool.
 
-**Systems lesson**: A robust scheduler must diversify across regions and instance types, monitor interruption risk, and maintain a "break glass" path to on-demand capacity when the spot market becomes toxic.
+**Systems insight**: A robust scheduler must diversify across regions and instance types, monitor interruption risk, and maintain a "break glass" path to on-demand capacity when the spot market becomes toxic.
 
 :::
 
@@ -1337,7 +1337,7 @@ The optimal mix depends on workload characteristics and organizational prioritie
 # │ Context: callout-perspective "Spot vs. on-demand training"
 # │
 # │ Goal: Compare on-demand and spot costs for a 512-GPU, 14-day run.
-# │ How: cost = GPUs × wall-clock hours × GPU-hour price.
+# │ How: Compare GPU-hours at on-demand and spot GPU-hour rates.
 # │
 # │ Imports: mlsysim.fmt (check)
 # │ Exports: spot_* strings for callout
@@ -1775,7 +1775,7 @@ Inference traffic typically follows a "human curve": low at 3 AM, ramping up at 
 # │ Context: callout-notebook "The Diurnal GPU Shift"
 # │
 # │ Goal: Compare static partitioning vs dynamic sharing for training/serving.
-# │ How: active_gpus/fleet_size; annual_value = reclaimed × rate × hours/yr.
+# │ How: Compare active GPUs to fleet size and convert recovered capacity into annual value.
 # │
 # │ Imports: mlsysim.book (fmt, check), mlsysim.constants (HOURS_PER_YEAR)
 # │ Exports: ds_* strings for callout
@@ -1872,7 +1872,7 @@ Attribution in a shared fleet presents a forensic challenge. A single "training"
 # │ Context: @sec-fleet-orchestration-resource-accounting
 # │
 # │ Goal: Quantify the visible chargeback cost of a 64-GPU, 34-day run.
-# │ How: cost = GPUs × hours × GPU-hour rate.
+# │ How: Multiply GPU count, wall-clock hours, and internal GPU-hour rate.
 # │
 # │ Imports: mlsysim.fmt (fmt, MarkdownStr, check)
 # │ Exports: chargeback_hours_str, chargeback_cost_str
@@ -1932,7 +1932,7 @@ The engineering cost of preemption extends far beyond the scheduling latency. Th
 # │ Context: @sec-fleet-orchestration-preemption-cascades
 # │
 # │ Goal: Quantify wasted cost and GPU-hours from repeated preemptions.
-# │ How: recovery_time × GPU count × GPU-hour rate.
+# │ How: Convert recovery time across all GPUs into wasted GPU-hour cost.
 # │
 # │ Imports: mlsysim.fmt (fmt, check)
 # │ Exports: preempt_* strings for prose
@@ -1983,7 +1983,7 @@ Financial accountability further aligns incentives. Organizations typically begi
 # │ Context: callout-war-story "The quota hoarding incident"
 # │
 # │ Goal: Quantify idle reservation cost for 500 GPUs over three weeks.
-# │ How: cost = GPUs × weeks × hours/week × GPU-hour rate.
+# │ How: Convert idle reserved GPUs and idle duration into GPU-hour cost.
 # │
 # │ Imports: mlsysim.fmt (fmt, check)
 # │ Exports: hoarding_cost_str
@@ -2016,7 +2016,7 @@ A concrete quota scenario shows how quickly idle reservations become expensive.
 
 **Consequence**: The GPUs sit idle for three weeks, a capital waste of roughly \$`{python} QuotaHoardingCost.hoarding_cost_str`, while other teams' queues grow.
 
-**Systems lesson**: The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
+**Systems insight**: The infrastructure team implemented a "use it or lose it" policy. Any reserved quota group operating below 20 percent utilization for 72 consecutive hours is now automatically reclaimed and converted to spot capacity for the general pool. Reclaiming the quota requires VP-level approval, effectively eliminating "parking" on idle hardware.
 
 :::
 
@@ -2050,7 +2050,7 @@ A cluster dashboard shows average GPU utilization stuck at 60 percent, yet devel
 # │ Goal: Plot job wait time vs cluster utilization; show M/M/1-style explosion
 # │       near 100%; Danger Zone >80%; Target 75%.
 # │ Show: Three curves (small/mixed/large jobs); log-scale y; shaded zone.
-# │ How: wait = rho/(1-rho)*avg_time; matplotlib.
+# │ How: Convert utilization into M/M/1-style waiting-time curves; matplotlib.
 # │
 # │ Imports: numpy (np), matplotlib.pyplot (plt)
 # │ Exports: (figure only, no prose variables)
@@ -2132,9 +2132,9 @@ fig = plt.gcf()
 # │       cluster from 60% to 84% effective utilization via policy changes.
 # │ Show: 240 fully utilized GPU-equivalents; ~400 equivalent raw GPUs
 # │       recovered at the old utilization; ~$7M/year in equivalent capacity value.
-# │ How: productive_gain = cluster × (util_after − util_before);
-# │      recovered_raw = productive_gain / util_before;
-# │      annual_value = recovered_raw × $2/GPU-hr × 8,760 hr/yr.
+# │ How: Compute productive GPU-equivalent gain from the utilization improvement;
+# │      convert it to recovered raw-GPU capacity at the old utilization;
+# │      convert recovered GPU-equivalent capacity into annual dollar value.
 # │
 # │ Imports: (uses ClusterEconomicsContext.gpu_hour_cost_usd from fleet-orchestration-setup)
 # │ Exports: debug_cluster_str, debug_productive_gain_str, debug_recovered_str, debug_annual_str

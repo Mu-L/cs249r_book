@@ -70,7 +70,7 @@ For decades, the dominant strategy was straightforward: more data, better models
 # │
 # │ Goal: Quantify the growth rate gap between compute and data.
 # │ Show: That compute grows 10×/3yr while data only grows 2×/5yr.
-# │ How: Contrast historical growth factors for TFLOPS and high-quality tokens.
+# │ How: Contrast historical growth factors for TFLOP/s and high-quality tokens.
 # │
 # │ Imports: mlsysim.book (fmt)
 # │ Exports: gpu_growth_str, gpu_period_str, web_data_growth_str, etc.
@@ -296,13 +296,13 @@ Each stage increases the *information density* of the data that reaches the mode
 
 ***Data Selection***\index{Data Selection!definition} is the process of maximizing the **Information-Compute Ratio** of a training dataset.
 
-1.  **Significance (quantitative)**: It identifies the smallest subset of data sufficient to define the decision boundary, reducing the **total operations $(O)$** of the iron law by eliminating redundant or noisy samples $(D_{\text{vol}})$ before they consume GPU cycles.
+1.  **Significance (quantitative)**: It identifies the smallest subset of data sufficient to define the decision boundary, reducing the **total operations $(O)$** of the iron law by eliminating redundant or noisy samples from the dataset $D$ before they consume GPU cycles.
 2.  **Distinction (durable)**: Unlike **data engineering**, which focuses on the **cleanliness** and **consistency** of data, data selection focuses on the **informativeness** and **diversity** of the samples.
 3.  **Common pitfall**: A frequent misconception is that more data is always better. In reality, it is the **quality of the samples** that matters: adding 10$\times$ more low-quality data may yield less accuracy than 1.1$\times$ carefully selected, high-quality data.
 
 :::
 
-To make this concrete, consider training a model in the **GPT-2/Llama Lighthouse** family from @sec-network-architectures-lighthouse-roster-model-biographies-a763, which spans the autoregressive large language model (LLM) family from GPT-2's 1.5B parameters to Llama's 7B--70B range, here using a 70B parameter language model:
+To make this concrete, consider training a model in the **GPT-2/Llama Lighthouse** family from @sec-network-architectures-lighthouse-roster-model-biographies-a763, which spans the autoregressive large language model (LLM) family from GPT-2's 1.5 billion parameters to Llama's 7-70 billion parameter range, here using a 70-billion-parameter language model:
 
 ```{python}
 #| label: gpt-llama-calc
@@ -448,7 +448,7 @@ Consider training cost reduction: a `{python} IronLawSavings.dataset_reduction_p
 \index{Deduplication!storage and I/O cost reduction}
 \index{Active Learning!labeling cost reduction}
 \index{Green AI!data selection as energy reduction}
-Compute savings cascade through the entire infrastructure stack. Large datasets consume petabytes of storage and saturate network bandwidth during distributed training; deduplication and coreset selection reduce storage costs while eliminating I/O bottlenecks that can idle expensive GPU clusters. The savings extend to labeling economics: expert labeling costs (\$5--100+ per sample in domains like medical imaging) often exceed compute costs, and active learning and semi-supervised methods reduce labeling budgets by 10--100$\times$. The environmental implications compound further: training a large language model can emit hundreds of tons of CO~2~, making data selection the most direct lever for Green AI, since halving the dataset halves training energy with no accuracy trade-off if done correctly. Smaller curated datasets also enable faster iteration velocity. A team that can iterate in hours rather than days has a compounding advantage in model development.
+Compute savings cascade through the entire infrastructure stack. Large datasets consume petabytes of storage and saturate network bandwidth during distributed training; deduplication and coreset selection reduce storage costs while eliminating I/O bottlenecks that can idle expensive GPU clusters. The savings extend to labeling economics: expert labeling costs (\$5--100+ per sample in domains like medical imaging) often exceed compute costs, and active learning and semi-supervised methods reduce labeling budgets by 10--100$\times$. The environmental implications compound further: training a large language model can emit hundreds of metric tons of CO~2~, making data selection the most direct lever for Green AI, since halving the dataset halves training energy with no accuracy trade-off if done correctly. Smaller curated datasets also enable faster iteration velocity. A team that can iterate in hours rather than days has a compounding advantage in model development.
 
 The cascading benefits illustrate a broader point: where the ML researcher asks "what is the sample complexity of this learning problem?", the systems engineer asks "what is the cost-per-accuracy-point across the entire pipeline, from data acquisition through deployment?" This chapter provides the systems engineer's toolkit for that question: techniques to minimize total cost, metrics to quantify efficiency gains, and architectural patterns to implement data selection at scale.
 
@@ -711,10 +711,10 @@ $$\text{ICR} = \frac{\Delta I}{\Delta \text{FLOPs}}$$
 
 The Information-Compute Ratio is not constant; it follows a law of diminishing returns. We define the **ICR Frontier**\index{ICR Frontier!diminishing returns} as the point where the marginal learning signal from additional data drops toward zero.
 
-Mathematically, let $I(D)$ be the information content of a dataset of size $D$. In a redundant dataset, $I(D)$ often scales logarithmically ($\log D$) while the compute cost $C(D)$ scales linearly ($O \cdot D$). The resulting ICR follows @eq-icr-decay:
-$$\text{ICR}(D) = \frac{\frac{d}{dD} I(D)}{\frac{d}{dD} C(D)} \approx \frac{1/D}{O} = \frac{1}{O \cdot D}$$ {#eq-icr-decay}
+Mathematically, let $I(D)$ be the information content of a dataset of size $D$. In a redundant dataset, $I(D)$ often scales logarithmically ($\log D$) while the compute cost $C(D)$ scales linearly with the per-sample operation count $O_{\text{sample}}$: $C(D) = O_{\text{sample}} \cdot D$. The resulting ICR follows @eq-icr-decay:
+$$\text{ICR}(D) = \frac{\frac{d}{dD} I(D)}{\frac{d}{dD} C(D)} \approx \frac{1/D}{O_{\text{sample}}} = \frac{1}{O_{\text{sample}} \cdot D}$$ {#eq-icr-decay}
 
-The $1/(O \cdot D)$ decay creates what we call the data wall\index{Data Wall!zero learning signal}. Beyond the frontier, adding more data yields near-zero learning but still costs linear compute. In this regime, data is no longer an asset; it is a **data tax**\index{Data Tax!definition} that inflates the $O$ term of the iron law without improving the accuracy numerator of the RoC (return on compute, see @sec-introduction-roc-invariant). A systems engineer's goal is to keep the system operating at the "knee" of the ICR curve, where the learning signal per FLOP is maximized. The static and dynamic selection techniques that follow are designed to achieve exactly that.
+The $1/(O_{\text{sample}} \cdot D)$ decay creates what we call the data wall\index{Data Wall!zero learning signal}. Beyond the frontier, adding more data yields near-zero learning but still costs linear compute. In this regime, data is no longer an asset; it is a **data tax**\index{Data Tax!definition} that inflates the $O$ term of the iron law without improving the accuracy numerator of the RoC (return on compute, see @sec-introduction-roc-invariant). A systems engineer's goal is to keep the system operating at the "knee" of the ICR curve, where the learning signal per FLOP is maximized. The static and dynamic selection techniques that follow are designed to achieve exactly that.
 
 \index{Information-Compute Ratio!equivalence to hardware speedup}
 As detailed in the preceding "Data selection and the iron law" callout, data selection turns the total operations $(O)$ term from a fixed constant into a variable. By maximizing ICR, we reduce the total FLOPs required to reach a target performance level. A 2$\times$ improvement in ICR is mathematically equivalent to a 2$\times$ improvement in hardware peak throughput $(R_{\text{peak}})$, but often much cheaper to achieve. ICR focuses specifically on compute; later cost models extend the same reasoning to acquisition, labeling, and storage costs.
@@ -1126,19 +1126,19 @@ class QualityMultiplier:
 
 **Math**: Classical learning theory (for convex optimization with SGD) tells us that convergence rates depend on label noise. While deep learning operates in a nonconvex regime, the qualitative relationship holds broadly.
 
-1.  **Clean data**: Convergence rate is typically $O(1/N)$. Halving the error requires **2$\times$** data.
-2.  **Noisy data**: Convergence rate drops to $O(1/\sqrt{N})$. Halving the error requires **4$\times$** data.
+1.  **Clean data**: Convergence rate is typically $\mathcal{O}(1/N)$. Halving the error requires **2$\times$** data.
+2.  **Noisy data**: Convergence rate drops to $\mathcal{O}(1/\sqrt{N})$. Halving the error requires **4$\times$** data.
 
 **Multiplier**:
 To reach a target error $\epsilon$:
 
-*   $N_{\text{clean}} \propto 1/\epsilon$
-*   $N_{\text{noisy}} \propto 1/\epsilon^2$
+*   $D_{\text{clean}} \propto 1/\epsilon$
+*   $D_{\text{noisy}} \propto 1/\epsilon^2$
 
 **Example**: For target error $\epsilon$ = `{python} QualityMultiplier.epsilon_str` (`{python} QualityMultiplier.epsilon_pct_str` percent):
 
-*   $N_{\text{clean}}$ ≈ `{python} QualityMultiplier.n_clean_str`
-*   $N_{\text{noisy}}$ ≈ `{python} QualityMultiplier.n_noisy_str`
+*   $D_{\text{clean}}$ ≈ `{python} QualityMultiplier.n_clean_str`
+*   $D_{\text{noisy}}$ ≈ `{python} QualityMultiplier.n_noisy_str`
 *   **Ratio**: `{python} QualityMultiplier.ratio_str`$\times$ more data required if noisy.
 
 **Systems insight**: Cleaning the dataset (removing label noise) is a **`{python} QualityMultiplier.ratio_str`$\times$ compute accelerator**.
@@ -1175,15 +1175,15 @@ Crucially, these scores transfer across architectures: scores computed on a smal
 
 Gradient-based approaches generally outperform geometry-based methods in selection quality but incur the overhead of proxy model training. The quality advantage justifies the proxy training overhead for most production workloads, as @tbl-coreset-comparison quantifies:
 
-| **Method**     | **Compute Cost**            | **Requires Training** | **Best For**          | **Limitation**            |
-|:---------------|:----------------------------|:----------------------|:----------------------|:--------------------------|
-| **k-Center**   | $O(N^2)$ or $O(NK)$         | No                    | Coverage, exploration | Ignores label information |
-| **Herding**    | $O(NK)$                     | No                    | Distribution matching | Assumes Gaussian-like     |
-| **GraNd**      | $O(\text{epochs} \times N)$ | Yes (few epochs)      | Decision boundaries   | Requires proxy training   |
-| **Forgetting** | $O(\text{full training})$   | Yes (full)            | Hard examples         | Expensive to compute      |
-| **EL2N**       | $O(\text{epochs} \times N)$ | Yes (few epochs)      | Uncertainty sampling  | Best with proxy model     |
+| **Method**     | **Compute Cost**                        | **Requires Training** | **Best For**          | **Limitation**            |
+|:---------------|:----------------------------------------|:----------------------|:----------------------|:--------------------------|
+| **k-Center**   | $\mathcal{O}(D^2)$ or $\mathcal{O}(DK)$ | No                    | Coverage, exploration | Ignores label information |
+| **Herding**    | $\mathcal{O}(DK)$                       | No                    | Distribution matching | Assumes Gaussian-like     |
+| **GraNd**      | $\mathcal{O}(\text{epochs} \times D)$   | Yes (few epochs)      | Decision boundaries   | Requires proxy training   |
+| **Forgetting** | $\mathcal{O}(\text{full training})$     | Yes (full)            | Hard examples         | Expensive to compute      |
+| **EL2N**       | $\mathcal{O}(\text{epochs} \times D)$   | Yes (few epochs)      | Uncertainty sampling  | Best with proxy model     |
 
-: **Coreset Selection Algorithm Comparison**: $N =$ dataset size, $K =$ coreset size. The fundamental trade-off is selection quality vs. computational cost: gradient-based methods (GraNd, EL2N, Forgetting) outperform geometry-based methods ($k$-Center, Herding) because they use training dynamics to identify decision-boundary samples, but this advantage requires proxy model training as an upfront investment. {#tbl-coreset-comparison .striped .hover}
+: **Coreset Selection Algorithm Comparison**: $D =$ dataset size, $K =$ coreset size. The fundamental trade-off is selection quality vs. computational cost: gradient-based methods (GraNd, EL2N, Forgetting) outperform geometry-based methods ($k$-Center, Herding) because they use training dynamics to identify decision-boundary samples, but this advantage requires proxy model training as an upfront investment. {#tbl-coreset-comparison .striped .hover}
 
 Each algorithm in @tbl-coreset-comparison represents a different answer to the ICR framework's central question: where in the compute-vs.-information trade-off should the selection budget be spent to maximize learning signal per FLOP?
 
@@ -1323,7 +1323,7 @@ class CoresetPractice:
 3. Select the `{python} CoresetPractice.n_coreset_str` samples with highest uncertainty
 4. Train the full model on this coreset
 
-**Systems lesson**: The coreset often achieves **higher accuracy** than random sampling because it focuses on the decision boundary rather than redundant "easy" examples.
+**Systems insight**: The coreset often achieves **higher accuracy** than random sampling because it focuses on the decision boundary rather than redundant "easy" examples.
 
 :::
 
@@ -1383,9 +1383,9 @@ Near-duplicate detection addresses the more subtle problem of semantically redun
 
 [^fn-jaccard-dedup]: **Jaccard Similarity**\index{Jaccard Similarity!deduplication}: Defined as $|A \cap B| / |A \cup B|$, ranging from 0 (disjoint) to one (identical). For deduplication, the metric's set-based formulation naturally handles documents of different lengths without normalization. The practical threshold matters: setting Jaccard similarity above 0.8 catches near-duplicates while preserving legitimately similar-but-distinct content, but lowering it below 0.5 risks collapsing topically related documents and reducing dataset diversity.
 
-[^fn-lsh-dedup]: **Locality-Sensitive Hashing (LSH)**: LSH works by hashing MinHash document fingerprints into buckets such that similar fingerprints are highly likely to collide. This probabilistic bucketing avoids the quadratic cost of comparing every document pair, directly enabling the efficiency described. The core trade-off is that tuning for higher recall (fewer missed duplicates) by using more hash functions increases computational cost, shifting the problem from an infeasible $O(N^2)$ complexity toward a manageable $O(N)$.\index{LSH!deduplication}
+[^fn-lsh-dedup]: **Locality-Sensitive Hashing (LSH)**: LSH works by hashing MinHash document fingerprints into buckets such that similar fingerprints are highly likely to collide. This probabilistic bucketing avoids the quadratic cost of comparing every document pair, directly enabling the efficiency described. The core trade-off is that tuning for higher recall (fewer missed duplicates) by using more hash functions increases computational cost, shifting the problem from an infeasible $\mathcal{O}(D^2)$ complexity toward a manageable $\mathcal{O}(D)$.\index{LSH!deduplication}
 
-[^fn-minhash-dedup]: **MinHash**: Invented by @broder1997resemblance to detect duplicate web pages for AltaVista, the algorithm creates compact "signatures" using random hash functions such that similar documents produce similar signatures with high probability. Each signature compresses a document to a fixed-size sketch (typically 128--256 hash values), enabling similarity estimation between any two documents in $O(1)$ time. For ML pretraining pipelines processing billions of documents, MinHash reduces deduplication storage from terabytes of raw text to gigabytes of signatures. \index{MinHash!signature compression}
+[^fn-minhash-dedup]: **MinHash**: Invented by @broder1997resemblance to detect duplicate web pages for AltaVista, the algorithm creates compact "signatures" using random hash functions such that similar documents produce similar signatures with high probability. Each signature compresses a document to a fixed-size sketch (typically 128--256 hash values), enabling similarity estimation between any two documents in $\mathcal{O}(1)$ time. For ML pretraining pipelines processing billions of documents, MinHash reduces deduplication storage from terabytes of raw text to gigabytes of signatures. \index{MinHash!signature compression}
 
 \index{Perceptual Hashing!image deduplication}
 For images, perceptual hashing produces signatures robust to minor transformations like resizing and compression, identifying visually identical images stored in different formats. Embedding-based similarity\index{Deduplication!embedding-based} offers the highest-fidelity detection by computing dense representations (CLIP[^fn-clip-dedup] [@radford2021learning] for images, sentence transformers for text) and clustering similar items, though this approach incurs higher computational overhead.
@@ -1437,9 +1437,9 @@ The effectiveness of curriculum learning stems from how neural networks respond 
 \index{Pacing Function!linear warmup}
 Implementing a curriculum requires two components: a difficulty scorer that ranks samples, and a pacing function that controls how quickly hard samples are introduced. A common choice is linear pacing:
 $$
-\text{samples}_t = \texttt{sort\_by\_difficulty}[:N \cdot \min(1, t/T_{\text{warmup}})]
+\text{samples}_{n_{\text{epoch}}} = \texttt{sort\_by\_difficulty}[:D \cdot \min(1, n_{\text{epoch}}/N_{\text{warmup}})]
 $$
-where $t$ is the current epoch and $T_{\text{warmup}}$ is the epoch at which the full dataset becomes available. Early epochs train on the easiest $N \cdot (t/T_{\text{warmup}})$ fraction; after warmup, training proceeds on the full dataset.
+where $n_{\text{epoch}}$ is the current epoch, $D$ is the full dataset size, and $N_{\text{warmup}}$ is the number of warmup epochs before the full dataset becomes available. Early epochs train on the easiest $D \cdot (n_{\text{epoch}}/N_{\text{warmup}})$ fraction; after warmup, training proceeds on the full dataset.
 
 The difficulty scorer can be designed in several ways, each with different computational requirements and applicability (@tbl-difficulty-scoring).
 
@@ -2040,7 +2040,7 @@ Consider a medical imaging dataset: a hospital has 50,000 chest X-rays, but only
 
 Active learning optimizes which samples to label but still requires human annotation for every selected example. **Semi-supervised learning**\index{Semi-Supervised Learning!definition} takes a more aggressive approach: rather than asking *which* samples to label, it asks whether we can extract learning signal from unlabeled data directly. It uses a small set of labeled examples to guide learning on a much larger unlabeled pool, typically achieving 80–95 percent of fully supervised accuracy with only 10–20 percent of the labels.
 
-The core insight behind semi-supervised learning is that unlabeled data, while it cannot directly teach the mapping from inputs to outputs, contains structural information about the input distribution $P(X)$ that constrains the hypothesis space. A decision boundary that cuts through dense regions of $P(X)$ is unlikely to generalize well because it would assign different labels to similar inputs. Semi-supervised methods use unlabeled data to push decision boundaries toward low-density regions, where class transitions are more likely to occur naturally.
+The core insight behind semi-supervised learning is that unlabeled data, while it cannot directly teach the mapping from inputs to outputs, contains structural information about the input distribution $p(x)$ that constrains the hypothesis space. A decision boundary that cuts through dense regions of $p(x)$ is unlikely to generalize well because it would assign different labels to similar inputs. Semi-supervised methods use unlabeled data to push decision boundaries toward low-density regions, where class transitions are more likely to occur naturally.
 
 \index{Pseudo-labeling!semi-supervised technique}
 Three main techniques implement this insight. Pseudo-labeling[^fn-pseudo-labeling-ssl] takes the most direct approach: train on labeled data, use the model to generate "pseudo-labels" for high-confidence unlabeled predictions, then retrain on both. The confidence threshold is critical: setting it too low introduces label noise that degrades learning, while setting it too high wastes potentially useful data.
@@ -2469,7 +2469,7 @@ Three classes of generative approaches address these needs, each with distinct c
 
 ### Bridging the domain gap {#sec-data-selection-bridging-domain-gap-100b}
 
-[^fn-stable-diffusion-synthesis]: **Stable Diffusion**: Performs iterative denoising in a compressed latent space, making text-to-image synthesis more computationally efficient than pixel-space methods. This enables generating targeted training examples from natural language, but at a cost of 2-5 seconds per image on a single GPU. This is roughly 1,000$\times$ slower per sample than geometric augmentation, the trade-off for producing entirely novel scenes that data transformation cannot create. \index{Stable Diffusion!generation cost}
+[^fn-stable-diffusion-synthesis]: **Stable Diffusion**: Performs iterative denoising in a compressed latent space, making text-to-image synthesis more computationally efficient than pixel-space methods. This enables generating targeted training examples from natural language, but at a cost of 2--5 seconds per image on a single GPU. This is roughly 1,000$\times$ slower per sample than geometric augmentation, the trade-off for producing entirely novel scenes that data transformation cannot create. \index{Stable Diffusion!generation cost}
 
 \index{Domain Gap!synthetic vs. real data}
 Synthetic data's greatest limitation is the **domain gap**,[^fn-domain-gap-shift] the statistical difference between generated and real-world data, as illustrated in @fig-domain-gap. A model trained only on synthetic data learns a decision boundary optimized for the wrong distribution, potentially performing well on synthetic test data while failing on real deployment data.
@@ -2630,7 +2630,7 @@ To solve this, we use a Data Selection Solution Stack:
 4. **Negative mining**: Use acoustic similarity to find hard negatives ("Hey Siri", "Hey Google") from public datasets
 5. **Simulation (optional)**: Text-to-speech synthesis with diverse voice models
 
-**Systems lesson**: When the target model is tiny, the data selection challenge shifts from "reduce terabytes to gigabytes" to "create a useful dataset from almost nothing." Augmentation and simulation become essential rather than optional. `{python} KwsDataSelectionCalc.seed_samples_str` real recordings become `{python} KwsDataSelectionCalc.target_samples_str`+ training samples at `{python} KwsDataSelectionCalc.seed_cost_pct_str` percent of the recording cost. The noise injection serves as domain randomization, improving deployment robustness.
+**Systems insight**: When the target model is tiny, the data selection challenge shifts from "reduce terabytes to gigabytes" to "create a useful dataset from almost nothing." Augmentation and simulation become essential rather than optional. `{python} KwsDataSelectionCalc.seed_samples_str` real recordings become `{python} KwsDataSelectionCalc.target_samples_str`+ training samples at `{python} KwsDataSelectionCalc.seed_cost_pct_str` percent of the recording cost. The noise injection serves as domain randomization, improving deployment robustness.
 
 :::
 
@@ -2652,7 +2652,7 @@ Selecting the right combination of techniques from these three pipeline stages r
 
 ## Decision Framework {#sec-data-selection-decision-framework-0261}
 
-@tbl-data-selection summarizes the three-stage optimization pipeline introduced at the beginning of this chapter.
+Each stage increases information-compute ratio by a different mechanism, as @tbl-data-selection shows: pruning removes low-value samples before training, dynamic selection focuses compute on high-value samples during training, and synthesis creates new high-value samples on demand.
 
 | **Stage**                | **When Applied** | **Techniques**                                        |                                           **Typical Gains** |
 |:-------------------------|:-----------------|:------------------------------------------------------|------------------------------------------------------------:|
@@ -2834,7 +2834,7 @@ class SelectionBottleneckAnchor:
 Dynamic data selection introduces a new bottleneck: selection latency\index{Latency!selection, dynamic selection bottleneck}. In standard training, the data loader reads the next batch sequentially. In active learning or curriculum learning, the system must evaluate a selection function $f(x)$ over a large candidate pool to determine the next batch. Concretely, scoring a `{python} SelectionBottleneckAnchor.dataset_size_str` image dataset with a large model can take `{python} SelectionBottleneckAnchor.scoring_time_str`, potentially negating the savings from a `{python} SelectionBottleneckAnchor.coreset_pct_str` coreset if not performed with a smaller proxy model.
 
 For a selection strategy to be systems-efficient, it must satisfy the **Selection Inequality**\index{Selection Inequality!definition} expressed in @eq-selection-inequality:
-$$ T_{\text{selection}} + T_{\text{train}}(N_{\text{subset}}) < T_{\text{train}}(N_{\text{total}}) $$ {#eq-selection-inequality}
+$$ T_{\text{selection}} + T_{\text{train}}(D_{\text{subset}}) < T_{\text{train}}(D_{\text{total}}) $$ {#eq-selection-inequality}
 
 Here $T_{\text{selection}}$ is the time spent scoring the pool and $T_{\text{train}}$ is the compute time. If $f(x)$ requires a forward pass of a large model, the cost of selection can exceed the cost of training, producing negative ROI. A concrete scenario illustrates this trade-off.
 
@@ -2949,7 +2949,7 @@ class SelectionInequalityCalc:
 - Option B saves `{python} SelectionInequalityCalc.savings_b_str` hours vs. baseline (`{python} SelectionInequalityCalc.savings_b_pct_str` percent reduction) ✓
 - Option B beats Option A by `{python} SelectionInequalityCalc.b_beats_a_str` hours. Proxy selection yields better ROI.
 
-**Trap**: If selection required `{python} SelectionInequalityCalc.trap_sel_hrs_str` hours (for example, running a 7B parameter model), the total would reach `{python} SelectionInequalityCalc.trap_total_str` hours, still better than baseline, but the selection overhead equals `{python} SelectionInequalityCalc.trap_pct_str` percent of the remaining net savings.
+**Trap**: If selection required `{python} SelectionInequalityCalc.trap_sel_hrs_str` hours (for example, running a 7-billion-parameter model), the total would reach `{python} SelectionInequalityCalc.trap_total_str` hours, still better than baseline, but the selection overhead equals `{python} SelectionInequalityCalc.trap_pct_str` percent of the remaining net savings.
 
 **Systems insight**: Selection time should stay below 10 percent of full-training time for good ROI, and it must remain smaller than the compute saved by discarding low-value samples.
 
@@ -3198,9 +3198,9 @@ class RandomAccessPenalty:
 : **The Cost of Randomness**: Comparative I/O throughput for sequential vs. random 4 KB reads across different storage tiers. Standard data loaders optimize for sequential throughput, while data selection strategies often incur the random access penalty. {#tbl-io-performance .striped .hover tbl-colwidths="[20,20,20,20,20]"}
 
 \index{Vector Index!embedding-based selection}
-High-efficiency systems mitigate this penalty through several techniques. Small proxy models (a 10M parameter "student" scoring on behalf of a 7B "teacher") reduce selection cost by an order of magnitude while preserving ranking quality. Embedding indices such as FAISS[^fn-faiss-selection] reduce selection from full linear scans to index-dependent approximate nearest-neighbor searches, often sublinear in practice. Both approaches share a common principle: decoupling selection from training enables independent optimization.
+High-efficiency systems mitigate this penalty through several techniques. Small proxy models (a 10-million-parameter "student" scoring on behalf of a 7-billion-parameter "teacher") reduce selection cost by an order of magnitude while preserving ranking quality. Embedding indices such as FAISS[^fn-faiss-selection] reduce selection from full linear scans to index-dependent approximate nearest-neighbor searches, often sublinear in practice. Both approaches share a common principle: decoupling selection from training enables independent optimization.
 
-[^fn-faiss-selection]: **FAISS (Facebook AI Similarity Search)**: Provides GPU-accelerated approximate nearest-neighbor search using inverted file indices (IVF), product quantization (PQ), and hierarchical navigable small world graphs (HNSW). A single GPU can search billions of vectors in milliseconds, transforming selection from $O(N)$ linear scans into approximate nearest-neighbor searches that are often sublinear in practice. For data selection pipelines, FAISS enables three critical operations at billion-scale: $k$-nearest-neighbor retrieval for coreset selection, embedding-based deduplication, and stratified clustering for balanced sampling. Without this infrastructure, embedding-based selection would be computationally intractable at web scale. \index{FAISS!selection infrastructure}
+[^fn-faiss-selection]: **FAISS (Facebook AI Similarity Search)**: Provides GPU-accelerated approximate nearest-neighbor search using inverted file indices (IVF), product quantization (PQ), and hierarchical navigable small world graphs (HNSW). A single GPU can search billions of vectors in milliseconds, transforming selection from $\mathcal{O}(N)$ linear scans into approximate nearest-neighbor searches that are often sublinear in practice. For data selection pipelines, FAISS enables three critical operations at billion-scale: $k$-nearest-neighbor retrieval for coreset selection, embedding-based deduplication, and stratified clustering for balanced sampling. Without this infrastructure, embedding-based selection would be computationally intractable at web scale. \index{FAISS!selection infrastructure}
 
 Data loaders\index{Data Loading!shard-based sequential I/O} also require architectural adaptation. Modern formats such as WebDataset and FFCV group thousands of samples into shards, enabling efficient bulk reads even when target samples are scattered. Shuffle buffers\index{Shuffle Buffer!approximate random sampling} provide a practical approximation: the loader reads large sequential shards into memory and samples randomly within the buffer, preserving sequential I/O throughput while achieving the statistical benefits of random sampling.
 
@@ -3335,14 +3335,14 @@ C_{\text{total}} = C_{\text{acquire}} + C_{\text{label}} + C_{\text{store}} + C_
 $$
 where:
 
-|      **Component**       |                      **Formula**                      | **Typical Range**                             |
-|:------------------------:|:-----------------------------------------------------:|:----------------------------------------------|
-| **$C_{\text{acquire}}$** |              $N \times c_{\text{sample}}$             | \$0.001–\$10/sample (web scrape vs. licensed) |
-|  **$C_{\text{label}}$**  |      $N_{\text{labeled}} \times c_{\text{label}}$     | \$0.10–\$100/sample (crowd vs. expert)        |
-|  **$C_{\text{store}}$**  | $S_{\text{bytes}} \times c_{\text{storage}} \times T$ | \$0.02–\$0.10/GB/month                        |
-| **$C_{\text{process}}$** |          $N \times E \times c_{\text{FLOP}}$          | Proportional to training FLOPs                |
+|      **Component**       |                                 **Formula**                                  | **Typical Range**                             |
+|:------------------------:|:----------------------------------------------------------------------------:|:----------------------------------------------|
+| **$C_{\text{acquire}}$** |                         $D \times c_{\text{sample}}$                         | \$0.001–\$10/sample (web scrape vs. licensed) |
+|  **$C_{\text{label}}$**  |                 $D_{\text{labeled}} \times c_{\text{label}}$                 | \$0.10–\$100/sample (crowd vs. expert)        |
+|  **$C_{\text{store}}$**  |  $D_{\text{vol,store}} \times c_{\text{storage}} \times T_{\text{months}}$   | \$0.02–\$0.10/GB/month                        |
+| **$C_{\text{process}}$** | $D \times N_{\text{epochs}} \times O_{\text{sample}} \times c_{\text{FLOP}}$ | Proportional to training FLOPs                |
 
-: **Total Cost of Training Data**: The four cost components span the full data lifecycle. Labeling costs $(C_{\text{label}})$ vary by three orders of magnitude depending on whether crowd workers or domain experts are required, making this the component most amenable to optimization through data selection. {#tbl-cost-components .striped .hover tbl-colwidths="[20,20,60]"}
+: **Total Cost of Training Data**: The four cost components span the full data lifecycle. Here $D$ is the total sample count, $D_{\text{labeled}}$ is the labeled subset, $D_{\text{vol,store}}$ is stored byte volume, $T_{\text{months}}$ is retention time, $N_{\text{epochs}}$ is the number of training passes, and $O_{\text{sample}}$ is per-sample training work. Labeling costs $(C_{\text{label}})$ vary by three orders of magnitude depending on whether crowd workers or domain experts are required, making this the component most amenable to optimization through data selection. {#tbl-cost-components .striped .hover tbl-colwidths="[20,20,60]"}
 
 For a concrete example, consider training a vision model:
 
@@ -3823,7 +3823,7 @@ Data selection does not exist in isolation. A coreset-trained model will eventua
 
 Model compression (@sec-model-compression) reduces the size of the trained model through pruning, quantization, and distillation. The training dataset directly affects how compressible the resulting model becomes. Models trained on smaller, higher-quality datasets are often more compressible than those trained on larger, noisier ones.
 
-The mechanism relates to how models encode information. A model trained on repetitive data learns redundant features that pruning later removes. The training compute required to learn those features was wasted, only to be discarded during compression. By contrast, a model trained on diverse, informative samples learns compact, nonredundant representations from the start, making subsequent compression more effective. Empirical evidence supports this relationship: in experiments on ImageNet, models trained on 50 percent coresets selected by EL2N compress to four-bit precision with 2 percent less accuracy loss than models trained on the full dataset, because the curated training produced cleaner weight distributions that quantize more gracefully.
+The mechanism relates to how models encode information. A model trained on repetitive data learns redundant features that pruning later removes. The training compute required to learn those features was wasted, only to be discarded during compression. By contrast, a model trained on diverse, informative samples learns compact, nonredundant representations from the start, making subsequent compression more effective. Empirical evidence supports this relationship: in experiments on ImageNet, models trained on 50 percent coresets selected by EL2N compress to INT4 precision with 2 percent less accuracy loss than models trained on the full dataset, because the curated training produced cleaner weight distributions that quantize more gracefully.
 
 Data selection and model compression are therefore complementary. The techniques in this chapter can reduce both training cost *and* posttraining compression effort. When planning an efficiency pipeline, apply data selection first; the resulting model will be easier to compress.
 
@@ -4246,7 +4246,7 @@ where $n$ is the number of training samples. A higher PPD indicates more efficie
 
 Rather than comparing at a single point, the **area under the learning curve**\index{Area Under the Learning Curve!definition} (AULC) integrates performance across all dataset sizes:
 $$
-\text{AULC} = \int_0^N \text{Accuracy}(n) \, dn
+\text{AULC} = \int_0^D \text{Accuracy}(n) \, dn
 $$
 
 A data-efficient strategy has higher AULC because it achieves good accuracy faster. This metric is particularly useful for comparing coreset selection algorithms.
@@ -4255,7 +4255,7 @@ A data-efficient strategy has higher AULC because it achieves good accuracy fast
 
 For coreset methods, the **Data Compression Ratio**\index{Data Compression Ratio!definition} (DCR) measures how much data reduction is achieved at a target accuracy:
 $$
-\text{DCR} = \frac{N_{\text{full}}}{N_{\text{coreset}}} \text{ at } \text{Accuracy}_{\text{target}}
+\text{DCR} = \frac{D_{\text{full}}}{D_{\text{coreset}}} \text{ at } \text{Accuracy}_{\text{target}}
 $$
 
 A DCR of 5$\times$ means the coreset achieves target accuracy with 20 percent of the data.
@@ -4269,7 +4269,7 @@ Research on neural scaling laws [@kaplan2020scaling; @hoffmann2022chinchilla] es
 \index{Chinchilla!compute-optimal training}
 The Chinchilla study[^fn-chinchilla-scaling] [@hoffmann2022chinchilla] revealed a key insight: for any fixed compute budget, there exists an optimal balance between model size and training data. Training on too little data relative to model size wastes compute on an undertrained model; training on too much data with too small a model wastes data on a model that cannot absorb it.
 
-[^fn-chinchilla-scaling]: **Chinchilla**: A 70B-parameter language model whose central finding upended the "bigger is better" assumption: GPT-3 (175B parameters, 300B tokens) was significantly undertrained relative to its size. Chinchilla, with 70B parameters but 1.4T tokens (4.7$\times$ more data), outperformed GPT-3 on most benchmarks. The Chinchilla scaling law prescribes that model parameters and training tokens should scale roughly equally, redirecting the field from model scaling toward data scaling. For this chapter, the implication is direct: at the compute-optimal frontier, data quality and selection determine whether additional compute translates into better models or wasted FLOPs. \index{Chinchilla!compute-optimal scaling}
+[^fn-chinchilla-scaling]: **Chinchilla**: A 70-billion-parameter language model whose central finding upended the "bigger is better" assumption: GPT-3 (175 billion parameters, 300 billion tokens) was significantly undertrained relative to its size. Chinchilla, with 70 billion parameters but 1.4 trillion tokens (4.7$\times$ more data), outperformed GPT-3 on most benchmarks. The Chinchilla scaling law prescribes that model parameters and training tokens should scale roughly equally, redirecting the field from model scaling toward data scaling. For this chapter, the implication is direct: at the compute-optimal frontier, data quality and selection determine whether additional compute translates into better models or wasted FLOPs. \index{Chinchilla!compute-optimal scaling}
 
 The optimal balance defines a **compute-optimal frontier**\index{Compute-Optimal Frontier!Chinchilla scaling laws}: the best achievable performance at each compute budget when data and model size are properly balanced (@fig-compute-optimal-frontier).
 
@@ -4376,14 +4376,14 @@ The frontier provides a practical diagnostic framework:
 #| label: chinchilla-diagnostic-calc
 #| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
-# │ CHINCHILLA D/N DIAGNOSTIC ANCHORS
+# │ CHINCHILLA D/P DIAGNOSTIC ANCHORS
 # ├─────────────────────────────────────────────────────────────────────────────
 # │ Context: "The Chinchilla rule of thumb" subsection prose and the
 # │          [^fn-chinchilla-ratio] footnote.
 # │
 # │ Goal:    Anchor the tokens-per-parameter thresholds (starved, optimal,
-# │          diminishing) and the GPT-3 / LLaMA-2 70B reference D/N ratios.
-# │ Show:    Threshold values, reference D/N ratios for both models, and the
+# │          diminishing) and the GPT-3 / LLaMA-2 70B reference D/P ratios.
+# │ Show:    Threshold values, reference D/P ratios for both models, and the
 # │          token-count growth implied by doubling the compute budget.
 # │ How:     Divide training tokens by parameter counts for each reference
 # │          model; compute sqrt(2) - 1 for the doubling growth percent.
@@ -4428,7 +4428,7 @@ class ChinchillaDiagnostic:
 
 In the compute-optimal regime described by the Chinchilla scaling laws[^fn-chinchilla-ratio], training tokens and model parameters should scale together in a fixed ratio (roughly `{python} ChinchillaDiagnostic.tokens_per_param_opt_str` tokens per parameter). As a simplified consequence, when the model size is held proportional to its compute-optimal allocation, the number of training tokens grows roughly as $D_{\text{opt}} \propto \sqrt{C}$; doubling the compute budget then implies about $\sqrt{2} - 1$, or `{python} ChinchillaDiagnostic.doubling_token_growth_pct_str` percent, more tokens, not 100 percent. This explains why the data wall is so constraining: as compute grows exponentially, the demand for quality data grows roughly as its square root, but even that slower growth outpaces the supply of high-quality human-generated content.
 
-[^fn-chinchilla-ratio]: **Chinchilla Ratio Diagnostic**: The Chinchilla scaling law provides a practical data-starvation diagnostic: the $D/N$ ratio (training tokens per model parameter). A ratio below `{python} ChinchillaDiagnostic.starvation_ratio_str` indicates severe data starvation; around `{python} ChinchillaDiagnostic.tokens_per_param_opt_str` is compute-optimal; above `{python} ChinchillaDiagnostic.diminishing_ratio_str` yields diminishing returns. For reference, GPT-3 was trained at $D/N \approx$ `{python} ChinchillaDiagnostic.gpt3_dn_ratio_str` (175B parameters, 300B tokens)---chronically undertrained. LLaMA-2 70B at $D/N \approx$ `{python} ChinchillaDiagnostic.llama2_dn_ratio_str` is near-optimal. This single ratio is the fastest diagnostic for determining whether a training run is data-limited (add more tokens) or compute-limited (train a smaller model longer) before committing to an expensive run. \index{Chinchilla!D/N ratio diagnostic}
+[^fn-chinchilla-ratio]: **Chinchilla Ratio Diagnostic**: The Chinchilla scaling law provides a practical data-starvation diagnostic: the $D/P$ ratio (training tokens per model parameter). A ratio below `{python} ChinchillaDiagnostic.starvation_ratio_str` indicates severe data starvation; around `{python} ChinchillaDiagnostic.tokens_per_param_opt_str` is compute-optimal; above `{python} ChinchillaDiagnostic.diminishing_ratio_str` yields diminishing returns. For reference, GPT-3 was trained at $D/P \approx$ `{python} ChinchillaDiagnostic.gpt3_dn_ratio_str` (175 billion parameters, 300 billion tokens)---chronically undertrained. LLaMA-2 70B at $D/P \approx$ `{python} ChinchillaDiagnostic.llama2_dn_ratio_str` is near-optimal. This single ratio is the fastest diagnostic for determining whether a training run is data-limited (add more tokens) or compute-limited (train a smaller model longer) before committing to an expensive run. \index{Chinchilla!D/P ratio diagnostic}
 
 #### Applying the diagnostic {.unnumbered}
 

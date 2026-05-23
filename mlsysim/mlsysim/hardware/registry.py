@@ -2,22 +2,22 @@ from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy,
 from ..core.registry import Registry
 from ..core.constants import (
     ureg, V100_MEM_BW, V100_FLOPS_FP16_TENSOR, V100_MEM_CAPACITY, V100_TDP, V100_FLOPS_FP32, V100_UNIT_COST,
-    A100_MEM_BW, A100_FLOPS_FP16_TENSOR, A100_MEM_CAPACITY, A100_TDP, A100_FLOPS_FP32, A100_FLOPS_TF32, A100_FLOPS_INT8, A100_UNIT_COST,
-    H100_MEM_BW, H100_FLOPS_FP16_TENSOR, H100_MEM_CAPACITY, H100_TDP, H100_FLOPS_TF32, H100_FLOPS_FP8_TENSOR, H100_FLOPS_INT8, H100_UNIT_COST,
+    A100_MEM_BW, A100_FLOPS_FP16_TENSOR, A100_MEM_CAPACITY, A100_TDP, A100_FLOPS_FP32, A100_FLOPS_TF32, A100_TOPS_INT8, A100_UNIT_COST,
+    H100_MEM_BW, H100_FLOPS_FP16_TENSOR, H100_MEM_CAPACITY, H100_TDP, H100_FLOPS_TF32, H100_FLOPS_FP8_TENSOR, H100_TOPS_INT8, H100_UNIT_COST,
     H200_MEM_BW, H200_MEM_CAPACITY, H200_TDP, H200_UNIT_COST,
-    B200_MEM_BW, B200_FLOPS_FP16_TENSOR, B200_MEM_CAPACITY, B200_TDP, B200_FLOPS_FP8_TENSOR, B200_FLOPS_INT4, B200_UNIT_COST,
+    B200_MEM_BW, B200_FLOPS_FP16_TENSOR, B200_MEM_CAPACITY, B200_TDP, B200_FLOPS_FP8_TENSOR, B200_FLOPS_FP4_TENSOR, B200_TOPS_INT4, B200_UNIT_COST,
     NVL72_FLOPS_FP16_TENSOR, NVL72_FLOPS_FP8_TENSOR, NVL72_FLOPS_FP4_TENSOR,
     NVL72_MEM_CAPACITY, NVL72_MEM_BW, NVL72_NVLINK_BW, NVL72_TDP, NVL72_UNIT_COST,
     MI300X_MEM_BW, MI300X_FLOPS_FP16_TENSOR, MI300X_MEM_CAPACITY, MI300X_TDP, MI300X_UNIT_COST,
-    MI300X_FLOPS_FP8, MI300X_FLOPS_INT8, MI300X_FLOPS_FP32,
-    MI250X_FLOPS_FP16_TENSOR, MI250X_FLOPS_FP32, MI250X_FLOPS_INT8, MI250X_MEM_BW, MI250X_MEM_CAPACITY, MI250X_TDP,
+    MI300X_FLOPS_FP8, MI300X_TOPS_INT8, MI300X_FLOPS_FP32,
+    MI250X_FLOPS_FP16_TENSOR, MI250X_FLOPS_FP32, MI250X_TOPS_INT8, MI250X_MEM_BW, MI250X_MEM_CAPACITY, MI250X_TDP,
     GAUDI2_FLOPS_BF16, GAUDI2_FLOPS_FP8, GAUDI2_MEM_BW, GAUDI2_MEM_CAPACITY, GAUDI2_TDP,
     GAUDI3_FLOPS_BF16, GAUDI3_FLOPS_FP8, GAUDI3_MEM_BW, GAUDI3_MEM_CAPACITY, GAUDI3_TDP,
     TRAINIUM2_FLOPS_BF16, TRAINIUM2_FLOPS_FP8, TRAINIUM2_MEM_BW, TRAINIUM2_MEM_CAPACITY, TRAINIUM2_TDP,
     TPUV4_FLOPS_BF16, TPUV4_MEM_BW,
     TPUV6_FLOPS_BF16, TPUV6_MEM_BW, TPUV6_MEM_CAPACITY,
-    TPUV5P_MEM_BW, TPUV5P_FLOPS_BF16, TPUV5P_MEM_CAPACITY, TPUV5P_TDP, TPUV5P_FLOPS_INT8,
-    T4_MEM_BW, T4_FLOPS_FP16_TENSOR, T4_TDP, T4_FLOPS_INT8, T4_UNIT_COST,
+    TPUV5P_MEM_BW, TPUV5P_FLOPS_BF16, TPUV5P_MEM_CAPACITY, TPUV5P_TDP, TPUV5P_TOPS_INT8,
+    T4_MEM_BW, T4_FLOPS_FP16_TENSOR, T4_TDP, T4_TOPS_INT8, T4_UNIT_COST,
     WSE3_FLOPS_FP16, WSE3_MEM_CAPACITY, WSE3_MEM_BW, WSE3_TDP, CEREBRAS_CS3_UNIT_COST,
     PCIE_GEN3_BW, PCIE_GEN4_BW, PCIE_GEN5_BW, NVME_SEQUENTIAL_BW
 )
@@ -38,7 +38,7 @@ class CloudHardware(Registry):
     A100 = HardwareNode(
         name="NVIDIA A100",
         release_year=2020,
-        compute=ComputeCore(peak_flops=A100_FLOPS_FP16_TENSOR, precision_flops={"fp32": A100_FLOPS_FP32, "tf32": A100_FLOPS_TF32, "int8": A100_FLOPS_INT8}),
+        compute=ComputeCore(peak_flops=A100_FLOPS_FP16_TENSOR, precision_flops={"fp32": A100_FLOPS_FP32, "tf32": A100_FLOPS_TF32, "int8": A100_TOPS_INT8}),
         memory=MemoryHierarchy(capacity=A100_MEM_CAPACITY, bandwidth=A100_MEM_BW),
         interconnect=IOInterconnect(name="PCIe Gen4 x16", bandwidth=PCIE_GEN4_BW),
         tdp=A100_TDP,
@@ -51,7 +51,7 @@ class CloudHardware(Registry):
     H100 = HardwareNode(
         name="NVIDIA H100",
         release_year=2022,
-        compute=ComputeCore(peak_flops=H100_FLOPS_FP16_TENSOR, precision_flops={"tf32": H100_FLOPS_TF32, "fp8": H100_FLOPS_FP8_TENSOR, "int8": H100_FLOPS_INT8}),
+        compute=ComputeCore(peak_flops=H100_FLOPS_FP16_TENSOR, precision_flops={"tf32": H100_FLOPS_TF32, "fp8": H100_FLOPS_FP8_TENSOR, "int8": H100_TOPS_INT8}),
         memory=MemoryHierarchy(capacity=H100_MEM_CAPACITY, bandwidth=H100_MEM_BW),
         storage=StorageHierarchy(capacity=2 * ureg.TB, bandwidth=NVME_SEQUENTIAL_BW),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=PCIE_GEN5_BW),
@@ -65,7 +65,7 @@ class CloudHardware(Registry):
     H200 = HardwareNode(
         name="NVIDIA H200",
         release_year=2023,
-        compute=ComputeCore(peak_flops=H100_FLOPS_FP16_TENSOR, precision_flops={"tf32": H100_FLOPS_TF32, "fp8": H100_FLOPS_FP8_TENSOR, "int8": H100_FLOPS_INT8}),
+        compute=ComputeCore(peak_flops=H100_FLOPS_FP16_TENSOR, precision_flops={"tf32": H100_FLOPS_TF32, "fp8": H100_FLOPS_FP8_TENSOR, "int8": H100_TOPS_INT8}),
         memory=MemoryHierarchy(capacity=H200_MEM_CAPACITY, bandwidth=H200_MEM_BW),
         storage=StorageHierarchy(capacity=4 * ureg.TB, bandwidth=NVME_SEQUENTIAL_BW),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=PCIE_GEN5_BW),
@@ -77,7 +77,7 @@ class CloudHardware(Registry):
     B200 = HardwareNode(
         name="NVIDIA B200",
         release_year=2024,
-        compute=ComputeCore(peak_flops=B200_FLOPS_FP16_TENSOR, precision_flops={"fp8": B200_FLOPS_FP8_TENSOR, "int4": B200_FLOPS_INT4}),
+        compute=ComputeCore(peak_flops=B200_FLOPS_FP16_TENSOR, precision_flops={"fp8": B200_FLOPS_FP8_TENSOR, "fp4": B200_FLOPS_FP4_TENSOR, "int4": B200_TOPS_INT4}),
         memory=MemoryHierarchy(capacity=B200_MEM_CAPACITY, bandwidth=B200_MEM_BW),
         tdp=B200_TDP,
         unit_cost=B200_UNIT_COST,
@@ -108,7 +108,7 @@ class CloudHardware(Registry):
     MI300X = HardwareNode(
         name="AMD MI300X",
         release_year=2023,
-        compute=ComputeCore(peak_flops=MI300X_FLOPS_FP16_TENSOR, precision_flops={"fp8": MI300X_FLOPS_FP8, "int8": MI300X_FLOPS_INT8, "fp32": MI300X_FLOPS_FP32}),
+        compute=ComputeCore(peak_flops=MI300X_FLOPS_FP16_TENSOR, precision_flops={"fp8": MI300X_FLOPS_FP8, "int8": MI300X_TOPS_INT8, "fp32": MI300X_FLOPS_FP32}),
         memory=MemoryHierarchy(capacity=MI300X_MEM_CAPACITY, bandwidth=MI300X_MEM_BW),
         tdp=MI300X_TDP,
         unit_cost=MI300X_UNIT_COST,
@@ -118,7 +118,7 @@ class CloudHardware(Registry):
     MI250X = HardwareNode(
         name="AMD MI250X",
         release_year=2021,
-        compute=ComputeCore(peak_flops=MI250X_FLOPS_FP16_TENSOR, precision_flops={"fp32": MI250X_FLOPS_FP32, "int8": MI250X_FLOPS_INT8}),
+        compute=ComputeCore(peak_flops=MI250X_FLOPS_FP16_TENSOR, precision_flops={"fp32": MI250X_FLOPS_FP32, "int8": MI250X_TOPS_INT8}),
         memory=MemoryHierarchy(capacity=MI250X_MEM_CAPACITY, bandwidth=MI250X_MEM_BW),
         tdp=MI250X_TDP,
         dispatch_tax=0.015 * ureg.ms
@@ -163,7 +163,7 @@ class CloudHardware(Registry):
     TPUv5p = HardwareNode(
         name="Google TPU v5p",
         release_year=2023,
-        compute=ComputeCore(peak_flops=TPUV5P_FLOPS_BF16, precision_flops={"int8": TPUV5P_FLOPS_INT8}),
+        compute=ComputeCore(peak_flops=TPUV5P_FLOPS_BF16, precision_flops={"int8": TPUV5P_TOPS_INT8}),
         memory=MemoryHierarchy(capacity=TPUV5P_MEM_CAPACITY, bandwidth=TPUV5P_MEM_BW),
         tdp=TPUV5P_TDP,
         dispatch_tax=0.04 * ureg.ms
@@ -181,7 +181,7 @@ class CloudHardware(Registry):
     T4 = HardwareNode(
         name="NVIDIA T4",
         release_year=2018,
-        compute=ComputeCore(peak_flops=T4_FLOPS_FP16_TENSOR, precision_flops={"int8": T4_FLOPS_INT8}),
+        compute=ComputeCore(peak_flops=T4_FLOPS_FP16_TENSOR, precision_flops={"int8": T4_TOPS_INT8}),
         memory=MemoryHierarchy(capacity=16 * ureg.GiB, bandwidth=T4_MEM_BW),
         tdp=T4_TDP,
         unit_cost=T4_UNIT_COST,
@@ -231,7 +231,7 @@ class MobileHardware(Registry):
     iPhone15Pro = HardwareNode(
         name="iPhone 15 Pro (A17 Pro)",
         release_year=2023,
-        compute=ComputeCore(peak_flops=35 * ureg.TFLOPs/ureg.s),
+        compute=ComputeCore(peak_flops=35 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=8 * ureg.GB, bandwidth=100 * ureg.GB/ureg.s),
         tdp=5 * ureg.W,
         battery_capacity=15 * ureg.Wh,
@@ -241,7 +241,7 @@ class MobileHardware(Registry):
     Pixel8 = HardwareNode(
         name="Google Pixel 8 (Tensor G3)",
         release_year=2023,
-        compute=ComputeCore(peak_flops=15 * ureg.TFLOPs/ureg.s),
+        compute=ComputeCore(peak_flops=15 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=8 * ureg.GB, bandwidth=60 * ureg.GB/ureg.s),
         tdp=5 * ureg.W,
         dispatch_tax=1.2 * ureg.ms
@@ -250,7 +250,7 @@ class MobileHardware(Registry):
     Snapdragon8Gen3 = HardwareNode(
         name="Snapdragon 8 Gen 3",
         release_year=2023,
-        compute=ComputeCore(peak_flops=45 * ureg.TFLOPs/ureg.s),
+        compute=ComputeCore(peak_flops=45 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=12 * ureg.GB, bandwidth=77 * ureg.GB/ureg.s),
         tdp=5 * ureg.W,
         dispatch_tax=1.5 * ureg.ms
@@ -261,7 +261,7 @@ class EdgeHardware(Registry):
     JetsonOrinNX = HardwareNode(
         name="NVIDIA Jetson Orin NX",
         release_year=2023,
-        compute=ComputeCore(peak_flops=25 * ureg.TFLOPs/ureg.s, precision_flops={"int8": 100 * ureg.TFLOPs/ureg.s}),
+        compute=ComputeCore(peak_flops=25 * ureg.TFLOPs/ureg.s, precision_flops={"int8": 100 * ureg.TOPS}),
         memory=MemoryHierarchy(capacity=16 * ureg.GB, bandwidth=102 * ureg.GB/ureg.s),
         tdp=25 * ureg.W,
         dispatch_tax=0.2 * ureg.ms
@@ -270,7 +270,7 @@ class EdgeHardware(Registry):
     Coral = HardwareNode(
         name="Google Coral Edge TPU",
         release_year=2019,
-        compute=ComputeCore(peak_flops=4 * ureg.TFLOPs/ureg.s),
+        compute=ComputeCore(peak_flops=4 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=1 * ureg.GB, bandwidth=8 * ureg.GB/ureg.s),
         tdp=2 * ureg.W,
         dispatch_tax=1.0 * ureg.ms
@@ -279,7 +279,7 @@ class EdgeHardware(Registry):
     NUC_Movidius = HardwareNode(
         name="Intel NUC + Movidius",
         release_year=2020,
-        compute=ComputeCore(peak_flops=1 * ureg.TFLOPs/ureg.s),
+        compute=ComputeCore(peak_flops=1 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=16 * ureg.GB, bandwidth=25 * ureg.GB/ureg.s),
         tdp=15 * ureg.W,
         dispatch_tax=2.0 * ureg.ms
@@ -306,7 +306,7 @@ class TinyHardware(Registry):
         # ~2.4 GOPS INT8 (240 MHz dual-core, vector instructions)
         compute=ComputeCore(
             peak_flops=0.0005 * ureg.TFLOPs/ureg.s,
-            precision_flops={"int8": 0.0024 * ureg.TFLOPs/ureg.s}
+            precision_flops={"int8": 0.0024 * ureg.TOPS}
         ),
         # 512 KiB SRAM (usable ~256 KiB after RTOS/stack); 8 MB flash for weights
         # capacity/bandwidth = flash (default path for large models)
@@ -330,8 +330,8 @@ class TinyHardware(Registry):
         release_year=2018,
         # MLPerf Tiny reference platform. Cortex-M4F @ 64 MHz.
         compute=ComputeCore(
-            peak_flops=0.000064 * ureg.TFLOPs/ureg.s,  # ~64 MFLOPS (single-precision)
-            precision_flops={"int8": 0.000128 * ureg.TFLOPs/ureg.s}  # ~128 MOPS INT8
+            peak_flops=0.000064 * ureg.TFLOPs/ureg.s,  # ~64 MFLOP/s (single-precision)
+            precision_flops={"int8": 0.000128 * ureg.TOPS}  # ~128 MOPS INT8
         ),
         memory=MemoryHierarchy(
             capacity=1 * ureg.MB,                     # Flash (primary weight storage)

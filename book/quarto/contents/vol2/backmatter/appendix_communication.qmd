@@ -16,7 +16,7 @@ This appendix collects the communication cost models that answer those questions
 
 This appendix is designed as a reference. Reach for it when translating a distributed training symptom ("AllReduce is slow," "pipeline bubbles are killing throughput," "should we compress gradients?") into a quantitative diagnosis.
 
-Conventions used here follow the book-wide notation. We use $\alpha$ for per-message startup latency, $\beta$ for link bandwidth in bytes per second, $N$ for the number of participating GPUs, and $M$ for total message size in bytes.
+Conventions used here follow the book-wide notation. We use $\alpha$ for per-message startup latency, $\beta$ for link bandwidth in bytes per second, $n$ for point-to-point message size, $n^*$ for the $\alpha$-$\beta$ crossover point, $N$ for the number of participating GPUs, and $M$ for collective payload size in bytes.
 
 - **When AllReduce is slow**: Use @sec-comm-foundations-collective-complexity to compute the expected time and compare ring vs. tree costs.
 - **When choosing ring vs. tree**: Use @sec-comm-foundations-algorithm-selection and the crossover analysis to match algorithm to message size.
@@ -200,17 +200,17 @@ Estimating *how* long a gradient synchronization will take across `{python} CF.r
 
 Every point-to-point transfer on a network follows the same fundamental pattern: the sender pays a fixed startup cost to initiate the message, then transmits the payload at a rate determined by the link's bandwidth. This two-parameter model captures the essential physics of network communication.
 
-The **$\alpha$-$\beta$ model**, given by @eq-alpha-beta, predicts the time to transfer a message of $M$ bytes:
+The **$\alpha$-$\beta$ model**, given by @eq-alpha-beta, predicts the time to transfer a point-to-point message of $n$ bytes:
 
-$$ T(M) = \alpha + \frac{M}{\beta} $$ {#eq-alpha-beta}
+$$ T(n) = \alpha + \frac{n}{\beta} $$ {#eq-alpha-beta}
 
 where:
 
 - $\alpha$ is the **startup latency** (seconds)---the fixed cost of initiating a message, including software overhead, NIC processing, and routing setup
-- $\beta$ is the **link bandwidth** (bytes/second)---the sustained data rate after startup
-- $M$ is the **message size** (bytes)
+- $\beta$ is the **link bandwidth** (bytes/s)---the sustained data rate after startup
+- $n$ is the **message size** (bytes)
 
-The model decomposes every transfer into exactly two costs: a per-message tax ($\alpha$) paid regardless of size, and a per-byte tax ($M/\beta$) that scales linearly with the payload. This decomposition drives all the algorithm selection decisions in @sec-comm-foundations-algorithm-selection.
+The model decomposes every transfer into exactly two costs: a per-message tax ($\alpha$) paid regardless of size, and a per-byte tax ($n/\beta$) that scales linearly with the payload. This decomposition drives all the algorithm selection decisions in @sec-comm-foundations-algorithm-selection.
 
 @tbl-alpha-beta-params lists the $\alpha$ and $\beta$ values for interconnects commonly found in ML training clusters. These numbers are the starting point for every communication cost estimate in this appendix.
 
@@ -227,13 +227,13 @@ The model decomposes every transfer into exactly two costs: a per-message tax ($
 
 ### Latency-dominated vs. bandwidth-dominated regimes {#sec-comm-foundations-regimes}
 
-The $\alpha$-$\beta$ model reveals two distinct operating regimes. For small messages, the startup latency $\alpha$ dominates---the link spends most of its time *starting* transfers, not *sustaining* them. For large messages, the bandwidth term $M/\beta$ dominates, and the startup cost becomes negligible.
+The $\alpha$-$\beta$ model reveals two distinct operating regimes. For small messages, the startup latency $\alpha$ dominates---the link spends most of its time *starting* transfers, not *sustaining* them. For large messages, the bandwidth term $n/\beta$ dominates, and the startup cost becomes negligible.
 
-The **crossover message size** $M_{\text{cross}}$ is the point where both terms contribute equally:
+The **crossover message size** $n^*$ is the point where both terms contribute equally:
 
-$$ M_{\text{cross}} = \alpha \times \beta $$ {#eq-crossover}
+$$ n^* = \alpha \times \beta $$ {#eq-crossover}
 
-Below $M_{\text{cross}}$, communication is **latency-dominated**: sending more small messages wastes time on repeated startups. Above $M_{\text{cross}}$, communication is **bandwidth-dominated**: the link is fully utilized, and the only way to go faster is higher bandwidth.
+Below $n^*$, communication is **latency-dominated**: sending more small messages wastes time on repeated startups. Above $n^*$, communication is **bandwidth-dominated**: the link is fully utilized, and the only way to go faster is higher bandwidth.
 
 ::: {#nbk-appendix-communication-crossover-infiniband-ndr .callout-notebook title="Worked example: Crossover on InfiniBand NDR"}
 
@@ -243,7 +243,7 @@ Below $M_{\text{cross}}$, communication is **latency-dominated**: sending more s
 
 **Math**:
 
-$M_{\text{cross}} = \alpha \times \beta =$ `{python} CF.ib_ndr_alpha_us_str` $\times 10^{-6}$ s $\times$ `{python} CF.ib_ndr_beta_gbs_str` $\times 10^{9}$ B/s $=$ `{python} CF.crossover_kb_str` KB
+$n^* = \alpha \times \beta =$ `{python} CF.ib_ndr_alpha_us_str` $\times 10^{-6}$ s $\times$ `{python} CF.ib_ndr_beta_gbs_str` $\times 10^{9}$ B/s $=$ `{python} CF.crossover_kb_str` KB
 
 **Interpretation**: Messages smaller than `{python} CF.crossover_kb_str` KB are latency-dominated on IB NDR. Gradient tensors from a single layer of a large model are typically 10--100 MB---well above this threshold. Control messages, heartbeats, and barrier synchronizations, however, are well below it.
 
@@ -378,24 +378,24 @@ NCCL automatically selects a collective algorithm based on message size and GPU 
 
 ### Ring vs. tree vs. recursive halving-doubling {#sec-comm-foundations-ring-vs-tree}
 
-The ring algorithm minimizes bandwidth usage but pays a latency cost that grows linearly with $N$. The tree algorithm minimizes latency but wastes bandwidth because it sends the full message at each level. **Recursive halving-doubling** splits the difference: it uses halving (like a tree) for the reduce phase and doubling for the gather phase, achieving near-optimal bandwidth with $O(\log N)$ latency steps.
+The ring algorithm minimizes bandwidth usage but pays a latency cost that grows linearly with $N$. The tree algorithm minimizes latency but wastes bandwidth because it sends the full message at each level. **Recursive halving-doubling** splits the difference: it uses halving (like a tree) for the reduce phase and doubling for the gather phase, achieving near-optimal bandwidth with $\mathcal{O}(\log N)$ latency steps.
 
 The decision boundary between ring and tree depends on message size:
 
-- **$M \gg M_{\text{cross}}$** (large gradients): Use **ring**. The bandwidth term dominates, and ring's $(N-1)/N$ factor is optimal.
-- **$M \ll M_{\text{cross}}$** (barriers, scalars): Use **tree**. The latency term dominates, and tree's $\log_2 N$ steps are far fewer than ring's $2(N-1)$.
-- **$M \approx M_{\text{cross}}$** (medium tensors): Use **recursive halving-doubling** for balanced performance, or test empirically.
+- **$M \gg n^*$** (large gradients): Use **ring**. The bandwidth term dominates, and ring's $(N-1)/N$ factor is optimal.
+- **$M \ll n^*$** (barriers, scalars): Use **tree**. The latency term dominates, and tree's $\log_2 N$ steps are far fewer than ring's $2(N-1)$.
+- **$M \approx n^*$** (medium tensors): Use **recursive halving-doubling** for balanced performance, or test empirically.
 
 @tbl-algorithm-selection provides guidance for choosing the right algorithm.
 
-| **Regime**                                            | **Ring**                               | **Tree**                             | **Recursive Halving-Doubling**                     |
-|:------------------------------------------------------|:---------------------------------------|:-------------------------------------|:---------------------------------------------------|
-| **Large messages ($M > 10 \times M_{\text{cross}}$)** | Best---optimal bandwidth utilization   | Poor---sends $M$ at every tree level | Good---near-optimal bandwidth, $O(\log N)$ latency |
-| **Small messages ($M < M_{\text{cross}}/10$)**        | Poor---$2(N-1)$ startup costs dominate | Best---$\log_2 N$ startup costs      | Good---$O(\log N)$ startup costs                   |
-| **Medium messages ($M \approx M_{\text{cross}}$)**    | Acceptable                             | Acceptable                           | Best---balances both terms                         |
-| **Power-of-2 $N$**                                    | Works for any $N$                      | Best when $N = 2^k$                  | Requires $N = 2^k$                                 |
+| **Regime**                               | **Ring**                               | **Tree**                             | **Recursive Halving-Doubling**                               |
+|:-----------------------------------------|:---------------------------------------|:-------------------------------------|:-------------------------------------------------------------|
+| **Large messages ($M > 10 \times n^*$)** | Best---optimal bandwidth utilization   | Poor---sends $M$ at every tree level | Good---near-optimal bandwidth, $\mathcal{O}(\log N)$ latency |
+| **Small messages ($M < n^*/10$)**        | Poor---$2(N-1)$ startup costs dominate | Best---$\log_2 N$ startup costs      | Good---$\mathcal{O}(\log N)$ startup costs                   |
+| **Medium messages ($M \approx n^*$)**    | Acceptable                             | Acceptable                           | Best---balances both terms                                   |
+| **Power-of-2 $N$**                       | Works for any $N$                      | Best when $N = 2^k$                  | Requires $N = 2^k$                                           |
 
-: **Algorithm Selection Guide**: Strengths and weaknesses of ring, tree, and recursive halving-doubling for different message sizes and GPU counts. $M_{\text{cross}} = \alpha \times \beta$ is the crossover message size from @eq-crossover. {#tbl-algorithm-selection}
+: **Algorithm Selection Guide**: Strengths and weaknesses of ring, tree, and recursive halving-doubling for different message sizes and GPU counts. $n^* = \alpha \times \beta$ is the crossover message size from @eq-crossover. {#tbl-algorithm-selection}
 
 ### Hierarchical AllReduce {#sec-comm-foundations-hierarchical}
 
@@ -419,32 +419,32 @@ Pipeline parallelism splits a model across multiple GPUs so that each GPU holds 
 
 ### Bubble fraction {#sec-comm-foundations-bubble-fraction}
 
-In a pipeline with $P$ stages and $M$ microbatches, the **bubble fraction** is the proportion of total GPU-time spent idle:
+In a pipeline with $p$ stages and $m$ microbatches, the **bubble fraction** is the proportion of total GPU-time spent idle:
 
-$$ b = \frac{P - 1}{P - 1 + M} $$ {#eq-pipeline-bubble}
+$$ b = \frac{p - 1}{p - 1 + m} $$ {#eq-pipeline-bubble}
 
 This formula applies to both GPipe (where all forward passes complete before any backward pass begins) and 1F1B (one-forward-one-backward interleaving). The 1F1B schedule has the same asymptotic bubble fraction but uses less peak memory because it retires microbatches earlier.
 
 The key insight: the bubble fraction depends on the *ratio* of stages to microbatches. Adding more microbatches (for a fixed number of stages) amortizes the pipeline fill and drain across more useful work.
 
-Rule of thumb: Keeping bubble overhead at or below 20 percent requires $M \geq 4(P - 1)$; strictly below 20 percent requires $M > 4(P - 1)$. The practical rule $M \geq 4P$ is a convenient conservative target.
+Rule of thumb: Keeping bubble overhead at or below 20 percent requires $m \geq 4(p - 1)$; strictly below 20 percent requires $m > 4(p - 1)$. The practical rule $m \geq 4p$ is a convenient conservative target.
 
 @tbl-pipeline-bubble shows how bubble fraction varies with pipeline depth and microbatch count.
 
-| **Pipeline Stages ($P$)** | **$M$ = 8**                         | **$M$ = 16**                         | **$M$ = 32**                         | **$M$ = 64**                         |
+| **Pipeline Stages ($p$)** | **$m$ = 8**                         | **$m$ = 16**                         | **$m$ = 32**                         | **$m$ = 64**                         |
 |:--------------------------|:------------------------------------|:-------------------------------------|:-------------------------------------|:-------------------------------------|
-| **$P$ = 4**               | `{python} CF.bubble_p4_m8_pct_str`% | `{python} CF.bubble_p4_m16_pct_str`% | `{python} CF.bubble_p4_m32_pct_str`% | `{python} CF.bubble_p4_m64_pct_str`% |
-| **$P$ = 8**               | `{python} CF.bubble_p8_m8_pct_str`% | `{python} CF.bubble_p8_m16_pct_str`% | `{python} CF.bubble_p8_m32_pct_str`% | `{python} CF.bubble_p8_m64_pct_str`% |
+| **$p$ = 4**               | `{python} CF.bubble_p4_m8_pct_str`% | `{python} CF.bubble_p4_m16_pct_str`% | `{python} CF.bubble_p4_m32_pct_str`% | `{python} CF.bubble_p4_m64_pct_str`% |
+| **$p$ = 8**               | `{python} CF.bubble_p8_m8_pct_str`% | `{python} CF.bubble_p8_m16_pct_str`% | `{python} CF.bubble_p8_m32_pct_str`% | `{python} CF.bubble_p8_m64_pct_str`% |
 
-: **Pipeline Bubble Fraction**: Percentage of GPU-time lost to pipeline bubbles for various stage counts and microbatch counts. Values below 20 percent (the typical target) require $M \geq 4P$. {#tbl-pipeline-bubble}
+: **Pipeline Bubble Fraction**: Percentage of GPU-time lost to pipeline bubbles for various stage counts and microbatch counts. Values below 20 percent (the typical target) require $m \geq 4p$. {#tbl-pipeline-bubble}
 
 ### Interleaved scheduling {#sec-comm-foundations-interleaved}
 
-Interleaved scheduling (used in Megatron-LM) assigns $V$ **virtual stages** to each physical GPU instead of one. Each GPU processes $V$ nonconsecutive chunks of the model, which means the pipeline has $P \times V$ virtual stages but the bubble overhead uses the original $P$, as @eq-interleaved-bubble shows:
+Interleaved scheduling (used in Megatron-LM) assigns $V$ **virtual stages** to each physical GPU instead of one. Each GPU processes $V$ nonconsecutive chunks of the model, which means the pipeline has $p \times V$ virtual stages but the bubble overhead uses the original $p$, as @eq-interleaved-bubble shows:
 
-$$ b_{\text{interleaved}} = \frac{P - 1}{P - 1 + M \times V} $$ {#eq-interleaved-bubble}
+$$ b_{\text{interleaved}} = \frac{p - 1}{p - 1 + m \times V} $$ {#eq-interleaved-bubble}
 
-The microbatch term in the denominator is multiplied by $V$ compared to @eq-pipeline-bubble, so the bubble reduction approaches $V$ when $M$ dominates $P - 1$. For $P$ = 8, $M$ = 16, and $V$ = 4, the bubble fraction drops from `{python} CF.bubble_std_pct_str` percent to `{python} CF.bubble_interleaved_pct_str` percent, a `{python} CF.interleaved_bubble_reduction_str`$\times$ reduction that comes at the cost of more frequent, smaller communication between stages.
+The microbatch term in the denominator is multiplied by $V$ compared to @eq-pipeline-bubble, so the bubble reduction approaches $V$ when $m$ dominates $p - 1$. For $p$ = 8, $m$ = 16, and $V$ = 4, the bubble fraction drops from `{python} CF.bubble_std_pct_str` percent to `{python} CF.bubble_interleaved_pct_str` percent, a `{python} CF.interleaved_bubble_reduction_str`$\times$ reduction that comes at the cost of more frequent, smaller communication between stages.
 
 Interleaved scheduling highlights a recurring theme in distributed ML: communication granularity is a tunable knob. Smaller, more frequent transfers improve overlap and reduce idle time, but increase the aggregate latency overhead. The same trade-off appears in gradient compression, which is the final cost model in this appendix.
 
@@ -460,13 +460,13 @@ Gradient compression promises to reduce communication volume by 10--1000$\times$
 
 Gradient compression replaces the original $M$-byte gradient with a compressed representation of size $M/C$, where $C$ is the compression ratio. @eq-compression-total expresses the total time with compression:
 
-$$ T_{\text{compressed}} = T_{\text{encode}} + T_{\text{comm}}\!\left(\frac{M}{C}\right) + T_{\text{decode}} $$ {#eq-compression-total}
+$$ T_{\text{compressed}} = T_{\text{encode}} + T_{\text{transfer}}\!\left(\frac{M}{C}\right) + T_{\text{decode}} $$ {#eq-compression-total}
 
-Compression is beneficial when $T_{\text{compressed}} < T_{\text{comm}}(M)$. Rearranging this inequality yields the break-even condition in @eq-compression-breakeven:
+Compression is beneficial when $T_{\text{compressed}} < T_{\text{transfer}}(M)$. Rearranging this inequality yields the break-even condition in @eq-compression-breakeven:
 
-$$ T_{\text{encode}} + T_{\text{decode}} < T_{\text{comm}}(M) - T_{\text{comm}}\!\left(\frac{M}{C}\right) $$ {#eq-compression-breakeven}
+$$ T_{\text{encode}} + T_{\text{decode}} < T_{\text{transfer}}(M) - T_{\text{transfer}}\!\left(\frac{M}{C}\right) $$ {#eq-compression-breakeven}
 
-In the bandwidth-dominated regime ($M \gg M_{\text{cross}}$), the communication time scales linearly with message size, and the right-hand side simplifies to approximately $T_{\text{comm}}(M) \times (1 - 1/C)$. For high compression ratios ($C \gg 1$), this approaches $T_{\text{comm}}(M)$---meaning compression is worthwhile as long as the codec overhead is less than the uncompressed communication time.
+In the bandwidth-dominated regime ($M \gg n^*$), the communication time scales linearly with message size, and the right-hand side simplifies to approximately $T_{\text{transfer}}(M) \times (1 - 1/C)$. For high compression ratios ($C \gg 1$), this approaches $T_{\text{transfer}}(M)$---meaning compression is worthwhile as long as the codec overhead is less than the uncompressed communication time.
 
 ::: {#nbk-appendix-communication-top-k-compression-worth-it .callout-notebook title="Worked example: Is top-k compression worth it?"}
 
@@ -496,7 +496,7 @@ In the bandwidth-dominated regime ($M \gg M_{\text{cross}}$), the communication 
 | **64$\times$**              | `{python} CF.breakeven_64_10_str` ms       | `{python} CF.breakeven_64_40_str` ms       | `{python} CF.breakeven_64_100_str` ms       |
 | **256$\times$**             | `{python} CF.breakeven_256_10_str` ms      | `{python} CF.breakeven_256_40_str` ms      | `{python} CF.breakeven_256_100_str` ms      |
 
-: **Compression Break-Even Thresholds**: Maximum tolerable codec overhead (encode + decode) for compression to reduce total time, computed as $T_{\text{comm}}(M) \times (1 - 1/C)$. At high compression ratios, nearly the entire uncompressed AllReduce time is available as codec budget. {#tbl-compression-breakeven}
+: **Compression Break-Even Thresholds**: Maximum tolerable codec overhead (encode + decode) for compression to reduce total time, computed as $T_{\text{transfer}}(M) \times (1 - 1/C)$. At high compression ratios, nearly the entire uncompressed AllReduce time is available as codec budget. {#tbl-compression-breakeven}
 
 ## Fallacies and Pitfalls {#sec-comm-foundations-fallacies-pitfalls}
 
@@ -512,7 +512,7 @@ Within a node, GPUs communicate through NVLink or NVSwitch, which provides all-t
 
 Fallacy: *Pipeline parallelism eliminates communication overhead.*
 
-Pipeline parallelism replaces AllReduce with point-to-point activation transfers between adjacent stages, which are indeed cheaper. It introduces, however, bubble overhead that is mathematically unavoidable: with $P$ stages, at least $(P-1)/(P-1+M)$ of GPU-time is idle. For deep pipelines ($P \geq 8$), this overhead requires $M \geq 32$ microbatches to stay below 20 percent---a constraint that affects batch size, memory, and convergence.
+Pipeline parallelism replaces AllReduce with point-to-point activation transfers between adjacent stages, which are indeed cheaper. It introduces, however, bubble overhead that is mathematically unavoidable: with $p$ stages, at least $(p-1)/(p-1+m)$ of GPU-time is idle. For deep pipelines ($p \geq 8$), this overhead requires $m \geq 32$ microbatches to stay below 20 percent---a constraint that affects batch size, memory, and convergence.
 
 Pitfall: *Evaluating gradient compression by communication speedup alone.*
 
@@ -526,11 +526,11 @@ While the bandwidth and latency formulas are identical for ring-based implementa
 
 ::: {.callout-takeaways title="Communication costs are predictable"}
 
-* **The $\alpha$-$\beta$ model**: The model ($T = \alpha + M/\beta$) decomposes every network transfer into a fixed startup cost and a payload-proportional bandwidth cost. The crossover message size $M_{\text{cross}} = \alpha \times \beta$ determines which cost dominates.
+* **The $\alpha$-$\beta$ model**: The model ($T(n) = \alpha + n/\beta$) decomposes every network transfer into a fixed startup cost and a payload-proportional bandwidth cost. The crossover message size $n^* = \alpha \times \beta$ determines which cost dominates.
 * **Ring-based collectives**: AllReduce, AllGather, ReduceScatter, and AllToAll achieve bandwidth-optimal communication with a $(N-1)/N$ factor, but their latency term grows linearly with GPU count. **Tree-based algorithms** trade bandwidth for logarithmic latency scaling.
-* **Algorithm selection**: Message size relative to $M_{\text{cross}}$ determines the algorithm: ring for large messages (gradients), tree for small messages (barriers), and hierarchical two-level schemes for multi-node clusters.
-* **Pipeline bubble fraction**: $b = (P-1)/(P-1+M)$ is the fundamental overhead of pipeline parallelism. The practical rule $M \geq 4P$ keeps bubbles below 20 percent, and interleaved scheduling with $V$ virtual stages makes the bubble reduction approach $V$ when the microbatch term dominates.
+* **Algorithm selection**: Message size relative to $n^*$ determines the algorithm: ring for large messages (gradients), tree for small messages (barriers), and hierarchical two-level schemes for multi-node clusters.
+* **Pipeline bubble fraction**: $b = (p-1)/(p-1+m)$ is the fundamental overhead of pipeline parallelism. The practical rule $m \geq 4p$ keeps bubbles below 20 percent, and interleaved scheduling with $V$ virtual stages makes the bubble reduction approach $V$ when the microbatch term dominates.
 * **Gradient compression**: Gradient compression is profitable when the codec overhead (encode + decode) is less than the communication time saved. At high compression ratios in the bandwidth-dominated regime, nearly the entire uncompressed AllReduce time is available as overhead budget---but convergence impact must always be validated.
-* **Four parameters predict communication cost**: The point-to-point and collective communication models in this appendix derive from two hardware parameters ($\alpha$ and $\beta$) and two workload parameters ($M$ and $N$). Measuring these four numbers for a cluster yields a complete first-order prediction of distributed training overhead, with pipeline and compression sections introducing additional parameters as noted earlier.
+* **Four parameters predict communication cost**: The point-to-point and collective communication models in this appendix derive from two hardware parameters ($\alpha$ and $\beta$) and two workload parameters (message payload $n$ or $M$, plus participant count $N$ for collectives). Measuring these quantities for a cluster yields a complete first-order prediction of distributed training overhead, with pipeline and compression sections introducing additional parameters as noted earlier.
 
 :::
