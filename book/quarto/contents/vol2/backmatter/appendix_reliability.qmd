@@ -252,13 +252,13 @@ Each component in isolation appears highly reliable---a GPU lasts `{python} Comp
 
 A compute node is a series system: if *any* component fails, the node fails. For independent components with constant failure rates, @eq-mtbf-node sums the individual rates into the node-level failure rate:
 
-$$ \frac{1}{\text{MTBF}_\text{node}} = \frac{n_\text{gpu}}{\text{MTTF}_\text{gpu}} + \frac{n_\text{nic}}{\text{MTTF}_\text{nic}} + \frac{n_\text{psu}}{\text{MTTF}_\text{psu}} + \cdots $$ {#eq-mtbf-node}
+$$ \frac{1}{\text{MTBF}_{\text{node}}} = \frac{n_{\text{gpu}}}{\text{MTTF}_{\text{gpu}}} + \frac{n_{\text{nic}}}{\text{MTTF}_{\text{nic}}} + \frac{n_{\text{psu}}}{\text{MTTF}_{\text{psu}}} + \cdots $$ {#eq-mtbf-node}
 
 Think of each component as a ticking clock counting down to failure. A node with 8 GPUs, 2 NICs, and 2 PSUs has 12 independent clocks---the node fails when the *first* clock reaches zero. More clocks mean a shorter expected wait.
 
-For a cluster of $N$ identical nodes, the same logic applies one level up, as @eq-mtbf-cluster shows:
+For a cluster of $N_{\text{nodes}}$ identical nodes, the same logic applies one level up, as @eq-mtbf-cluster shows:
 
-$$ \text{MTBF}_\text{cluster} = \frac{\text{MTBF}_\text{node}}{N} $$ {#eq-mtbf-cluster}
+$$ \text{MTBF}_{\text{cluster}} = \frac{\text{MTBF}_{\text{node}}}{N_{\text{nodes}}} $$ {#eq-mtbf-cluster}
 
 This is the **MTBF cascade**: reliability degrades linearly with component count at each level, and the levels compound. A node with `{python} RS.node_mtbf_str`-hour MTBF sounds reliable. A cluster of `{python} RS.nodes_10k_str` such nodes has an MTBF of just `{python} RS.cluster_mtbf_10k_str` hours---a failure every few hours is the expected steady state.
 
@@ -321,11 +321,11 @@ The table makes a visceral point: the transition from "hundreds of GPUs" to "ten
 
 Knowing the MTBF tells us the *average* time between failures, but training jobs have fixed durations. The question practitioners ask is: *what is the probability that my job will be interrupted at least once?*
 
-Under the exponential failure model (constant failure rate), @eq-failure-probability gives the probability of at least one failure during a job of duration $T_\text{job}$:
+Under the exponential failure model (constant failure rate), @eq-failure-probability gives the probability of at least one failure during a job of duration $T_{\text{job}}$:
 
-$$ P(\geq 1 \text{ failure}) = 1 - e^{-T_\text{job} / \text{MTBF}} $$ {#eq-failure-probability}
+$$ \Pr(\geq 1\ \text{failure}) = 1 - e^{-T_{\text{job}} / \text{MTBF}} $$ {#eq-failure-probability}
 
-When $T_\text{job} \gg \text{MTBF}$, this probability approaches 1 rapidly. @tbl-failure-prob shows the concrete numbers for various cluster sizes and job durations.
+When $T_{\text{job}} \gg \text{MTBF}$, this probability approaches 1 rapidly. @tbl-failure-prob shows the concrete numbers for various cluster sizes and job durations.
 
 ```{python}
 #| label: failure-probability-table
@@ -333,9 +333,9 @@ When $T_\text{job} \gg \text{MTBF}$, this probability approaches 1 rapidly. @tbl
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FAILURE PROBABILITY TABLE
 # ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: @tbl-failure-prob—P(≥1 failure) by cluster size and job duration
+# │ Context: @tbl-failure-prob—Pr(≥1 failure) by cluster size and job duration
 # │
-# │ Goal: Compute P(≥1 failure) matrix across cluster sizes and job durations.
+# │ Goal: Compute Pr(≥1 failure) matrix across cluster sizes and job durations.
 # │ Show: fp_data dict rendered as table; rows by n_gpus, cols by 1-day/1-week/30-day.
 # │ How: R.p_failure(n_gpus, dur_h) for each cluster size and duration.
 # │
@@ -394,19 +394,19 @@ Every checkpoint saves progress but costs time. Checkpoint too rarely and a fail
 
 ### The Young-Daly model {#sec-reliability-foundations-young-daly}
 
-The optimal checkpoint interval balances two competing costs. Writing a checkpoint takes time $\delta$ (the **checkpoint cost**), during which no useful training occurs. The longer the interval between checkpoints, however, the more work is lost when a failure strikes---on average, half the interval. The **Young-Daly formula** minimizes the expected total overhead:
+The optimal checkpoint interval balances two competing costs. Writing a checkpoint takes time $T_{\text{write}}$ (the **checkpoint cost**), during which no useful training occurs. The longer the interval between checkpoints, however, the more work is lost when a failure strikes---on average, half the interval. The **Young-Daly formula** minimizes the expected total overhead:
 
-$$ \tau_{\text{opt}} = \sqrt{2 \times \delta \times \text{MTBF}_{\text{cluster}}} $$ {#eq-young-daly}
+$$ \tau_{\text{opt}} = \sqrt{2 \times T_{\text{write}} \times \text{MTBF}_{\text{system}}} $$ {#eq-young-daly}
 
-where $\delta$ is the checkpoint write time in seconds and $\text{MTBF}_{\text{cluster}}$ is the cluster MTBF in seconds.
+where $T_{\text{write}}$ is the checkpoint write time in seconds and $\text{MTBF}_{\text{system}}$ is the cluster or job-level system MTBF in seconds.
 
-The intuition is geometric-mean-like: when checkpoints are cheap relative to the MTBF ($\delta \ll \text{MTBF}_{\text{cluster}}$, the common case), the optimal interval sits between the two time scales. If checkpoints took zero time, the optimal cadence is every step. If the system never failed, no checkpoints would be required. The square root interpolates between these extremes.
+The intuition is geometric-mean-like: when checkpoints are cheap relative to the MTBF ($T_{\text{write}} \ll \text{MTBF}_{\text{system}}$, the common case), the optimal interval sits between the two time scales. If checkpoints took zero time, the optimal cadence is every step. If the system never failed, no checkpoints would be required. The square root interpolates between these extremes.
 
-The formula assumes that failures follow an exponential distribution (memoryless property) and that checkpoint cost $\delta$ is small compared to $\text{MTBF}_{\text{cluster}}$. Both assumptions hold well for production training clusters: the exponential model fits observed failure data, and modern checkpointing systems write to fast parallel storage in tens of seconds, while MTBF is measured in hours.
+The formula assumes that failures follow an exponential distribution (memoryless property) and that checkpoint cost $T_{\text{write}}$ is small compared to $\text{MTBF}_{\text{system}}$. Both assumptions hold well for production training clusters: the exponential model fits observed failure data, and modern checkpointing systems write to fast parallel storage in tens of seconds, while MTBF is measured in hours.
 
 ### Checkpoint sizing {#sec-reliability-foundations-checkpoint-sizing}
 
-Checkpoint size determines the write time $\delta$ that feeds into the Young-Daly formula. For common mixed-precision training checkpoints with the Adaptive Moment Estimation (Adam) optimizer, each parameter requires approximately 14 bytes of persistent state:
+Checkpoint size determines the write time $T_{\text{write}}$ that feeds into the Young-Daly formula. For common mixed-precision training checkpoints with the Adaptive Moment Estimation (Adam) optimizer, each parameter requires approximately 14 bytes of persistent state:
 
 - 2 bytes for BF16 model weights
 - 4 bytes for FP32 master weights
@@ -415,7 +415,7 @@ Checkpoint size determines the write time $\delta$ that feeds into the Young-Dal
 
 @eq-checkpoint-size aggregates these per-parameter costs into the total checkpoint footprint:
 
-$$ \text{Checkpoint Size} = N_\text{params} \times 14 \text{ bytes/param} $$ {#eq-checkpoint-size}
+$$ \text{Checkpoint Size} = P_{\text{model}} \times 14 \text{ bytes/parameter} $$ {#eq-checkpoint-size}
 
 ```{python}
 #| label: checkpoint-sizing-table
@@ -458,7 +458,7 @@ for i, n_params in enumerate(R.model_sizes_params):
 
 : **Checkpoint Sizes for Mixed-Precision Adam Training**: Each parameter requires about 14 bytes of persistent checkpoint state (model weights + FP32 master weights + optimizer moments); gradients are normally transient and recomputed after restore rather than serialized as durable checkpoint state. Write times assume 100 GB/s aggregate storage bandwidth. {#tbl-checkpoint-size}
 
-As @tbl-checkpoint-size shows, at frontier scale (175B+ parameters), checkpoint sizes reach the terabyte range. This makes checkpoint write time a significant cost that directly affects the Young-Daly optimal interval. The checkpoint strategies in @sec-fault-tolerance-reliability discuss techniques for reducing $\delta$---asynchronous checkpointing, incremental deltas, and distributed storage---all of which improve the Young-Daly result by shrinking the numerator under the square root.
+As @tbl-checkpoint-size shows, at frontier scale (175B+ parameters), checkpoint sizes reach the terabyte range. This makes checkpoint write time a significant cost that directly affects the Young-Daly optimal interval. The checkpoint strategies in @sec-fault-tolerance-reliability discuss techniques for reducing $T_{\text{write}}$---asynchronous checkpointing, incremental deltas, and distributed storage---all of which improve the Young-Daly result by shrinking the numerator under the square root.
 
 ### Worked example: Optimal checkpoint interval {#sec-reliability-foundations-worked-example}
 
@@ -475,10 +475,10 @@ Combining the checkpoint write time with the 10,000-GPU MTBF gives a concrete ch
 # │ Goal: Compute optimal checkpoint interval τ_opt for 175B model on 10K-GPU cluster;
 # │       show scaling to 20K GPUs.
 # │ Show: ~14 min optimal interval, ~X% checkpoint overhead, shorter interval at 20K GPUs.
-# │ How: calc_young_daly_interval(δ, MTBF_s) from R.ckpt_write_time_s and R.cluster_mtbf_10k_s.
+# │ How: calc_young_daly_interval(T_write_s, MTBF_system_s) from R.ckpt_write_time_s and R.cluster_mtbf_10k_s.
 # │
 # │ Imports: mlsysim.core.formulas (calc_young_daly_interval), mlsysim.constants (GPUS_PER_HOST)
-# │ Exports: yd_mtbf_h_str, yd_delta_str, yd_tau_min_str, yd_overhead_str, tau_20k_min_str
+# │ Exports: yd_mtbf_h_str, yd_t_write_str, yd_tau_min_str, yd_overhead_str, tau_20k_min_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 class WorkedExampleYoungDaly:
@@ -486,21 +486,21 @@ class WorkedExampleYoungDaly:
     # All values already computed in ReliabilityFoundations
     yd_mtbf_h = R.cluster_mtbf_10k          # Quantity[hour]
     yd_mtbf_s = R.cluster_mtbf_10k_s        # raw float (seconds)
-    yd_delta = R.ckpt_write_time_s           # raw float (seconds)
+    yd_t_write_s = R.ckpt_write_time_s       # raw float (seconds)
     yd_tau_s = R.tau_opt_s                   # Quantity[second]
     yd_tau_min = R.tau_opt_min               # raw float in minutes
 
     # Overhead from checkpointing alone
-    yd_ckpt_overhead = (yd_delta/yd_tau_s.m_as(ureg.second)) * 100
+    yd_ckpt_overhead = (yd_t_write_s/yd_tau_s.m_as(ureg.second)) * 100
 
     # What if MTBF halves (20K GPUs)?
     mtbf_20k_h = R.node_mtbf / (20_000 // GPUS_PER_HOST)  # Quantity[hour]
     mtbf_20k_s = mtbf_20k_h.m_as(ureg.second)              # raw float (seconds)
-    tau_20k_s = calc_young_daly_interval(yd_delta, mtbf_20k_s)  # Quantity[second]
+    tau_20k_s = calc_young_daly_interval(yd_t_write_s, mtbf_20k_s)  # Quantity[second]
     tau_20k_min = tau_20k_s.m_as(ureg.minute)               # raw float in minutes
 
     yd_mtbf_h_str = fmt(yd_mtbf_h.m_as(ureg.hour), precision=2)
-    yd_delta_str = fmt(yd_delta, precision=1)
+    yd_t_write_str = fmt(yd_t_write_s, precision=1)
     yd_tau_min_str = fmt(yd_tau_min, precision=1)
     yd_overhead_str = fmt(yd_ckpt_overhead, precision=1)
     tau_20k_min_str = fmt(tau_20k_min, precision=1)
@@ -508,13 +508,15 @@ class WorkedExampleYoungDaly:
     # Build display math attributes (vol1 pattern: no {python} inside math)
     _ckpt_gb_str = fmt(R.ckpt_175b_gb, precision=0)
     _bw_str = fmt(R.ckpt_write_bw, precision=0, commas=False)
-    delta_eq_math = MarkdownStr(
-        f"$$\\delta = \\frac{{\\text{{Checkpoint Size}}}}{{\\text{{Write Bandwidth}}}} "
+    t_write_eq_math = MarkdownStr(
+        f"$$T_{{\\text{{write}}}} = \\frac{{\\text{{Checkpoint Size}}}}{{\\text{{Write Bandwidth}}}} "
         f"= \\frac{{{_ckpt_gb_str} \\text{{ GB}}}}{{{_bw_str} \\text{{ GB/s}}}} "
-        f"= {yd_delta_str} \\text{{ s}}$$"
+        f"= {yd_t_write_str} \\text{{ s}}$$"
     )
     tau_opt_eq_math = MarkdownStr(
-        f"$$\\tau_\\text{{opt}} = \\sqrt{{2 \\times {yd_delta_str} \\text{{ s}} "
+        f"$$\\tau_{{\\text{{opt}}}} = \\sqrt{{2 \\times T_{{\\text{{write}}}} "
+        f"\\times \\text{{MTBF}}_{{\\text{{system}}}}}} "
+        f"= \\sqrt{{2 \\times {yd_t_write_str} \\text{{ s}} "
         f"\\times {yd_mtbf_h_str} \\text{{ h}} \\times 3{{,}}600 \\text{{ s/h}}}} "
         f"= {yd_tau_min_str} \\text{{ min}}$$"
     )
@@ -526,19 +528,19 @@ class WorkedExampleYoungDaly:
 
 **Setup.** Consider training a 175B-parameter model on a 10,000-GPU cluster. The cluster MTBF is `{python} WorkedExampleYoungDaly.yd_mtbf_h_str` hours (@tbl-mtbf-cluster). The checkpoint size is `{python} WorkedExampleYoungDaly.ckpt_175b_gb_str` GB, and the parallel storage system writes at `{python} WorkedExampleYoungDaly.ckpt_write_bw_str` GB/s.
 
-**Step 1**: Checkpoint write time ($\delta$).
-`{python} WorkedExampleYoungDaly.delta_eq_math`
+**Step 1**: Checkpoint write time ($T_{\text{write}}$).
+`{python} WorkedExampleYoungDaly.t_write_eq_math`
 
 **Step 2**: Apply the Young-Daly formula.
 `{python} WorkedExampleYoungDaly.tau_opt_eq_math`
 
-**Interpretation.** The optimal checkpoint interval is approximately `{python} WorkedExampleYoungDaly.yd_tau_min_str` minutes. The overhead from checkpointing alone is $\delta / \tau_\text{opt} \approx$ `{python} WorkedExampleYoungDaly.yd_overhead_str` percent of training time.
+**Interpretation.** The optimal checkpoint interval is approximately `{python} WorkedExampleYoungDaly.yd_tau_min_str` minutes. The overhead from checkpointing alone is $T_{\text{write}} / \tau_{\text{opt}} \approx$ `{python} WorkedExampleYoungDaly.yd_overhead_str` percent of training time.
 
 **Implication.** If the cluster were doubled to 20,000 GPUs, the MTBF would halve, and the optimal interval would shrink to `{python} WorkedExampleYoungDaly.tau_20k_min_str` minutes---checkpointing more frequently because failures happen more often. This illustrates the fundamental tension at scale: larger clusters are faster but demand more frequent interruption to protect progress.
 
 :::
 
-The boundary conditions of the Young-Daly formula merit attention. When $\delta$ approaches $\text{MTBF}_{\text{cluster}}$ (checkpoint cost approaches MTBF), checkpoint and rework overheads become so large that checkpoint/restart alone may fail to maintain useful forward progress. In such cases, redundancy or elastic training becomes necessary, as discussed in @sec-reliability-foundations-strategies.
+The boundary conditions of the Young-Daly formula merit attention. When $T_{\text{write}}$ approaches $\text{MTBF}_{\text{system}}$ (checkpoint cost approaches MTBF), checkpoint and rework overheads become so large that checkpoint/restart alone may fail to maintain useful forward progress. In such cases, redundancy or elastic training becomes necessary, as discussed in @sec-reliability-foundations-strategies.
 
 ---
 
@@ -554,7 +556,7 @@ When a failure occurs, the system does not instantly resume training. Detection,
 
 Recovery is not a single event but a pipeline of phases, each with its own time budget. @eq-reliability-recovery-time sums them into total recovery time:
 
-$$ T_\text{recovery} = T_\text{detect} + T_\text{reschedule} + T_\text{reload} + T_\text{replay} $$ {#eq-reliability-recovery-time}
+$$ T_{\text{recovery}} = T_{\text{detect}} + T_{\text{reschedule}} + T_{\text{reload}} + T_{\text{replay}} $$ {#eq-reliability-recovery-time}
 
 ```{python}
 #| label: recovery-anatomy-table
@@ -581,19 +583,19 @@ class RecoveryAnatomy:
     t_total_str       = fmt(R.t_recovery_total_s, precision=1)
 ```
 
-| **Phase**                     | **Typical Duration**                          | **What Happens**                                |
-|:------------------------------|:----------------------------------------------|:------------------------------------------------|
-| **$T_\text{detect}$**         | `{python} RecoveryAnatomy.t_detect_str` s     | Heartbeat timeout expires; failure is confirmed |
-| **$T_\text{reschedule}$**     | `{python} RecoveryAnatomy.t_reschedule_str` s | Replacement node allocated from spare pool      |
-| **$T_\text{reload}$**         | `{python} RecoveryAnatomy.t_reload_str` s     | Checkpoint read from storage into GPU memory    |
-| **$T_\text{replay}$**         | ~`{python} RecoveryAnatomy.t_replay_str` min  | Recompute training steps since last checkpoint  |
-| **Total $T_\text{recovery}$** | ~`{python} RecoveryAnatomy.t_total_str` min   | System fully productive again                   |
+| **Phase**                       | **Typical Duration**                          | **What Happens**                                |
+|:--------------------------------|:----------------------------------------------|:------------------------------------------------|
+| **$T_{\text{detect}}$**         | `{python} RecoveryAnatomy.t_detect_str` s     | Heartbeat timeout expires; failure is confirmed |
+| **$T_{\text{reschedule}}$**     | `{python} RecoveryAnatomy.t_reschedule_str` s | Replacement node allocated from spare pool      |
+| **$T_{\text{reload}}$**         | `{python} RecoveryAnatomy.t_reload_str` s     | Checkpoint read from storage into GPU memory    |
+| **$T_{\text{replay}}$**         | ~`{python} RecoveryAnatomy.t_replay_str` min  | Recompute training steps since last checkpoint  |
+| **Total $T_{\text{recovery}}$** | ~`{python} RecoveryAnatomy.t_total_str` min   | System fully productive again                   |
 
 : **Recovery Time Breakdown**: Each phase contributes to the total time between failure and full-speed resumption. For the 10K-GPU, 175B-model scenario, replay dominates because it recomputes work lost since the last checkpoint. {#tbl-recovery-anatomy}
 
-As @tbl-recovery-anatomy illustrates, the key insight is that $T_\text{replay}$ typically dominates, and it is directly controlled by the checkpoint interval: on average, half the interval must be replayed. This creates a reinforcing loop with the Young-Daly formula---shorter intervals mean less replay but more checkpoint overhead, and the formula finds the minimum of this sum.
+As @tbl-recovery-anatomy illustrates, the key insight is that $T_{\text{replay}}$ typically dominates, and it is directly controlled by the checkpoint interval: on average, half the interval must be replayed. This creates a reinforcing loop with the Young-Daly formula---shorter intervals mean less replay but more checkpoint overhead, and the formula finds the minimum of this sum.
 
-The other phases offer engineering optimization targets. $T_\text{detect}$ can be reduced with more aggressive heartbeat intervals (at the cost of false positives). $T_\text{reschedule}$ depends on having hot spare nodes preallocated, a fleet orchestration decision covered in @sec-fleet-orchestration. $T_\text{reload}$ scales with checkpoint size and storage bandwidth, motivating the checkpoint compression and sharding techniques discussed in @sec-fault-tolerance-reliability.
+The other phases offer engineering optimization targets. $T_{\text{detect}}$ can be reduced with more aggressive heartbeat intervals (at the cost of false positives). $T_{\text{reschedule}}$ depends on having hot spare nodes preallocated, a fleet orchestration decision covered in @sec-fleet-orchestration. $T_{\text{reload}}$ scales with checkpoint size and storage bandwidth, motivating the checkpoint compression and sharding techniques discussed in @sec-fault-tolerance-reliability.
 
 ### Goodput vs. rawput {#sec-reliability-foundations-goodput}
 
@@ -650,7 +652,7 @@ The three canonical strategies represent different points in the trade-off space
 
 For serving workloads, availability is typically expressed as a percentage: 99 percent ("two nines"), 99.9 percent ("three nines"), and so on. Redundancy improves availability by running $k$ independent replicas. The system is unavailable only when *all* replicas are simultaneously down, which @eq-availability-stacked captures:
 
-$$ A_\text{system} = 1 - (1 - A)^k $$ {#eq-availability-stacked}
+$$ A_{\text{system}} = 1 - (1 - A)^k $$ {#eq-availability-stacked}
 
 where $A$ is the availability of a single replica and $k$ is the number of replicas.
 
@@ -709,11 +711,11 @@ The independence assumption is critical, however. Correlated failures---power ou
 
 **Fallacy**: *If each GPU is 99.99 percent reliable, a 10,000-GPU cluster is also 99.99 percent reliable.*
 
-Reliability does not compose by averaging---it compounds by multiplication. A system of $N$ serial components, each with availability $A$, has aggregate availability $A^N$. For $A = 0.9999$ and $N = 10{,}000$: $0.9999^{10{,}000} \approx 0.37$. The cluster is *down* 63 percent of the time. Individual component reliability is necessary but nowhere near sufficient; system-level fault tolerance must be designed explicitly.
+Reliability does not compose by averaging---it compounds by multiplication. A system of $N_{\text{comp}}$ serial components, each with availability $A$, has aggregate availability $A^{N_{\text{comp}}}$. For $A = 0.9999$ and $N_{\text{comp}} = 10{,}000$: $0.9999^{10{,}000} \approx 0.37$. The cluster is *down* 63 percent of the time. Individual component reliability is necessary but nowhere near sufficient; system-level fault tolerance must be designed explicitly.
 
 **Pitfall**: *Checkpointing as frequently as possible to minimize lost work.*
 
-More frequent checkpoints reduce the expected replay time after a failure, but each checkpoint incurs a fixed write cost $\delta$. Checkpointing every minute when $\delta$ is 30 seconds means spending 50 percent of training time just writing checkpoints. The Young-Daly formula in @eq-young-daly gives the mathematically optimal balance; deviating in either direction increases total overhead.
+More frequent checkpoints reduce the expected replay time after a failure, but each checkpoint incurs a fixed write cost $T_{\text{write}}$. Checkpointing every minute when $T_{\text{write}}$ is 30 seconds means spending 50 percent of training time just writing checkpoints. The Young-Daly formula in @eq-young-daly gives the mathematically optimal balance; deviating in either direction increases total overhead.
 
 **Fallacy**: *Adding more GPUs always speeds up training.*
 
@@ -721,7 +723,7 @@ Beyond the well-known communication overhead of distributed training, each addit
 
 **Pitfall**: *Treating failures as independent when they share infrastructure.*
 
-The availability stacking formula $A_\text{system} = 1 - (1 - A)^k$ assumes independent failures. In practice, correlated failures---a power distribution unit taking out an entire rack, a firmware bug affecting all GPUs of the same generation, or a network partition isolating a failure domain---are the dominant source of multi-replica outages. The correlation, not the individual failure rate, determines whether redundancy actually delivers the expected availability.
+The availability stacking formula $A_{\text{system}} = 1 - (1 - A)^k$ assumes independent failures. In practice, correlated failures---a power distribution unit taking out an entire rack, a firmware bug affecting all GPUs of the same generation, or a network partition isolating a failure domain---are the dominant source of multi-replica outages. The correlation, not the individual failure rate, determines whether redundancy actually delivers the expected availability.
 
 **Pitfall**: *Ignoring recovery time when planning training budgets.*
 
@@ -734,7 +736,7 @@ A training run scheduled for 30 days on a 10,000-GPU cluster will require 33--38
 * **Failure rate scales linearly with component count**: A single GPU fails once per `{python} ComponentFitTable.gpu_mttf_yr_str` years; a 10,000-GPU cluster experiences a failure every `{python} RS.cluster_mtbf_10k_str` hours. At fleet scale, failure is a continuous background condition, not an exceptional event.
 * **The MTBF cascade compounds through system levels**: Node MTBF is determined by the weakest component type; cluster MTBF divides by node count. @tbl-mtbf-cluster provides the reference numbers for capacity planning.
 * **Job failure probability approaches certainty quickly**: For clusters above a few thousand GPUs running multi-day jobs, the probability of at least one failure exceeds 99 percent. Fault tolerance is not optional at this scale---it is a prerequisite for completing any training run.
-* **The Young-Daly formula $\tau_\text{opt} = \sqrt{2 \delta \, \text{MTBF}_{\text{cluster}}}$ optimizes checkpoint frequency**: It balances the cost of writing checkpoints against the cost of lost work, requiring only two measurable inputs: checkpoint write time and cluster MTBF.
+* **The Young-Daly formula $\tau_{\text{opt}} = \sqrt{2 T_{\text{write}} \, \text{MTBF}_{\text{system}}}$ optimizes checkpoint frequency**: It balances the cost of writing checkpoints against the cost of lost work, requiring only two measurable inputs: checkpoint write time and system MTBF.
 * **Recovery has four phases**: Detection, rescheduling, reloading, and replay. Replay typically dominates and is controlled by the checkpoint interval. Each phase offers distinct optimization opportunities.
 * **Strategy selection depends on workload type**: Checkpoint/restart suits batch training. Redundancy suits latency-sensitive serving. Elastic training bridges the two but adds complexity.
 * **Availability stacks exponentially with independent replicas**: Independent replicas improve availability exponentially, but correlated failures collapse that benefit. Failure domain isolation is the prerequisite that makes redundancy effective.

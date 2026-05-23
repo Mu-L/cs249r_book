@@ -32,7 +32,7 @@ A100_FLOPS_FP16_TENSOR = 312 * TFLOPs / second   # Dense FP16 Tensor Core (624 w
 A100_FLOPS_FP16_SPARSE = 624 * TFLOPs / second   # With 2:4 structured sparsity
 A100_FLOPS_TF32 = 156 * TFLOPs / second           # Dense TF32 (312 with sparsity)
 A100_FLOPS_FP32 = 19.5 * TFLOPs / second          # Standard CUDA cores (no tensor)
-A100_FLOPS_INT8 = 624 * TFLOPs / second            # Dense INT8 Tensor Core (1248 with sparsity)
+A100_TOPS_INT8 = 624 * TOPS                        # Dense INT8 Tensor Core (1248 with sparsity)
 A100_MEM_BW = 2039 * GB / second           # HBM2e (SXM variant)
 A100_MEM_CAPACITY = 80 * GiB              # SXM variant (also 40 GiB PCIe)
 A100_TDP = 400 * watt                     # SXM variant
@@ -42,7 +42,7 @@ H100_FLOPS_FP16_TENSOR = 989 * TFLOPs / second
 H100_FLOPS_FP8_TENSOR = 1979 * TFLOPs / second
 H100_FLOPS_TF32 = 494 * TFLOPs / second
 H100_FLOPS_FP32_CUDA = 67 * TFLOPs / second  # FP32 on CUDA (vector) cores, no Tensor Core
-H100_FLOPS_INT8 = 1979 * TFLOPs / second  # Dense. Sparse is 3958.
+H100_TOPS_INT8 = 1979 * TOPS              # Dense. Sparse is 3958.
 H100_MEM_BW = 3.35 * TB / second          # HBM3
 H100_MEM_CAPACITY = 80 * GiB
 H100_TDP = 700 * watt                     # SXM variant
@@ -57,7 +57,8 @@ H200_TDP = 700 * watt                       # Same as H100 SXM
 B200_FLOPS_FP16_TENSOR = 2250 * TFLOPs / second  # Dense. Sparse is 4500.
 B200_FLOPS_FP16_SPARSE = 4500 * TFLOPs / second
 B200_FLOPS_FP8_TENSOR = 4500 * TFLOPs / second   # Dense. Sparse is 9000.
-B200_FLOPS_INT4 = 9000 * TFLOPs / second         # Dense. Sparse is 18 PFLOPS.
+B200_FLOPS_FP4_TENSOR = 9000 * TFLOPs / second   # Dense. Sparse is 18 PFLOP/s.
+B200_TOPS_INT4 = 9000 * TOPS                     # Dense. Sparse is 18000.
 B200_MEM_BW = 8 * TB / second             # HBM3e
 B200_MEM_CAPACITY = 192 * GiB
 B200_TDP = 1000 * watt
@@ -66,9 +67,9 @@ B200_TDP = 1000 * watt
 # This is a full rack containing 72 Blackwell GPUs and 36 Grace CPUs.
 # We model the aggregate resources of the rack for macro-scale simulation.
 NVL72_GPUs = 72 * count
-NVL72_FLOPS_FP16_TENSOR = 162 * PFLOPs / second  # 72 * 2.25 PFLOPS FP16 dense
-NVL72_FLOPS_FP4_TENSOR = 720 * PFLOPs / second  # 72 * 10 PFLOPS FP4 dense (NVIDIA marketing headline)
-NVL72_FLOPS_FP8_TENSOR = 324 * PFLOPs / second  # 72 * 4.5 PFLOPS FP8 dense
+NVL72_FLOPS_FP16_TENSOR = 162 * PFLOPs / second  # 72 * 2.25 PFLOP/s FP16 dense
+NVL72_FLOPS_FP4_TENSOR = 720 * PFLOPs / second  # 72 * 10 PFLOP/s FP4 dense (NVIDIA marketing headline)
+NVL72_FLOPS_FP8_TENSOR = 324 * PFLOPs / second  # 72 * 4.5 PFLOP/s FP8 dense
 NVL72_MEM_CAPACITY = 13.8 * TB                  # 72 * 192 GB
 NVL72_MEM_BW = 576 * TB / second                # 72 * 8 TB/s
 NVL72_NVLINK_BW = 130 * TB / second             # Full bisection (bidirectional)
@@ -78,7 +79,7 @@ NVL72_UNIT_COST = 3000000 * USD                 # Estimated $3M+ per rack
 # AMD Instinct MI300X (CDNA 3, 2023) — Source: AMD Instinct MI300X Data Sheet
 MI300X_FLOPS_FP16_TENSOR = 1307 * TFLOPs / second  # Dense. Sparse is 2614.
 MI300X_FLOPS_FP8 = 2614 * TFLOPs / second          # FP8 dense (same as FP16 sparse)
-MI300X_FLOPS_INT8 = 2614 * TFLOPs / second          # INT8 dense
+MI300X_TOPS_INT8 = 2614 * TOPS                      # INT8 dense
 MI300X_FLOPS_FP32 = 163.4 * TFLOPs / second         # FP32 (Matrix Core)
 MI300X_MEM_BW = 5.3 * TB / second
 MI300X_MEM_CAPACITY = 192 * GiB
@@ -87,7 +88,7 @@ MI300X_TDP = 750 * watt
 # AMD Instinct MI250X (CDNA 2, 2021) — Source: AMD MI250X Data Sheet
 MI250X_FLOPS_FP16_TENSOR = 383 * TFLOPs / second   # Dense FP16 Matrix Core (per OAM)
 MI250X_FLOPS_FP32 = 47.9 * TFLOPs / second
-MI250X_FLOPS_INT8 = 383 * TFLOPs / second
+MI250X_TOPS_INT8 = 383 * TOPS
 MI250X_MEM_BW = 3.2 * TB / second                   # HBM2e (2x 1.6 TB/s per GCD)
 MI250X_MEM_CAPACITY = 128 * GiB                      # 2x 64 GiB HBM2e
 MI250X_TDP = 500 * watt
@@ -115,12 +116,12 @@ TRAINIUM2_TDP = 500 * watt                           # Estimated
 
 # NVIDIA T4 (Turing, 2018) — Source: NVIDIA T4 Data Sheet
 T4_FLOPS_FP16_TENSOR = 65 * TFLOPs / second
-T4_FLOPS_INT8 = 130 * TFLOPs / second
+T4_TOPS_INT8 = 130 * TOPS
 T4_MEM_BW = 320 * GB / second
 T4_TDP = 70 * watt
 
 # Google TPU v1 — Source: Jouppi et al. (2017)
-TPUV1_FLOPS_INT8 = 92 * TFLOPs / second
+TPUV1_TOPS_INT8 = 92 * TOPS
 TPUV1_TDP = 75 * watt
 
 # Google TPU v2 — Source: Google Cloud Documentation
@@ -139,7 +140,7 @@ TPUV4_MEM_BW = 1200 * GB / second
 
 # Google TPU v5p — Source: Google Cloud Documentation (2024)
 TPUV5P_FLOPS_BF16 = 459 * TFLOPs / second
-TPUV5P_FLOPS_INT8 = 918 * TFLOPs / second          # INT8 (2x BF16)
+TPUV5P_TOPS_INT8 = 918 * TOPS                      # INT8 (2x BF16)
 TPUV5P_MEM_BW = 2.76 * TB / second
 TPUV5P_MEM_CAPACITY = 95 * GiB
 TPUV5P_ICI_BW = 1200 * GB / second        # Bidirectional Inter-Chip Interconnect
@@ -181,8 +182,8 @@ LATENCY_INFINIBAND = 5000 * NS
 LATENCY_NVME_SSD = 100000 * NS
 
 # Mobile NPU
-MOBILE_NPU_TOPS_INT8 = 50 * TFLOPs / second
-MOBILE_FLAGSHIP_NPU_TOPS_INT8 = 100 * TFLOPs / second
+MOBILE_NPU_TOPS_INT8 = 50 * TOPS
+MOBILE_FLAGSHIP_NPU_TOPS_INT8 = 100 * TOPS
 MOBILE_NPU_MEM_BW = 100 * GB / second
 
 # --- Datasets ---
@@ -226,7 +227,7 @@ ENERGY_DRAM_ACCESS_PJ = 640 * ureg.picojoule
 ENERGY_DRAM_PJ_PER_BYTE = 160 * ureg.picojoule / byte
 ENERGY_FLOP_FP32_PJ = 3.7 * ureg.picojoule / flop   # FP32 multiply-add
 ENERGY_FLOP_FP16_PJ = 1.1 * ureg.picojoule / flop   # FP16 multiply-add
-ENERGY_FLOP_INT8_PJ = 0.2 * ureg.picojoule / flop   # INT8 multiply-add
+ENERGY_OP_INT8_PJ = 0.2 * ureg.picojoule / count    # INT8 multiply-add
 ENERGY_FLOP_PJ = 4.6 * ureg.picojoule / flop         # Generic (legacy alias)
 ENERGY_SRAM_L1_PJ = 0.5 * ureg.picojoule             # L1 cache access
 ENERGY_SRAM_L2_PJ = 2.0 * ureg.picojoule             # L2 cache access

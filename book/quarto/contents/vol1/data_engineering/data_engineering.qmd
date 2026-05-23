@@ -169,7 +169,7 @@ The workflow stages from @sec-ml-workflow establish the *when* and *why* of data
 
 ***Data Engineering***\index{Data Engineering!definition} is the infrastructure layer that manages the lifecycle of data from source to model, encompassing acquisition, transformation, storage, and governance.
 
-1.  **Significance (quantitative)**: Its critical function is ensuring **Training-Serving Consistency**, preventing **Silent Degradation** by decoupling the model from the volatility of raw data. Within the iron law, it governs the **Data Volume** $(D_{\text{vol}})$ and ensures that it remains representative of the target distribution.
+1.  **Significance (quantitative)**: Its critical function is ensuring **Training-Serving Consistency**, preventing **Silent Degradation** by decoupling the model from the volatility of raw data. Within the iron law, it governs bytes moved $(D_{\text{vol}})$, while dataset composition and quality determine whether the dataset $(D)$ remains representative of the target distribution.
 2.  **Distinction (durable)**: Unlike **Data Science**\index{Data Science!vs. data engineering}, which focuses on **Inference and Insight**, Data Engineering addresses the **Scalability and Reliability** of the data pipeline.
 3.  **Common pitfall**: A frequent misconception is that Data Engineering is "data cleaning." In reality, it is **Dataset Compilation**\index{Dataset Compilation}: transforming raw, noisy observations into an optimized binary that the model consumes.
 
@@ -240,7 +240,7 @@ class DataGravity:
     # Step 1: Time
     transfer_seconds = dataset_gb/network_gbs
     transfer_hours = transfer_seconds/SEC_PER_HOUR
-    # Step 2: 10Gbps = 1.25 GB/s
+    # Step 2: 10 Gbps = 1.25 GB/s
     transfer_days_10g = (dataset_gb / (10 / BITS_PER_BYTE)) / SEC_PER_DAY
 
     # Step 3: Cost
@@ -248,7 +248,7 @@ class DataGravity:
     equiv_tpu_hours = transfer_cost/tpu_hourly_cost
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(transfer_hours >= 20, f"Transfer time ({transfer_hours:.1f}h) is too fast. Data gravity argument fails.")
+    check(transfer_hours >= 20, f"Transfer time ({transfer_hours:.1f} h) is too fast. Data gravity argument fails.")
     check(transfer_days_10g >= 9, f"1 PB over 10 Gbps should take many days, got {transfer_days_10g:.1f}.")
     check(transfer_cost >= 10000, f"Transfer cost (${transfer_cost}) is too cheap.")
 
@@ -256,7 +256,7 @@ class DataGravity:
     transfer_seconds_str = fmt(transfer_seconds, precision=0, commas=True)
     transfer_hours_str = fmt(transfer_hours, precision=0, commas=False)
     transfer_days_10g_str = fmt(transfer_days_10g, precision=0, commas=False)
-    transfer_time_10g_math = fmt_math(f"T = D_{{vol}}/BW \\approx {transfer_days_10g_str} \\text{{ days}}")
+    transfer_time_10g_math = fmt_math(f"T = D_{{\\text{{vol}}}}/\\text{{BW}} \\approx {transfer_days_10g_str} \\text{{ days}}")
     transfer_cost_str = fmt(transfer_cost, precision=0, commas=True)
     tpu_hours_str = fmt(equiv_tpu_hours, precision=0, commas=True)
     network_gbs_str = fmt(network_gbs, precision=1, commas=False)
@@ -287,7 +287,7 @@ $$ \text{Data Selection Gain} \propto \frac{\text{Information Entropy}}{\text{Da
 # │
 # │ Goal: Demonstrate the mismatch between accelerator compute and disk bandwidth.
 # │ Show: That a standard cloud disk causes 80%+ idle time for an A100.
-# │ How: Calculate required bandwidth for ResNet-50 inference at peak TFLOPS.
+# │ How: Calculate required bandwidth for ResNet-50 inference at peak TFLOP/s.
 # │
 # │ Imports: mlsysim.core.constants, mlsysim.book
 # │ Exports: FeedingProblem.req_bw_gbs_str, FeedingProblem.disk_bw_mbs_str,
@@ -308,7 +308,7 @@ class FeedingProblem:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    gpu_flops = A100_FLOPS_FP16_TENSOR
+    gpu_peak_rate = A100_FLOPS_FP16_TENSOR
     model_flops = RESNET50_FLOPs
 
     # Image: 224x224x3 @ FP32
@@ -318,16 +318,16 @@ class FeedingProblem:
     disk_bw_mbs = 250.0
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # Step 1: Throughput (Images/sec) = GPU_Peak/Model_FLOPs
-    img_per_sec = (gpu_flops/model_flops).to_base_units().m_as('count/second')
+    # Step 1: Throughput (images/s) = R_peak / model FLOPs
+    img_per_sec = (gpu_peak_rate/model_flops).to_base_units().m_as('count/second')
 
-    # Step 2: Required Bandwidth (Bytes/sec) = img_per_sec * img_size_bytes
+    # Step 2: Required bandwidth (bytes/s) = img_per_sec * img_size_bytes
     req_bw_bytes_sec = img_per_sec * img_size_bytes
     req_bw_gbs = req_bw_bytes_sec / (1 * GB).m_as('B')
 
-    # Step 3: Efficiency (eta) = Disk_BW / (Required_BW in MB/s)
-    eta = min(disk_bw_mbs / (req_bw_bytes_sec / (1 * MB).m_as('B')), 1.0)
-    feeding_tax_pct = (1.0 - eta) * 100
+    # Step 3: Feeding efficiency = disk BW / required BW
+    eta_feed = min(disk_bw_mbs / (req_bw_bytes_sec / (1 * MB).m_as('B')), 1.0)
+    feeding_tax_pct = (1.0 - eta_feed) * 100
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(req_bw_gbs > 1.0, f"Required bandwidth ({req_bw_gbs:.1f} GB/s) is lower than expected.")
@@ -344,7 +344,7 @@ class FeedingProblem:
 
 Data gravity establishes the cost of moving the entire mass; **The Feeding Problem**\index{Feeding Problem!data pipeline throughput} establishes the cost of delivering it. In the Hennessy & Patterson tradition, we analyze this as a **Flow Rate**\index{Flow Rate!data pipeline} problem: the struggle to saturate a high-throughput "Machine" from a low-bandwidth "Data" source.
 
-According to the iron law, the system is only as fast as its slowest term. If a modern accelerator can process `{python} FeedingProblem.img_per_sec_str` samples per second, but the storage pipeline delivers only `{python} FeedingProblem.disk_bw_mbs_str` MB/s, the expensive silicon sits idle. We quantify this as **The Feeding Tax**\index{Feeding Tax!I/O wait cost}: the wall-clock time lost to I/O wait, which directly reduces the system efficiency $(\eta_{\text{hw}})$\index{System Efficiency!feeding tax} term. For a standard cloud volume, the feeding tax can exceed **`{python} FeedingProblem.feeding_tax_pct_str` percent**, meaning the GPU spends the majority of its time waiting for bits. This tax transforms the Data Pipeline from a simple storage concern into the primary regulator of the system's Duty Cycle. To saturate a 300 TFLOPS processor, the pipeline must often sustain **`{python} FeedingProblem.req_bw_gbs_str` GB/s** transfer rates—a requirement that forces the shift from traditional file systems to the specialized storage architectures we examine in @sec-data-engineering-ml-storage-systems-architecture-options-67fa.
+According to the iron law, the system is only as fast as its slowest term. If a modern accelerator can process `{python} FeedingProblem.img_per_sec_str` samples per second, but the storage pipeline delivers only `{python} FeedingProblem.disk_bw_mbs_str` MB/s, the expensive silicon sits idle. We quantify this as **The Feeding Tax**\index{Feeding Tax!I/O wait cost}: the wall-clock time lost to I/O wait, which directly reduces the system efficiency $(\eta_{\text{hw}})$\index{System Efficiency!feeding tax} term. For a standard cloud volume, the feeding tax can exceed **`{python} FeedingProblem.feeding_tax_pct_str` percent**, meaning the GPU spends the majority of its time waiting for bits. This tax transforms the Data Pipeline from a simple storage concern into the primary regulator of the system's Duty Cycle. To saturate a 300 TFLOP/s processor, the pipeline must often sustain **`{python} FeedingProblem.req_bw_gbs_str` GB/s** transfer rates—a requirement that forces the shift from traditional file systems to the specialized storage architectures we examine in @sec-data-engineering-ml-storage-systems-architecture-options-67fa.
 
 These physical properties also carry an energy cost: as data moves farther from the processor, movement increasingly dominates the budget.
 
@@ -1052,7 +1052,7 @@ The resulting configuration in @tbl-data-engineering-kws-configuration balances 
 | **MFCC coefficients** | 13                       | Memory-constrained, nonnegotiable                         |
 | **Training examples** | 750K real + 2M synthetic | Budget-optimal mix                                        |
 | **Data diversity**    | Noisy + clean mix        | Critical for real-world deployment                        |
-| **Inference**         | Local, 8-bit quantized   | Memory-constrained                                        |
+| **Inference**         | Local, INT8 quantized    | Memory-constrained                                        |
 | **Augmentation**      | Heavy synthetic          | 10$\times$ cost efficiency                                |
 
 : **KWS Final Configuration**: Budget-optimized data engineering choices that satisfy the four-pillar constraints derived in @tbl-kws-design-space, trading higher sampling and synthetic augmentation against fixed memory and labeling budgets to reach an estimated 97--99 percent accuracy range around the `{python} DataEngineeringSetup.kws_accuracy_target_str` percent target. {#tbl-data-engineering-kws-configuration}
@@ -2008,7 +2008,7 @@ Categorical features require different statistical approaches. Instead of compar
 # │ Goal: Provide a concrete numeric threshold for detecting distribution drift.
 # │ Show: That a two-sample difference of about 0.061 marks the threshold
 # │       when training and serving samples both contain 1000 observations.
-# │ How: Calculate the K-S critical value $D_{\text{crit}}$ at $\alpha = 0.05$.
+# │ How: Calculate the K-S critical value at alpha = 0.05.
 # │
 # │ Imports: math (sqrt), mlsysim.constants (KS_TEST_COEFFICIENT),
 # │          mlsysim.book (fmt)
@@ -2043,22 +2043,22 @@ class KSTest:
 
 ::: {#exmp-data-engineering-detecting-drift-with-k-s-test .callout-example title="Detecting drift with K-S test"}
 
-**Scenario**: Monitoring `session_duration` distribution stability between training $(P)$ and serving $(Q)$.
+**Scenario**: Monitoring `session_duration` distribution stability between the training baseline $(P_0)$ and current serving distribution $(P_t)$.
 
 **Methodology**
 
 1.  **Compute CDFs**: Calculate cumulative distribution functions for both datasets.
-2.  **Calculate statistic** $(D_{\text{KS}})$: Find the maximum absolute difference between the CDFs. Let $F_P(x)$ and $F_Q(x)$ denote the cumulative distribution functions of the training $(P)$ and serving $(Q)$ datasets.
-    $$D_{\text{KS}} = \max_x |F_P(x) - F_Q(x)|$$
+2.  **Calculate statistic** $(\mathcal{D}_{\text{KS}})$: Find the maximum absolute difference between the CDFs. Let $F_{P_0}(x)$ and $F_{P_t}(x)$ denote the cumulative distribution functions of the training baseline $(P_0)$ and current serving $(P_t)$ datasets.
+    $$\mathcal{D}_{\text{KS}} = \max_x |F_{P_0}(x) - F_{P_t}(x)|$$
 
-3.  **Determine significance**: Compare $D_{\text{KS}}$ to critical value $D_{\text{crit}}$ based on training sample size $n_P$, serving sample size $n_Q$, and confidence level $(\alpha = 0.05)$.
-    $$D_{\text{crit}} \approx 1.36\sqrt{\frac{n_P + n_Q}{n_P n_Q}}$$
+3.  **Determine significance**: Compare $\mathcal{D}_{\text{KS}}$ to critical value $\mathcal{D}_{\text{crit}}$ based on training-baseline sample size $n_0$, serving sample size $n_t$, and confidence level $(\alpha = 0.05)$.
+    $$\mathcal{D}_{\text{crit}} \approx 1.36\sqrt{\frac{n_0 + n_t}{n_0 n_t}}$$
 
 **Example Calculation**
 
-- Sample sizes $n_P = n_Q = 1000$.
-- Critical value $D_{\text{crit}} \approx 1.36\sqrt{(1000 + 1000)/(1000 \cdot 1000)}$ ≈ `{python} KSTest.ks_dcrit_str`.
-- If observed max difference $D_{\text{KS}} = 0.08$, then 0.08 > `{python} KSTest.ks_dcrit_str` → **Reject Null Hypothesis**. Significant drift detected. Trigger retraining or investigation.
+- Sample sizes $n_0 = n_t = 1000$.
+- Critical value $\mathcal{D}_{\text{crit}} \approx 1.36\sqrt{(1000 + 1000)/(1000 \cdot 1000)}$ ≈ `{python} KSTest.ks_dcrit_str`.
+- If observed max difference $\mathcal{D}_{\text{KS}} = 0.08$, then 0.08 > `{python} KSTest.ks_dcrit_str` → **Reject Null Hypothesis**. Significant drift detected. Trigger retraining or investigation.
 
 :::
 
@@ -2163,15 +2163,15 @@ Understanding the three core types of drift enables targeted detection and respo
 
 #### Covariate shift {#sec-data-engineering-covariate-shift-b3d9}
 
-**Covariate shift**\index{Covariate Shift!definition} occurs when input feature distributions change while the relationship between features and labels remains constant: $P(X)$ changes but $P(Y|X)$ stays the same. A medical imaging system trained on one camera model might see production data from a different camera manufacturer. The disease-image relationship remains unchanged (same pathologies produce same visual indicators), but pixel value distributions shift due to different sensor characteristics, color calibration, or image processing pipelines. Detection focuses on monitoring feature distributions using statistical metrics like PSI or KL divergence applied to input features.
+**Covariate shift**\index{Covariate Shift!definition} occurs when input feature distributions change while the relationship between features and labels remains constant: $p(x)$ changes but $p(y \mid x)$ stays the same. A medical imaging system trained on one camera model might see production data from a different camera manufacturer. The disease-image relationship remains unchanged (same pathologies produce same visual indicators), but pixel value distributions shift due to different sensor characteristics, color calibration, or image processing pipelines. Detection focuses on monitoring feature distributions using statistical metrics like PSI or KL divergence applied to input features.
 
 #### Label shift {#sec-data-engineering-label-shift-dd6c}
 
-**Label shift**\index{Label Shift!definition}\index{Distribution Shift!label shift} occurs when the output label distribution changes while the relationship between labels and features remains constant: $P(Y)$ changes but $P(X|Y)$ stays the same. Disease prevalence might change seasonally (flu cases spike in winter) while symptoms remain consistent predictors of each disease. A recommendation system might see label shift when new product categories launch, changing the distribution of user preferences without altering what makes products appealing within each category. Detection monitors prediction distributions for shifts in relative frequencies of predicted classes, which can be done without ground truth labels by tracking model output distributions.
+**Label shift**\index{Label Shift!definition}\index{Distribution Shift!label shift} occurs when the output label distribution changes while the relationship between labels and features remains constant: $p(y)$ changes but $p(x \mid y)$ stays the same. Disease prevalence might change seasonally (flu cases spike in winter) while symptoms remain consistent predictors of each disease. A recommendation system might see label shift when new product categories launch, changing the distribution of user preferences without altering what makes products appealing within each category. Detection monitors prediction distributions for shifts in relative frequencies of predicted classes, which can be done without ground truth labels by tracking model output distributions.
 
 #### Concept drift {#sec-data-engineering-concept-drift-2b83}
 
-**Concept drift**\index{Concept Drift!definition} represents the most challenging case: the relationship between features and labels changes, meaning $P(Y|X)$ evolves over time [@gama2014]. Medical treatment protocols change, altering disease outcomes for given symptoms. User preferences shift as social trends evolve, changing what product features drive purchases. Fraud patterns evolve as attackers adapt to detection systems. Concept drift requires ground truth labels for detection since we must monitor whether the feature-to-label relationship has changed, making it inherently more difficult and delayed than detecting covariate or label shift.
+**Concept drift**\index{Concept Drift!definition} represents the most challenging case: the relationship between features and labels changes, meaning $p(y \mid x)$ evolves over time [@gama2014]. Medical treatment protocols change, altering disease outcomes for given symptoms. User preferences shift as social trends evolve, changing what product features drive purchases. Fraud patterns evolve as attackers adapt to detection systems. Concept drift requires ground truth labels for detection since we must monitor whether the feature-to-label relationship has changed, making it inherently more difficult and delayed than detecting covariate or label shift.
 
 ```{python}
 #| label: cohens-kappa-chance-calc
@@ -2183,7 +2183,7 @@ Understanding the three core types of drift enables targeted detection and respo
 # │
 # │ Goal: Compute chance agreement for a 90/10 binary label distribution.
 # │ Show: Majority-class agreement alone is 81%, but total chance agreement is 82%.
-# │ How: p_e = p(not spam)^2 + p(spam)^2.
+# │ How: Square and sum the class marginals to get chance agreement.
 # │
 # │ Imports: mlsysim.book (fmt, check)
 # │ Exports: CohensKappaChance.chance_agreement_pct_str
@@ -2430,7 +2430,7 @@ class RealtimeCost:
     cost_ratio = stream_cost_day/batch_cost_day
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(abs(throughput_gbs - 1.0) < 1e-9, f"1M 1KB events/sec should be 1 GB/s, got {throughput_gbs:.2f}.")
+    check(abs(throughput_gbs - 1.0) < 1e-9, f"1 million events/s at 1 KB/event should be 1 GB/s, got {throughput_gbs:.2f}.")
     check(cost_ratio >= 3, f"Streaming premium should be material, got {cost_ratio:.1f}x.")
     check(batch_cost_day < stream_cost_day, "Batch reference should be cheaper than always-on streaming.")
 
@@ -2855,7 +2855,7 @@ The consistency challenge\index{Training-Serving Consistency} extends beyond app
 
 ***The Consistency Imperative***\index{Consistency Imperative!definition} is the axiom that **Transformation Logic** must be immutable across training and serving environments.
 
-1.  **Significance (quantitative)**: It predicts that performance degradation is proportional to the **KL Divergence** $(\mathcal{D}_{\text{KL}}(T \parallel T'))$ between the training transformation $(T)$ and the serving transformation $(T')$.
+1.  **Significance (quantitative)**: It predicts that performance degradation is proportional to the **KL Divergence** $(\mathcal{D}_{\text{KL}}(p_{g_{\text{serve}}} \lVert p_{g_{\text{train}}}))$ between feature distributions induced by the serving transformation $g_{\text{serve}}$ (current) and training transformation $g_{\text{train}}$ (baseline).
 2.  **Distinction (durable)**: Unlike **Data Quality**, which focuses on the **Cleanliness** of a single record, the consistency imperative focuses on the **Alignment** of the entire transformation pipeline.
 3.  **Common pitfall**: A frequent misconception is that consistency is "fixed" by sharing code. In reality, it is a **State Synchronization** problem: parameters computed on training data (for example, means, standard deviations) must be stored and reused during serving.
 
@@ -3009,10 +3009,10 @@ Single-machine processing\index{Single-Machine Processing!scalability} suffices 
 
 [^fn-parquet-columnar-io]: **Parquet**: A columnar storage format that organizes data by column, not by row. For the single-machine optimizations described, this is critical; instead of wastefully reading an entire CSV row to access a few columns, a Parquet reader loads only the specific data needed for a computation. This selective I/O can reduce data movement from disk by 5--10$\times$ for typical feature-selection workloads, enabling terabyte-scale analysis on a single machine. \index{Parquet!I/O reduction}
 
-Distributed processing frameworks become necessary when data volumes or computational requirements exceed single-machine capacity, but the speedup achievable through parallelization faces inherent limits described by Amdahl's Law.[^fn-amdahls-law-data] @sec-machine-foundations-amdahls-law-gustafsons-law-b741 derives the law; here, let $S$ be the serial fraction, $p$ the parallelizable fraction, and $N$ the number of workers. @eq-amdahl-data gives the data-pipeline bound:
+Distributed processing frameworks become necessary when data volumes or computational requirements exceed single-machine capacity, but the speedup achievable through parallelization faces inherent limits described by Amdahl's Law.[^fn-amdahls-law-data] @sec-machine-foundations-amdahls-law-gustafsons-law-b741 derives the law; here, let $f_{\text{serial}}$ be the serial fraction, $f_{\text{parallel}}$ the parallelizable fraction, and $N_{\text{workers}}$ the number of workers. @eq-amdahl-data gives the data-pipeline bound:
 
-$$\text{Speedup} \leq \frac{1}{S + \frac{p}{N}}$$ {#eq-amdahl-data}
-where $S$ represents the serial fraction of work that cannot parallelize, $p$ the parallel fraction (with $S + p = 1$), and $N$ the number of processors. This explains why distributing our KWS feature extraction across 64 cores achieves only a 64$\times$ speedup when the work is embarrassingly parallel $(S \approx 0)$, but coordination-heavy operations like computing global normalization statistics might achieve only 10$\times$ speedup even with 64 cores due to the serial aggregation phase. Understanding this relationship guides architectural decisions: operations with high serial fractions should run on fewer, faster cores rather than many slower cores, while highly parallel workloads benefit from maximum distribution. @sec-model-training examines distributed training architectures that apply these principles at cluster scale.
+$$\text{Speedup} \leq \frac{1}{f_{\text{serial}} + \frac{f_{\text{parallel}}}{N_{\text{workers}}}}$$ {#eq-amdahl-data}
+where $f_{\text{serial}}$ represents the serial fraction of work that cannot parallelize, $f_{\text{parallel}}$ the parallel fraction (with $f_{\text{serial}} + f_{\text{parallel}} = 1$), and $N_{\text{workers}}$ the number of processors. This explains why distributing our KWS feature extraction across 64 cores achieves only a 64$\times$ speedup when the work is embarrassingly parallel $(f_{\text{serial}} \approx 0)$, but coordination-heavy operations like computing global normalization statistics might achieve only 10$\times$ speedup even with 64 cores due to the serial aggregation phase. Understanding this relationship guides architectural decisions: operations with high serial fractions should run on fewer, faster cores rather than many slower cores, while highly parallel workloads benefit from maximum distribution. @sec-model-training examines distributed training architectures that apply these principles at cluster scale.
 
 [^fn-amdahls-law-data]: **Amdahl's Law**: Presented by Gene Amdahl at the 1967 AFIPS Spring Joint Computer Conference to argue that multiprocessor designs would yield diminishing returns. His original point -- that the serial fraction of a workload imposes a hard ceiling on parallelism -- applies directly to data pipelines: operations like computing global normalization statistics force serial aggregation phases that cap speedup regardless of how many workers process individual records in parallel. \index{Amdahl's Law!data pipeline ceiling}
 
@@ -3475,13 +3475,13 @@ Optimizing this term requires understanding two core storage performance metrics
 1.  **IOPS (Input/Output Operations Per Second)**: The number of distinct read/write requests a device can handle per second. This limits performance for *random access* workloads (for example, fetching small batches of images or individual user profiles).
 2.  **Throughput (Bandwidth)**: The volume of data transferred per second, typically $\text{IOPS} \times \text{Block Size}$. This limits performance for *sequential access* workloads (for example, scanning a Parquet file for training).
 
-The choice between databases, data warehouses, and data lakes is fundamentally a choice about which of these metrics to optimize. Databases (OLTP systems) optimize for high IOPS with small block sizes, making them suited for serving individual feature vectors in real-time where per-request latency dominates. Data warehouses (OLAP systems) optimize for high throughput with large block sizes and sequential access, making them ideal for feature engineering and batch analytics. Data lakes prioritize capacity and throughput for unstructured data, essential for training jobs where the "Data" numerator is measured in petabytes and aggregate bandwidth must scale to thousands of GPUs.
+The choice between databases, data warehouses, and data lakes is fundamentally a choice about which of these metrics to optimize. Databases (OLTP systems) optimize for high IOPS with small block sizes, making them suited for serving individual feature vectors in real-time where per-request latency dominates. Data warehouses (OLAP systems) optimize for high throughput with large block sizes and sequential access, making them ideal for feature engineering and batch analytics. Data lakes prioritize capacity and throughput for unstructured data, essential for training jobs where the $D_{\text{vol}}$ numerator is measured in petabytes and aggregate bandwidth must scale to thousands of GPUs.
 
 Each storage architecture exhibits distinct strengths when applied to specific ML tasks. For online feature serving, the high-IOPS characteristics of databases enable millisecond lookups of individual records. The DLRM recommendation lighthouse discussed in @sec-network-architectures-sparse-architectures-recommendation-systems-5d19 exemplifies this challenge at its most extreme: its terabyte-scale embedding tables must serve billions of sparse lookups per second, requiring storage architectures that optimize IOPS over sequential throughput. More generally, a recommendation system looking up a user's profile during real-time inference requires random access optimized for per-request latency.
 
 For model training on structured data, the throughput-optimized design of data warehouses enables high-speed sequential scans over large, clean tables. Training a fraud detection model that processes millions of transactions with hundreds of features per transaction benefits from columnar storage that reads only relevant features efficiently, directly reducing the Data Term by minimizing bytes transferred.
 
-For exploratory analysis and training on unstructured data (images, audio, text), data lakes provide the flexibility and low-cost storage needed for massive volumes. A computer vision system storing terabytes of raw images alongside metadata, annotations, and intermediate processing results requires the schema flexibility and cost efficiency that only data lakes provide, where the sheer scale of the Data numerator demands the highest aggregate bandwidth.
+For exploratory analysis and training on unstructured data (images, audio, text), data lakes provide the flexibility and low-cost storage needed for massive volumes. A computer vision system storing terabytes of raw images alongside metadata, annotations, and intermediate processing results requires the schema flexibility and cost efficiency that only data lakes provide, where the sheer scale of the $D_{\text{vol}}$ numerator demands the highest aggregate bandwidth.
 
 Databases\index{Database!OLTP for ML}\index{OLTP} excel at operational and transactional purposes, maintaining product catalogs, user profiles, or transaction histories with strong consistency guarantees and low-latency point lookups. For ML workflows, databases serve specific roles well: storing feature metadata that changes frequently, managing experiment tracking where transactional consistency matters, or maintaining model registries that require atomic updates. A PostgreSQL database handling structured user attributes (user_id, age, country, preferences) provides millisecond lookups for serving systems that need individual user features in real-time. However, databases struggle when ML training requires scanning millions of records repeatedly across multiple epochs. The row-oriented storage that optimizes transactional lookups becomes inefficient when training needs only 20 of 100 columns from each record but must read entire rows to extract those columns.
 
@@ -3721,7 +3721,7 @@ class ModelStorageScale:
     model_growth_str = fmt(model_growth_factor, precision=0)
 ```
 
-Modern ML models contain millions to trillions of parameters\index{Model Parameters!storage requirements} requiring storage and retrieval patterns fundamentally different from traditional data. GPT-3 [@brown2020language] requires approximately `{python} ModelStorageScale.gpt3_fp32_str` gigabytes for model weights when stored in FP32 format (`{python} ModelStorageScale.gpt3_params_str` billion parameters times 4 bytes), though practical deployments typically use FP16 (`{python} ModelStorageScale.gpt3_fp16_str` GB) or quantized formats for reduced storage and faster inference (see @sec-model-compression for quantization techniques). Even at FP16 precision, this exceeds many organizations' entire operational databases. The trajectory reveals accelerating scale: from AlexNet's `{python} ModelStorageScale.alexnet_params_str` million parameters [@krizhevsky2012imagenet] to GPT-3's `{python} ModelStorageScale.gpt3_params_str` billion parameters [@brown2020language], model size grew approximately `{python} ModelStorageScale.model_growth_str`-fold in eight years (`{python} ModelStorageScale.alexnet_params_str` M to `{python} ModelStorageScale.gpt3_params_str` B parameters). Storage systems must handle these dense numerical arrays efficiently for both capacity and access speed. Unlike typical files where sequential organization matters for readability, model weights benefit from block-aligned storage enabling parallel reads across parameter groups. When multiple GPUs need to read model data from shared storage, whether during training initialization or checkpoint loading, storage systems must deliver aggregate bandwidth approaching network interface limits, often 25 Gbps or higher, without introducing bottlenecks that would idle expensive compute resources.
+Modern ML models contain millions to trillions of parameters\index{Model Parameters!storage requirements} requiring storage and retrieval patterns fundamentally different from traditional data. GPT-3 [@brown2020language] requires approximately `{python} ModelStorageScale.gpt3_fp32_str` gigabytes for model weights when stored in FP32 format (`{python} ModelStorageScale.gpt3_params_str` billion parameters times 4 bytes), though practical deployments typically use FP16 (`{python} ModelStorageScale.gpt3_fp16_str` GB) or quantized formats for reduced storage and faster inference (see @sec-model-compression for quantization techniques). Even at FP16 precision, this exceeds many organizations' entire operational databases. The trajectory reveals accelerating scale: from AlexNet's `{python} ModelStorageScale.alexnet_params_str` million parameters [@krizhevsky2012imagenet] to GPT-3's `{python} ModelStorageScale.gpt3_params_str` billion parameters [@brown2020language], model size grew approximately `{python} ModelStorageScale.model_growth_str`-fold in eight years (`{python} ModelStorageScale.alexnet_params_str` million to `{python} ModelStorageScale.gpt3_params_str` billion parameters). Storage systems must handle these dense numerical arrays efficiently for both capacity and access speed. Unlike typical files where sequential organization matters for readability, model weights benefit from block-aligned storage enabling parallel reads across parameter groups. When multiple GPUs need to read model data from shared storage, whether during training initialization or checkpoint loading, storage systems must deliver aggregate bandwidth approaching network interface limits, often 25 Gbps or higher, without introducing bottlenecks that would idle expensive compute resources.
 
 The iterative nature of ML development introduces versioning requirements\index{Model Versioning!requirements} qualitatively different from traditional software. Git excels at tracking code changes where files are predominantly text with small incremental modifications, but it fails for large binary files where even small model changes result in entirely new checkpoints. Storing ten versions of a 10 GB model naively would consume 100 GB; ML versioning systems typically keep lightweight metadata pointers in Git or a registry and store artifacts in external content-addressed storage. Identical files can be deduplicated, but changed binary checkpoints are often stored as separate objects unless the backend adds its own delta compression. Tools like DVC (Data Version Control) and MLflow\index{MLflow!model versioning} maintain pointers to model artifacts rather than storing copies, enabling efficient versioning while preserving the ability to reproduce any historical model. A typical ML project generates hundreds of model versions during hyperparameter tuning—one version per training run as engineers explore learning rates, batch sizes, architectures, and regularization strategies. Without systematic versioning capturing training configuration, accuracy metrics, and training data version alongside model weights, reproducing results becomes impossible when yesterday's model performed better than today's but teams cannot identify which configuration produced it. This reproducibility challenge connects directly to the governance requirements addressed by @sec-data-engineering-data-versioning-ml-reproducibility-16d0: regulatory compliance often requires demonstrating exactly which data and process produced specific model predictions.
 
@@ -3806,10 +3806,10 @@ Designing for high-throughput training starts by matching storage throughput to 
 
 **The compute term (throughput ceiling)**
 
-*   **Hardware peak**: NVIDIA A100 = `{python} StorageBandwidth.a100_flops_t_str` TFLOPS (FP16 Tensor Core, dense operations).
+*   **Hardware peak**: NVIDIA A100 = `{python} StorageBandwidth.a100_flops_t_str` TFLOP/s (FP16 Tensor Core, dense operations).
 *   **Model cost**: ResNet-50 requires approximately four GFLOPs for the forward pass per image; including the backward pass, total is approximately `{python} StorageBandwidth.resnet_flops_g_str` GFLOPs per training step.
 *   **Maximum theoretical throughput**:
-    `{python} StorageBandwidth.a100_flops_t_str` $\times 10^{12}$ FLOPs/sec / `{python} StorageBandwidth.resnet_flops_g_str` $\times 10^{9}$ FLOPs/img = **`{python} StorageBandwidth.max_img_per_sec_str` images/sec**
+    `{python} StorageBandwidth.a100_flops_t_str` $\times 10^{12}$ FLOP/s / `{python} StorageBandwidth.resnet_flops_g_str` $\times 10^{9}$ FLOPs/img = **`{python} StorageBandwidth.max_img_per_sec_str` images/sec**
 
 **The data term (bandwidth requirement)**
 
