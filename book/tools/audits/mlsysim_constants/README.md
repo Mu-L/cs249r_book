@@ -23,4 +23,10 @@ Regenerate `target_source` fields after map changes:
 python3 book/tools/audit/refresh_mlsysim_constants_yamls.py
 ```
 
+Verify appendix assumption-table LEGO cells against live registries:
+
+```bash
+python3 book/tools/audit/generate_appendix_constants.py --verify
+```
+
 Pre-commit gates: `mlsysim-check-registry-gates`, `book-check-registry-sources`.
