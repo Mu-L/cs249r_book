@@ -44,9 +44,10 @@ async def _():
     JETSON_RAM_GB    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
     JETSON_TDP_W     = mlsysim.Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
 
-    PCIE_GEN5_GBS = 64.0
-    PCIE_GEN4_GBS = 32.0
-    NVME_SEQ_GBS  = 7.0
+    PCIE_GEN5_GBS = mlsysim.Hardware.Cloud.H100.interconnect.bandwidth.m_as("GB/s")
+    PCIE_GEN4_GBS = mlsysim.Hardware.Cloud.A100.interconnect.bandwidth.m_as("GB/s")
+    from mlsysim.core.constants import NVME_SEQUENTIAL_BW
+    NVME_SEQ_GBS  = NVME_SEQUENTIAL_BW.m_as("GB/s")
     NET_FS_GBS    = 1.25
 
     RESNET50_PARAMS = mlsysim.Models.ResNet50.parameters.m_as("count")
