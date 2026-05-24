@@ -173,53 +173,65 @@ def _render_interconnect_class() -> str:
         '    """Formatted constants for Interconnect and Network Bandwidth."""',
         "",
         "    # ┌── 4. OUTPUT (Formatting) ───────────────────────────",
-        GENERATED_MARKER,
+        f"    {GENERATED_MARKER}",
     ]
     for name, source in INTERCONNECT_FIELDS:
-        pad = " " * max(1, 36 - len(name))
-        lines.append(f"    {name}_val_str{pad}= fmt_val({source})")
-        lines.append(f"    {name}_unit_str{' ' * max(1, 35 - len(name))}= fmt_unit({source})")
+        val_pad = max(1, 36 - len(name))
+        unit_pad = max(1, 35 - len(name))
+        lines.append(f"    {name}_val_str{' ' * val_pad}= fmt_val({source})")
+        lines.append(f"    {name}_unit_str{' ' * unit_pad}= fmt_unit({source})")
     return "\n".join(lines)
 
 
 def _render_interconnect_cell() -> str:
-    return textwrap.dedent(
-        f"""
-        ```{{python}}
-        #| echo: false
-        from mlsysim import *
-        from mlsysim.core.constants import *
-        #| label: appendix-interconnectconstants
-        # ┌── LEGO ───────────────────────────────────────────────
-        # │ Context: ## Interconnect and Network Bandwidth {{.unnumbered}}
-        # │ Goal: Formatted value/unit pairs for reference tables in this section
-        # │ Exports: InterconnectConstants.*_val_str, InterconnectConstants.*_unit_str
-        # │ Source:  book/tools/audit/generate_appendix_constants.py (--write interconnect)
-        from mlsysim.core import constants
-        from mlsysim.fmt import fmt, fmt_val, fmt_unit
+    body = _render_interconnect_class()
+    return (
+        "```{python}\n"
+        "#| echo: false\n"
+        "from mlsysim import *\n"
+        "from mlsysim.core.constants import *\n"
+        "#| label: appendix-interconnectconstants\n"
+        "# ┌── LEGO ───────────────────────────────────────────────\n"
+        "# │ Context: ## Interconnect and Network Bandwidth {.unnumbered}\n"
+        "# │ Goal: Formatted value/unit pairs for reference tables in this section\n"
+        "# │ Exports: InterconnectConstants.*_val_str, InterconnectConstants.*_unit_str\n"
+        "# │ Source:  book/tools/audit/generate_appendix_constants.py (--write interconnect)\n"
+        "from mlsysim.core import constants\n"
+        "from mlsysim.fmt import fmt, fmt_val, fmt_unit\n"
+        "\n"
+        f"{body}\n"
+        "```"
+    )
 
-        {_render_interconnect_class()}
-        ```
-        """
-    ).strip("\n")
+
+def _replace_cell_by_label(text: str, label: str, new_cell: str) -> str | None:
+    """Replace a single ```{python} cell identified by ``#| label: <label>``."""
+    label_pat = re.compile(rf"^#\|\s*label:\s*{re.escape(label)}\s*$", re.MULTILINE)
+    match = label_pat.search(text)
+    if not match:
+        return None
+
+    start = text.rfind("```{python}", 0, match.start())
+    if start == -1:
+        return None
+    end = text.find("\n```", match.start())
+    if end == -1:
+        return None
+    end += len("\n```")
+    return text[:start] + new_cell + text[end:]
 
 
 def write_interconnect() -> bool:
     path = APPENDIX_PATHS[0]
     text = path.read_text(encoding="utf-8")
-    pattern = re.compile(
-        r"```\{python\}\s*\n"
-        r"(?:.*?\n)*?"
-        r"#\|\s*label:\s*appendix-interconnectconstants\s*\n"
-        r"(?:.*?\n)*?"
-        r"```\s*$",
-        re.MULTILINE,
-    )
     new_cell = _render_interconnect_cell()
-    if not pattern.search(text):
-        print(f"ERROR: appendix-interconnectconstants cell not found in {path}", file=sys.stderr)
+    updated = _replace_cell_by_label(text, "appendix-interconnectconstants", new_cell)
+    if updated is None:
+        print(
+            f"ERROR: appendix-interconnectconstants cell not found in {path}",
+            file=sys.stderr,
+        )
         return False
-    updated = pattern.sub(new_cell + "\n", text, count=1)
     if updated == text:
         print("InterconnectConstants cell unchanged")
         return False

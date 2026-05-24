@@ -43,6 +43,48 @@ def _tokens_from_value(value: str) -> list[str]:
     return [p for p in parts if re.match(r"^[A-Z][A-Z0-9_]+$", p)]
 
 
+APPENDIX_NAPKIN_OVERRIDES: dict[str, dict[str, str]] = {
+    "gpt3_accelerators": {
+        "target_source": "mlsysim.Models.Language.GPT3.training_accelerators_ref",
+        "current_source": "mlsysim",
+    },
+    "bytes_per_param": {
+        "target_source": "mlsysim.core.constants.BYTES_FP16 + TrainingMemoryModel optimizer bytes",
+        "current_source": "derived",
+    },
+    "hours_per_day": {
+        "target_source": "mlsysim.core.constants.HOURS_PER_DAY",
+        "current_source": "mlsysim",
+    },
+}
+
+
+def finalize_yaml(path: Path) -> bool:
+    """Mark migration audit entries complete after QMD migration lands."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    changed = False
+    if data.get("status") != "migrated":
+        data["status"] = "migrated"
+        changed = True
+    for cell in data.get("python_cells") or []:
+        for entry in cell.get("constants") or []:
+            name = str(entry.get("name", ""))
+            if name in APPENDIX_NAPKIN_OVERRIDES:
+                for key, val in APPENDIX_NAPKIN_OVERRIDES[name].items():
+                    if entry.get(key) != val:
+                        entry[key] = val
+                        changed = True
+            if entry.get("should_change") is not False:
+                entry["should_change"] = False
+                changed = True
+    if changed:
+        path.write_text(
+            yaml.dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    return changed
+
+
 def refresh_yaml(path: Path, mapping: dict[str, str]) -> bool:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     changed = False
@@ -79,10 +121,14 @@ def refresh_yaml(path: Path, mapping: dict[str, str]) -> bool:
 
 
 def main() -> int:
+    finalize = "--finalize" in sys.argv
     mapping = _load_merged_mapping()
     updated = 0
     for path in sorted(YAML_DIR.glob("*.yaml")):
-        if refresh_yaml(path, mapping):
+        changed = refresh_yaml(path, mapping)
+        if finalize:
+            changed = finalize_yaml(path) or changed
+        if changed:
             updated += 1
             print(f"updated {path.name}")
     print(f"Done: {updated}/{len(list(YAML_DIR.glob('*.yaml')))} files changed")

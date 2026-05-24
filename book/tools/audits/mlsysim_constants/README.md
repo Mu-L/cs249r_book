@@ -21,12 +21,19 @@ Regenerate `target_source` fields after map changes:
 
 ```bash
 python3 book/tools/audit/refresh_mlsysim_constants_yamls.py
+python3 book/tools/audit/refresh_mlsysim_constants_yamls.py --finalize
 ```
 
 Verify appendix assumption-table LEGO cells against live registries:
 
 ```bash
 python3 book/tools/audit/generate_appendix_constants.py --verify
+```
+
+End-to-end migration build check:
+
+```bash
+python3 book/tools/audit/check_registry_migration_build.py
 ```
 
 Pre-commit gates: `mlsysim-check-registry-gates`, `book-check-registry-sources`.

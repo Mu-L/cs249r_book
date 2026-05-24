@@ -44,3 +44,30 @@ def test_generate_appendix_constants_cli_verify():
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_write_interconnect_preserves_other_cells():
+    mod = _load_generator()
+    sample = (
+        "intro\n\n"
+        "```{python}\n"
+        "#| label: napkin-math-examples\n"
+        "class NapkinMath:\n"
+        "    x = 1\n"
+        "```\n\n"
+        "middle\n\n"
+        "```{python}\n"
+        "#| label: appendix-interconnectconstants\n"
+        "class InterconnectConstants:\n"
+        "    old = 1\n"
+        "```\n\n"
+        "tail\n"
+    )
+    new_cell = mod._render_interconnect_cell()
+    updated = mod._replace_cell_by_label(sample, "appendix-interconnectconstants", new_cell)
+    assert updated is not None
+    assert "class NapkinMath:" in updated
+    assert "AUTO-GENERATED body" in updated
+    assert "class InterconnectConstants:" in updated
+    assert "tail" in updated
+    assert updated.count("```{python}") == 2
