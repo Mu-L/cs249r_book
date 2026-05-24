@@ -55,7 +55,7 @@ class LanguageModels(Registry):
         layers=24,
         hidden_dim=1024,
         heads=16,
-        inference_flops=68e9 * ureg.flop
+        inference_flops=72e9 * ureg.flop
     )
     Llama2_7B = TransformerWorkload(
         name="Llama-2-7B",

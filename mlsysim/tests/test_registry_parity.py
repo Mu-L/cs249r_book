@@ -33,6 +33,15 @@ PARITY_CASES: list[tuple[str, object]] = [
     ("MNIST_TRAINING_EXAMPLES", Datasets.MNIST.training_examples),
     ("GPT3_TRAINING_TOKENS", Models.Language.GPT3.training_tokens),
     ("H100_L2_CACHE", Hardware.Cloud.H100.memory.l2_cache),
+    ("BERT_BASE_FLOPs", Models.Language.BERT_Base.inference_flops),
+    ("BERT_LARGE_FLOPs", Models.Language.BERT_Large.inference_flops),
+    ("ALEXNET_FLOPs", Models.Vision.AlexNet.inference_flops),
+    ("RESNET18_PARAMS", Models.Vision.ResNet18.parameters),
+    ("YOLOV8_NANO_FLOPs", Models.Vision.YOLOv8_Nano.inference_flops),
+    ("WAKEVISION_FLOPs", Models.Tiny.WakeVision.inference_flops),
+    ("RESNET50_FLOPs", Models.Vision.ResNet50.inference_flops),
+    ("MOBILENETV2_FLOPs", Models.Vision.MobileNetV2.inference_flops),
+    ("KWS_DSCNN_FLOPs", Models.Tiny.DS_CNN.inference_flops),
 ]
 
 

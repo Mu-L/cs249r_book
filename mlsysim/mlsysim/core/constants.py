@@ -149,30 +149,7 @@ VIDEO_BYTES_PER_PIXEL_RGB = 3 * byte
 VIDEO_FPS_STANDARD = Q_(30, 'Hz')
 
 # --- Models & Workloads ---
-
-# GPT-2 (1.5B) — used in training chapter worked examples
-
-# BERT-Base — Source: Devlin et al. (2018)
-BERT_BASE_FLOPs = 22e9 * flop              # Per inference (seq_len=512)
-
-# BERT-Large — Source: Devlin et al. (2018)
-BERT_LARGE_FLOPs = 72e9 * flop             # Per inference (seq_len=512)
-
-# AlexNet (Reference)
-ALEXNET_FLOPs = 1.5e9 * flop               # Estimated per inference
-
-# ResNet-18
-RESNET18_PARAMS = 11.7e6 * param
-
-# YOLOv8-nano — Source: Ultralytics (2023)
-YOLOV8_NANO_FLOPs = 8.7e9 * flop  # 640x640
-
-# WakeVision (Doorbell) — Source: Banbury et al. (2021)
-WAKEVISION_FLOPs = 25e6 * flop
-
-# Mamba-130M — Source: Gu & Dao (2023)
-
-# Mamba-2.8B — Source: Gu & Dao (2023)
+# Model FLOPs and parameter counts live in mlsysim/models/registry.py.
 
 # Stable Diffusion v1.5 — Source: Rombach et al. (2022)
 STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP = 20e9 * flop
@@ -224,18 +201,6 @@ GPUS_PER_HOST = 8
 # Google Search (Reference)
 GOOGLE_SEARCHES_PER_DAY = 8.5e9
 GMAIL_EMAILS_PER_DAY = 121e9
-
-# ResNet-50
-RESNET50_FLOPs = 4.1e9 * flop
-
-# MobileNetV2
-MOBILENETV2_FLOPs = 0.3e9 * flop
-
-# MobileNetV1
-MOBILENET_V1_PARAMS = 4.2e6 * param
-
-# KWS DS-CNN (Keyword Spotting Depthwise Separable CNN)
-KWS_DSCNN_FLOPs = 20e6 * flop
 
 # DLRM (Deep Learning Recommendation Model) — Meta benchmark
 DLRM_EMBEDDING_ENTRIES = 25e9  # 25 Billion entries (dimensionless count)
