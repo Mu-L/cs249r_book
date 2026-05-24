@@ -59,6 +59,7 @@ async def _():
     from mlsysim.labs.components import DecisionLog
     from mlsysim.hardware.registry import Hardware
     from mlsysim.models.registry import Models
+    from mlsysim.systems.registry import Systems
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -85,8 +86,8 @@ async def _():
     H100_TFLOPS_FP16    = _cloud.compute.peak_flops.m_as("TFLOPs/s")  # 989
     H100_RAM_GB         = _cloud.memory.capacity.m_as("GiB")          # 80 GiB
     H100_TDP_W          = _cloud.tdp.m_as("W")                        # 700 W
-    NVLINK_BW_GBS       = 900     # GB/s NVLink4 bidirectional per GPU
-    IB_BW_GBPS          = 400     # Gb/s InfiniBand NDR per port
+    NVLINK_BW_GBS       = _cloud.nvlink.bandwidth.m_as("GB/s")
+    IB_BW_GBPS          = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("Gbps")
     MTBF_GPU_HOURS      = 2000    # Mean time between failures per GPU (hours)
     CHECKPOINT_COST_S   = 120     # Seconds per checkpoint
 
