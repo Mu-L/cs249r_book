@@ -45,8 +45,10 @@ The A100 ridge is `{python} A100RidgeExample.ridge_str` FLOP/byte.
 ## Do
 
 - Keep **≤ 5–8 exports** per cell when possible.
-- Use **`mlsysim` constants** (`Hardware.Cloud.H100`, `constants.GPU_MTTF_HOURS`)
-  for shared specs instead of duplicating numbers in every chapter.
+- Use **registry paths** for shared specs — `Hardware.Cloud.H100`, `Models.Vision.ResNet50`,
+  `defaults.GPU_MTTF_HOURS` (via `from mlsysim.core import defaults`), and
+  `mlsysim.physics.calc_*` for architecture formulas. Reserve `mlsysim.core.constants`
+  for physics/units only (`HOURS_PER_DAY`, `BYTES_FP16`, latency stack).
 - Put `#| echo: false` as the **first line** after ` ```{python}` (required by
   `book-check-code`).
 - Use **`fmt_int(round(x))`** for computed integers; **`precision=0`** only when
@@ -93,5 +95,7 @@ automate the checklist; until then, apply this contract in review.
 ## Related
 
 - `book/tools/audit/fmt/README.md` — spurious `.0` / fmt precision workflow
-- `./book/binder check math --scope canonical` — static fmt and suffix lint (implementation: `book/cli/checks/math_canonical.py`)
+- `./book/binder check math --scope canonical` — static fmt and suffix lint
 - `./book/binder check refs --scope inline-python` — chapter exec validation
+- `book/tools/audit/book_check_registry_sources.py` — legacy alias / constant import gate
+- `mlsysim/tests/test_constants_allowlist.py` — CI lock on `constants.py` surface
