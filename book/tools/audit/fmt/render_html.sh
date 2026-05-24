@@ -80,7 +80,7 @@ case "$VOL" in
     ;;
 esac
 
-echo "${VOL^^} HTML RENDER + AUDIT"
+echo "$(echo "$VOL" | tr '[:lower:]' '[:upper:]') HTML RENDER + AUDIT"
 echo "========================"
 FAIL=0
 for ch in "${CHAPTERS[@]}"; do

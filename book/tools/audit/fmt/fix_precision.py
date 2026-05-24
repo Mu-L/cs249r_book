@@ -121,6 +121,36 @@ def _fresh_ns(prior_cells: list[str]) -> dict:
     return ns
 
 
+def _statement_block(lines: list[str], lineno: int) -> tuple[int, int, str]:
+    """Return (start, end_exclusive, joined text) for a possibly multiline assignment."""
+    idx = lineno - 1
+    start = idx
+    while start > 0 and lines[start - 1].rstrip().endswith("\\"):
+        start -= 1
+    while start > 0 and not lines[start - 1].strip():
+        start -= 1
+    if start > 0 and "=" not in lines[start] and re.match(r"^\s*\w+_str\s*=", lines[start - 1]):
+        start -= 1
+    end = idx + 1
+    depth = lines[start].count("(") - lines[start].count(")")
+    while end < len(lines) and depth > 0:
+        depth += lines[end].count("(") - lines[end].count(")")
+        end += 1
+    return start, end, "\n".join(lines[start:end])
+
+
+def _apply_fix_block(block: str, msg: str, ns: dict | None = None) -> str | None:
+    """Apply precision fixes to a single- or multi-line fmt assignment."""
+    flat = " ".join(ln.strip() for ln in block.splitlines())
+    fixed_flat = _apply_fix(flat, msg, ns)
+    if not fixed_flat or fixed_flat == flat:
+        return None
+    indent = re.match(r"^(\s*)", block.splitlines()[0]).group(1)
+    lhs = block.splitlines()[0].split("=")[0].strip()
+    rhs = fixed_flat.strip().split("=", 1)[1].strip()
+    return f"{indent}{lhs} = {rhs}"
+
+
 def _fix_cell(code: str, prior_cells: list[str]) -> tuple[str, int, dict]:
     fixes = 0
     lines = code.splitlines()
@@ -136,11 +166,17 @@ def _fix_cell(code: str, prior_cells: list[str]) -> tuple[str, int, dict]:
             msg = str(exc)
             if lineno is None or lineno < 1 or lineno > len(lines):
                 raise ValueError(f"No lineno for: {msg}") from exc
-            line = lines[lineno - 1]
-            new_line = _apply_fix(line, msg, trial_ns)
-            if not new_line or new_line == line:
-                raise ValueError(f"Cannot fix line {lineno}: {msg}\n  {line}") from exc
-            lines[lineno - 1] = new_line
+            start, end, block = _statement_block(lines, lineno)
+            new_block = _apply_fix_block(block, msg, trial_ns)
+            if not new_block:
+                line = lines[lineno - 1]
+                new_line = _apply_fix(line, msg, trial_ns)
+                if not new_line or new_line == line:
+                    raise ValueError(f"Cannot fix line {lineno}: {msg}\n  {line}") from exc
+                lines[lineno - 1] = new_line
+            else:
+                new_lines = new_block.splitlines()
+                lines[start:end] = new_lines
             code = "\n".join(lines)
             if "fmt_int(" in code:
                 for j, ln in enumerate(lines):
