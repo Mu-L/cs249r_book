@@ -140,7 +140,7 @@ ETHERNET_1P6T_BW = 1600 * Gbps
 SWITCH_ASIC_51T2_BW = 51_200 * Gbps
 SWITCH_ASIC_102T4_BW = 102_400 * Gbps
 
-# Intra-node interconnects
+# Intra-node interconnects (legacy aliases — prefer Hardware.Cloud.<GPU>.nvlink.bandwidth)
 NVLINK_V100_BW = 300 * GB / second        # NVLink 2.0 (V100, 6 links × 50 GB/s)
 NVLINK_A100_BW = 600 * GB / second        # NVLink 3.0 (A100, 12 links × 50 GB/s)
 NVLINK_H100_BW = 900 * GB / second        # NVLink 4.0 (H100, 18 links × 50 GB/s)

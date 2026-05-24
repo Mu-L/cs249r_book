@@ -40,7 +40,8 @@ class HardwareNode(BaseModel):
     compute: ComputeCore
     memory: MemoryHierarchy
     storage: Optional[StorageHierarchy] = None
-    interconnect: Optional[IOInterconnect] = None
+    interconnect: Optional[IOInterconnect] = None  # Host I/O (e.g., PCIe)
+    nvlink: Optional[IOInterconnect] = None        # Intra-node GPU-GPU (NVLink/ICI)
     tdp: Optional[Quantity] = None
     battery_capacity: Optional[Quantity] = None
     unit_cost: Optional[Quantity] = None

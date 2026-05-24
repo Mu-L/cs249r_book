@@ -1,6 +1,6 @@
 from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy, IOInterconnect
 from ..core.registry import Registry
-from ..core.constants import (GB, GiB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, second, ureg, watt)
+from ..core.constants import (GB, GiB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, second, ureg, watt, LATENCY_NVLINK)
 
 class CloudHardware(Registry):
     """Datacenter-scale accelerators (Volume II)."""
@@ -10,6 +10,7 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=125 * TFLOPs / second, precision_flops={"fp32": 15.7 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=32 * GiB, bandwidth=900 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen3 x16", bandwidth=15.75 * GB / second),
+        nvlink=IOInterconnect(name="NVLink 2.0", bandwidth=300 * GB / second, latency=LATENCY_NVLINK),
         tdp=300 * watt,
         unit_cost=10000 * USD,
         dispatch_tax=0.02 * ureg.ms
@@ -21,6 +22,7 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=312 * TFLOPs / second, precision_flops={"fp32": 19.5 * TFLOPs / second, "tf32": 156 * TFLOPs / second, "int8": 624 * TOPS}),
         memory=MemoryHierarchy(capacity=80 * GiB, bandwidth=2039 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen4 x16", bandwidth=32 * GB / second),
+        nvlink=IOInterconnect(name="NVLink 3.0", bandwidth=600 * GB / second, latency=LATENCY_NVLINK),
         tdp=400 * watt,
         unit_cost=15000 * USD,
         embodied_carbon_kg=130.0,  # Gupta et al. 2022 estimate
@@ -35,6 +37,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=80 * GiB, bandwidth=3.35 * TB / second),
         storage=StorageHierarchy(capacity=2 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
+        nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=LATENCY_NVLINK),
         tdp=700 * watt,
         unit_cost=30000 * USD,
         embodied_carbon_kg=150.0,  # Gupta et al. 2022 estimate for high-end datacenter GPU
@@ -49,6 +52,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=131 * GiB, bandwidth=4.8 * TB / second),
         storage=StorageHierarchy(capacity=4 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
+        nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=LATENCY_NVLINK),
         tdp=700 * watt,
         unit_cost=35000 * USD,
         dispatch_tax=0.01 * ureg.ms
@@ -59,6 +63,8 @@ class CloudHardware(Registry):
         release_year=2024,
         compute=ComputeCore(peak_flops=2250 * TFLOPs / second, precision_flops={"fp8": 4500 * TFLOPs / second, "fp4": 9000 * TFLOPs / second, "int4": 9000 * TOPS}),
         memory=MemoryHierarchy(capacity=192 * GiB, bandwidth=8 * TB / second),
+        interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
+        nvlink=IOInterconnect(name="NVLink 5.0", bandwidth=1800 * GB / second, latency=LATENCY_NVLINK),
         tdp=1000 * watt,
         unit_cost=40000 * USD,
         dispatch_tax=0.008 * ureg.ms,

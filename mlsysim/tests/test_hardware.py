@@ -35,3 +35,17 @@ def test_tpuv4_is_not_alias_to_tpuv5p():
     assert Hardware.Cloud.TPUv4.name == "Google TPU v4"
     assert Hardware.Cloud.TPUv4 is not Hardware.Cloud.TPUv5p
     assert Hardware.Cloud.TPUv4.compute.peak_flops == (275 * ureg.TFLOPs / ureg.second)
+
+
+def test_nvlink_on_cloud_gpus():
+    """NVLink bandwidth lives on HardwareNode, not loose constants."""
+    from mlsysim.core.constants import (
+        NVLINK_V100_BW, NVLINK_A100_BW, NVLINK_H100_BW, NVLINK_B200_BW, GB, second,
+    )
+
+    assert Hardware.Cloud.V100.nvlink.name == "NVLink 2.0"
+    assert Hardware.Cloud.V100.nvlink.bandwidth == NVLINK_V100_BW
+    assert Hardware.Cloud.A100.nvlink.bandwidth == NVLINK_A100_BW
+    assert Hardware.Cloud.H100.nvlink.bandwidth == NVLINK_H100_BW
+    assert Hardware.Cloud.B200.nvlink.bandwidth == NVLINK_B200_BW
+    assert Hardware.Cloud.B200.nvlink.bandwidth.m_as(GB / second) == 1800.0
