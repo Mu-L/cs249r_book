@@ -68,6 +68,8 @@ Run the one-time setup command:
 
 This installs the pre-commit hooks declared in `.pre-commit-config.yaml` (EPUB source hygiene, vault corpus-guard, BibTeX validation, figure-div syntax, and ~60 other checks) and runs `./binder doctor` to report the state of your tooling (Python, Quarto, Java, epubcheck, and so on).
 
+Every `book-check-*` hook calls `./book/binder check <group>` — the same commands you can run locally. See [BINDER.md](BINDER.md) for the full check/fix reference and pre-commit mapping.
+
 Without this step, the config file ships with the repo but the framework is never actually invoked on your commits — so bugs that the hooks would have blocked can slip through to CI and waste the maintainers' review time. Run it once per fresh clone.
 
 If setup reports `pre-commit` is missing, install it with `pip install pre-commit` (or activate the project's virtualenv that includes it) and re-run.

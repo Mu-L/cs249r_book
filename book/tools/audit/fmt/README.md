@@ -42,6 +42,7 @@ PYTHONPATH=mlsysim python3 book/tools/audit/fmt/audit_prose.py "$CH" --flagged-o
 
 # 4. Static fmt-family checks (suffix discipline, prefer_fmt_int, etc.)
 python3 book/tools/audit/audit_math_canonical.py "$CH"
+# or: ./book/binder check math --scope canonical --path "$CH"
 
 # 5. HTML render + final scan
 ./book/binder build html --vol1 vol1/training --skip-hygiene --skip-validate
@@ -73,7 +74,7 @@ Legacy wrappers at `book/tools/audit/render_vol1_audit.sh` and
 | `fix_precision.py` | Apply fixes when `fmt()` raises `Formatting Precision Error` |
 | `fix_spurious_prose.py` | Rewrite `*_str = fmt(...)` lines whose output ends in `.0` |
 | `audit_prose.py` | Exec cells, substitute `{python}` refs, flag spurious `.0` |
-| `audit_math_canonical.py` | Static LEGO / fmt-family lint (parent directory) |
+| `audit_math_canonical.py` | Thin CLI wrapper → `cli/checks/math_canonical.py` |
 | `audit_html.py` | Scan rendered HTML narrative for spurious `.0` |
 | `spurious_zero.py` | Shared false-positive filters (prose + HTML) |
 | `render_html.sh` | Sequential build, archive, audit all chapters in a volume |
@@ -100,7 +101,7 @@ committed. Use the tools above for repeatable audits.
 
 - `mlsysim/mlsysim/fmt.py` — `fmt()`, `fmt_int()`, precision guards
 - [`book/docs/LEGO_CELLS.md`](../../../docs/LEGO_CELLS.md) — inline `{python}` cell placement and review contract
-- Pre-commit: `book-check-math-canonical` (static), `book-check-code` (echo, LEGO)
+- Pre-commit: `book-check-math` (includes `canonical` scope), `book-check-code` (echo, LEGO)
 
 ## Backward compatibility
 

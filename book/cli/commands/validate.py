@@ -16,9 +16,9 @@ no YAML edit needed. Ad-hoc audits use `--all-scopes` or `--scope <name>`.
 
 Some checks still delegate to scripts under book/tools/scripts/ (tables,
 spelling, epub, sources, grid-tables, images) and to standalone audit
-scripts under book/tools/audit/index/. The dispatch pattern uses
-`_delegate_script` for subprocess wrappers; preserve that pattern for new
-script-backed scopes.
+scripts under book/tools/audit/index/. Prefer new logic in cli/checks/
+with normal imports; see book/cli/README.md "Check implementation layout".
+Legacy `_delegate_script` / importlib paths are being phased out.
 """
 
 from __future__ import annotations
@@ -368,6 +368,8 @@ class ValidateCommand:
                   note="space before $\\times$ after inline code"),
             Scope("attr-leaks", "_run_attr_latex_leaks",
                   note="LaTeX in title=/fig-cap/tbl-cap/fig-alt/tbl-alt"),
+            Scope("canonical", "_run_math_canonical",
+                  note="fmt-family + _str/_math/_eq/_frac suffix discipline (LEGO)"),
             # render-audit builds every chapter (~10 min). Manual stage only;
             # default=False ensures `binder check math` stays under 1s.
             Scope("render-audit", "_run_math_render_audit", default=False),
@@ -505,7 +507,7 @@ class ValidateCommand:
             "subcommand",
             nargs="?",
             choices=all_group_names,
-            help="Check group to run (refs, labels, headers, footnotes, figures, rendering, references, content, all)",
+            help="Check group to run (refs, labels, headers, footnotes, figures, markup, references, content, all)",
         )
         parser.add_argument(
             "files",
@@ -734,7 +736,7 @@ class ValidateCommand:
             "prose": "Prose style (contractions, dup words, ASCII, above/below, Acknowledgments)",
             "punctuation": "Em-dash, slash, vs. period, e.g./i.e. comma, en-dash ranges",
             "numbers": "Units + percent spacing, binary units, percent-in-captions",
-            "math": "\\times spacing, attribute-string LaTeX leaks, optional render audit",
+            "math": "\\times spacing, attr-leaks, fmt/suffix discipline (LEGO), optional render audit",
             "structure": "Heading levels, parts, Purpose-unnumbered",
             "code": "Python code blocks (echo: false, _str/_math export hygiene)",
             "tables": "Grid tables → pipe, table content hygiene, caption-required",
@@ -5163,6 +5165,38 @@ class ValidateCommand:
             name="render-audit",
             description="Full HTML build + leak scan (delegates to tools/audit/)",
             files_checked=0,
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    def _run_math_canonical(self, root: Path) -> ValidationRunResult:
+        """math --scope canonical: fmt-family and suffix discipline for LEGO cells."""
+        from cli.checks.math_canonical import audit
+
+        start = time.time()
+        qmd_files = sorted(root.rglob("*.qmd")) if root.is_dir() else ([root] if root.suffix == ".qmd" else [])
+        violations = audit([root] if root.is_dir() else qmd_files or [root])
+
+        issues: List[ValidationIssue] = []
+        for v in violations:
+            file_path = Path(v.file)
+            try:
+                rel = str(file_path.resolve().relative_to(root.resolve()))
+            except ValueError:
+                rel = v.file
+            issues.append(ValidationIssue(
+                file=rel,
+                line=v.line,
+                code=v.code,
+                message=v.message,
+                severity="error",
+                context=v.context,
+            ))
+
+        return ValidationRunResult(
+            name="math-canonical",
+            description="fmt-family + _str/_math/_eq/_frac suffix discipline",
+            files_checked=len(qmd_files) if qmd_files else len({v.file for v in violations}),
             issues=issues,
             elapsed_ms=int((time.time() - start) * 1000),
         )

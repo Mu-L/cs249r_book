@@ -23,100 +23,6 @@ Conventions used here follow the book-wide notation (for example, we reserve $B$
 - **When tensor code “should work” but does not**: Use @sec-algorithm-foundations-shapes-strides-1aea and @sec-algorithm-foundations-broadcasting-ec16.
 - **When sparsity is proposed as a fix**: Use @sec-algorithm-foundations-sparse-matrix-formats-0bd0 to check density and metadata overhead.
 
-```{python}
-from mlsysim import *
-from mlsysim.core.constants import *
-#| echo: false
-#| label: appendix-algorithm-setup
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ ALGORITHM FOUNDATIONS SETUP
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: @sec-algorithm-foundations—Sparse Storage, GEMM Intensity,
-# │          Training Memory sections
-# │
-# │ Goal: Compute sparse vs. dense storage trade-off and GEMM intensity
-# │       examples for a vocabulary embedding matrix and small GEMM.
-# │ Show: ~4 GB dense vs. ~80 MB sparse at 1% density; ridge point ~153;
-# │       small 64×64 GEMM at ~14% efficiency.
-# │ How: Scalar arithmetic using byte counts from pint constants (.m_as).
-# │
-# │ Imports: mlsysim.core.constants (BYTES_FP32, BYTES_FP16, BYTES_INT32,
-# │          BYTES_ADAM_STATE,
-# │          Hardware.Cloud.A100.compute.peak_flops, Hardware.Cloud.A100.memory.bandwidth, ureg, byte, GB, MB,
-# │          TFLOPs, second, TB, BILLION, MILLION, THOUSAND)
-# │          mlsysim.book (fmt, check, fmt_math)
-# │ Exports: n_small_str, small_intensity_str, small_efficiency_pct_str,
-# │          a100_ridge_str, sparsity_pct_str, reduction_factor_str,
-# │          vocab_size_str, embed_dim_str, total_elements_str,
-# │          dense_gb_str, nonzeros_str, sparse_mb_str,
-# │          bytes_fp16_str, bytes_fp32_str, bytes_int32_str,
-# │          optimizer_overhead_str, csr_break_even_density_pct_str,
-# │          coo_break_even_density_pct_str, gemm_intensity_eq
-# └─────────────────────────────────────────────────────────────────────────────
-
-from mlsysim.fmt import fmt_int, fmt, check, fmt_math, MarkdownStr
-
-class AlgorithmFoundations:
-    """
-    Namespace for algorithm performance metrics.
-    """
-
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    vocab_size = 100 * THOUSAND
-    embed_dim = 10 * THOUSAND
-    sparsity_pct = 1
-    n_small = 64
-
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    total_elements = vocab_size * embed_dim
-    dense_bytes = total_elements * BYTES_FP32.m_as(ureg.byte)
-    dense_gb = (dense_bytes * byte).m_as(GB)
-
-    nonzeros = int(total_elements * sparsity_pct / 100)
-    csr_bytes_per_nonzero = BYTES_FP32.m_as(ureg.byte) + BYTES_INT32.m_as(ureg.byte)
-    coo_bytes_per_nonzero = BYTES_FP32.m_as(ureg.byte) + 2 * BYTES_INT32.m_as(ureg.byte)
-    sparse_bytes = nonzeros * csr_bytes_per_nonzero
-    sparse_mb = (sparse_bytes * byte).m_as(MB)
-    reduction_factor = int(dense_bytes/sparse_bytes)
-    csr_break_even_density_pct = BYTES_FP32.m_as(ureg.byte) / csr_bytes_per_nonzero * 100
-    coo_break_even_density_pct = BYTES_FP32.m_as(ureg.byte) / coo_bytes_per_nonzero * 100
-
-    small_intensity = n_small / 3
-    a100_ridge = int(
-        Hardware.Cloud.A100.compute.peak_flops.m_as(TFLOPs/second)
-        / Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second)
-    )
-    small_efficiency_pct = small_intensity/a100_ridge * 100
-
-    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    check(a100_ridge > 150, f"A100 ridge point ({a100_ridge}) unexpectedly low.")
-
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    n_small_str = fmt(n_small, precision=0, commas=False)
-    small_intensity_str = fmt_int(small_intensity, commas=False)
-    small_efficiency_pct_str = fmt(small_efficiency_pct, precision=1, commas=False)
-    a100_ridge_str = fmt(a100_ridge, precision=0, commas=False)
-    sparsity_pct_str = fmt(sparsity_pct, precision=0, commas=False)
-    reduction_factor_str = fmt(reduction_factor, precision=0, commas=False)
-    vocab_size_str = fmt(vocab_size, precision=0)
-    embed_dim_str = fmt(embed_dim, precision=0)
-    total_elements_str = fmt(total_elements/BILLION, precision=0, commas=False)
-    dense_gb_str = fmt(dense_gb, precision=0, commas=False)
-    nonzeros_str = fmt(nonzeros/MILLION, precision=0, commas=False)
-    sparse_mb_str = fmt(sparse_mb, precision=0, commas=False)
-
-    bytes_fp16_str = fmt_int(BYTES_FP16.m_as(ureg.byte), commas=False)
-    bytes_fp32_str = fmt_int(BYTES_FP32.m_as(ureg.byte), commas=False)
-    bytes_int32_str = fmt_int(BYTES_INT32.m_as(ureg.byte), commas=False)
-    csr_break_even_density_pct_str = fmt(csr_break_even_density_pct, precision=0, commas=False)
-    coo_break_even_density_pct_str = fmt(coo_break_even_density_pct, precision=1, commas=False)
-    optimizer_overhead_min = int(BYTES_ADAM_STATE.m_as(ureg.byte))
-    optimizer_overhead_max = optimizer_overhead_min + int(BYTES_FP32.m_as(ureg.byte))
-    optimizer_overhead_str = MarkdownStr(f"{optimizer_overhead_min}–{optimizer_overhead_max}")
-
-    gemm_intensity_eq = fmt_math(rf"\text{{Intensity}} = \frac{{O}}{{D_{{\text{{vol}}}}}} = \frac{{2n^3}}{{3n^2 \times {bytes_fp16_str}}} = \frac{{n}}{{3}} \text{{ FLOP/byte}}")
-```
-
 This appendix covers the mathematical and computational machinery that powers neural networks. From the linear algebra at the heart of every layer to the backpropagation algorithm that enables learning, these foundations explain *how* models compute and *why* certain implementation choices affect performance. The concepts here support the deep learning foundations in @sec-neural-computation, the framework internals in @sec-ml-frameworks, and the training strategies in @sec-model-training.
 
 ## Linear Algebra {#sec-algorithm-foundations-linear-algebra-c937}
@@ -156,15 +62,53 @@ GEMM[^fn-gemm-blas] is the computational workhorse of deep learning. For matrice
 
 [^fn-gemm-blas]: **General Matrix Multiply (GEMM)**: The name comes from the BLAS (Basic Linear Algebra Subprograms) library specification, first standardized in 1979. The "GE" prefix stands for "general" (as opposed to symmetric, triangular, or banded matrices). GEMM computes $C = \alpha AB + \beta C$ and is the single most performance-critical routine in deep learning. See @sec-model-training for how GEMM shapes determine training throughput.
 
-The arithmetic intensity of GEMM scales linearly with matrix dimension. For square $n{\times}n$ matrices in FP16 (`{python} AlgorithmFoundations.bytes_fp16_str` bytes/element):
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: gemm-intensity-example
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: @sec-algorithm-foundations-general-matrix-multiply-gemm-b55d
+# │ Goal: GEMM intensity formula and small-matrix roofline example
+# │ Exports: GemmIntensityExample.*_str, gemm_intensity_eq
+from mlsysim.fmt import fmt_int, fmt, check, fmt_math
 
-`{python} AlgorithmFoundations.gemm_intensity_eq`
+class GemmIntensityExample:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    n_small = 64
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    bytes_fp16 = int(BYTES_FP16.m_as(ureg.byte))
+    small_intensity = n_small / 3
+    a100_ridge = int(
+        Hardware.Cloud.A100.compute.peak_flops.m_as(TFLOPs/second)
+        / Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second)
+    )
+    small_efficiency_pct = small_intensity / a100_ridge * 100
+
+    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    check(a100_ridge > 150, f"A100 ridge point ({a100_ridge}) unexpectedly low.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    bytes_fp16_str = fmt_int(bytes_fp16, commas=False)
+    n_small_str = fmt(n_small, precision=0, commas=False)
+    small_intensity_str = fmt_int(small_intensity, commas=False)
+    small_efficiency_pct_str = fmt(small_efficiency_pct, precision=1, commas=False)
+    a100_ridge_str = fmt(a100_ridge, precision=0, commas=False)
+    gemm_intensity_eq = fmt_math(
+        rf"\text{{Intensity}} = \frac{{O}}{{D_{{\text{{vol}}}}}} = \frac{{2n^3}}{{3n^2 \times {bytes_fp16_str}}} = \frac{{n}}{{3}} \text{{ FLOP/byte}}"
+    )
+```
+
+The arithmetic intensity of GEMM scales linearly with matrix dimension. For square $n{\times}n$ matrices in FP16 (`{python} GemmIntensityExample.bytes_fp16_str` bytes/element):
+
+`{python} GemmIntensityExample.gemm_intensity_eq`
 
 This explains several important phenomena:
 
 - **Larger batches improve efficiency**: Batching increases the effective matrix dimensions, pushing workloads toward the compute-bound region of the roofline.
 - **Aligned dimensions help**: Hardware tensor cores are optimized for precision- and architecture-specific tile multiples. Dimensions that align with these multiples avoid padding overhead and improve kernel efficiency, but they do not need to be powers of two.
-- **Small matrices are inefficient**: A square GEMM with $n =$ `{python} AlgorithmFoundations.n_small_str` has intensity `{python} AlgorithmFoundations.n_small_str`/3 ≈ `{python} AlgorithmFoundations.small_intensity_str` FLOP/byte, well below the ridge point (`{python} AlgorithmFoundations.a100_ridge_str`), achieving only ~`{python} AlgorithmFoundations.small_efficiency_pct_str` percent of peak throughput.
+- **Small matrices are inefficient**: A square GEMM with $n =$ `{python} GemmIntensityExample.n_small_str` has intensity `{python} GemmIntensityExample.n_small_str`/3 ≈ `{python} GemmIntensityExample.small_intensity_str` FLOP/byte, well below the ridge point (`{python} GemmIntensityExample.a100_ridge_str`), achieving only ~`{python} GemmIntensityExample.small_efficiency_pct_str` percent of peak throughput.
 
 ### Sparse matrix formats {#sec-algorithm-foundations-sparse-matrix-formats-0bd0}
 
@@ -178,11 +122,51 @@ The **Compressed Sparse Row (CSR)** format uses three arrays:
 
 CSR is essential for recommendation systems (sparse embedding tables) and pruned models. For a matrix with $N$ elements, $R$ rows, and $K$ nonzeros, CSR uses $\mathcal{O}(K + R)$ storage instead of $\mathcal{O}(N)$; when $K$ is large relative to $R$, this is often summarized as $\mathcal{O}(K)$.
 
-To see the trade-off concretely, consider a vocabulary embedding matrix with `{python} AlgorithmFoundations.vocab_size_str` rows and `{python} AlgorithmFoundations.embed_dim_str` columns (`{python} AlgorithmFoundations.total_elements_str` billion parameters):
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: sparse-embedding-example
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: @sec-algorithm-foundations-sparse-matrix-formats-0bd0 embedding example
+# │ Goal: Dense vs sparse vocabulary embedding footprint at 1% density
+# │ Exports: SparseEmbeddingExample.*_str
+from mlsysim.fmt import fmt_int, fmt
 
-*   **Dense (FP32)**: `{python} AlgorithmFoundations.total_elements_str` $\times$ $10^{9}$ $\times$ `{python} AlgorithmFoundations.bytes_fp32_str` bytes = **`{python} AlgorithmFoundations.dense_gb_str` GB**.
-*   **Sparse (`{python} AlgorithmFoundations.sparsity_pct_str` percent density)**: Storing only nonzeros requires roughly `{python} AlgorithmFoundations.nonzeros_str` $\times$ $10^{6}$ $\times$ (`{python} AlgorithmFoundations.bytes_fp32_str` bytes value + `{python} AlgorithmFoundations.bytes_int32_str` bytes index) ≈ **`{python} AlgorithmFoundations.sparse_mb_str` MB**.
-*   *Result*: A `{python} AlgorithmFoundations.reduction_factor_str`$\times$ reduction in memory footprint, fitting a model that would otherwise OOM (Out of Memory).
+class SparseEmbeddingExample:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    vocab_size = 100 * THOUSAND
+    embed_dim = 10 * THOUSAND
+    sparsity_pct = 1
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    total_elements = vocab_size * embed_dim
+    dense_bytes = total_elements * BYTES_FP32.m_as(ureg.byte)
+    dense_gb = (dense_bytes * byte).m_as(GB)
+    nonzeros = int(total_elements * sparsity_pct / 100)
+    csr_bytes_per_nonzero = BYTES_FP32.m_as(ureg.byte) + BYTES_INT32.m_as(ureg.byte)
+    sparse_bytes = nonzeros * csr_bytes_per_nonzero
+    sparse_mb = (sparse_bytes * byte).m_as(MB)
+    reduction_factor = int(dense_bytes / sparse_bytes)
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    vocab_size_str = fmt(vocab_size, precision=0)
+    embed_dim_str = fmt(embed_dim, precision=0)
+    total_elements_str = fmt(total_elements / BILLION, precision=0, commas=False)
+    dense_gb_str = fmt(dense_gb, precision=0, commas=False)
+    nonzeros_str = fmt(nonzeros / MILLION, precision=0, commas=False)
+    sparse_mb_str = fmt(sparse_mb, precision=0, commas=False)
+    bytes_fp32_str = fmt_int(BYTES_FP32.m_as(ureg.byte), commas=False)
+    bytes_int32_str = fmt_int(BYTES_INT32.m_as(ureg.byte), commas=False)
+    sparsity_pct_str = fmt(sparsity_pct, precision=0, commas=False)
+    reduction_factor_str = fmt(reduction_factor, precision=0, commas=False)
+```
+
+To see the trade-off concretely, consider a vocabulary embedding matrix with `{python} SparseEmbeddingExample.vocab_size_str` rows and `{python} SparseEmbeddingExample.embed_dim_str` columns (`{python} SparseEmbeddingExample.total_elements_str` billion parameters):
+
+*   **Dense (FP32)**: `{python} SparseEmbeddingExample.total_elements_str` $\times$ $10^{9}$ $\times$ `{python} SparseEmbeddingExample.bytes_fp32_str` bytes = **`{python} SparseEmbeddingExample.dense_gb_str` GB**.
+*   **Sparse (`{python} SparseEmbeddingExample.sparsity_pct_str` percent density)**: Storing only nonzeros requires roughly `{python} SparseEmbeddingExample.nonzeros_str` $\times$ $10^{6}$ $\times$ (`{python} SparseEmbeddingExample.bytes_fp32_str` bytes value + `{python} SparseEmbeddingExample.bytes_int32_str` bytes index) ≈ **`{python} SparseEmbeddingExample.sparse_mb_str` MB**.
+*   *Result*: A `{python} SparseEmbeddingExample.reduction_factor_str`$\times$ reduction in memory footprint, fitting a model that would otherwise OOM (Out of Memory).
 
 Linear algebra tells us *what* to compute; the next question is *how* to express those computations in code. Tensor programming primitives—shapes, strides, and broadcasting—bridge the gap between mathematical notation and the array operations that actually execute on hardware.
 
@@ -318,18 +302,38 @@ $$ M_{\text{total}} = M_{\text{weights}} + M_{\text{gradients}} + M_{\text{optim
 
 For a standard Adaptive Moment Estimation (Adam) optimizer in Mixed Precision:
 
-*   **Weights**: `{python} AlgorithmFoundations.bytes_fp16_str` bytes (FP16/BF16) or `{python} AlgorithmFoundations.bytes_fp32_str` bytes (FP32).
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: training-memory-bytes
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: @sec-algorithm-foundations-true-cost-training-memory-e54e
+# │ Goal: Per-parameter byte counts for mixed-precision Adam training
+# │ Exports: TrainingMemoryBytes.*_str
+from mlsysim.fmt import fmt_int, fmt, MarkdownStr
+
+class TrainingMemoryBytes:
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    bytes_fp16_str = fmt_int(BYTES_FP16.m_as(ureg.byte), commas=False)
+    bytes_fp32_str = fmt_int(BYTES_FP32.m_as(ureg.byte), commas=False)
+    optimizer_overhead_min = int(BYTES_ADAM_STATE.m_as(ureg.byte))
+    optimizer_overhead_max = optimizer_overhead_min + int(BYTES_FP32.m_as(ureg.byte))
+    optimizer_overhead_str = MarkdownStr(f"{optimizer_overhead_min}–{optimizer_overhead_max}")
+```
+
+*   **Weights**: `{python} TrainingMemoryBytes.bytes_fp16_str` bytes (FP16/BF16) or `{python} TrainingMemoryBytes.bytes_fp32_str` bytes (FP32).
 *   **Gradients**: Same size as weights.
-*   **Optimizer State**: `{python} AlgorithmFoundations.optimizer_overhead_str` bytes per parameter (Momentum + Variance + FP32 Master Weights).
+*   **Optimizer State**: `{python} TrainingMemoryBytes.optimizer_overhead_str` bytes per parameter (Momentum + Variance + FP32 Master Weights).
 *   **Activations**: The hidden giant. $\mathcal{O}(B \times S \times N_L \times d)$.
 
 To see how these components interact in practice, consider a concrete model.
 
 ```{python}
+#| echo: false
 from mlsysim import *
 from mlsysim.core.constants import *
 #| label: gpt2-training-memory
-#| echo: false
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ GPT-2 XL TRAINING MEMORY BREAKDOWN
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -468,13 +472,52 @@ Together, the linear algebra foundations, tensor programming mechanics, and trai
 
 ## Fallacies and Pitfalls {#sec-algorithm-foundations-fallacies-pitfalls-ae60}
 
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: sparse-break-even-recap
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Fallacies and Summary — sparse format break-even densities
+# │ Goal: CSR/COO metadata break-even density thresholds
+# │ Exports: SparseBreakEvenRecap.*_str
+from mlsysim.fmt import fmt
+
+class SparseBreakEvenRecap:
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    csr_bytes_per_nonzero = BYTES_FP32.m_as(ureg.byte) + BYTES_INT32.m_as(ureg.byte)
+    coo_bytes_per_nonzero = BYTES_FP32.m_as(ureg.byte) + 2 * BYTES_INT32.m_as(ureg.byte)
+    csr_break_even_density_pct = BYTES_FP32.m_as(ureg.byte) / csr_bytes_per_nonzero * 100
+    coo_break_even_density_pct = BYTES_FP32.m_as(ureg.byte) / coo_bytes_per_nonzero * 100
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    csr_break_even_density_pct_str = fmt(csr_break_even_density_pct, precision=0, commas=False)
+    coo_break_even_density_pct_str = fmt(coo_break_even_density_pct, precision=1, commas=False)
+```
+
+```{python}
+#| echo: false
+#| label: training-memory-recap
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Fallacies — training memory ≠ model size
+# │ Exports: TrainingMemoryRecap.*_str
+from mlsysim.fmt import fmt_int, fmt, MarkdownStr
+
+class TrainingMemoryRecap:
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    bytes_fp16_str = fmt_int(BYTES_FP16.m_as(ureg.byte), commas=False)
+    optimizer_overhead_min = int(BYTES_ADAM_STATE.m_as(ureg.byte))
+    optimizer_overhead_max = optimizer_overhead_min + int(BYTES_FP32.m_as(ureg.byte))
+    optimizer_overhead_str = MarkdownStr(f"{optimizer_overhead_min}–{optimizer_overhead_max}")
+```
+
 **Pitfall**: *Assuming sparse matrices always save memory.*
 
-Sparse formats like CSR and COO add metadata overhead in the form of index arrays. With FP32 values and INT32 indices, CSR storage breaks even at roughly `{python} AlgorithmFoundations.csr_break_even_density_pct_str` percent density before row-pointer overhead, while COO breaks even around `{python} AlgorithmFoundations.coo_break_even_density_pct_str` percent density because it stores both row and column indices. A separate performance rule of thumb is stricter: sparsity usually needs to exceed 90–95 percent before generic sparse kernels outrun dense kernels, though specialized hardware patterns (like NVIDIA's 2:4 structured sparsity) change this calculus by encoding sparsity in fixed-ratio bitmasks rather than explicit indices.
+Sparse formats like CSR and COO add metadata overhead in the form of index arrays. With FP32 values and INT32 indices, CSR storage breaks even at roughly `{python} SparseBreakEvenRecap.csr_break_even_density_pct_str` percent density before row-pointer overhead, while COO breaks even around `{python} SparseBreakEvenRecap.coo_break_even_density_pct_str` percent density because it stores both row and column indices. A separate performance rule of thumb is stricter: sparsity usually needs to exceed 90–95 percent before generic sparse kernels outrun dense kernels, though specialized hardware patterns (like NVIDIA's 2:4 structured sparsity) change this calculus by encoding sparsity in fixed-ratio bitmasks rather than explicit indices.
 
 **Fallacy**: *Training memory equals model size.*
 
-As shown in @sec-algorithm-foundations-true-cost-training-memory-e54e, training memory includes gradients, optimizer states, and activations in addition to weights. For a model with $P$ parameters trained with Adam in mixed precision, the nonactivation overhead alone is roughly `{python} AlgorithmFoundations.bytes_fp16_str` + `{python} AlgorithmFoundations.bytes_fp16_str` + `{python} AlgorithmFoundations.optimizer_overhead_str` = 12–16 bytes per parameter—far more than the `{python} AlgorithmFoundations.bytes_fp16_str`-byte weight footprint that naive estimates assume.
+As shown in @sec-algorithm-foundations-true-cost-training-memory-e54e, training memory includes gradients, optimizer states, and activations in addition to weights. For a model with $P$ parameters trained with Adam in mixed precision, the nonactivation overhead alone is roughly `{python} TrainingMemoryRecap.bytes_fp16_str` + `{python} TrainingMemoryRecap.bytes_fp16_str` + `{python} TrainingMemoryRecap.optimizer_overhead_str` = 12–16 bytes per parameter—far more than the `{python} TrainingMemoryRecap.bytes_fp16_str`-byte weight footprint that naive estimates assume.
 
 **Pitfall**: *Ignoring tensor layout when optimizing performance.*
 
@@ -485,7 +528,7 @@ A matrix multiplication can run at 80 percent of peak throughput or 5 percent of
 ::: {.callout-takeaways title="When 'hardware-bound' is really algorithm-bound"}
 
 * **GEMM arithmetic intensity**: It scales as $n/3$ for square $n{\times}n$ matrices, so small matrices are memory bound and waste most of the hardware's compute capability. Increasing batch size or aligning dimensions to hardware tile sizes are the primary levers for improving throughput.
-* **Sparse storage formats**: They reduce memory once density falls below the metadata break-even point (roughly `{python} AlgorithmFoundations.csr_break_even_density_pct_str` percent density for CSR with FP32 values and INT32 indices), but sparse-kernel performance usually needs much higher sparsity, often 90–95 percent, because irregular index traversal costs throughput.
+* **Sparse storage formats**: They reduce memory once density falls below the metadata break-even point (roughly `{python} SparseBreakEvenRecap.csr_break_even_density_pct_str` percent density for CSR with FP32 values and INT32 indices), but sparse-kernel performance usually needs much higher sparsity, often 90–95 percent, because irregular index traversal costs throughput.
 * **Tensor layout bugs are silent**: Tensor shapes, strides, and broadcasting are the source of many subtle bugs: a noncontiguous tensor can silently degrade kernel performance by orders of magnitude, and an incorrect broadcast can produce a result of the wrong shape without raising an error.
 * **Training memory is activation-sensitive**: Training memory is dominated by four components—weights, gradients, optimizer states, and activations—and the last of these grows with batch size and sequence length, often exceeding the model's weight footprint by 10--50$\times$.
 * **Backpropagation trades memory for compute**: Backpropagation's efficiency comes from computing all parameter gradients in a single backward pass, but it requires caching forward-pass activations, creating a fundamental memory–compute trade-off that gradient checkpointing partially resolves.

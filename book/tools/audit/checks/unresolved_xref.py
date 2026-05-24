@@ -11,8 +11,8 @@ build the index of defined IDs before deciding whether any single
 reference is unresolved. The per-file `check()` entrypoint required by
 the registry therefore lazy-builds (and memoizes) the corpus-wide ID
 index on first invocation, then validates the references in the current
-file against it. The `scan_corpus()` entrypoint is provided for the
-`binder check release` orchestrator which wants a single global pass.
+file against it. The `scan_corpus()` entrypoint is provided for corpus-wide passes
+(e.g. `python3 book/tools/audit/scan.py --scope vol1`).
 
 Relationship to `./book/binder check refs`:
 
@@ -221,7 +221,7 @@ def check(
     return issues, counter
 
 
-# ── Corpus-wide entrypoint (for `binder check release`) ─────────────────────
+# ── Corpus-wide entrypoint (for audit/scan.py) ────────────────────────────────
 
 
 def scan_corpus(root: Path, scope: str = "both") -> list[Issue]:
@@ -231,8 +231,8 @@ def scan_corpus(root: Path, scope: str = "both") -> list[Issue]:
     of it — we walk up to find the contents root). `scope` controls the
     Issue id prefix only; defaults to "both".
 
-    This is the entrypoint the `binder check release` orchestrator calls.
-    It deduplicates the cache, so subsequent per-file `check()` calls in
+    This is the entrypoint ``book/tools/audit/scan.py`` calls for corpus-wide
+    unresolved-xref detection. It deduplicates the cache, so subsequent per-file `check()` calls in
     the same process reuse the index.
     """
     # Locate the contents root.

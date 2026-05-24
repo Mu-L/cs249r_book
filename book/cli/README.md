@@ -1,6 +1,10 @@
 # MLSysBook CLI (`binder`) — Architecture & Reference
 
-The `./book/binder` CLI is the single entry point for building, validating, and formatting the MLSysBook. All pre-commit hooks route through binder.
+The `./book/binder` CLI is the **single source of truth** for building, checking, fixing, and formatting MLSysBook. Every `book-check-*` pre-commit hook dispatches through `./book/binder check <group>`; CI and the VS Code extension use the same commands.
+
+**User-facing command reference:** [`book/docs/BINDER.md`](../docs/BINDER.md) (check/fix tables, pre-commit mapping, examples).
+
+**This file** covers implementation: architecture, scope registry, pre-commit contract, EPUB layers, and how to add new checks.
 
 ## Architecture
 
@@ -13,20 +17,51 @@ cli/
 ├── commands/
 │   ├── build.py             # Build HTML/PDF/EPUB (full book or chapters)
 │   ├── preview.py           # Live dev server with hot reload
-│   ├── validate.py          # All validation checks (check group)
+│   ├── validate.py          # Check router: dispatches scopes → cli/checks or inline
 │   ├── formatting.py        # Auto-formatters (format group)
 │   ├── reference_check.py   # Bibliography verification (Crossref/DOI)
+│   ├── _epub_checks.py      # EPUB hygiene / smoke / epubcheck primitives
 │   ├── bib.py               # Bibliography management
-│   ├── info.py              # Stats, figures, concepts, headers, acronyms
-│   ├── render.py            # Plot rendering to PNG gallery
-│   ├── newsletter.py        # Newsletter drafts and publishing
-│   ├── clean.py             # Build artifact cleanup
-│   ├── debug.py             # Failing chapter/section finder
-│   ├── doctor.py            # Health check
-│   └── maintenance.py       # Image compression, repo health
+│   └── …
+├── checks/                  # Check implementations (canonical home — grow here)
+│   └── math_canonical.py    # math --scope canonical (LEGO fmt discipline)
 ├── formats/                 # Format-specific handlers
 └── utils/                   # Shared utilities
 ```
+
+## Check implementation layout
+
+**Goal:** every `./book/binder check …` scope is backed by code under `book/cli/`,
+not by loading arbitrary scripts from `book/tools/` at runtime.
+
+| Layer | Location | Status |
+|-------|----------|--------|
+| **Router + inline checks** | `commands/validate.py` | ~75 scopes (regex walks, graphs) live here today |
+| **Extracted check modules** | `cli/checks/*.py` | Preferred home for new checks and migrations |
+| **Shared primitives** | `commands/_epub_checks.py`, `reference_check.py` | Native CLI modules |
+| **Fix / maintenance** | `commands/maintenance.py` | Self-contained (no script delegation) |
+
+**Anti-pattern (being phased out):** `importlib` or `subprocess` into
+`book/tools/scripts/*.py` or `book/tools/bib_lint.py`. Those files may remain
+as thin standalone CLIs, but the implementation should live in `cli/checks/`
+and be imported normally.
+
+**Migrated:** `math --scope canonical` → `cli/checks/math_canonical.py`
+(pre-commit `book-check-math` runs it as part of `check math`).
+
+**Still transitional:** `bib --scope hygiene` (importlib → `bib_lint.py`),
+several table/image scopes, index scopes via subprocess, `audit.checks.*`
+adapters. These work correctly through Binder but should move into `cli/checks/`
+over time.
+
+### Adding a new check
+
+1. Implement logic in `cli/checks/your_check.py` with a function returning
+   structured violations (or add inline `_run_*` in `validate.py` if tiny).
+2. Register `Scope("name", "_run_your_check")` in `validate.py` `GROUPS`.
+3. Pre-commit picks it up automatically when `default=True` for that group.
+
+Do **not** add new pre-commit hooks that call `python3 book/tools/...` directly.
 
 ## Command Groups
 

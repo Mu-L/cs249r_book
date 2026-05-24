@@ -58,7 +58,7 @@ CHECK_REGISTRY: list[tuple[str, str]] = [
     ("audit.checks.bibliography_hygiene", "bibliography-hygiene"),
     ("audit.checks.notation_consistency", "notation-consistency"),
     ("audit.checks.index_placement", "index-placement"),
-    # Wave 7 — release-gate defect catalog (binder check release)
+    # Wave 7 — release-gate defect catalog (run via book/tools/audit/scan.py)
     ("audit.checks.bare_attribution", "bare-attribution"),
     ("audit.checks.duplicate_citation", "duplicate-citation"),
     ("audit.checks.math_notation_render", "math-notation-render"),

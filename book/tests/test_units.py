@@ -35,6 +35,79 @@ sys.path.insert(0, _book_dir)
 from mlsysim.core.constants import *
 from mlsysim.core.formulas import *
 from mlsysim.fmt import fmt, fmt_sci
+from mlsysim import Hardware, Models
+
+# Legacy aliases for unit tests (hardware/model specs live in registries).
+_a100 = Hardware.Cloud.A100
+_v100 = Hardware.Cloud.V100
+_h100 = Hardware.Cloud.H100
+_t4 = Hardware.Cloud.T4
+_resnet50 = Models.Vision.ResNet50
+_gpt3 = Models.Language.GPT3
+_gpt2 = Models.Language.GPT2
+_yolov8_nano = Models.Vision.YOLOv8_Nano
+_mobilenetv2 = Models.Vision.MobileNetV2
+_bert_base = Models.Language.BERT_Base
+_llama3_8b = Models.Language.Llama3_8B
+_b200 = Hardware.Cloud.B200
+_mi300x = Hardware.Cloud.MI300X
+_tpuv4 = Hardware.Cloud.TPUv4
+_tpuv6 = Hardware.Cloud.TPUv6
+_mobile = Hardware.Mobile.iPhone15Pro
+
+A100_FLOPS_FP16_TENSOR = _a100.compute.peak_flops
+A100_FLOPS_FP32 = _a100.compute.precision_flops["fp32"]
+A100_FLOPS_TF32 = _a100.compute.precision_flops["tf32"]
+A100_TOPS_INT8 = _a100.compute.precision_flops["int8"]
+A100_MEM_BW = _a100.memory.bandwidth
+A100_MEM_CAPACITY = _a100.memory.capacity
+A100_TDP = _a100.tdp
+
+V100_FLOPS_FP16_TENSOR = _v100.compute.peak_flops
+V100_MEM_BW = _v100.memory.bandwidth
+V100_MEM_CAPACITY = _v100.memory.capacity
+V100_TDP = _v100.tdp
+
+H100_FLOPS_FP16_TENSOR = _h100.compute.peak_flops
+H100_FLOPS_TF32 = _h100.compute.precision_flops["tf32"]
+H100_TOPS_INT8 = _h100.compute.precision_flops["int8"]
+H100_MEM_BW = _h100.memory.bandwidth
+H100_MEM_CAPACITY = _h100.memory.capacity
+H100_TDP = _h100.tdp
+
+T4_FLOPS_FP16_TENSOR = _t4.compute.peak_flops
+T4_TDP = _t4.tdp
+
+RESNET50_PARAMS = _resnet50.parameters
+RESNET50_FLOPs = _resnet50.inference_flops
+GPT3_PARAMS = _gpt3.parameters
+GPT2_PARAMS = _gpt2.parameters
+YOLOV8_NANO_FLOPs = _yolov8_nano.inference_flops
+BERT_BASE_PARAMS = _bert_base.parameters
+BERT_BASE_FLOPs = _bert_base.inference_flops
+MOBILENETV2_PARAMS = _mobilenetv2.parameters
+MOBILENETV2_FLOPs = _mobilenetv2.inference_flops
+LLAMA3_8B_PARAMS = _llama3_8b.parameters
+
+B200_FLOPS_FP16_TENSOR = _b200.compute.peak_flops
+B200_MEM_BW = _b200.memory.bandwidth
+B200_MEM_CAPACITY = _b200.memory.capacity
+
+MI300X_FLOPS_FP16_TENSOR = _mi300x.compute.peak_flops
+MI300X_MEM_BW = _mi300x.memory.bandwidth
+
+TPUV4_FLOPS_BF16 = _tpuv4.compute.precision_flops["bf16"]
+TPUV4_MEM_BW = _tpuv4.memory.bandwidth
+
+TPUV6_FLOPS_BF16 = _tpuv6.compute.peak_flops
+TPUV6_MEM_BW = _tpuv6.memory.bandwidth
+
+MOBILE_NPU_TOPS_INT8 = _mobile.compute.peak_flops
+MOBILE_NPU_MEM_BW = _mobile.memory.bandwidth
+
+GPT3_TRAINING_OPS = (
+    TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN * _gpt3.parameters * GPT3_TRAINING_TOKENS
+)
 
 FAILURES = []
 
@@ -116,7 +189,7 @@ def test_flop_units():
     ok &= check("V100 125 TFLOPs/s", V100_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 125.0)
     ok &= check("H100 989 TFLOPs/s", H100_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 989.0)
     ok &= check("T4 65 TFLOPs/s", T4_FLOPS_FP16_TENSOR.to(TFLOPs / second).magnitude, 65.0)
-    ok &= check("Mobile 50 TOPS", MOBILE_NPU_TOPS_INT8.to(TOPS).magnitude, 50.0)
+    ok &= check("Mobile 35 TOPS", MOBILE_NPU_TOPS_INT8.to(TOPS).magnitude, 35.0)
 
     # Model FLOPs
     ok &= check("ResNet 4.1 GFLOPs", RESNET50_FLOPs.to(GFLOPs).magnitude, 4.1)

@@ -28,7 +28,7 @@ export function registerPublishCommands(context: vscode.ExtensionContext): void 
       });
     }),
     vscode.commands.registerCommand('mlsysbook.buildGlossary', () => {
-      void runBookCommand('./book/binder maintain glossary paths', root, {
+      void runBookCommand('./book/binder fix glossary paths', root, {
         label: 'Show glossary paths',
       });
     }),

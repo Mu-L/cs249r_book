@@ -1,171 +1,278 @@
 # Book Binder CLI
 
-The **Book Binder** is a self-contained, lightning-fast development CLI for the MLSysBook project. It provides streamlined commands for building, previewing, and managing the book in both HTML and PDF formats.
+The **Book Binder** (`./book/binder`) is the single entry point for building, checking, fixing, and formatting the MLSysBook.
 
-## Public API Policy
+## Author workflow (typical)
 
-Binder is the public automation interface for this repository.
-
-- Use `./binder ...` commands in local workflows, CI, and editor integrations.
-- Scripts under `book/tools/scripts/` are internal implementation details.
-- Direct script invocation is soft-deprecated for workflows now covered by Binder.
-- The VS Code extension should call Binder subcommands, not scripts directly.
-
-## Quick Start
+Most chapter work needs only **build** (and optionally **preview**). You do not need to run `check` or `fix` by hand — **pre-commit runs those on every commit** via the same `./book/binder check …` commands documented below.
 
 ```bash
-# First time setup
-./binder setup
+# From repository root — one-time per clone
+./book/binder setup
 
-# Welcome and overview
-./binder hello
+# Day to day: build what you're editing
+./book/binder build html --vol1 vol1/ml_systems      # fast HTML chapter
+./book/binder build pdf --vol1 vol1/ml_systems       # PDF chapter
+./book/binder build epub --vol1 vol1/ml_systems      # EPUB chapter
+./book/binder build html --vol1                      # whole Volume I site
+./book/binder build pdf --vol1                       # whole Volume I PDF
 
-# Build a single chapter (HTML)
-./binder build intro
+# Optional: live reload while editing
+./book/binder preview vol1/ml_systems
 
-# Build multiple chapters together (HTML)
-./binder build intro,ml_systems
+# When a commit is blocked, pre-commit prints the failing binder command.
+# Re-run that command locally to see details, or:
+./book/binder check refs --path book/quarto/contents/vol1/ml_systems/ml_systems.qmd
+```
 
-# Preview a chapter (builds and opens in browser)
-./binder preview intro
+Commit as usual; hooks handle validation. Run `./book/binder check all --vol1` only when you want a full local sweep before pushing.
 
-# Build the complete book (HTML)
-./binder build
+## Public API policy
 
-# Build the complete book (PDF)
-./binder build pdf
+Binder is the **single source of truth** for book automation in this repository.
 
-# Build a single chapter (PDF) - SELECTIVE BUILD
-./binder build pdf intro
-# ↳ Automatically comments out all chapters except index.qmd and introduction.qmd
+- **Checks:** `./book/binder check <group> [--scope …]` — every `book-check-*` pre-commit hook dispatches here.
+- **Fixes:** `./book/binder fix <topic> <action>` — maintenance and content repair (alias: `maintain`).
+- **Formats:** `./book/binder format <target>` — auto-formatters (some pre-commit hooks use `format … --check`).
+- Use `./book/binder …` from the **repository root**. If your shell is already in `book/`, `./binder …` is equivalent.
+| Implementation | Where check logic lives |
+|----------------|-------------------------|
+| **Preferred** | `book/cli/checks/*.py` — imported by `validate.py` |
+| **Inline** | `book/cli/commands/validate.py` — small regex/graph checks |
+| **Transitional** | importlib/subprocess into `book/tools/` (being migrated) |
 
-# Publish the book
-./binder publish
+Scripts under `book/tools/` are not the public API. Pre-commit, CI, and editors call `./book/binder check …` only.
+- The VS Code extension, pre-commit, and CI must call Binder subcommands — not scripts directly.
 
-# Get help
-./binder help
+**Documentation map**
 
-# Run native validation suite
-./binder validate all
+| Audience | Document |
+|----------|----------|
+| Authors & daily use | This file (`book/docs/BINDER.md`) — command reference |
+| Check/fix implementation | [`book/cli/README.md`](../cli/README.md) — architecture, adding scopes, EPUB layers |
+| Scope registry (code) | `book/cli/commands/validate.py` → `GROUPS` dict |
+| Pre-commit wiring | `.pre-commit-config.yaml` — one hook per check group (or explicit `--scope`) |
 
-# Run maintenance namespace
-./binder maintain repo-health
+Run `./book/binder check` with no arguments to print the live group/scope catalogue (authoritative; docs may lag).
+
+## Quick start (full reference)
+
+```bash
+# First time setup (from repository root)
+./book/binder setup
+./book/binder doctor
+
+# Build & preview — primary author commands (see BUILD.md)
+./book/binder build html --vol1 vol1/training
+./book/binder preview vol1/introduction
+
+# Checks — usually pre-commit only; run locally when debugging a failed hook
+./book/binder check all --vol1
+./book/binder check refs --path book/quarto/contents/vol1/introduction/introduction.qmd
+
+# Fixes — maintenance / repair (rare in daily chapter work)
+./book/binder fix repo-health
+./book/binder fix headers add --vol1 --dry-run
+
+# Live command reference
+./book/binder help
+./book/binder check refs help    # per-group scopes and error codes
 ```
 
 ## Installation
 
-The binder is a Python script located in the project root. Make sure it's executable:
+The binder lives at `book/binder` (Python entry point → `book/cli/`). Ensure it is executable:
 
 ```bash
-chmod +x binder
+chmod +x book/binder
 ```
 
-**Dependencies**: Python 3.6+ (uses only standard library modules)
+Requires Python 3.10+ and project dependencies (Rich, etc.). Run `./book/binder doctor` to verify Quarto, Java/epubcheck, and other tooling.
 
-## Command Reference
+---
 
-### ⚡ Core Commands
+## Check — validation (`check <group>`)
 
-Intuitive commands that work on both individual chapters and the entire book.
+> **Authors:** you usually skip this section. Pre-commit invokes these automatically on commit. Use it when a hook fails and you need the full error output, or when maintaining the check suite.
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `build [chapter[,ch2,...]]` | Build book or chapter(s) in HTML | `./binder build intro,ml_systems` |
-| `preview [chapter[,ch2,...]]` | Preview book or chapter(s) | `./binder preview ops` |
-| `build pdf [chapter[,ch2,...]]` | Build book or chapter(s) in PDF | `./binder build pdf intro` |
+### Command shape
 
-**Smart defaults**: No target = entire book, with target = specific chapter(s)
+```bash
+./book/binder check <group> [--scope <name>] [--vol1|--vol2] [--path PATH] [--json]
+./book/binder check all [--vol1|--vol2]          # every group's curated scopes
+./book/binder check <group> --all-scopes         # include opt-in / heavy scopes
+./book/binder check <group> help                 # scopes + error codes for one group
+```
 
-### 📚 Full Book Examples
+`validate` is a backward-compatible alias for `check` (same parser). Prefer **`check`**.
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `build` | Build complete book (HTML) | `./binder build` |
-| `preview` | Preview complete book | `./binder preview` |
-| `build pdf` | Build complete book (PDF) | `./binder build pdf` |
-| `publish` | Build and publish book | `./binder publish` |
+**Important:** the first argument after `check` must be a **group name** (e.g. `refs`, `labels`), not a legacy flat name. Scopes such as `inline-python` or `duplicates` require `--scope`.
 
-### 🔧 Management Commands
+### Check groups (25 + `all`)
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `validate <subcommand>` | Run Binder-native validation checks | `./binder validate inline-refs` |
-| `maintain <topic> ...` | Run Binder-native maintenance utilities | `./binder maintain glossary paths` |
-| `setup` | Configure environment | `./binder setup` |
-| `clean` | Clean configs & artifacts | `./binder clean` |
-| `switch <format>` | Switch active config | `./binder switch pdf` |
-| `status` | Show current status | `./binder status` |
-| `list` | List available chapters | `./binder list` |
-| `doctor` | Run comprehensive health check | `./binder doctor` |
-| `about` | Show project information | `./binder about` |
-| `help` | Show help information | `./binder help` |
+| Group | What it validates | Common scopes |
+|-------|-------------------|---------------|
+| `refs` | Cross-refs, citations, inline `{python}` refs | `cross-refs`, `citations`, `inline`; opt-in: `inline-python`, `self-ref` |
+| `labels` | Duplicate and orphan `@fig-` / `@tbl-` / … labels | `duplicates`, `orphans` |
+| `headers` | Section IDs (`{#sec-…}`) and headline case | `ids`, `case` |
+| `bib` | Bibliography hygiene | `hygiene` |
+| `footnotes` | Definition shape, placement, integrity | `definition-shape`, `placement`, `integrity` |
+| `figures` | Captions, div syntax, alt text, label-required | default set in `check figures help` |
+| `markup` | Low-level markup (patterns, div fences, callouts) | `patterns`, `div-fences`, `callouts` |
+| `prose` | Contractions, duplicate words, above/below, … | see `check prose help` |
+| `punctuation` | Em-dash, slash, vs., e.g./i.e., en-dash ranges | |
+| `numbers` | Unit spacing, binary units, percent rules | |
+| `math` | `\times` spacing, attribute LaTeX leaks, LEGO fmt/suffix canonical | `canonical`, `render-audit` (opt-in) |
+| `structure` | Heading levels, parts, Purpose sections | |
+| `code` | Python `echo: false`, `_str` LaTeX leaks, LEGO dead code | `lego-dead-code` |
+| `tables` | Grid→pipe, content hygiene, caption-required | |
+| `listings` | `#lst-` divs carry `lst-cap` | |
+| `index` | `\index{}` placement, anti-patterns, xrefs | |
+| `images` | Formats, external URLs, SVG XML | |
+| `json` | JSON syntax in book tree | |
+| `units` | mlsysim physics unit tests | |
+| `notation` | Iron-law symbol consistency | |
+| `spelling` | aspell on prose / TikZ | opt-in (needs aspell) |
+| `epub` | Source hygiene; opt-in: smoke, epubcheck | `hygiene --fix` auto-repairs source |
+| `sources` | Source-note / citation formatting | |
+| `references` | External .bib verification (hallucinator) | opt-in, network |
+| `content` | Content tree structure | opt-in |
 
-### ✅ Validation Namespace
+### Examples
 
-Use Binder-native checks instead of direct script calls:
+```bash
+# Pre-commit-equivalent: all curated checks on Volume I
+./book/binder check all --vol1
 
-- `./binder validate inline-python`
-- `./binder validate refs`
-- `./binder validate citations`
-- `./binder validate references` — validate .bib entries vs academic DBs (hallucinator; install: `pip install -e ".[reference-check]"` or `pip install -r book/tools/dependencies/requirements.txt`)
-  - `-f BIB` / `--file BIB` — .bib file(s) to check (can repeat)
-  - `-o FILE` / `--output FILE` — write report to FILE
-  - `--limit N` — check only first N refs (quick test)
-- `./binder validate duplicate-labels`
-- `./binder validate unreferenced-labels`
-- `./binder validate inline-refs`
-- `./binder validate all`
+# Single file, inline Python execution
+./book/binder check refs --scope inline-python --path book/quarto/contents/vol1/training/training.qmd
 
-#### Bibliography consistency (`.bib` + pre-commit)
+# Inline `{python}` variable references
+./book/binder check refs --scope inline --path book/quarto/contents/vol1/introduction/introduction.qmd
 
-Committed `.bib` files go through **pre-commit** in this order:
+# LEGO fmt / suffix discipline (also runs as part of `check math` on commit)
+./book/binder check math --scope canonical --path book/quarto/contents/vol1/training/training.qmd
 
-1. **`bib-apply-mechanical`** — `book/tools/bib_apply_mechanical_fixes.py` (safe §5 field fixes; only **changed** `.bib` in the commit; exits **1** if it rewrote a file so you re-stage)
+# Label hygiene
+./book/binder check labels --scope duplicates --vol1
+./book/binder check labels --scope orphans --vol1
+
+# External bibliography audit (optional dependency)
+./book/binder check references --scope hallucinator -f book/quarto/contents/vol1/backmatter/references.bib --limit 10
+
+# Machine-readable output (CI / editor integration)
+./book/binder check refs --json --quiet
+```
+
+Exit codes: `0` = passed, `1` = failures or command error.
+
+### Pre-commit ↔ binder mapping
+
+Every `book-check-*` hook in `.pre-commit-config.yaml` calls `./book/binder check …`. The hook ID mirrors the group; scopes are embedded in the `entry` when needed.
+
+| Pre-commit hook | Binder command |
+|-----------------|----------------|
+| `book-check-headers` | `check headers` |
+| `book-check-structure` | `check structure` |
+| `book-check-labels-orphans` | `check labels --scope orphans` |
+| `book-check-labels-duplicates` | `check labels --scope duplicates` |
+| `book-check-refs` | `check refs` |
+| `book-check-footnotes` | `check footnotes` |
+| `book-check-figures` | `check figures` |
+| `book-check-images` | `check images` |
+| `book-check-tables` | `check tables` |
+| `book-check-listings` | `check listings` |
+| `book-check-tables-format` | `format tables --check` |
+| `book-check-markup` | `check markup` |
+| `book-check-code` | `check code` |
+| `book-check-prose` | `check prose` |
+| `book-check-punctuation` | `check punctuation` |
+| `book-check-numbers` | `check numbers` |
+| `book-check-math` | `check math` (includes `canonical` scope for LEGO fmt discipline) |
+| `book-check-notation` | `check notation` |
+| `book-check-index` | `check index` |
+| `book-check-sources` | `check sources` |
+| `book-check-json` | `check json` |
+| `book-check-units` | `check units` |
+| `book-check-epub` | `check epub` (scope `hygiene`) |
+| `book-check-bib` | `check bib` |
+| `book-check-math-render-audit` | `check math --scope render-audit` (manual stage) |
+
+To reproduce a hook locally:
+
+```bash
+pre-commit run book-check-refs --files book/quarto/contents/vol1/introduction/introduction.qmd
+# equivalent:
+./book/binder check refs --path book/quarto/contents/vol1/introduction/introduction.qmd
+```
+
+### Bibliography (`.bib` + pre-commit)
+
+Committed `.bib` files go through pre-commit in this order:
+
+1. **`bib-apply-mechanical`** — safe field fixes on staged `.bib` only
 2. **`bibtex-tidy`** — layout
-3. **`./book/binder check bib --scope hygiene`** — same as `book/tools/bib_lint.py` **errors** (see `book/tools/bib_lint_baseline.json` for grandfathering; warnings do not block)
+3. **`./book/binder check bib --scope hygiene`** — same errors as `book/tools/bib_lint.py` (see `book/tools/bib_lint_baseline.json`)
 
-To run the same pipeline **by hand** on the whole tree (e.g. before a big merge), from the **repository root**:
+Normalize the whole tree by hand:
 
 ```bash
 ./book/binder bib normalize              # all git-tracked *.bib
-./book/binder bib normalize --vol1        # only under book/quarto/contents/vol1
+./book/binder bib normalize --vol1
 ```
 
-This runs, in order: `book/tools/bib_apply_mechanical_fixes.py` (safe §5 field fixes) → `pre-commit run bibtex-tidy --all-files` (until it passes) → `python3 book/tools/bib_lint.py --all --check`. Optional metadata refresh via betterbib is separate: **`./book/binder bib update`**. That command runs `betterbib sync` on a temp copy, propagates any citekey renames into companion prose files, and rejects ambiguous collisions.
+Metadata refresh: `./book/binder bib update` (betterbib sync + citekey propagation).
 
-Machine-readable output is available for editor/CI integration:
+---
 
-```bash
-./binder validate all --json
-```
+## Fix — maintenance (`fix <topic> <action>`)
 
-Exit semantics:
+> **Authors:** rarely needed day to day. Pre-commit and `./book/binder fix …` overlap only for optional housekeeping (repo health, image compression, section IDs).
 
-- `0` success (no issues)
-- `1` validation failures or command failure
+Canonical namespace for repairs and housekeeping. `maintain` is an alias for `fix`.
 
-### 🧰 Maintenance Namespace
+| Topic | Actions | Example |
+|-------|---------|---------|
+| `glossary` | `paths` | `./book/binder fix glossary paths [--vol1\|--vol2]` |
+| `images` | `compress` | `./book/binder fix images compress --all --smart-compression [--apply]` |
+| `repo-health` | `check` (optional) | `./book/binder fix repo-health [--json] [--min-size-mb N]` |
+| `headers` | `add`, `repair`, `list`, `remove` | `./book/binder fix headers add --vol1 --dry-run` |
+| `footnotes` | `cleanup`, `reorganize`, `remove` | `./book/binder fix footnotes cleanup --vol1 --dry-run` |
 
-- `./binder maintain glossary paths [--vol1|--vol2]`
-- `./binder maintain images compress [-f <file> ... | --all] [--smart-compression] [--apply]`
-- `./binder maintain repo-health [--json] [--min-size-mb N]`
+**Related commands (not under `fix`):**
 
-### 🚀 Shortcuts
+- `./book/binder headings check|dry-run|apply` — headline-case enforcement (also runs as `check headers --scope case`)
+- `./book/binder check epub --scope hygiene --fix` — auto-repair SVG/BibTeX EPUB source issues
+- `./book/binder bib normalize|sync|clean|update` — bibliography tooling
 
-All commands have convenient shortcuts:
+---
 
-| Shortcut | Command |
-|----------|---------|
-| `b` | `build` |
-| `p` | `preview` |
-| `pdf` | `build pdf` |
-| `epub` | `build epub` |
-| `l` | `list` |
-| `s` | `status` |
-| `d` | `doctor` |
-| `h` | `help` |
+## Build & preview (summary)
 
-## Chapter Names
+| Command | Description | Example |
+|---------|-------------|---------|
+| `build [html\|pdf\|epub] [chapter[,…]]` | Build book or chapter(s) | `./book/binder build pdf --vol1 vol1/intro` |
+| `preview [chapter]` | Live dev server | `./book/binder preview vol1/intro` |
+| `pdf\|html\|epub reset` | Reset fast-build config | `./book/binder pdf reset --vol1` |
+
+See [BUILD.md](BUILD.md) and [DEVELOPMENT.md](DEVELOPMENT.md) for full build workflows.
+
+### Management commands
+
+| Command | Description |
+|---------|-------------|
+| `setup` | Configure environment and pre-commit |
+| `clean` | Remove build artifacts |
+| `switch <format>` | Switch active Quarto config symlink |
+| `list` / `status` | Chapters and config status |
+| `doctor` | Tooling health check |
+| `help` | Command reference |
+
+**Note:** `publish` is not a Binder subcommand. Release publishing uses GitHub Actions and scripts under `book/tools/scripts/publish/`.
+
+---
+
+## Chapter names
 
 Chapters can be referenced by their short names. Common examples:
 
@@ -184,9 +291,14 @@ Use `./binder list` to see all available chapters.
 | HTML | `build/html/` | Website format with navigation |
 | PDF | `build/pdf/` | Academic book format |
 
-## 🚀 Publishing
+## Publishing
 
-The `publish` command provides two modes based on how you call it:
+Release publishing is **not** a Binder subcommand. Use GitHub Actions and scripts under `book/tools/scripts/publish/`. The sections below describe historical `publish` behavior and may be outdated — see your team's release runbook.
+
+<details>
+<summary>Legacy publish documentation (historical)</summary>
+
+The former `publish` CLI command has been removed from Binder.
 
 ### 1. Interactive Mode (Default)
 
@@ -257,6 +369,8 @@ When called with arguments, `publish` triggers the GitHub Actions workflow direc
 - Must be on `main` branch
 - No uncommitted changes
 - Git repository properly configured
+
+</details>
 
 ## Advanced Features
 
@@ -430,29 +544,8 @@ Use `./binder switch <format>` to change the active configuration symlink.
 - Only use full builds (`./binder build * format`) for final verification
 - Preview mode auto-rebuilds on file changes
 
-## 🚀 Publishing
+## Further reading
 
-The `publish` command provides a complete publishing workflow:
-
-```bash
-# One-command publishing
-./binder publish
-```
-
-**What it does:**
-1. **Validates environment** - Checks Git status, tools, and dependencies
-2. **Manages branches** - Merges `dev` to `main` with confirmation
-3. **Plans release** - Suggests version bump (patch/minor/major)
-4. **Builds everything** - PDF first, then HTML (ensures PDF is available)
-5. **Creates release** - Git tag, AI-generated release notes, GitHub release
-6. **Deploys** - Copies PDF to assets, commits, pushes to production
-
-**Features:**
-- 🤖 **AI-powered release notes** (requires Ollama)
-- 📊 **Smart version suggestions** based on changes
-- 🛡️ **Safety checks** and confirmations
-- 🎯 **Step-by-step wizard** with clear progress
-
-For more details, see:
-- [BUILD.md](BUILD.md) - Complete build instructions
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Development setup and workflow
+- [BUILD.md](BUILD.md) — build instructions
+- [DEVELOPMENT.md](DEVELOPMENT.md) — development setup
+- [`book/cli/README.md`](../cli/README.md) — check/fix architecture, adding scopes, EPUB layers

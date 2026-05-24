@@ -236,8 +236,8 @@ cd book
 # Utilities
 ./binder help               # Show all commands
 ./binder list               # List chapters
-./binder validate all       # Run Binder-native validation checks
-./binder maintain repo-health # Run Binder-native repo diagnostics
+./binder check all          # Run curated validation checks (same family as pre-commit)
+./binder fix repo-health    # Repo diagnostics
 ```
 
 ---

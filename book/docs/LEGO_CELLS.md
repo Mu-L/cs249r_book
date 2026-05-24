@@ -6,7 +6,7 @@ references them with `` `{python} Class.field_str` ``.
 
 This document defines how to author and review LEGO cells. It complements the
 fmt/notation audit lane (`book/tools/audit/fmt/README.md`) and pre-commit checks
-(`lego-dead-code`, `audit_math_canonical.py`).
+(`lego-dead-code`, `./book/binder check math --scope canonical`).
 
 ## Core rule
 
@@ -85,7 +85,7 @@ copyedit, fact-check, or fmt audit:
 1. Split the mega-class at callout boundaries.
 2. Rename classes to match the narrative beat.
 3. Inline duplicated constants from `mlsysim` where it reduces drift.
-4. Re-run `fmt/audit_prose.py` and `audit_math_canonical.py` on that chapter.
+4. Re-run `fmt/audit_prose.py` and `./book/binder check math --scope canonical` on that chapter.
 
 Future optional lints (`lego-locality`, `lego-span`, `lego-cross-ref`) may
 automate the checklist; until then, apply this contract in review.
@@ -93,5 +93,5 @@ automate the checklist; until then, apply this contract in review.
 ## Related
 
 - `book/tools/audit/fmt/README.md` — spurious `.0` / fmt precision workflow
-- `book/tools/audit/audit_math_canonical.py` — static fmt and suffix lint
-- `./book/binder validate inline-python` — chapter exec validation
+- `./book/binder check math --scope canonical` — static fmt and suffix lint (implementation: `book/cli/checks/math_canonical.py`)
+- `./book/binder check refs --scope inline-python` — chapter exec validation
