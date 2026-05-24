@@ -37,7 +37,7 @@ class CloudHardware(Registry):
     H100 = HardwareNode(
         name="NVIDIA H100",
         release_year=2022,
-        compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS}),
+        compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS, "fp32_cuda": 67 * TFLOPs / second}),
         memory=MemoryHierarchy(
             capacity=80 * GiB,
             bandwidth=3.35 * TB / second,
@@ -56,7 +56,7 @@ class CloudHardware(Registry):
     H200 = HardwareNode(
         name="NVIDIA H200",
         release_year=2023,
-        compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS}),
+        compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS, "fp32_cuda": 67 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=131 * GiB, bandwidth=4.8 * TB / second),
         storage=StorageHierarchy(capacity=4 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),

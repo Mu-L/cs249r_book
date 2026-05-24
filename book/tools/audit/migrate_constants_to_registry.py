@@ -27,6 +27,7 @@ INTERCONNECT_MAP = {
     "INFINIBAND_NDR_BW": "Systems.Fabrics.InfiniBand_NDR.bandwidth",
     "INFINIBAND_XDR_BW": "Systems.Fabrics.InfiniBand_XDR.bandwidth",
     "INFINIBAND_GXDR_BW": "Systems.Fabrics.InfiniBand_GXDR.bandwidth",
+    "H100_FLOPS_FP32_CUDA": 'Hardware.Cloud.H100.compute.precision_flops["fp32_cuda"]',
     "CPU_FLOPS_FP32": "Hardware.Cloud.ReferenceCPU.compute.peak_flops",
     "H100_L2_CACHE": "Hardware.Cloud.H100.memory.l2_cache",
     "TPUV5P_L2_SRAM": "Hardware.Cloud.TPUv5p.memory.l2_cache",
@@ -78,11 +79,24 @@ DEFAULTS_MAP = {
     "CARBON_QUEBEC_GCO2_KWH": "defaults.CARBON_QUEBEC_GCO2_KWH",
     "CARBON_IOWA_GCO2_KWH": "defaults.CARBON_IOWA_GCO2_KWH",
     "CARBON_POLAND_GCO2_KWH": "defaults.CARBON_POLAND_GCO2_KWH",
+    "CARBON_NORWAY_GCO2_KWH": "defaults.CARBON_NORWAY_GCO2_KWH",
+    "CARBON_EU_AVG_GCO2_KWH": "defaults.CARBON_EU_AVG_GCO2_KWH",
+    "CARBON_FRANCE_GCO2_KWH": "defaults.CARBON_FRANCE_GCO2_KWH",
     "MEMORY_BIT_ERROR_RATE_PER_BIT": "defaults.MEMORY_BIT_ERROR_RATE_PER_BIT",
     "KS_TEST_COEFFICIENT": "defaults.KS_TEST_COEFFICIENT",
     "PSI_WARN_THRESHOLD": "defaults.PSI_WARN_THRESHOLD",
     "PSI_REVIEW_THRESHOLD": "defaults.PSI_REVIEW_THRESHOLD",
     "PSI_CRITICAL_THRESHOLD": "defaults.PSI_CRITICAL_THRESHOLD",
+    "INFINIBAND_NDR_BW_GBS": "defaults.INFINIBAND_NDR_BW_GBS",
+    "INFINIBAND_HDR_BW_GBS": "defaults.INFINIBAND_HDR_BW_GBS",
+    "INFINIBAND_XDR_BW_GBS": "defaults.INFINIBAND_XDR_BW_GBS",
+    "ETHERNET_400G_BW_GBS": "defaults.ETHERNET_400G_BW_GBS",
+    "ETHERNET_800G_BW_GBS": "defaults.ETHERNET_800G_BW_GBS",
+    "ROCE_100G_BW_GBS": "defaults.ROCE_100G_BW_GBS",
+    "IB_NDR_LATENCY_US": "defaults.IB_NDR_LATENCY_US",
+    "IB_HDR_LATENCY_US": "defaults.IB_HDR_LATENCY_US",
+    "ROCE_LATENCY_US": "defaults.ROCE_LATENCY_US",
+    "TCP_LATENCY_US": "defaults.TCP_LATENCY_US",
 }
 
 DATASETS_MAP = {
@@ -122,7 +136,12 @@ def substitute_cell(cell: str, mapping: dict[str, str]) -> tuple[str, list[str]]
     replaced: list[str] = []
     out = cell
     for sym, target in mapping.items():
-        pat = re.compile(rf"\b{re.escape(sym)}\b")
+        cpat = re.compile(rf"\bconstants\.{re.escape(sym)}\b")
+        if cpat.search(out):
+            out = cpat.sub(target, out)
+            replaced.append(sym)
+            continue
+        pat = re.compile(rf"(?<![.\w]){re.escape(sym)}\b")
         if pat.search(out):
             out = pat.sub(target, out)
             replaced.append(sym)
