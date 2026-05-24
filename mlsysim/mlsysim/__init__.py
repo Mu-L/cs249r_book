@@ -13,6 +13,7 @@ from . import platforms
 from . import infra
 from . import systems
 from . import sim
+from . import physics
 
 # AUTHORITATIVE API ENTRY POINTS
 from .core.engine import Engine
@@ -99,5 +100,5 @@ __all__ = [
     # Viz
     "viz", "plot_evaluation_scorecard", "plot_roofline",
     # Internal Namespaces
-    "core", "hardware", "models", "infra", "systems", "sim",
+    "core", "hardware", "models", "infra", "systems", "sim", "physics",
 ]
