@@ -74,27 +74,25 @@ async def _():
     import mlsysim
     from mlsysim import Hardware
     from mlsysim.core.defaults import INFINIBAND_NDR_BW_GBS
-    from mlsysim.core.constants import (
-        A100_FLOPS_FP16_TENSOR, T4_FLOPS_FP16_TENSOR,
-    )
+    from mlsysim.core.constants import GPUS_PER_HOST
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100
     A100 = Hardware.Cloud.A100
+    T4 = Hardware.Cloud.T4
 
     # ── Hardware constants (from registry) ──────────────────────────────
     H100_TFLOPS_FP16  = H100.compute.peak_flops.m_as("TFLOPs/s")
     H100_BW_GBS       = H100.memory.bandwidth.m_as("GB/s")
     H100_RAM_GB       = H100.memory.capacity.m_as("GB")
     A100_RAM_GB       = A100.memory.capacity.m_as("GB")
-    A100_TFLOPS_FP16  = A100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    T4_TFLOPS_FP16    = T4_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    # Interconnect specs (from defaults — not in per-device registry)
-    NVLINK4_BW_GBS    = 900.0     # GB/s NVLink 4 (DGX H100)
+    A100_TFLOPS_FP16  = A100.compute.peak_flops.m_as("TFLOPs/s")
+    T4_TFLOPS_FP16    = T4.compute.peak_flops.m_as("TFLOPs/s")
+    NVLINK4_BW_GBS    = H100.nvlink.bandwidth.m_as("GB/s")
     IB_NDR_BW_GBS     = INFINIBAND_NDR_BW_GBS  # 50 GB/s, alias for consistent naming
     IB_HDR_BW_GBS     = 25.0      # GB/s InfiniBand HDR per port
     ETH_100G_BW_GBS   = 12.5      # GB/s 100GbE
-    GPUS_PER_NODE     = 8
+    GPUS_PER_NODE     = GPUS_PER_HOST
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):

@@ -36,23 +36,22 @@ async def _():
     from mlsysim.core.formulas import calc_young_daly_interval, calc_mtbf_cluster
     from mlsysim.core.constants import (
         ureg,
-        H100_FLOPS_FP16_TENSOR,
-        A100_FLOPS_FP16_TENSOR,
-        B200_FLOPS_FP16_TENSOR,
-        V100_FLOPS_FP16_TENSOR,
         NVME_SEQUENTIAL_BW,
     )
 
     # ── Hardware registry ─────────────────────────────────────────────────────
     _H100_REG = mlsysim.Hardware.Cloud.H100
+    _A100_REG = mlsysim.Hardware.Cloud.A100
+    _B200_REG = mlsysim.Hardware.Cloud.B200
+    _V100_REG = mlsysim.Hardware.Cloud.V100
     _T4_REG = mlsysim.Hardware.Cloud.T4
     _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
 
     # Scalar extraction
-    H100_TFLOPS = H100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    A100_TFLOPS = A100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    B200_TFLOPS = B200_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    V100_TFLOPS = V100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
+    H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    A100_TFLOPS = _A100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    B200_TFLOPS = _B200_REG.compute.peak_flops.m_as("TFLOPs/s")
+    V100_TFLOPS = _V100_REG.compute.peak_flops.m_as("TFLOPs/s")
     NVME_GBS = NVME_SEQUENTIAL_BW.m_as("GB/s")
 
     H100_RAM_GB = _H100_REG.memory.capacity.m_as("GB")

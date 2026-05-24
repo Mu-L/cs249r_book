@@ -42,38 +42,29 @@ async def _():
     )
     from mlsysim.core.constants import (
         ureg,
-        H100_FLOPS_FP16_TENSOR,
-        H100_MEM_BW,
-        H100_MEM_CAPACITY,
-        H100_TDP,
-        A100_FLOPS_FP16_TENSOR,
-        A100_MEM_BW,
-        A100_MEM_CAPACITY,
-        B200_FLOPS_FP16_TENSOR,
-        B200_MEM_BW,
-        B200_MEM_CAPACITY,
-        V100_FLOPS_FP16_TENSOR,
-        V100_MEM_BW,
         NVME_SEQUENTIAL_BW,
     )
 
     # ── Hardware registry ─────────────────────────────────────────────────────
     _H100_REG = mlsysim.Hardware.Cloud.H100
+    _A100_REG = mlsysim.Hardware.Cloud.A100
+    _B200_REG = mlsysim.Hardware.Cloud.B200
+    _V100_REG = mlsysim.Hardware.Cloud.V100
     _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
 
     # Extract scalar values for chart use
-    H100_TFLOPS = H100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    H100_BW_GBS = H100_MEM_BW.m_as("GB/s")
-    H100_RAM_GB = H100_MEM_CAPACITY.m_as("GB")
-    H100_TDP_W = H100_TDP.m_as("W")
+    H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    H100_BW_GBS = _H100_REG.memory.bandwidth.m_as("GB/s")
+    H100_RAM_GB = _H100_REG.memory.capacity.m_as("GB")
+    H100_TDP_W = _H100_REG.tdp.m_as("W")
     H100_RIDGE = H100_TFLOPS * 1000 / H100_BW_GBS  # FLOPs/Byte
 
-    A100_TFLOPS = A100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    A100_BW_GBS = A100_MEM_BW.m_as("GB/s")
-    B200_TFLOPS = B200_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    B200_BW_GBS = B200_MEM_BW.m_as("GB/s")
-    V100_TFLOPS = V100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    V100_BW_GBS = V100_MEM_BW.m_as("GB/s")
+    A100_TFLOPS = _A100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    A100_BW_GBS = _A100_REG.memory.bandwidth.m_as("GB/s")
+    B200_TFLOPS = _B200_REG.compute.peak_flops.m_as("TFLOPs/s")
+    B200_BW_GBS = _B200_REG.memory.bandwidth.m_as("GB/s")
+    V100_TFLOPS = _V100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    V100_BW_GBS = _V100_REG.memory.bandwidth.m_as("GB/s")
 
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
     EDGE_BW_GBS = _EDGE_REG.memory.bandwidth.m_as("GB/s")
