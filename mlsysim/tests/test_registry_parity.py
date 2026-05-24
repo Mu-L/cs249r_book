@@ -1,8 +1,4 @@
-"""Parity tests: registry replacements must match legacy constants before deletion.
-
-Populated incrementally as symbols migrate out of mlsysim.core.constants.
-Run with: pytest mlsysim/tests/test_registry_parity.py -v
-"""
+"""Parity tests: registry replacements must match legacy constants before deletion."""
 
 from __future__ import annotations
 
@@ -11,15 +7,28 @@ from pathlib import Path
 
 import pytest
 
+from mlsysim import Hardware, Systems
+from mlsysim.core import constants as legacy
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = (
     REPO_ROOT / "book" / "tools" / "audit" / "artifacts" / "registry_migration_manifest.json"
 )
 
-# (constant_name, registry_getter) pairs added per migration step.
-# Example after Hardware migration:
-#   ("H100_FLOPS_FP16_TENSOR", lambda: Hardware.Cloud.H100.compute.peak_flops),
-PARITY_CASES: list[tuple[str, str]] = []
+# (constant_name, registry_value) — add pairs as symbols are hard-deleted from constants.py.
+PARITY_CASES: list[tuple[str, object]] = [
+    ("NVLINK_V100_BW", Hardware.Cloud.V100.nvlink.bandwidth),
+    ("NVLINK_A100_BW", Hardware.Cloud.A100.nvlink.bandwidth),
+    ("NVLINK_H100_BW", Hardware.Cloud.H100.nvlink.bandwidth),
+    ("NVLINK_B200_BW", Hardware.Cloud.B200.nvlink.bandwidth),
+    ("PCIE_GEN3_BW", Hardware.Cloud.V100.interconnect.bandwidth),
+    ("PCIE_GEN4_BW", Hardware.Cloud.A100.interconnect.bandwidth),
+    ("PCIE_GEN5_BW", Hardware.Cloud.H100.interconnect.bandwidth),
+    ("INFINIBAND_HDR_BW", Systems.Fabrics.InfiniBand_HDR.bandwidth),
+    ("INFINIBAND_NDR_BW", Systems.Fabrics.InfiniBand_NDR.bandwidth),
+    ("INFINIBAND_XDR_BW", Systems.Fabrics.InfiniBand_XDR.bandwidth),
+    ("INFINIBAND_GXDR_BW", Systems.Fabrics.InfiniBand_GXDR.bandwidth),
+]
 
 
 def _load_manifest() -> dict:
@@ -28,19 +37,12 @@ def _load_manifest() -> dict:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("constant_name,replacement", PARITY_CASES or [("_placeholder", None)])
-def test_registry_parity(constant_name: str, replacement: str | None) -> None:
-    if constant_name == "_placeholder":
-        manifest = _load_manifest()
-        migrate = [s for s in manifest.get("symbols", []) if s.get("action") == "migrate"]
-        assert migrate, "manifest has no migrate symbols"
-        pytest.skip("parity cases not yet wired; scaffold only")
-    from mlsysim.core import constants as legacy
-
+@pytest.mark.parametrize("constant_name,registry_val", PARITY_CASES)
+def test_registry_parity(constant_name: str, registry_val: object) -> None:
+    if not hasattr(legacy, constant_name):
+        pytest.skip(f"{constant_name} already removed from constants.py")
     legacy_val = getattr(legacy, constant_name)
-    # Registry eval happens in step-specific commits once paths are stable.
-    assert legacy_val is not None
-    assert replacement is not None
+    assert legacy_val == registry_val
 
 
 def test_manifest_present() -> None:

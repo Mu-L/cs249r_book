@@ -44,7 +44,7 @@ async def _():
         calc_tree_allreduce_time,
         calc_hierarchical_allreduce_time,
     )
-    from mlsysim.core.constants import ureg, NVLINK_H100_BW
+    from mlsysim.core.constants import ureg
 
     # ── Hardware registry ─────────────────────────────────────────────────────
     _H100_REG = mlsysim.Hardware.Cloud.H100
@@ -55,7 +55,7 @@ async def _():
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
     EDGE_BW_GBS = _EDGE_REG.memory.bandwidth.m_as("GB/s")
 
-    NVLINK_GBS = NVLINK_H100_BW.m_as("GB/s")
+    NVLINK_GBS = _H100_REG.nvlink.bandwidth.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
     GPT2 = mlsysim.Models.GPT2

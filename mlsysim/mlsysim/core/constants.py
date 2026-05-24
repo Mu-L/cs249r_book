@@ -117,21 +117,6 @@ ETHERNET_1P6T_BW = 1600 * Gbps
 SWITCH_ASIC_51T2_BW = 51_200 * Gbps
 SWITCH_ASIC_102T4_BW = 102_400 * Gbps
 
-# Intra-node interconnects (legacy aliases — prefer Hardware.Cloud.<GPU>.nvlink.bandwidth)
-NVLINK_V100_BW = 300 * GB / second        # NVLink 2.0 (V100, 6 links × 50 GB/s)
-NVLINK_A100_BW = 600 * GB / second        # NVLink 3.0 (A100, 12 links × 50 GB/s)
-NVLINK_H100_BW = 900 * GB / second        # NVLink 4.0 (H100, 18 links × 50 GB/s)
-NVLINK_B200_BW = 1800 * GB / second       # NVLink 5.0 (B200, 72 links × 25 GB/s)
-PCIE_GEN3_BW = 15.75 * GB / second        # PCIe Gen3 x16 (after 128b/130b encoding)
-PCIE_GEN4_BW = 32 * GB / second           # PCIe Gen4 x16 (unidirectional, per direction)
-PCIE_GEN5_BW = 64 * GB / second           # PCIe Gen5 x16 (unidirectional, per direction)
-
-# Inter-node interconnects
-INFINIBAND_HDR_BW = 200 * Gbps            # HDR InfiniBand (25 GB/s)
-INFINIBAND_NDR_BW = 400 * Gbps            # NDR InfiniBand (50 GB/s)
-INFINIBAND_XDR_BW = 800 * Gbps            # XDR InfiniBand (100 GB/s)
-INFINIBAND_GXDR_BW = 1600 * Gbps          # GXDR InfiniBand (200 GB/s, 2026)
-
 # --- Energy (Horowitz, 2014 @ 45nm) ---
 ENERGY_DRAM_ACCESS_PJ = 640 * ureg.picojoule
 ENERGY_DRAM_PJ_PER_BYTE = 160 * ureg.picojoule / byte

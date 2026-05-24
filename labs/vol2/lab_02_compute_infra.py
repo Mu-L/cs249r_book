@@ -54,8 +54,6 @@ async def _():
         B200_MEM_CAPACITY,
         V100_FLOPS_FP16_TENSOR,
         V100_MEM_BW,
-        NVLINK_H100_BW,
-        PCIE_GEN5_BW,
         NVME_SEQUENTIAL_BW,
     )
 
@@ -82,8 +80,8 @@ async def _():
     EDGE_RAM_GB = _EDGE_REG.memory.capacity.m_as("GB")
     EDGE_TDP_W = _EDGE_REG.tdp.m_as("W")
 
-    NVLINK_GBS = NVLINK_H100_BW.m_as("GB/s")
-    PCIE_GBS = PCIE_GEN5_BW.m_as("GB/s")
+    NVLINK_GBS = _H100_REG.nvlink.bandwidth.m_as("GB/s")
+    PCIE_GBS = _H100_REG.interconnect.bandwidth.m_as("GB/s")
     IB_NDR_GBS = INFINIBAND_NDR_BW_GBS
     NVME_GBS = NVME_SEQUENTIAL_BW.m_as("GB/s")
 

@@ -1,12 +1,17 @@
 from .types import Node, Fleet, NetworkFabric
+from ..core.units import ureg, Q_, Gbps
 from ..core.constants import (
-    ureg, Q_,
-    INFINIBAND_NDR_BW, INFINIBAND_HDR_BW, INFINIBAND_XDR_BW, INFINIBAND_GXDR_BW,
     NETWORK_10G_BW, NETWORK_100G_BW, ETHERNET_400G_BW, ETHERNET_800G_BW,
-    IB_NDR_LATENCY_US, IB_HDR_LATENCY_US, TCP_LATENCY_US,
 )
+from ..core.defaults import IB_NDR_LATENCY_US, IB_HDR_LATENCY_US, TCP_LATENCY_US
 from ..hardware.registry import Hardware
 from ..core.registry import Registry
+
+# Canonical fabric bit-rates (Systems.Fabrics is the public API).
+_INFINIBAND_HDR_BW = 200 * Gbps
+_INFINIBAND_NDR_BW = 400 * Gbps
+_INFINIBAND_XDR_BW = 800 * Gbps
+_INFINIBAND_GXDR_BW = 1600 * Gbps
 
 
 class Nodes(Registry):
@@ -40,10 +45,10 @@ class Fabrics(Registry):
     Ethernet_100G = NetworkFabric(name="100GbE", bandwidth=NETWORK_100G_BW, latency=Q_(TCP_LATENCY_US, "us"))
     Ethernet_400G = NetworkFabric(name="400GbE", bandwidth=ETHERNET_400G_BW, latency=Q_(TCP_LATENCY_US, "us"))
     Ethernet_800G = NetworkFabric(name="800GbE", bandwidth=ETHERNET_800G_BW, latency=Q_(TCP_LATENCY_US, "us"))
-    InfiniBand_HDR = NetworkFabric(name="IB HDR", bandwidth=INFINIBAND_HDR_BW, latency=Q_(IB_HDR_LATENCY_US, "us"))
-    InfiniBand_NDR = NetworkFabric(name="IB NDR", bandwidth=INFINIBAND_NDR_BW, latency=Q_(IB_NDR_LATENCY_US, "us"))
-    InfiniBand_XDR = NetworkFabric(name="IB XDR", bandwidth=INFINIBAND_XDR_BW, latency=Q_(IB_NDR_LATENCY_US, "us"))
-    InfiniBand_GXDR = NetworkFabric(name="IB GXDR", bandwidth=INFINIBAND_GXDR_BW, latency=Q_(IB_NDR_LATENCY_US, "us"))
+    InfiniBand_HDR = NetworkFabric(name="IB HDR", bandwidth=_INFINIBAND_HDR_BW, latency=Q_(IB_HDR_LATENCY_US, "us"))
+    InfiniBand_NDR = NetworkFabric(name="IB NDR", bandwidth=_INFINIBAND_NDR_BW, latency=Q_(IB_NDR_LATENCY_US, "us"))
+    InfiniBand_XDR = NetworkFabric(name="IB XDR", bandwidth=_INFINIBAND_XDR_BW, latency=Q_(IB_NDR_LATENCY_US, "us"))
+    InfiniBand_GXDR = NetworkFabric(name="IB GXDR", bandwidth=_INFINIBAND_GXDR_BW, latency=Q_(IB_NDR_LATENCY_US, "us"))
 
 
 class Clusters(Registry):

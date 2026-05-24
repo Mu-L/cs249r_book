@@ -35,7 +35,7 @@ sys.path.insert(0, _book_dir)
 from mlsysim.core.constants import *
 from mlsysim.core.formulas import *
 from mlsysim.fmt import fmt, fmt_sci
-from mlsysim import Hardware, Models
+from mlsysim import Hardware, Models, Systems
 
 # Legacy aliases for unit tests (hardware/model specs live in registries).
 _a100 = Hardware.Cloud.A100
@@ -104,6 +104,14 @@ TPUV6_MEM_BW = _tpuv6.memory.bandwidth
 
 MOBILE_NPU_TOPS_INT8 = _mobile.compute.peak_flops
 MOBILE_NPU_MEM_BW = _mobile.memory.bandwidth
+
+NVLINK_V100_BW = _v100.nvlink.bandwidth
+NVLINK_A100_BW = _a100.nvlink.bandwidth
+NVLINK_H100_BW = _h100.nvlink.bandwidth
+PCIE_GEN4_BW = _a100.interconnect.bandwidth
+PCIE_GEN5_BW = _h100.interconnect.bandwidth
+INFINIBAND_HDR_BW = Systems.Fabrics.InfiniBand_HDR.bandwidth
+INFINIBAND_NDR_BW = Systems.Fabrics.InfiniBand_NDR.bandwidth
 
 GPT3_TRAINING_OPS = (
     TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN * _gpt3.parameters * GPT3_TRAINING_TOKENS
