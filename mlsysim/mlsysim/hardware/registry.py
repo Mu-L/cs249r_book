@@ -2,9 +2,14 @@ from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy,
 from ..core.registry import Registry
 from ..core.constants import (
     GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
-    LATENCY_NVLINK, CPU_FLOPS_FP32, H100_L2_CACHE, SGX_BASE_LATENCY, SGX_EPC_CAPACITY,
-    SGX_OVERFLOW_LATENCY, TPUV1_TDP, TPUV1_TOPS_INT8, TPUV5P_L2_SRAM,
+    LATENCY_NVLINK, TPUV1_TDP, TPUV1_TOPS_INT8,
 )
+
+_H100_L2_CACHE = 50 * MB
+_TPUV5P_L2_SRAM = 100 * MB
+_SGX_EPC_CAPACITY = 128 * MB
+_SGX_BASE_LATENCY = 5 * ms
+_REFERENCE_CPU_FP32 = 1 * TFLOPs / second
 
 class CloudHardware(Registry):
     """Datacenter-scale accelerators (Volume II)."""
@@ -41,7 +46,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(
             capacity=80 * GiB,
             bandwidth=3.35 * TB / second,
-            l2_cache=H100_L2_CACHE,
+            l2_cache=_H100_L2_CACHE,
         ),
         storage=StorageHierarchy(capacity=2 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
@@ -161,7 +166,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(
             capacity=95 * GiB,
             bandwidth=2.76 * TB / second,
-            l2_cache=TPUV5P_L2_SRAM,
+            l2_cache=_TPUV5P_L2_SRAM,
         ),
         tdp=300 * watt,
         dispatch_tax=0.04 * ureg.ms
@@ -207,8 +212,8 @@ class CloudHardware(Registry):
         name="Reference Desktop CPU",
         release_year=2024,
         compute=ComputeCore(
-            peak_flops=CPU_FLOPS_FP32,
-            precision_flops={"fp32": CPU_FLOPS_FP32},
+            peak_flops=_REFERENCE_CPU_FP32,
+            precision_flops={"fp32": _REFERENCE_CPU_FP32},
         ),
         memory=MemoryHierarchy(capacity=64 * GiB, bandwidth=50 * GB / second),
         tdp=150 * watt,
@@ -218,13 +223,13 @@ class CloudHardware(Registry):
     IntelSGX = HardwareNode(
         name="Intel SGX Enclave (Reference)",
         release_year=2020,
-        compute=ComputeCore(peak_flops=CPU_FLOPS_FP32, precision_flops={"fp32": CPU_FLOPS_FP32}),
+        compute=ComputeCore(peak_flops=_REFERENCE_CPU_FP32, precision_flops={"fp32": _REFERENCE_CPU_FP32}),
         memory=MemoryHierarchy(
-            capacity=SGX_EPC_CAPACITY,
+            capacity=_SGX_EPC_CAPACITY,
             bandwidth=10 * GB / second,
-            sram_capacity=SGX_EPC_CAPACITY,
+            sram_capacity=_SGX_EPC_CAPACITY,
         ),
-        dispatch_tax=SGX_BASE_LATENCY,
+        dispatch_tax=_SGX_BASE_LATENCY,
     )
 
     T4 = HardwareNode(

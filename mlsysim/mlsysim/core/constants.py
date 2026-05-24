@@ -26,7 +26,6 @@ from .units import *  # noqa: F401,F403 — re-export full unit registry
 A100_FLOPS_FP16_SPARSE = 624 * TFLOPs / second   # With 2:4 structured sparsity
 
 # NVIDIA H100 (Hopper, 2022) — Source: NVIDIA H100 Data Sheet
-H100_FLOPS_FP32_CUDA = 67 * TFLOPs / second  # FP32 on CUDA (vector) cores, no Tensor Core
 
 # NVIDIA H200 (Hopper, 2023) — Source: NVIDIA H200 Data Sheet
 # H200 shares the Hopper compute die with H100, only memory differs
@@ -67,9 +66,6 @@ TPUV5P_ICI_BW = 1200 * GB / second        # Bidirectional Inter-Chip Interconnec
 
 # Cerebras Wafer-Scale Engine (WSE) — Source: Cerebras Whitepapers
 
-# High-end Desktop CPU (Reference)
-CPU_FLOPS_FP32 = 1 * TFLOPs / second
-
 # --- Latency Hierarchy (2025 Reference) ---
 LATENCY_REGISTER_REF = 0.3 * NS
 LATENCY_L1_REGISTER = 1 * NS
@@ -87,11 +83,6 @@ MOBILE_INFERENCE_TDP_HIGH = 4 * watt
 JETSON_AGX_ORIN_TOPS_INT8 = 275 * TOPS
 JETSON_AGX_ORIN_TDP_MIN = 15 * watt
 JETSON_AGX_ORIN_TDP_MAX = 60 * watt
-
-# --- Datasets ---
-IMAGENET_IMAGES = 1_281_167 * count
-IMAGENET_TEST_IMAGES = 50_000 * count
-CIFAR10_IMAGES = 50_000 * count
 
 # Standard dimensions
 IMAGE_DIM_RESNET = 224
@@ -197,23 +188,6 @@ VIDEO_FPS_STANDARD = Q_(30, 'Hz')
 
 # GPT-2 (1.5B) — used in training chapter worked examples
 
-# GPT-3 (175B)
-GPT3_TRAINING_TOKENS = 300e9 * count
-GPT3_TRAINING_ACCELERATORS_REF = 1024 * count
-GPT3_TRAINING_DAYS_REF = 25 * day # Days on 1024 A100s
-GPT3_TRAINING_ENERGY_MWH = 1287 # MWh, estimated per Patterson et al. (2021)
-
-# GPT-4 (Reference) - Note: Unofficial public estimates
-GPT4_CLASS_PUBLIC_ESTIMATE_GPU_COUNT_REF = 25_000 * count
-GPT4_CLASS_PUBLIC_ESTIMATE_TRAINING_DAYS_REF = 90 * day
-GPT4_CLASS_PUBLIC_ESTIMATE_HARDWARE_LABEL = "A100-class"
-GPT4_TRAINING_GPU_DAYS = 2.5e6 # A100 days
-
-# Llama-2 (70B) — Source: Touvron et al. (2023)
-LLAMA2_70B_KV_HEADS = 8                       # Grouped-Query Attention (GQA)
-
-# Llama 3.1
-
 # BERT-Base — Source: Devlin et al. (2018)
 BERT_BASE_FLOPs = 22e9 * flop              # Per inference (seq_len=512)
 
@@ -249,11 +223,6 @@ SYSTOLIC_ARRAY_DIM = 128
 SIMD_REGISTER_BITS = 512
 FP32_BITS = 32
 INT8_BITS = 8
-MNIST_IMAGE_WIDTH = 28
-MNIST_IMAGE_HEIGHT = 28
-MNIST_NUM_CLASSES = 10
-MNIST_TRAINING_EXAMPLES = 60_000 * count
-
 # Synthetic Data Constraints
 SYNTHETIC_PROVENANCE_OVERHEAD = 0.4
 SYNTHETIC_VERIFICATION_PASSES = 3
@@ -357,14 +326,6 @@ DGX_PRICE_MAX = 5000 * USD
 TPU_POD_CHIPS = 4096
 TPU_POD_MEM = 131 * TB
 TPU_POD_POWER = 3 * ureg.megawatt
-
-# Hardware security and cache references
-IMAGENET_NUM_CLASSES = 1000
-H100_L2_CACHE = 50 * MB
-TPUV5P_L2_SRAM = 100 * MB
-SGX_EPC_CAPACITY = 128 * MB
-SGX_BASE_LATENCY = 5 * ms
-SGX_OVERFLOW_LATENCY = 150 * ms
 
 # Reliability and diagnostic thresholds
 MEMORY_BIT_ERROR_RATE_PER_BIT = 1e-17

@@ -114,7 +114,7 @@ INFINIBAND_HDR_BW = Systems.Fabrics.InfiniBand_HDR.bandwidth
 INFINIBAND_NDR_BW = Systems.Fabrics.InfiniBand_NDR.bandwidth
 
 GPT3_TRAINING_OPS = (
-    TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN * _gpt3.parameters * GPT3_TRAINING_TOKENS
+    TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN * _gpt3.parameters * _gpt3.training_tokens
 )
 
 FAILURES = []

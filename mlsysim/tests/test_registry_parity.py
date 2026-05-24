@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mlsysim import Hardware, Systems
+from mlsysim import Hardware, Systems, Datasets, Models
 from mlsysim.core import constants as legacy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +28,11 @@ PARITY_CASES: list[tuple[str, object]] = [
     ("INFINIBAND_NDR_BW", Systems.Fabrics.InfiniBand_NDR.bandwidth),
     ("INFINIBAND_XDR_BW", Systems.Fabrics.InfiniBand_XDR.bandwidth),
     ("INFINIBAND_GXDR_BW", Systems.Fabrics.InfiniBand_GXDR.bandwidth),
+    ("IMAGENET_IMAGES", Datasets.ImageNet.training_examples),
+    ("IMAGENET_NUM_CLASSES", Datasets.ImageNet.num_classes),
+    ("MNIST_TRAINING_EXAMPLES", Datasets.MNIST.training_examples),
+    ("GPT3_TRAINING_TOKENS", Models.Language.GPT3.training_tokens),
+    ("H100_L2_CACHE", Hardware.Cloud.H100.memory.l2_cache),
 ]
 
 

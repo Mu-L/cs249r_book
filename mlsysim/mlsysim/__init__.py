@@ -52,9 +52,12 @@ from .core.constants import (
     # Common scaling constants
     THOUSAND, MILLION, BILLION, TRILLION,
     param, Kparam, Mparam, Bparam, Tparam,
-    GPT3_TRAINING_DAYS_REF, GPT3_TRAINING_ACCELERATORS_REF, CLOUD_ELECTRICITY_PER_KWH,
+    CLOUD_ELECTRICITY_PER_KWH,
     HOURS_PER_DAY,
 )
+
+GPT3_TRAINING_DAYS_REF = Models.Language.GPT3.training_days_ref
+GPT3_TRAINING_ACCELERATORS_REF = Models.Language.GPT3.training_accelerators_ref
 
 # AUTHORITATIVE FORMATTING
 from .core.formulas import *
