@@ -82,6 +82,12 @@ class TransformerWorkload(Workload):
     heads: Optional[int] = None
     kv_heads: Optional[int] = None
     training_ops: Optional[Quantity] = None
+    training_tokens: Optional[Quantity] = None
+    training_accelerators_ref: Optional[Quantity] = None
+    training_days_ref: Optional[Quantity] = None
+    training_energy_mwh: Optional[float] = None
+    training_gpu_days: Optional[float] = None
+    training_hardware_label: Optional[str] = None
     inference_flops: Optional[Quantity] = None
     
     def size_in_bytes(self, precision: Quantity = BYTES_FP16) -> Quantity:

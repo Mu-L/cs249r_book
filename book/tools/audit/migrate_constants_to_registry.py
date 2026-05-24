@@ -44,9 +44,78 @@ def load_map_constants() -> dict[str, str]:
     return dict(getattr(mod, "mapping", {}))
 
 
+_MAPPING_CACHE: dict[str, str] | None = None
+
+DEFAULTS_MAP = {
+    "CLOUD_EGRESS_PER_GB": "defaults.CLOUD_EGRESS_PER_GB",
+    "CLOUD_ELECTRICITY_PER_KWH": "defaults.CLOUD_ELECTRICITY_PER_KWH",
+    "CLOUD_GPU_TRAINING_PER_HOUR": "defaults.CLOUD_GPU_TRAINING_PER_HOUR",
+    "CLOUD_GPU_INFERENCE_PER_HOUR": "defaults.CLOUD_GPU_INFERENCE_PER_HOUR",
+    "TPU_V4_PER_HOUR": "defaults.TPU_V4_PER_HOUR",
+    "FLEET_GPU_HOUR_COST_REF": "defaults.FLEET_GPU_HOUR_COST_REF",
+    "FLEET_SPOT_GPU_HOUR_COST_REF": "defaults.FLEET_SPOT_GPU_HOUR_COST_REF",
+    "FLEET_INTERNAL_CHARGEBACK_PER_HOUR": "defaults.FLEET_INTERNAL_CHARGEBACK_PER_HOUR",
+    "CARBON_PER_GPU_HR_KG": "defaults.CARBON_PER_GPU_HR_KG",
+    "STORAGE_COST_S3_STD": "defaults.STORAGE_COST_S3_STD",
+    "STORAGE_COST_GLACIER": "defaults.STORAGE_COST_GLACIER",
+    "STORAGE_COST_NVME_LOW": "defaults.STORAGE_COST_NVME_LOW",
+    "STORAGE_COST_NVME_HIGH": "defaults.STORAGE_COST_NVME_HIGH",
+    "RETRIEVAL_COST_GLACIER": "defaults.RETRIEVAL_COST_GLACIER",
+    "LABELING_COST_CROWD_LOW": "defaults.LABELING_COST_CROWD_LOW",
+    "LABELING_COST_CROWD_HIGH": "defaults.LABELING_COST_CROWD_HIGH",
+    "LABELING_COST_BOX_LOW": "defaults.LABELING_COST_BOX_LOW",
+    "LABELING_COST_BOX_HIGH": "defaults.LABELING_COST_BOX_HIGH",
+    "LABELING_COST_MEDICAL_LOW": "defaults.LABELING_COST_MEDICAL_LOW",
+    "LABELING_COST_MEDICAL_HIGH": "defaults.LABELING_COST_MEDICAL_HIGH",
+    "LEAD_TIME_GPU_MONTHS": "defaults.LEAD_TIME_GPU_MONTHS",
+    "LEAD_TIME_SUBSTATION_MONTHS": "defaults.LEAD_TIME_SUBSTATION_MONTHS",
+    "GRID_INTERCONNECTION_QUEUE_US_GW": "defaults.GRID_INTERCONNECTION_QUEUE_US_GW",
+    "PUE_LIQUID_COOLED": "defaults.PUE_LIQUID_COOLED",
+    "PUE_BEST_AIR": "defaults.PUE_BEST_AIR",
+    "PUE_TYPICAL": "defaults.PUE_TYPICAL",
+    "PUE_LEGACY": "defaults.PUE_LEGACY",
+    "CARBON_US_AVG_GCO2_KWH": "defaults.CARBON_US_AVG_GCO2_KWH",
+    "CARBON_QUEBEC_GCO2_KWH": "defaults.CARBON_QUEBEC_GCO2_KWH",
+    "CARBON_IOWA_GCO2_KWH": "defaults.CARBON_IOWA_GCO2_KWH",
+    "CARBON_POLAND_GCO2_KWH": "defaults.CARBON_POLAND_GCO2_KWH",
+    "MEMORY_BIT_ERROR_RATE_PER_BIT": "defaults.MEMORY_BIT_ERROR_RATE_PER_BIT",
+    "KS_TEST_COEFFICIENT": "defaults.KS_TEST_COEFFICIENT",
+    "PSI_WARN_THRESHOLD": "defaults.PSI_WARN_THRESHOLD",
+    "PSI_REVIEW_THRESHOLD": "defaults.PSI_REVIEW_THRESHOLD",
+    "PSI_CRITICAL_THRESHOLD": "defaults.PSI_CRITICAL_THRESHOLD",
+}
+
+DATASETS_MAP = {
+    "IMAGENET_IMAGES": "Datasets.ImageNet.training_examples",
+    "IMAGENET_TEST_IMAGES": "Datasets.ImageNet.test_examples",
+    "IMAGENET_NUM_CLASSES": "Datasets.ImageNet.num_classes",
+    "CIFAR10_IMAGES": "Datasets.CIFAR10.training_examples",
+    "CIFAR10_TEST_IMAGES": "Datasets.CIFAR10.test_examples",
+    "MNIST_IMAGE_WIDTH": "Datasets.MNIST.image_width",
+    "MNIST_IMAGE_HEIGHT": "Datasets.MNIST.image_height",
+    "MNIST_NUM_CLASSES": "Datasets.MNIST.num_classes",
+    "MNIST_TRAINING_EXAMPLES": "Datasets.MNIST.training_examples",
+}
+
+TRAINING_MAP = {
+    "GPT3_TRAINING_TOKENS": "Models.Language.GPT3.training_tokens",
+    "GPT3_TRAINING_ACCELERATORS_REF": "Models.Language.GPT3.training_accelerators_ref",
+    "GPT3_TRAINING_DAYS_REF": "Models.Language.GPT3.training_days_ref",
+    "GPT3_TRAINING_ENERGY_MWH": "Models.Language.GPT3.training_energy_mwh",
+    "GPT4_TRAINING_GPU_DAYS": "Models.Language.GPT4.training_gpu_days",
+    "GPT4_CLASS_PUBLIC_ESTIMATE_GPU_COUNT_REF": "Models.Language.GPT4.training_accelerators_ref",
+    "GPT4_CLASS_PUBLIC_ESTIMATE_TRAINING_DAYS_REF": "Models.Language.GPT4.training_days_ref",
+    "GPT4_CLASS_PUBLIC_ESTIMATE_HARDWARE_LABEL": "Models.Language.GPT4.training_hardware_label",
+    "LLAMA2_70B_KV_HEADS": "Models.Language.Llama2_70B.kv_heads",
+}
+
+
 def merged_mapping() -> dict[str, str]:
-    out = {**load_map_constants(), **INTERCONNECT_MAP}
-    return dict(sorted(out.items(), key=lambda kv: len(kv[0]), reverse=True))
+    global _MAPPING_CACHE
+    if _MAPPING_CACHE is None:
+        out = {**load_map_constants(), **INTERCONNECT_MAP, **DEFAULTS_MAP, **DATASETS_MAP, **TRAINING_MAP}
+        _MAPPING_CACHE = dict(sorted(out.items(), key=lambda kv: len(kv[0]), reverse=True))
+    return _MAPPING_CACHE
 
 
 def substitute_cell(cell: str, mapping: dict[str, str]) -> tuple[str, list[str]]:
@@ -64,10 +133,14 @@ def ensure_registry_imports(cell: str) -> str:
     needs_hardware = "Hardware." in cell and "import Hardware" not in cell and "from mlsysim import *" not in cell
     needs_systems = "Systems." in cell and "import Systems" not in cell and "from mlsysim import *" not in cell
     needs_models = "Models." in cell and "import Models" not in cell and "from mlsysim import *" not in cell
+    needs_datasets = "Datasets." in cell and "from mlsysim import *" not in cell
+    needs_defaults = "defaults." in cell and "from mlsysim.core import defaults" not in cell
     prefix = []
-    if needs_hardware or needs_systems or needs_models:
+    if needs_hardware or needs_systems or needs_models or needs_datasets:
         if "from mlsysim import *" not in cell:
             prefix.append("from mlsysim import *")
+    if needs_defaults and "from mlsysim.core import defaults" not in cell:
+        prefix.append("from mlsysim.core import defaults")
     if not prefix:
         return cell
     lines = cell.splitlines()

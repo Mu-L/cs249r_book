@@ -1,6 +1,6 @@
 from .types import TransformerWorkload, CNNWorkload, Workload, SSMWorkload, DiffusionWorkload
 from ..core.registry import Registry
-from ..core.constants import (flop, param, ureg)
+from ..core.constants import (flop, param, ureg, count, day)
 
 class LanguageModels(Registry):
     GPT2 = TransformerWorkload(
@@ -20,6 +20,10 @@ class LanguageModels(Registry):
         hidden_dim=12288,
         heads=96,
         training_ops=3.14e23 * flop,
+        training_tokens=300e9 * count,
+        training_accelerators_ref=1024 * count,
+        training_days_ref=25 * day,
+        training_energy_mwh=1287,
         inference_flops=2 * 175e9 * ureg.flop
     )
     GPT4 = TransformerWorkload(
@@ -29,6 +33,10 @@ class LanguageModels(Registry):
         layers=120,
         hidden_dim=16384,
         heads=128,
+        training_accelerators_ref=25_000 * count,
+        training_days_ref=90 * day,
+        training_gpu_days=2.5e6,
+        training_hardware_label="A100-class",
         inference_flops=2 * 1.76e12 * ureg.flop
     )
     BERT_Base = TransformerWorkload(

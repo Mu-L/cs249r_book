@@ -4,7 +4,7 @@ These are reasonable starting points for analytical modeling — override them
 for your specific scenario. Every value cites its source.
 """
 
-from .units import USD
+from .units import USD, ureg, GB, TB, hour, count, day
 from .provenance import TraceableConstant
 
 # --- Reliability (Component MTTF) ---
@@ -192,6 +192,46 @@ GPU_UNIT_COST_B200 = 40000 * USD     # NVIDIA B200 (2025 estimated)
 
 # Default electricity price — Source: AWS US baseline (2024)
 DEFAULT_KWH_PRICE = 0.12             # USD per kWh
+CLOUD_ELECTRICITY_PER_KWH = 0.12 * USD / ureg.kilowatt_hour
+
+# Cloud pricing (2024 baselines)
+CLOUD_EGRESS_PER_GB = 0.09 * USD / GB
+CLOUD_GPU_TRAINING_PER_HOUR = 4.0 * USD / hour
+CLOUD_GPU_INFERENCE_PER_HOUR = 2.5 * USD / hour
+TPU_V4_PER_HOUR = 4.0 * USD / hour
+
+# Fleet economics references
+FLEET_GPU_HOUR_COST_REF = 2.0 * USD / hour
+FLEET_SPOT_GPU_HOUR_COST_REF = 0.70 * USD / hour
+FLEET_INTERNAL_CHARGEBACK_PER_HOUR = 2.50 * USD / hour
+CARBON_PER_GPU_HR_KG = 0.16 * ureg.kilogram
+
+# Storage pricing (2024 baseline)
+STORAGE_COST_S3_STD = 23 * USD / TB / ureg.month
+STORAGE_COST_GLACIER = 1 * USD / TB / ureg.month
+STORAGE_COST_NVME_LOW = 100 * USD / TB / ureg.month
+STORAGE_COST_NVME_HIGH = 300 * USD / TB / ureg.month
+RETRIEVAL_COST_GLACIER = 0.02 * USD / GB
+
+# Labeling pricing (2024 estimates)
+LABELING_COST_CROWD_LOW = 0.01 * USD
+LABELING_COST_CROWD_HIGH = 0.05 * USD
+LABELING_COST_BOX_LOW = 0.05 * USD
+LABELING_COST_BOX_HIGH = 0.20 * USD
+LABELING_COST_MEDICAL_LOW = 50 * USD
+LABELING_COST_MEDICAL_HIGH = 200 * USD
+
+# Infrastructure lead times
+LEAD_TIME_GPU_MONTHS = 6
+LEAD_TIME_SUBSTATION_MONTHS = 24
+GRID_INTERCONNECTION_QUEUE_US_GW = 2000
+
+# Reliability / monitoring thresholds
+MEMORY_BIT_ERROR_RATE_PER_BIT = 1e-17
+KS_TEST_COEFFICIENT = 1.36
+PSI_WARN_THRESHOLD = 0.10
+PSI_REVIEW_THRESHOLD = 0.20
+PSI_CRITICAL_THRESHOLD = 0.25
 
 # --- Quantization accuracy deltas ---
 # Source: Gholami et al. (2021) survey medians
