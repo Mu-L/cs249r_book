@@ -38,6 +38,11 @@ CLUSTER_MEDIUM_GPUS = 2_048
 CLUSTER_LARGE_GPUS = 8_192
 CLUSTER_MEGA_GPUS = 100_000
 
+# --- Cloud TPU Pod (reference fleet envelope) ---
+TPU_POD_CHIPS = 4096
+TPU_POD_MEM = 131 * TB
+TPU_POD_POWER = 3 * ureg.megawatt
+
 # --- Inter-Node Network (Fleet-Scale Byte Rates) ---
 # Byte-per-second equivalents for bandwidth calculations.
 # These complement the Gbps values defined in units.py for bit-rate contexts.

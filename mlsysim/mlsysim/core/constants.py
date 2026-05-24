@@ -17,54 +17,7 @@
 from .units import *  # noqa: F401,F403 — re-export full unit registry
 
 # --- Legacy System Ratios / Physics ---
-# (Some derived capabilities are still here, but specific chips should live in registry.py)
-
-# NVIDIA V100 (Volta, 2017) — Source: NVIDIA V100 Data Sheet
-
-# NVIDIA A100 (Ampere, 2020) — Source: NVIDIA A100 Data Sheet
-# NOTE: Dense (without structured sparsity) values. With 2:4 sparsity, double these.
-A100_FLOPS_FP16_SPARSE = 624 * TFLOPs / second   # With 2:4 structured sparsity
-
-# NVIDIA H100 (Hopper, 2022) — Source: NVIDIA H100 Data Sheet
-
-# NVIDIA H200 (Hopper, 2023) — Source: NVIDIA H200 Data Sheet
-# H200 shares the Hopper compute die with H100, only memory differs
-
-# NVIDIA B100/B200 (Blackwell, 2024) — Source: NVIDIA Blackwell Architecture
-
-# NVIDIA GB200 NVL72 (Rack-scale, 2024) — Source: NVIDIA Blackwell Architecture
-# This is a full rack containing 72 Blackwell GPUs and 36 Grace CPUs.
-# We model the aggregate resources of the rack for macro-scale simulation.
-NVL72_GPUs = 72 * count
-
-# AMD Instinct MI300X (CDNA 3, 2023) — Source: AMD Instinct MI300X Data Sheet
-
-# AMD Instinct MI250X (CDNA 2, 2021) — Source: AMD MI250X Data Sheet
-
-# Intel Gaudi 2 (2022) — Source: Intel Gaudi 2 White Paper
-
-# Intel Gaudi 3 (2024) — Source: Intel Gaudi 3 Architecture White Paper
-
-# AWS Trainium 2 (2024) — Source: AWS re:Invent 2023 announcements
-
-# NVIDIA T4 (Turing, 2018) — Source: NVIDIA T4 Data Sheet
-
-# Google TPU v1 — Source: Jouppi et al. (2017)
-TPUV1_TOPS_INT8 = 92 * TOPS
-TPUV1_TDP = 75 * watt
-
-# Google TPU v2 — Source: Google Cloud Documentation
-
-# Google TPU v3 — Source: Google Cloud Documentation
-
-# Google TPU v4 — Source: Google TPUv4 paper (Jouppi et al., 2023)
-
-# Google TPU v5p — Source: Google Cloud Documentation (2024)
-TPUV5P_ICI_BW = 1200 * GB / second        # Bidirectional Inter-Chip Interconnect
-
-# Google TPU v6e (Trillium) — Source: Google Cloud Documentation
-
-# Cerebras Wafer-Scale Engine (WSE) — Source: Cerebras Whitepapers
+# (Chip-specific numbers live in mlsysim/hardware/registry.py)
 
 # --- Latency Hierarchy (2025 Reference) ---
 LATENCY_REGISTER_REF = 0.3 * NS
@@ -78,11 +31,6 @@ LATENCY_NVME_SSD = 100000 * NS
 
 # Mobile NPU
 MOBILE_INFERENCE_TDP_HIGH = 4 * watt
-
-# Edge accelerators
-JETSON_AGX_ORIN_TOPS_INT8 = 275 * TOPS
-JETSON_AGX_ORIN_TDP_MIN = 15 * watt
-JETSON_AGX_ORIN_TDP_MAX = 60 * watt
 
 # Standard dimensions
 IMAGE_DIM_RESNET = 224
@@ -148,12 +96,6 @@ VIDEO_1080P_HEIGHT = 1080
 VIDEO_BYTES_PER_PIXEL_RGB = 3 * byte
 VIDEO_FPS_STANDARD = Q_(30, 'Hz')
 
-# --- Models & Workloads ---
-# Model FLOPs and parameter counts live in mlsysim/models/registry.py.
-
-# Stable Diffusion v1.5 — Source: Rombach et al. (2022)
-STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP = 20e9 * flop
-
 # Reference model/dataset dimensions
 TRANSFORMER_DECODE_FLOPS_PER_PARAM = 2
 TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN = 6
@@ -202,13 +144,6 @@ GPUS_PER_HOST = 8
 GOOGLE_SEARCHES_PER_DAY = 8.5e9
 GMAIL_EMAILS_PER_DAY = 121e9
 
-# DLRM (Deep Learning Recommendation Model) — Meta benchmark
-DLRM_EMBEDDING_ENTRIES = 25e9  # 25 Billion entries (dimensionless count)
-
-# --- Hardware Unit Costs (Approximate, 2024 baseline) ---
-
-# --- Hardware TDP (where not already defined above) ---
-
 # --- Storage (I/O Bandwidth) ---
 NVME_GEN3_SEQUENTIAL_BW = 3.5 * GB / second
 NVME_SEQUENTIAL_BW = 7.0 * GB / second    # NVMe SSD sequential read (Gen 4)
@@ -230,25 +165,6 @@ ANOMALY_MODEL_ENERGY = 516 * ureg.microjoule
 BATTERY_CAPACITY_MAH = 3000 * ureg.milliampere_hour
 BATTERY_VOLTAGE_V = 3.7 * ureg.volt
 BATTERY_ENERGY_J = (BATTERY_CAPACITY_MAH * BATTERY_VOLTAGE_V).to(joule)
-
-# TinyML Hardware (ESP32-CAM)
-ESP32_RAM = 520 * KiB
-ESP32_FLASH = 4 * MB
-ESP32_POWER_MIN = 0.05 * watt
-ESP32_POWER_MAX = 1.2 * watt
-ESP32_PRICE = 10 * USD
-
-# Edge Hardware (NVIDIA DGX/Workstation)
-DGX_RAM = 128 * GB
-DGX_STORAGE = 4 * TB
-DGX_POWER = 200 * watt
-DGX_PRICE_MIN = 3000 * USD
-DGX_PRICE_MAX = 5000 * USD
-
-# Cloud Hardware (TPU Pod)
-TPU_POD_CHIPS = 4096
-TPU_POD_MEM = 131 * TB
-TPU_POD_POWER = 3 * ureg.megawatt
 
 # --- Shared Precision Map ---
 # Used by Engine, ServingModel, SynthesisSolver to map precision strings to byte widths.

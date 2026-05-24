@@ -44,8 +44,12 @@ class HardwareNode(BaseModel):
     interconnect: Optional[IOInterconnect] = None  # Host I/O (e.g., PCIe)
     nvlink: Optional[IOInterconnect] = None        # Intra-node GPU-GPU (NVLink/ICI)
     tdp: Optional[Quantity] = None
+    tdp_min: Optional[Quantity] = None
+    tdp_max: Optional[Quantity] = None
     battery_capacity: Optional[Quantity] = None
     unit_cost: Optional[Quantity] = None
+    unit_cost_max: Optional[Quantity] = None
+    accelerator_count: Optional[int] = None
     embodied_carbon_kg: Optional[float] = Field(
         default=None,
         description="Embodied CO2e in kg from manufacturing, packaging, and transport (Gupta et al. 2022)."

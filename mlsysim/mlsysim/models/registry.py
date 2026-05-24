@@ -168,7 +168,8 @@ class RecommendationModels(Registry):
     DLRM = Workload(
         name="DLRM",
         architecture="DLRM",
-        model_size=100 * ureg.GB
+        model_size=100 * ureg.GB,
+        embedding_entries=25e9 * count,
     )
 
 class StateSpaceModels(Registry):
@@ -198,7 +199,7 @@ class GenerativeVisionModels(Registry):
         parameters=860e6 * param,
         resolution=512,
         denoising_steps=50,
-        inference_flops=800e9 * ureg.flop
+        inference_flops=20e9 * ureg.flop
     )
 
 class Models(Registry):

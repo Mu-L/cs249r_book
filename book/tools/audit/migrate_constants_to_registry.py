@@ -36,6 +36,28 @@ INTERCONNECT_MAP = {
     "SGX_OVERFLOW_LATENCY": "Hardware.Cloud.IntelSGX.dispatch_tax",
 }
 
+HARDWARE_MAP = {
+    "A100_FLOPS_FP16_SPARSE": 'Hardware.Cloud.A100.compute.precision_flops["fp16_sparse"]',
+    "TPUV5P_ICI_BW": "Hardware.Cloud.TPUv5p.nvlink.bandwidth",
+    "TPUV1_TOPS_INT8": 'Hardware.Cloud.TPUv1.compute.precision_flops["int8"]',
+    "TPUV1_TDP": "Hardware.Cloud.TPUv1.tdp",
+    "JETSON_AGX_ORIN_TOPS_INT8": 'Hardware.Edge.JetsonAGXOrin.compute.precision_flops["int8"]',
+    "JETSON_AGX_ORIN_TDP_MIN": "Hardware.Edge.JetsonAGXOrin.tdp_min",
+    "JETSON_AGX_ORIN_TDP_MAX": "Hardware.Edge.JetsonAGXOrin.tdp_max",
+    "ESP32_RAM": "Hardware.Tiny.ESP32_S3.memory.sram_capacity",
+    "ESP32_FLASH": "Hardware.Tiny.ESP32_S3.memory.flash_capacity",
+    "ESP32_POWER_MIN": "Hardware.Tiny.ESP32_S3.tdp_min",
+    "ESP32_POWER_MAX": "Hardware.Tiny.ESP32_S3.tdp_max",
+    "ESP32_PRICE": "10",
+    "DGX_RAM": "Hardware.Workstation.DGX_Spark.memory.capacity",
+    "DGX_STORAGE": "Hardware.Workstation.DGX_Spark.storage.capacity",
+    "DGX_POWER": "Hardware.Workstation.DGX_Spark.tdp",
+    "DGX_PRICE_MIN": "Hardware.Workstation.DGX_Spark.unit_cost",
+    "DGX_PRICE_MAX": "Hardware.Workstation.DGX_Spark.unit_cost_max",
+    "STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP": "Models.GenerativeVision.StableDiffusion_v1_5.inference_flops",
+    "DLRM_EMBEDDING_ENTRIES": "Models.Recommendation.DLRM.embedding_entries",
+}
+
 
 def load_map_constants() -> dict[str, str]:
     spec = importlib.util.spec_from_file_location("map_constants", MAP_PATH)
@@ -97,6 +119,9 @@ DEFAULTS_MAP = {
     "IB_HDR_LATENCY_US": "defaults.IB_HDR_LATENCY_US",
     "ROCE_LATENCY_US": "defaults.ROCE_LATENCY_US",
     "TCP_LATENCY_US": "defaults.TCP_LATENCY_US",
+    "TPU_POD_CHIPS": "defaults.TPU_POD_CHIPS",
+    "TPU_POD_MEM": "defaults.TPU_POD_MEM",
+    "TPU_POD_POWER": "defaults.TPU_POD_POWER",
 }
 
 DATASETS_MAP = {
@@ -127,7 +152,7 @@ TRAINING_MAP = {
 def merged_mapping() -> dict[str, str]:
     global _MAPPING_CACHE
     if _MAPPING_CACHE is None:
-        out = {**load_map_constants(), **INTERCONNECT_MAP, **DEFAULTS_MAP, **DATASETS_MAP, **TRAINING_MAP}
+        out = {**load_map_constants(), **INTERCONNECT_MAP, **HARDWARE_MAP, **DEFAULTS_MAP, **DATASETS_MAP, **TRAINING_MAP}
         _MAPPING_CACHE = dict(sorted(out.items(), key=lambda kv: len(kv[0]), reverse=True))
     return _MAPPING_CACHE
 

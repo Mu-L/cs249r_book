@@ -35,7 +35,7 @@ CANONICAL = [
     ("a100_tf32",      156,   0.02, "A100_FLOPS_TF32"),
     ("a100_fp32",      19.5,  0.05, "A100_FLOPS_FP32"),
     ("a100_int8",      624,   0.02, "A100_TOPS_INT8"),
-    ("a100_sparse",    624,   0.02, "A100_FLOPS_FP16_SPARSE"),
+    ("a100_sparse",    624,   0.02, 'Hardware.Cloud.A100.compute.precision_flops["fp16_sparse"]'),
     ("h100_fp16",      989,   0.02, "H100_FLOPS_FP16_TENSOR"),
     ("h100_tflops",    989,   0.02, "H100_FLOPS_FP16_TENSOR"),
     ("h100_fp8",       1979,  0.02, "H100_FLOPS_FP8_TENSOR"),

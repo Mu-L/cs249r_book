@@ -42,6 +42,11 @@ PARITY_CASES: list[tuple[str, object]] = [
     ("RESNET50_FLOPs", Models.Vision.ResNet50.inference_flops),
     ("MOBILENETV2_FLOPs", Models.Vision.MobileNetV2.inference_flops),
     ("KWS_DSCNN_FLOPs", Models.Tiny.DS_CNN.inference_flops),
+    ("STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP", Models.GenerativeVision.StableDiffusion_v1_5.inference_flops),
+    ("DLRM_EMBEDDING_ENTRIES", Models.Recommendation.DLRM.embedding_entries),
+    ("TPUV5P_ICI_BW", Hardware.Cloud.TPUv5p.nvlink.bandwidth),
+    ("TPUV1_TOPS_INT8", Hardware.Cloud.TPUv1.compute.precision_flops["int8"]),
+    ("TPUV1_TDP", Hardware.Cloud.TPUv1.tdp),
 ]
 
 

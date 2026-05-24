@@ -29,6 +29,7 @@ class Workload(BaseModel):
     metadata: Metadata = Field(default_factory=Metadata)
     parameters: Optional[Quantity] = None
     model_size: Optional[Quantity] = None
+    embedding_entries: Optional[Quantity] = None
     inference_flops: Optional[Quantity] = None
     data_rate: Optional[Quantity] = None # e.g., TB/hour for autonomous driving
 

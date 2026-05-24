@@ -1,8 +1,8 @@
 from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy, IOInterconnect
 from ..core.registry import Registry
 from ..core.constants import (
-    GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
-    LATENCY_NVLINK, TPUV1_TDP, TPUV1_TOPS_INT8,
+    GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt, count,
+    LATENCY_NVLINK,
 )
 
 _H100_L2_CACHE = 50 * MB
@@ -28,7 +28,7 @@ class CloudHardware(Registry):
     A100 = HardwareNode(
         name="NVIDIA A100",
         release_year=2020,
-        compute=ComputeCore(peak_flops=312 * TFLOPs / second, precision_flops={"fp32": 19.5 * TFLOPs / second, "tf32": 156 * TFLOPs / second, "int8": 624 * TOPS}),
+        compute=ComputeCore(peak_flops=312 * TFLOPs / second, precision_flops={"fp32": 19.5 * TFLOPs / second, "tf32": 156 * TFLOPs / second, "int8": 624 * TOPS, "fp16_sparse": 624 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=80 * GiB, bandwidth=2039 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen4 x16", bandwidth=32 * GB / second),
         nvlink=IOInterconnect(name="NVLink 3.0", bandwidth=600 * GB / second, latency=LATENCY_NVLINK),
@@ -100,6 +100,7 @@ class CloudHardware(Registry):
         interconnect=IOInterconnect(name="NVLink Switch (Bisection)", bandwidth=130 * TB / second),
         tdp=120 * kilowatt,
         unit_cost=3000000 * USD,
+        accelerator_count=72,
         dispatch_tax=0.005 * ureg.ms,
         metadata={"source_url": "https://www.nvidia.com/en-us/data-center/gb200-nvl72/"}
     )
@@ -168,6 +169,7 @@ class CloudHardware(Registry):
             bandwidth=2.76 * TB / second,
             l2_cache=_TPUV5P_L2_SRAM,
         ),
+        nvlink=IOInterconnect(name="ICI", bandwidth=1200 * GB / second),
         tdp=300 * watt,
         dispatch_tax=0.04 * ureg.ms
     )
@@ -177,7 +179,7 @@ class CloudHardware(Registry):
         release_year=2017,
         compute=ComputeCore(peak_flops=92 * TOPS, precision_flops={"int8": 92 * TOPS}),
         memory=MemoryHierarchy(capacity=8 * GiB, bandwidth=34 * GB / second),
-        tdp=TPUV1_TDP,
+        tdp=75 * watt,
         dispatch_tax=0.05 * ureg.ms,
     )
 
@@ -267,7 +269,10 @@ class WorkstationHardware(Registry):
             precision_flops={"fp8": 500 * ureg.TFLOPs/ureg.s, "fp4": 1000 * ureg.TFLOPs/ureg.s}
         ),
         memory=MemoryHierarchy(capacity=128 * ureg.GB, bandwidth=500 * ureg.GB/ureg.s),
-        tdp=250 * ureg.W,
+        storage=StorageHierarchy(capacity=4 * TB, bandwidth=7 * GB / second),
+        tdp=200 * watt,
+        unit_cost=3000 * USD,
+        unit_cost_max=5000 * USD,
         dispatch_tax=0.01 * ureg.ms
     )
 
@@ -312,6 +317,16 @@ class MobileHardware(Registry):
 
 class EdgeHardware(Registry):
     """Robotics and Industrial Edge (Volume I)."""
+    JetsonAGXOrin = HardwareNode(
+        name="NVIDIA Jetson AGX Orin",
+        release_year=2022,
+        compute=ComputeCore(peak_flops=275 * TOPS, precision_flops={"int8": 275 * TOPS}),
+        memory=MemoryHierarchy(capacity=64 * ureg.GB, bandwidth=204 * ureg.GB/ureg.s),
+        tdp=60 * watt,
+        tdp_min=15 * watt,
+        tdp_max=60 * watt,
+        dispatch_tax=0.2 * ureg.ms,
+    )
     JetsonOrinNX = HardwareNode(
         name="NVIDIA Jetson Orin NX",
         release_year=2023,
@@ -363,16 +378,18 @@ class TinyHardware(Registry):
         # capacity/bandwidth = flash (default path for large models)
         # sram_capacity/bandwidth = on-chip SRAM (used when model fits)
         memory=MemoryHierarchy(
-            capacity=8 * ureg.MB,                     # Flash (primary weight storage)
-            bandwidth=0.08 * ureg.GB/ureg.s,          # Flash read ~80 MB/s (XIP)
-            sram_capacity=512 * ureg.KiB,             # On-chip SRAM
-            sram_bandwidth=0.96 * ureg.GB/ureg.s,     # SRAM bandwidth @ 240 MHz
-            flash_capacity=8 * ureg.MB,               # Explicit flash (same as capacity)
-            flash_bandwidth=0.08 * ureg.GB/ureg.s,    # Flash read ~80 MB/s
+            capacity=4 * ureg.MB,
+            bandwidth=0.08 * ureg.GB/ureg.s,
+            sram_capacity=520 * ureg.KiB,
+            sram_bandwidth=0.96 * ureg.GB/ureg.s,
+            flash_capacity=4 * ureg.MB,
+            flash_bandwidth=0.08 * ureg.GB/ureg.s,
         ),
-        tdp=0.4 * ureg.W,              # Inference-only power (not WiFi-on 1.2W)
-        embodied_carbon_kg=5.0,        # Including packaging and PCB assembly
-        dispatch_tax=1.0 * ureg.ms     # TFLite Micro interpreter overhead
+        tdp=0.4 * ureg.W,
+        tdp_min=0.05 * watt,
+        tdp_max=1.2 * watt,
+        embodied_carbon_kg=5.0,
+        dispatch_tax=1.0 * ureg.ms,
     )
 
     nRF52840 = HardwareNode(
