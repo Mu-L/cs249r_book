@@ -8,6 +8,9 @@ gates, and verifies the result.
 **Plan:** `/Users/VJ/Desktop/MIT_Press_Feedback/15_audit_loop/PLAN.md`
 **Rules:** `/Users/VJ/GitHub/AIConfigs/projects/MLSysBook/.claude/rules/book-prose-merged.md`
 
+**Fmt / notation audit** (inline `{python}` numbers, spurious `.0`): see
+[`fmt/README.md`](fmt/README.md).
+
 ---
 
 ## The five-stage cycle
