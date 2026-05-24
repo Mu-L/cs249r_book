@@ -1279,7 +1279,6 @@ from mlsysim.core.constants import *
 # │          topk_bits_str, topk_eliminated_pct_str
 # └─────────────────────────────────────────────────────────────────────────────
 import math
-
 class OutputRoundingLeakage:
     # ┌── 1. LOAD ──────────────────────────────────────────
     class_count = IMAGENET_NUM_CLASSES
@@ -1314,41 +1313,6 @@ class OutputRoundingLeakage:
     top_k_str = fmt(top_k, precision=0, commas=False)
     topk_bits_str = fmt(topk_bits, precision=1, commas=False)
     topk_eliminated_pct_str = fmt(topk_eliminated_pct, precision=1, commas=False)
-
-class TEEMemoryFootprint:
-    # ┌── 1. LOAD ──────────────────────────────────────────
-    resnet18_params_m = RESNET18_PARAMS.m_as(Mparam)
-    resnet50_params_m = Models.Vision.ResNet50.parameters.m_as(Mparam)
-    fp32_bytes = BYTES_FP32.m_as(byte)
-    int8_bytes = BYTES_INT8.m_as(byte)
-    sgx_epc_mb = SGX_EPC_CAPACITY.m_as(MB)
-    sgx_latency_base_ms = SGX_BASE_LATENCY.m_as(ms)
-    sgx_latency_overflow_ms = SGX_OVERFLOW_LATENCY.m_as(ms)
-    small_model_limit_mb = 10
-
-    # ┌── 2. EXECUTE ───────────────────────────────────────
-    resnet18_fp32_mb = resnet18_params_m * fp32_bytes
-    resnet18_int8_mb = resnet18_params_m * int8_bytes
-    resnet50_fp32_mb = resnet50_params_m * fp32_bytes
-    resnet50_int8_mb = resnet50_params_m * int8_bytes
-    resnet50_fp32_epc_pct = resnet50_fp32_mb / sgx_epc_mb * 100
-
-    # ┌── 3. GUARD ─────────────────────────────────────────
-    check(abs(resnet50_fp32_mb - 102.4) < 0.01, "ResNet-50 FP32 size changed")
-    check(abs(resnet50_fp32_epc_pct - 80.0) < 0.01, "ResNet-50 EPC share changed")
-
-    # ┌── 4. OUTPUT ────────────────────────────────────────
-    resnet18_fp32_mb_str = fmt(resnet18_fp32_mb, precision=1, commas=False)
-    resnet18_int8_mb_str = fmt(resnet18_int8_mb, precision=1, commas=False)
-    resnet50_fp32_mb_str = fmt(resnet50_fp32_mb, precision=1, commas=False)
-    resnet50_int8_mb_str = fmt(resnet50_int8_mb, precision=1, commas=False)
-    resnet50_params_m_str = fmt(resnet50_params_m, precision=1, commas=False)
-    fp32_bytes_str = fmt(fp32_bytes, precision=0, commas=False)
-    sgx_epc_mb_str = fmt(sgx_epc_mb, precision=0, commas=False)
-    resnet50_fp32_epc_pct_str = fmt(resnet50_fp32_epc_pct, precision=0, commas=False)
-    sgx_latency_base_ms_str = fmt(sgx_latency_base_ms, precision=0, commas=False)
-    sgx_latency_overflow_ms_str = fmt(sgx_latency_overflow_ms, precision=0, commas=False)
-    small_model_limit_mb_str = fmt(small_model_limit_mb, precision=0, commas=False)
 ```
 
 where $d_{\text{dec}}$ is the number of decimal places. For a `{python} OutputRoundingLeakage.class_count_str`-class ImageNet classifier, rounding from `{python} OutputRoundingLeakage.from_decimals_str` decimals to `{python} OutputRoundingLeakage.to_decimals_str` decimals (e.g., 0.384627 → 0.38) removes `{python} OutputRoundingLeakage.decimal_digits_removed_str` decimal digits, about `{python} OutputRoundingLeakage.bits_removed_str` bits per class under a decimal-bin model, while maintaining decision boundaries.
@@ -2562,6 +2526,62 @@ Each mechanism addresses different aspects of the security challenge, working mo
 Modern ML systems require holistic analysis of security trade-offs across the entire hardware-software stack, similar to how we analyze compute-memory-energy trade-offs in performance optimization. The interdependence between hardware security features and software defenses creates both opportunities and constraints that must be understood quantitatively.
 
 Hardware security mechanisms introduce measurable overhead that must be factored into system design. ARM TrustZone world-switching adds approximately 300--1000 cycles depending on processor generation and cache state (0.6--2.0 $\mu$s at 500MHz) of latency per transition between secure and nonsecure worlds. Cryptographic operations in secure mode typically consume 15--30 percent additional power compared to normal execution, impacting battery life in mobile ML applications. Intel SGX context switching imposes 15--30 $\mu$s overhead per inference, representing 2 percent energy overhead for typical edge ML workloads.
+
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: tee-memory-footprint-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ TEE MEMORY FOOTPRINT (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: Hardware security foundations — TEE memory constraints prose and
+# │          fn-intel-sgx-limits footnote.
+# │
+# │ Goal: Quantify ResNet model sizes vs. Intel SGX EPC limits.
+# │ How: Parameter counts × bytes/weight; compare ResNet-50 FP32 to EPC capacity.
+# │
+# │ Imports: mlsysim.core.constants, mlsysim.book (fmt, check)
+# │ Exports: TEEMemoryFootprint.resnet18_*_mb_str, resnet50_*_mb_str,
+# │          sgx_epc_mb_str, resnet50_fp32_epc_pct_str, sgx_latency_*_ms_str,
+# │          small_model_limit_mb_str, resnet50_params_m_str, fp32_bytes_str
+# └─────────────────────────────────────────────────────────────────────────────
+
+class TEEMemoryFootprint:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    resnet18_params_m = RESNET18_PARAMS.m_as(Mparam)
+    resnet50_params_m = Models.Vision.ResNet50.parameters.m_as(Mparam)
+    fp32_bytes = BYTES_FP32.m_as(byte)
+    int8_bytes = BYTES_INT8.m_as(byte)
+    sgx_epc_mb = SGX_EPC_CAPACITY.m_as(MB)
+    sgx_latency_base_ms = SGX_BASE_LATENCY.m_as(ms)
+    sgx_latency_overflow_ms = SGX_OVERFLOW_LATENCY.m_as(ms)
+    small_model_limit_mb = 10
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    resnet18_fp32_mb = resnet18_params_m * fp32_bytes
+    resnet18_int8_mb = resnet18_params_m * int8_bytes
+    resnet50_fp32_mb = resnet50_params_m * fp32_bytes
+    resnet50_int8_mb = resnet50_params_m * int8_bytes
+    resnet50_fp32_epc_pct = resnet50_fp32_mb / sgx_epc_mb * 100
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(abs(resnet50_fp32_mb - 102.4) < 0.01, "ResNet-50 FP32 size changed")
+    check(abs(resnet50_fp32_epc_pct - 80.0) < 0.01, "ResNet-50 EPC share changed")
+
+    # ┌── 4. OUTPUT ────────────────────────────────────────
+    resnet18_fp32_mb_str = fmt(resnet18_fp32_mb, precision=1, commas=False)
+    resnet18_int8_mb_str = fmt(resnet18_int8_mb, precision=1, commas=False)
+    resnet50_fp32_mb_str = fmt(resnet50_fp32_mb, precision=1, commas=False)
+    resnet50_int8_mb_str = fmt(resnet50_int8_mb, precision=1, commas=False)
+    resnet50_params_m_str = fmt(resnet50_params_m, precision=1, commas=False)
+    fp32_bytes_str = fmt(fp32_bytes, precision=0, commas=False)
+    sgx_epc_mb_str = fmt(sgx_epc_mb, precision=0, commas=False)
+    resnet50_fp32_epc_pct_str = fmt(resnet50_fp32_epc_pct, precision=0, commas=False)
+    sgx_latency_base_ms_str = fmt(sgx_latency_base_ms, precision=0, commas=False)
+    sgx_latency_overflow_ms_str = fmt(sgx_latency_overflow_ms, precision=0, commas=False)
+    small_model_limit_mb_str = fmt(small_model_limit_mb, precision=0, commas=False)
+```
 
 Security features scale differently than computational resources. TEE memory limitations constrain model size regardless of available system memory. A ResNet-18 model is about `{python} TEEMemoryFootprint.resnet18_fp32_mb_str` MB with FP32 weights or `{python} TEEMemoryFootprint.resnet18_int8_mb_str` MB with INT8 weights, while ResNet-50 is about `{python} TEEMemoryFootprint.resnet50_fp32_mb_str` MB with FP32 weights or `{python} TEEMemoryFootprint.resnet50_int8_mb_str` MB with INT8 weights before activations and runtime buffers. These constraints create architectural decisions that must be made early in system design.
 

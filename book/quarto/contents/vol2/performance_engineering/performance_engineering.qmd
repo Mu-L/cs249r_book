@@ -1807,16 +1807,21 @@ A kernel that falls far below both the compute ceiling and the bandwidth ceiling
 #| echo: false
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Context: Roofline diagnosis — LayerNorm profiling example.
-# │ Exports: RooflineProfilingRecap.h100_fp16_ridge_str,
-# │          MemoryWallProfilingRecap.h100_hbm_bw_str
+# │ Exports: RooflineProfilingRecap.h100_fp16_ridge_str
 class RooflineProfilingRecap:
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     h100_fp16_ridge_str = fmt(Hardware.Cloud.H100.ridge_point("fp16").m_as("flop/byte"), precision=1, commas=False)
-
-class MemoryWallProfilingRecap:
-    h100_hbm_bw_str = fmt(Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second), precision=2, commas=False)
 ```
 
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Roofline diagnosis — LayerNorm profiling example.
+# │ Exports: MemoryWallProfilingRecap.h100_hbm_bw_str
+class MemoryWallProfilingRecap:
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    h100_hbm_bw_str = fmt(Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second), precision=2, commas=False)
+```
 Consider a concrete example: a LayerNorm kernel profiled on an H100 reports 15 TFLOP/s of achieved compute and 2.8 TB/s of achieved memory bandwidth. Its arithmetic intensity is $15 \text{ TFLOP/s} / 2.8 \text{ TB/s} \approx 5.4$ FLOP/byte. The H100's ridge point is approximately `{python} RooflineProfilingRecap.h100_fp16_ridge_str` FLOP/byte at FP16. Since 5.4 is far below `{python} RooflineProfilingRecap.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved 2.8 TB/s (84 percent of the H100's `{python} MemoryWallProfilingRecap.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield little gain; performance can only be improved materially by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
 
 ### PyTorch profiler workflow {#sec-performance-engineering-pytorch-profiler}
@@ -2282,11 +2287,24 @@ Recognizing these pitfalls saves teams from wasting months optimizing the wrong 
 #| echo: false
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Context: Chapter summary — roofline and FlashAttention recap.
-# │ Exports: RooflineSummaryRecap.h100_fp16_ridge_str,
-# │          FlashAttentionSummaryRecap.savings_str
+# │ Exports: RooflineSummaryRecap.h100_fp16_ridge_str
 class RooflineSummaryRecap:
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     h100_fp16_ridge_str = fmt(Hardware.Cloud.H100.ridge_point("fp16").m_as("flop/byte"), precision=1, commas=False)
+```
+Performance engineering transforms a model that should be efficient into one that is, by attacking the fundamental bottleneck of modern ML systems: the memory wall. @fig-optimization-hierarchy illustrates the profiling hierarchy, providing four levels of diagnostic granularity from application-level global metrics down to hardware counters.
 
+::: {#fig-optimization-hierarchy fig-env="figure" fig-pos="htb" fig-cap="**The Profiling Hierarchy**: Four levels of profiling granularity. Start at Level 4 (Application Profiling) for global symptoms, and drill down through Framework and Kernel profiling to find the root cause at Level 1 (Hardware Counters)." fig-alt="Pyramid diagram showing four levels of profiling: Hardware Counters at the base, Kernel Profiling, Framework Profiling, and Application Profiling at the top, with an arrow indicating drill-down from top to bottom."}
+![](images/svg/profiling-hierarchy.svg)
+:::
+
+The Roofline Model provides the diagnostic framework, classifying operations as compute-bound or memory-bound based on their arithmetic intensity relative to the hardware's ridge point. For the NVIDIA H100, this ridge point is approximately `{python} RooflineSummaryRecap.h100_fp16_ridge_str` FLOP/byte at FP16, meaning most transformer operations fall in the memory-bound regime.
+
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Chapter summary — FlashAttention recap.
+# │ Exports: FlashAttentionSummaryRecap.savings_str
 class FlashAttentionSummaryRecap:
     from mlsysim import Models
     m = Models.Language.Llama2_70B
@@ -2299,17 +2317,9 @@ class FlashAttentionSummaryRecap:
     )
     flash_attn_bytes_per_head = (3 + 1) * seq_len * head_dim * bytes_per_elem
     savings_ratio = naive_attn_bytes_per_head / flash_attn_bytes_per_head
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     savings_str = fmt(savings_ratio, precision=0, commas=False)
 ```
-
-Performance engineering transforms a model that should be efficient into one that is, by attacking the fundamental bottleneck of modern ML systems: the memory wall. @fig-optimization-hierarchy illustrates the profiling hierarchy, providing four levels of diagnostic granularity from application-level global metrics down to hardware counters.
-
-::: {#fig-optimization-hierarchy fig-env="figure" fig-pos="htb" fig-cap="**The Profiling Hierarchy**: Four levels of profiling granularity. Start at Level 4 (Application Profiling) for global symptoms, and drill down through Framework and Kernel profiling to find the root cause at Level 1 (Hardware Counters)." fig-alt="Pyramid diagram showing four levels of profiling: Hardware Counters at the base, Kernel Profiling, Framework Profiling, and Application Profiling at the top, with an arrow indicating drill-down from top to bottom."}
-![](images/svg/profiling-hierarchy.svg)
-:::
-
-The Roofline Model provides the diagnostic framework, classifying operations as compute-bound or memory-bound based on their arithmetic intensity relative to the hardware's ridge point. For the NVIDIA H100, this ridge point is approximately `{python} RooflineSummaryRecap.h100_fp16_ridge_str` FLOP/byte at FP16, meaning most transformer operations fall in the memory-bound regime.
-
 Operator fusion eliminates redundant HBM round-trips by combining sequences of operations into single kernels. FlashAttention is the canonical example, avoiding the quadratic attention intermediates that dominate long sequences through tiling and online softmax. In the 8K example above, this is a `{python} FlashAttentionSummaryRecap.savings_str`$\times$ reduction in materialized attention state. Ring Attention extends this principle across GPUs for extreme sequence lengths.
 
 Precision engineering reduces bytes per transaction. FP8 formats (E4M3 for weights, E5M2 for gradients) double effective bandwidth on H100 hardware. Block-wise quantization (LLM.int8(), GPTQ, AWQ) handles the outlier features that defeat uniform quantization. KV cache compression to INT4 or INT8 directly increases serving batch size.
