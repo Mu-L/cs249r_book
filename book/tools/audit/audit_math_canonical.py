@@ -75,7 +75,7 @@ PLAIN_ASSIGN = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*([^=].*)$")
 
 # Pattern: matches calls to canonical formatter helpers on the RHS.
 CANONICAL_STR_CALL = re.compile(
-    r"\b(fmt|fmt_percent|fmt_val|fmt_unit|fmt_sci|MarkdownStr)\s*\("
+    r"\b(fmt|fmt_int|fmt_percent|fmt_val|fmt_unit|fmt_sci|MarkdownStr)\s*\("
 )
 CANONICAL_MATH_CALL = re.compile(
     r"\b(fmt_math|MarkdownStr)\s*\("
@@ -120,16 +120,26 @@ NONINT_FLOAT_ASSIGN = re.compile(
     r"^\s*([A-Za-z_]\w*)\s*=\s*(\d+\.\d+(?:e-?\d+)?)\b"
 )
 
-# Pattern: fmt() call with precision=0 (only fmt itself; fmt_percent etc.
+# Pattern: fmt() call with precision=0 (only fmt itself; fmt_int and fmt_percent
 # have their own semantics). Captures the variable being formatted.
 PRECISION_ZERO_CALL = re.compile(
     r"\bfmt\(\s*([A-Za-z_][\w.]*)\s*,[^)]*\bprecision\s*=\s*0\b"
 )
 
+# Pattern: fmt(..., precision=N) with N>=1 on an integer literal first arg.
+SPURIOUS_DECIMAL_FMT = re.compile(
+    r"\bfmt\(\s*(\d+)\s*,[^)]*\bprecision\s*=\s*([1-9]\d*)\b"
+)
+
+# Pattern: fmt(round/int(...), precision=0) — prefer fmt_int(...) at call site.
+IMPLICIT_INT_CAST_FMT = re.compile(
+    r"\bfmt\(\s*(?:round|int)\("
+)
+
 # Pattern: fmt-family helper names used as calls in a cell body. Any of these
 # requires a matching `from mlsysim.fmt import ...` line in the file.
 FMT_FAMILY_USE = re.compile(
-    r"\b(fmt|fmt_math|fmt_percent|fmt_val|fmt_unit|fmt_sci|fmt_frac|sci_latex|MarkdownStr|check)\s*\("
+    r"\b(fmt|fmt_int|fmt_math|fmt_percent|fmt_val|fmt_unit|fmt_sci|fmt_frac|sci_latex|MarkdownStr|check)\s*\("
 )
 
 # Pattern: `from mlsysim.fmt import ...` block (possibly multi-line in parens
@@ -137,6 +147,14 @@ FMT_FAMILY_USE = re.compile(
 FMT_IMPORT_LINE = re.compile(
     r"\bfrom\s+mlsysim\.fmt\s+import\s+([^#\n]+)"
 )
+
+MLSYSIM_STAR_IMPORT = re.compile(r"\bfrom\s+mlsysim\s+import\s+\*")
+
+# Names exported by `from mlsysim import *` that belong to the fmt family.
+MLSYSIM_STAR_FMT_NAMES = frozenset({
+    "fmt", "fmt_int", "fmt_percent", "fmt_val", "fmt_unit", "fmt_sci",
+    "fmt_frac", "fmt_math", "MarkdownStr", "check", "sci_latex",
+})
 
 
 
@@ -389,11 +407,83 @@ def _audit_precision_loss_on_small_floats(qmd_path: Path) -> list[Violation]:
                     f"`{var}` was assigned `{value}` at line {assign_line} "
                     f"and is formatted with `precision=0`. {kind} Fix "
                     f"options: (a) bump precision to preserve the value "
-                    f"(e.g., `precision=2` for `{value}`), (b) set "
-                    f"`allow_zero=True` if integer rounding to "
-                    f"`{rounded}` is genuinely intentional, or (c) use "
+                    f"(e.g., `precision=2` for `{value}`), (b) use "
+                    f"`fmt_int({var})` if integer rounding to `{rounded}` "
+                    f"is genuinely intentional, or (c) use "
                     f"`MarkdownStr(f\"{{x}}\")` for value ranges that "
                     f"span orders of magnitude."
+                ),
+                context=line.strip()[:160],
+            )
+        )
+    return out
+
+
+def _audit_spurious_decimal_precision(qmd_path: Path) -> list[Violation]:
+    """Find fmt(INTEGER_LITERAL, precision>=1) — produces spurious .0 at runtime."""
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            continue
+        if not in_cell:
+            continue
+
+        m = SPURIOUS_DECIMAL_FMT.search(line)
+        if not m:
+            continue
+        literal, prec = m.group(1), m.group(2)
+        out.append(
+            Violation(
+                file=rel,
+                line=i,
+                code="spurious_decimal_precision",
+                message=(
+                    f"Integer literal `{literal}` is formatted with "
+                    f"`precision={prec}`, which produces spurious trailing "
+                    f"zeros (e.g. `{literal}.{'0' * int(prec)}`). Use "
+                    f"`precision=0` or `fmt_int({literal})` instead."
+                ),
+                context=line.strip()[:160],
+            )
+        )
+    return out
+
+
+def _audit_implicit_int_cast_precision_zero(qmd_path: Path) -> list[Violation]:
+    """Prefer fmt_int(...) over fmt(round/int(...), precision=0) for explicit intent."""
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            continue
+        if not in_cell:
+            continue
+        if not IMPLICIT_INT_CAST_FMT.search(line):
+            continue
+        if "precision=0" not in line:
+            continue
+        cast = "int(...)" if re.search(r"\bfmt\(\s*int\(", line) else "round(...)"
+        out.append(
+            Violation(
+                file=rel,
+                line=i,
+                code="prefer_fmt_int",
+                message=(
+                    f"Use `fmt_int(...)` instead of `fmt({cast}, precision=0)` "
+                    f"so integer display intent is explicit at the call site."
                 ),
                 context=line.strip()[:160],
             )
@@ -460,6 +550,10 @@ def _audit_missing_fmt_imports(qmd_path: Path) -> list[Violation]:
                     imported.add(name)
             continue
 
+        if MLSYSIM_STAR_IMPORT.search(line):
+            imported.update(MLSYSIM_STAR_FMT_NAMES)
+            continue
+
         # Skip comment lines.
         if line.strip().startswith("#"):
             continue
@@ -502,6 +596,8 @@ def audit(paths: list[Path]) -> list[Violation]:
             all_violations.extend(_audit_inline_refs(f))
             all_violations.extend(_audit_double_wrap(f))
             all_violations.extend(_audit_precision_loss_on_small_floats(f))
+            all_violations.extend(_audit_spurious_decimal_precision(f))
+            all_violations.extend(_audit_implicit_int_cast_precision_zero(f))
             all_violations.extend(_audit_missing_fmt_imports(f))
     return all_violations
 

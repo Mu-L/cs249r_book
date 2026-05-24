@@ -33,6 +33,76 @@ def _get_markdown():
     return MarkdownStr
 
 
+def _numeric_magnitude(quantity):
+    """Return a plain float magnitude for fmt safety checks."""
+    if isinstance(quantity, ureg.Quantity):
+        return float(quantity.magnitude)
+    return float(quantity)
+
+
+def _parse_formatted_number(result):
+    """Parse a formatted numeric string, ignoring thousands separators."""
+    try:
+        return float(result.replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _is_integer_like(val):
+    """True when a float is effectively a whole number (incl. 512.0, 989.0)."""
+    return abs(val - round(val)) <= 1e-9
+
+
+def _has_spurious_zero_decimals(result):
+    """True when fixed-point formatting produced trailing .0… with no other digits."""
+    plain = result.replace(",", "")
+    if "." not in plain:
+        return False
+    int_part, frac_part = plain.split(".", 1)
+    if not int_part or not int_part.lstrip("-").isdigit():
+        return False
+    return bool(frac_part) and set(frac_part) == {"0"}
+
+
+def _check_fmt_precision(val, precision, result):
+    """Fail loudly when formatting would hide meaningful magnitude.
+
+    Three failure modes:
+    1. Any precision: non-zero value displayed as ``0`` (e.g. 0.1 → "0").
+    2. precision=0: non-integer value displayed as an integer (e.g. 10.7 → "11").
+    3. precision>=1: integer-like value displayed with spurious decimals
+       (e.g. 512.0 → "512.0" instead of "512").
+    """
+    numeric_result = _parse_formatted_number(result)
+    if numeric_result is None:
+        return
+
+    if numeric_result == 0.0 and abs(val) > 1e-12:
+        raise ValueError(
+            f"Formatting Precision Error: Value {val} was formatted as '{result}' "
+            f"with precision={precision}. This hides the actual value. "
+            f"Increase precision or change units to avoid representing a "
+            f"non-zero value as zero."
+        )
+
+    if precision == 0 and abs(val) > 1e-12:
+        nearest_int = round(val)
+        if abs(val - nearest_int) > 1e-9:
+            raise ValueError(
+                f"Formatting Precision Error: Value {val} is not integer-like "
+                f"but precision=0 formats it as '{result}'. "
+                f"Use precision>=1 to preserve the fractional part, or "
+                f"fmt_int({val!r}) if integer display is intentional."
+            )
+
+    if precision >= 1 and _is_integer_like(val) and _has_spurious_zero_decimals(result):
+        raise ValueError(
+            f"Formatting Precision Error: Value {val} is integer-like "
+            f"but precision={precision} formats it as '{result}'. "
+            f"Use precision=0 or fmt_int(...) to avoid spurious trailing zeros."
+        )
+
+
 def fmt(quantity, unit=None, precision=1, commas=True,
         prefix="", suffix=""):
     """
@@ -47,36 +117,23 @@ def fmt(quantity, unit=None, precision=1, commas=True,
         fmt(bw_mb_s, precision=1, commas=False, suffix=" MB/s")  # "2.4 MB/s"
         fmt(speedup, precision=0, commas=False, suffix="x")     # "8x"
 
-    Safety: Raises ValueError if a non-zero value is formatted as "0"
-    due to insufficient precision.
+    Safety: Raises ValueError if formatting would hide meaningful magnitude:
+    non-zero values displayed as ``0``, non-integers displayed with
+    ``precision=0``, or integer-like values shown with spurious decimals
+    (``512.0``). Use ``fmt_int(...)`` when integer display is intentional.
     """
     if unit:
         # If a raw number is passed, assume it is already in base units.
         if isinstance(quantity, ureg.Quantity):
             quantity = quantity.to(unit)
 
-    if isinstance(quantity, ureg.Quantity):
-        val = quantity.magnitude
-    else:
-        val = quantity
+    val = _numeric_magnitude(quantity)
 
     # Primary formatting
     fmt_str = f",.{precision}f" if commas else f".{precision}f"
     result = f"{val:{fmt_str}}"
 
-    # --- Precision Safety Check ---
-    # Check if we accidentally rounded a non-zero value to zero
-    try:
-        numeric_result = float(result.replace(",", ""))
-    except ValueError:
-        numeric_result = None # Case for non-numeric strings if any
-
-    if numeric_result == 0.0 and abs(val) > 1e-12:
-        raise ValueError(
-            f"Formatting Precision Error: Value {val} was formatted as '{result}' "
-            f"with precision={precision}. This hides the actual value. "
-            f"Increase precision or change units to avoid representing a non-zero value as zero."
-        )
+    _check_fmt_precision(val, precision, result)
 
     decorated = f"{prefix}{result}{suffix}"
     out = MarkdownStr(decorated)
@@ -86,6 +143,21 @@ def fmt(quantity, unit=None, precision=1, commas=True,
         "See .claude/rules/math.md."
     )
     return out
+
+
+def fmt_int(quantity, unit=None, commas=True, prefix="", suffix=""):
+    """
+    Format a value as an integer for narrative text.
+
+    Explicit source-level opt-in for integer display of computed values.
+    Equivalent to ``fmt(round(val), precision=0, ...)`` but makes editorial
+    intent visible at the call site.
+    """
+    if unit:
+        if isinstance(quantity, ureg.Quantity):
+            quantity = quantity.to(unit)
+    val = _numeric_magnitude(quantity)
+    return fmt(round(val), precision=0, commas=commas, prefix=prefix, suffix=suffix)
 
 
 def fmt_val(quantity, default="-"):

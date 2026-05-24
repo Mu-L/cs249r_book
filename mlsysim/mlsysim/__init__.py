@@ -54,7 +54,7 @@ from .core.constants import (
 
 # AUTHORITATIVE FORMATTING
 from .core.formulas import *
-from .fmt import fmt, check, MarkdownStr
+from .fmt import fmt, fmt_int, check, MarkdownStr
 
 def plot_evaluation_scorecard(*args, **kwargs):
     """Render a system evaluation scorecard."""
@@ -70,7 +70,7 @@ __all__ = [
     # Core API
     "Engine", "Hardware", "Models", "Systems", "Tiers", "Infra",
     "Scenario", "Scenarios", "Applications",
-    "fmt", "check", "MarkdownStr",
+    "fmt", "fmt_int", "check", "MarkdownStr",
     # Solvers
     "SingleNodeModel", "DistributedModel", "ReliabilityModel",
     "SustainabilityModel", "EconomicsModel", "ServingModel",
