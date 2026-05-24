@@ -110,6 +110,20 @@ def _flag_preview(preview: str) -> list[str]:
         ctx = preview[start:end]
         if re.search(r"Software\s+[\d,]+\.0", ctx):
             continue
+        if re.search(
+            r"(?:Industry|PyTorch|NVLink|CUDA|SciPy|PCIe|InfiniBand|DOI|CO;)\s*[\d,]*\.0",
+            ctx,
+            re.I,
+        ):
+            continue
+        if re.search(r"(?:KFLOPs|MFLOPs|GFLOPs|TFLOPs|TFLOP/s|TB/s|GB/s| billion FLOPs| pJ)\b", ctx):
+            continue
+        if re.search(r"\d+\.0\s*M\b", ctx):
+            continue
+        if re.search(r"FLOP/byte", ctx):
+            continue
+        if re.search(r"(?:Baseline|perfect|\[math\]).*\d+\.0", ctx, re.I):
+            continue
         flags.append("spurious_.0")
         break
     if "<MISSING:" in preview:
