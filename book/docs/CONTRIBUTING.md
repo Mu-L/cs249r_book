@@ -91,6 +91,7 @@ Please make sure that your changes are consistent with the style of the existing
 - **Chapter content** lives in `book/quarto/contents/vol1/` or `vol2/`. Each chapter has its own directory.
 - **Images** go in the chapter's `images/png/` (raster) or `images/svg/` (vector) subdirectory.
 - **Editorial standards**: For prose contributions, please review the style conventions in the repository. We follow an academic textbook register (active voice, quantitative claims, no blog-post informality).
+- **Inline Python (LEGO cells)**: Quantitative examples use `{python}` cells with small scenario classes. See [LEGO cell contract](LEGO_CELLS.md) for placement, naming, and fmt conventions. Fmt/notation audits use [book/tools/audit/fmt/README.md](../tools/audit/fmt/README.md).
 
 ### 6. Commit Your Changes
 

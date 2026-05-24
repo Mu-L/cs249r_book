@@ -99,6 +99,7 @@ committed. Use the tools above for repeatable audits.
 ## Related
 
 - `mlsysim/mlsysim/fmt.py` — `fmt()`, `fmt_int()`, precision guards
+- [`book/docs/LEGO_CELLS.md`](../../../docs/LEGO_CELLS.md) — inline `{python}` cell placement and review contract
 - Pre-commit: `book-check-math-canonical` (static), `book-check-code` (echo, LEGO)
 
 ## Backward compatibility
