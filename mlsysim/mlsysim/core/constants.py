@@ -12,7 +12,7 @@
 # Model specifications belong in: `mlsysim/models/registry.py`
 #
 # Measurement units live in units.py; tuneable simulation defaults live in
-# defaults.py. This module re-exports both for convenience.
+# defaults.py (import explicitly — not re-exported here).
 
 from .units import *  # noqa: F401,F403 — re-export full unit registry
 
@@ -178,6 +178,3 @@ PRECISION_MAP = {
     "int4": BYTES_INT4,      # 0.5 bytes (aggressive quantization)
 }
 
-# Fleet-Scale Constants (Volume II)
-# Re-exported from defaults.py for backward compatibility.
-from .defaults import *  # noqa: E402,F401,F403

@@ -783,10 +783,13 @@ class TestCompressionModel:
 # 8. Constants & Module Import Tests
 # ======================================================================
 
-        """Importing from constants.py should still work (re-exports from units + defaults)."""
+    def test_constants_and_defaults_import(self):
+        """Units from constants.py; fleet defaults from defaults.py."""
         from mlsysim.core.constants import (
             ureg, Q_,
             BYTES_FP16, BYTES_FP32, BYTES_INT8, BYTES_INT4,
+        )
+        from mlsysim.core.defaults import (
             GPU_MTTF_HOURS,
             CHINCHILLA_TOKENS_PER_PARAM,
         )
