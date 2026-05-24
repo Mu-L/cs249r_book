@@ -32,7 +32,6 @@ H100_FLOPS_FP32_CUDA = 67 * TFLOPs / second  # FP32 on CUDA (vector) cores, no T
 # H200 shares the Hopper compute die with H100, only memory differs
 
 # NVIDIA B100/B200 (Blackwell, 2024) — Source: NVIDIA Blackwell Architecture
-B200_FLOPS_FP16_SPARSE = 4500 * TFLOPs / second
 
 # NVIDIA GB200 NVL72 (Rack-scale, 2024) — Source: NVIDIA Blackwell Architecture
 # This is a full rack containing 72 Blackwell GPUs and 36 Grace CPUs.
@@ -56,14 +55,8 @@ TPUV1_TOPS_INT8 = 92 * TOPS
 TPUV1_TDP = 75 * watt
 
 # Google TPU v2 — Source: Google Cloud Documentation
-TPUV2_FLOPS_BF16 = 45 * TFLOPs / second
-TPUV2_MEM_BW = 700 * GB / second
-TPUV2_MEM_CAPACITY = 16 * GiB
 
 # Google TPU v3 — Source: Google Cloud Documentation
-TPUV3_FLOPS_BF16 = 105 * TFLOPs / second
-TPUV3_MEM_BW = 900 * GB / second
-TPUV3_MEM_CAPACITY = 32 * GiB
 
 # Google TPU v4 — Source: Google TPUv4 paper (Jouppi et al., 2023)
 
@@ -73,19 +66,6 @@ TPUV5P_ICI_BW = 1200 * GB / second        # Bidirectional Inter-Chip Interconnec
 # Google TPU v6e (Trillium) — Source: Google Cloud Documentation
 
 # Cerebras Wafer-Scale Engine (WSE) — Source: Cerebras Whitepapers
-WSE1_CORES = 400000 * count
-WSE1_MEM_CAPACITY = 18 * GB
-WSE1_MEM_BW = 9 * PB / second
-WSE1_TDP = 15000 * watt
-WSE1_FLOPS_FP16 = 9 * PFLOPs / second  # Estimated
-
-WSE2_CORES = 850000 * count
-WSE2_MEM_CAPACITY = 40 * GB
-WSE2_MEM_BW = 20 * PB / second
-WSE2_TDP = 15000 * watt
-WSE2_FLOPS_FP16 = 38 * PFLOPs / second  # Estimated
-
-WSE3_CORES = 900000 * count
 
 # High-end Desktop CPU (Reference)
 CPU_FLOPS_FP32 = 1 * TFLOPs / second
@@ -101,7 +81,6 @@ LATENCY_INFINIBAND = 5000 * NS
 LATENCY_NVME_SSD = 100000 * NS
 
 # Mobile NPU
-MOBILE_FLAGSHIP_NPU_TOPS_INT8 = 100 * TOPS
 MOBILE_INFERENCE_TDP_HIGH = 4 * watt
 
 # Edge accelerators
@@ -113,7 +92,6 @@ JETSON_AGX_ORIN_TDP_MAX = 60 * watt
 IMAGENET_IMAGES = 1_281_167 * count
 IMAGENET_TEST_IMAGES = 50_000 * count
 CIFAR10_IMAGES = 50_000 * count
-CIFAR10_TEST_IMAGES = 10_000 * count
 
 # Standard dimensions
 IMAGE_DIM_RESNET = 224
@@ -133,7 +111,6 @@ FABRIC_HOP_LATENCY = 0.6 * US
 # Optical Interconnects (2025-2026 Reference)
 OPTICS_POWER_PLUGGABLE_400G_W = 20 * watt
 OPTICS_POWER_CPO_400G_W = 10 * watt
-OPTICS_POWER_LPO_400G_W = 12 * watt       # Linear Pluggable Optics
 ETHERNET_400G_BW = 400 * Gbps
 ETHERNET_800G_BW = 800 * Gbps
 ETHERNET_1P6T_BW = 1600 * Gbps
@@ -200,12 +177,8 @@ RETRIEVAL_COST_GLACIER = 0.02 * USD / GB
 # Labeling Pricing (2024 estimates)
 LABELING_COST_CROWD_LOW = 0.01 * USD
 LABELING_COST_CROWD_HIGH = 0.05 * USD
-LABELING_COST_EXPERT_LOW = 0.50 * USD
-LABELING_COST_EXPERT_HIGH = 2.00 * USD
 LABELING_COST_BOX_LOW = 0.05 * USD
 LABELING_COST_BOX_HIGH = 0.20 * USD
-LABELING_COST_SEG_LOW = 5 * USD
-LABELING_COST_SEG_HIGH = 50 * USD
 LABELING_COST_MEDICAL_LOW = 50 * USD
 LABELING_COST_MEDICAL_HIGH = 200 * USD
 
@@ -224,7 +197,6 @@ CARBON_PER_GPU_HR_KG = 0.16 * ureg.kilogram
 MOBILE_TDP_W = 3 * watt
 PHONE_BATTERY_WH = 15 * watt * hour
 OBJECT_DETECTOR_POWER_W = 2 * watt
-SERVER_POWER_W = 300 * watt
 
 # Reference energies
 ENERGY_SMARTPHONE_CHARGE_J = 40000 * joule
@@ -256,7 +228,6 @@ GPT4_TRAINING_GPU_DAYS = 2.5e6 # A100 days
 LLAMA2_70B_KV_HEADS = 8                       # Grouped-Query Attention (GQA)
 
 # Llama 3.1
-LLAMA3_405B_PARAMS = 405e9 * param
 
 # BERT-Base — Source: Devlin et al. (2018)
 BERT_BASE_FLOPs = 22e9 * flop              # Per inference (seq_len=512)
@@ -356,7 +327,6 @@ KWS_DSCNN_FLOPs = 20e6 * flop
 
 # DLRM (Deep Learning Recommendation Model) — Meta benchmark
 DLRM_EMBEDDING_ENTRIES = 25e9  # 25 Billion entries (dimensionless count)
-DLRM_EMBEDDING_DIM = 128
 
 # --- Hardware Unit Costs (Approximate, 2024 baseline) ---
 
@@ -369,7 +339,6 @@ NVME_GEN5_SEQUENTIAL_BW = 14.0 * GB / second
 SYSTEM_MEMORY_BW = 50 * GB / second        # DDR4/DDR5 typical
 HOST_DRAM_BW = 200 * GB / second
 LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count
-LOCAL_NVME_DRIVE_CAPACITY_REF = 7.68 * TB
 
 # --- Case Studies ---
 WAYMO_DATA_PER_HOUR_LOW = 1 * TB / hour
@@ -414,11 +383,6 @@ SGX_OVERFLOW_LATENCY = 150 * ms
 
 # Reliability and diagnostic thresholds
 MEMORY_BIT_ERROR_RATE_PER_BIT = 1e-17
-DAM_IO_OVERHEAD_WARN_THRESHOLD = 0.10
-DAM_ACTIVE_PARAMETER_SPARSE_THRESHOLD = 0.01
-DAM_MFU_LOW_THRESHOLD = 0.30
-DAM_LOW_UTILIZATION_THRESHOLD = 0.50
-DAM_HIGH_UTILIZATION_THRESHOLD = 0.80
 
 # --- Shared Precision Map ---
 # Used by Engine, ServingModel, SynthesisSolver to map precision strings to byte widths.
