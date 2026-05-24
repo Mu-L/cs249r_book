@@ -582,8 +582,6 @@ For gradient computation, the framework records a history of operations in what 
 
 [^fn-autograd-tape-memory]: **Autograd Tape**: A transient data structure built during forward execution, where each node records the operation type, input tensor references, saved intermediate values, and the backward function for chain rule application. The tape's memory cost scales linearly with network depth and is destroyed after the backward pass. For deep models, this transient graph can consume more memory than the model weights themselves, which is why activation checkpointing (trading recomputation for memory) becomes necessary for training models that would otherwise exhaust accelerator memory. \index{Autograd Tape!memory cost}
 
-Consider this example using PyTorch, which implements eager execution as its default mode. @lst-autograd-tape-example shows *how* operations are recorded as they execute.
-
 ::: {#lst-autograd-tape-example lst-cap="**Autograd Tape Construction**: Each operation executes immediately while recording a backward node to the autograd tape for later gradient computation."}
 
 ```{.python}
@@ -596,6 +594,8 @@ z = y + 1  # Executes immediately; records AddBackward node
 ```
 
 :::
+
+Consider this example using PyTorch, which implements eager execution as its default mode. @lst-autograd-tape-example shows *how* operations are recorded as they execute.
 
 After these two operations, the framework has constructed an autograd tape with two nodes: one for the multiplication and one for the addition. The tape records that `z` depends on `y`, and `y` depends on `x`.
 
@@ -921,7 +921,9 @@ Static graph execution defines the complete computational graph as a symbolic re
 
 ##### Two-phase execution {.unnumbered}
 
-Static graphs implement a clear separation between graph construction and execution. @lst-tf-static-graph illustrates the two phases using TensorFlow 1.x, which exemplified this approach: symbolic definition creates placeholders and operations without computation, while explicit execution triggers actual arithmetic:
+Static graphs implement a clear separation between graph construction and execution. @lst-tf-static-graph illustrates the two phases using TensorFlow 1.x, which exemplified this approach: symbolic definition creates placeholders and operations without computation, while explicit execution triggers actual arithmetic.
+
+Compare this with the dynamic model by examining @fig-mlfm-static-graph. Notice the clear boundary between phases: in the definition phase (left), the framework builds a complete blueprint without touching any data; in the execution phase (right), data flows through an already-optimized graph. This separation enables the framework to resolve questions during the definition phase that are unreachable operation-by-operation: which intermediate tensors can share memory, which operations can fuse into a single kernel, and what the total memory footprint will be. By the time execution begins, these optimizations are already baked in.
 
 ::: {#lst-tf-static-graph lst-cap="**Static Graph Two-Phase Execution**: Graph construction (symbolic definition) is separated from execution (actual computation), enabling ahead-of-time optimization."}
 
@@ -945,7 +947,8 @@ with tf.Session() as sess:
 
 :::
 
-Compare this with the dynamic model by examining @fig-mlfm-static-graph. Notice the clear boundary between phases: in the definition phase (left), the framework builds a complete blueprint without touching any data; in the execution phase (right), data flows through an already-optimized graph. This separation enables the framework to resolve questions during the definition phase that are unreachable operation-by-operation: which intermediate tensors can share memory, which operations can fuse into a single kernel, and what the total memory footprint will be. By the time execution begins, these optimizations are already baked in.
+The key difference from eager execution is that during construction, `x`, `y`, and `z` are not tensors containing values but rather symbolic nodes in a graph. Operations like `*` and `+` add nodes to the graph definition without performing any arithmetic. The `print(y)` line in the code example would reveal this distinction---it would print tensor metadata, not a computed value. Execution is triggered explicitly through `sess.run()`, at which point the framework analyzes the complete graph, optimizes it, and executes the optimized version with the provided input data.
+
 
 ::: {#fig-mlfm-static-graph fig-env="figure" fig-pos="htb" fig-cap="**Static Graph: Define Then Execute**: The two phases of static graph execution. The definition phase (left) declares operations and builds the graph. The execution phase (right) loads data, runs the optimized graph, and produces results." fig-alt="Flow diagram showing two phases. Definition phase: Define operations, declare variables, build graph. Execution phase: Load data, run graph, get results. Arrows connect boxes left to right."}
 
@@ -1235,8 +1238,6 @@ fill=green!03](F2){};
 
 :::
 
-The key difference from eager execution is that during construction, `x`, `y`, and `z` are not tensors containing values but rather symbolic nodes in a graph. Operations like `*` and `+` add nodes to the graph definition without performing any arithmetic. The `print(y)` line in the code example would reveal this distinction---it would print tensor metadata, not a computed value. Execution is triggered explicitly through `sess.run()`, at which point the framework analyzes the complete graph, optimizes it, and executes the optimized version with the provided input data.
-
 ##### Ahead-of-time optimization {.unnumbered}
 
 \index{Ahead-of-Time Optimization}
@@ -1341,7 +1342,6 @@ def conditional_forward(x):
     else:
         return x * 3
 
-
 traced = torch.jit.trace(conditional_forward, torch.tensor([1.0]))
 # Tracing captures ONLY the x.sum() > 0 branch
 # If input later has sum <= 0, traced version
@@ -1363,7 +1363,6 @@ def forward(x):
     z = y + 1
     return z
 
-
 # Compiles Python source code to TorchScript IR
 # No example inputs needed
 # Preserves control flow structure
@@ -1382,7 +1381,6 @@ def conditional_forward(x: torch.Tensor) -> torch.Tensor:
         return x * 2
     else:
         return x * 3
-
 
 # Both branches preserved in IR
 # Correct branch executes based on runtime input values
@@ -1698,8 +1696,7 @@ def conditional_compute(x):
         return x * 3
 
 
-# Creates two compiled regions: operations before
-# and after the if statement
+# Creates two compiled regions: operations before and after the if statement
 # The if statement itself executes eagerly
 ```
 
@@ -1767,8 +1764,6 @@ The compilation mode controls *how aggressively* to optimize; the backend contro
 
 @lst-torch-compile-benchmark implements correct GPU benchmarking methodology, incorporating CUDA synchronization, warmup iterations to exclude compilation time, and sufficient iterations to amortize measurement overhead.
 
-Critical benchmarking details: (1) Use `torch.cuda.synchronize()` because CUDA operations are asynchronous; without synchronization, timing measures only kernel launch time, not execution time. (2) Warmup compilation by calling once before timing to exclude compilation from measurements. (3) Run 100+ iterations to amortize measurement overhead.
-
 ::: {#lst-torch-compile-benchmark lst-cap="**Benchmarking torch.compile**: Properly measuring speedup requires CUDA synchronization, warmup to exclude compilation time, and sufficient iterations to amortize measurement overhead."}
 
 ```{.python}
@@ -1807,6 +1802,8 @@ print(f"Speedup: {eager_time/compiled_time:.2f}$\times$ ")
 ```
 
 :::
+
+Critical benchmarking details: (1) Use `torch.cuda.synchronize()` because CUDA operations are asynchronous; without synchronization, timing measures only kernel launch time, not execution time. (2) Warmup compilation by calling once before timing to exclude compilation from measurements. (3) Run 100+ iterations to amortize measurement overhead.
 
 ##### Systems implications {.unnumbered}
 
@@ -1967,7 +1964,7 @@ class CompilationBenchmark:
 | **ViT-B/16**     |             620              |                 950                  |              1,650              |             25--45             |
 | **GPT-2 (124M)** |             180              |                 260                  |               420               |             45--90             |
 
-: **Training and Inference Throughput**: Representative throughput comparison across execution modes for common model architectures on NVIDIA A100 GPU with batch size 32. The table values imply torch.compile speedups of `{python} CompilationBenchmark.torch_compile_speedup_min_str`--`{python} CompilationBenchmark.torch_compile_speedup_max_str`$\times$ over eager mode, while TensorRT implies `{python} CompilationBenchmark.tensorrt_speedup_min_str`--`{python} CompilationBenchmark.tensorrt_speedup_max_str`$\times$ speedups but requires longer compilation and is inference only. Compile times vary based on model complexity and optimization level. {#tbl-training-benchmark}
+: **Training and Inference Throughput**: Representative throughput comparison across execution modes for common model architectures on NVIDIA A100 GPU with batch size 32. The table values imply torch.compile speedups of `{python} CompilationBenchmark.torch_compile_speedup_min_str`--`{python} CompilationBenchmark.torch_compile_speedup_max_str`$\times$ over eager mode, while TensorRT implies `{python} CompilationBenchmark.tensorrt_speedup_min_str`--`{python} CompilationBenchmark.tensorrt_speedup_max_str`$\times$ speedups but requires longer compilation and is inference only. Compile times vary based on model complexity and optimization level. {#tbl-training-benchmark {tbl-colwidths="[20,20,20,20,20]"}
 
 These throughput differences across execution modes raise a practical question—which framework execution strategy best serves each workload archetype.
 
@@ -1982,7 +1979,7 @@ The optimal framework execution strategy depends on which iron law term dominate
 | **DLRM (Sparse Scatter)**     | $\frac{D_{\text{vol}}}{\text{BW}}(\text{Random Access})+L_{\text{lat,network}}$ | **Eager** with specialized kernels  (FBGEMM)             | Embedding lookups are inherently irregular and dynamic; compilation gains are small |
 | **DS-CNN (Tiny Constraint)**  | $L_{\text{lat}}$ (Overhead)                                                     | **AOT compilation** (TFLite, ONNX)                       | Sub-ms inference; every microsecond of  Python overhead is unacceptable             |
 
-: **Framework Execution Strategy by Workload**: Recommended execution strategy for each workload archetype, aligned to the dominant iron law term. Compute-bound workloads benefit most from compilation, while irregular access patterns favor eager execution. {#tbl-framework-archetype-strategy tbl-colwidths="[17,31,22,30]"}
+: **Framework Execution Strategy by Workload**: Recommended execution strategy for each workload archetype, aligned to the dominant iron law term. Compute-bound workloads benefit most from compilation, while irregular access patterns favor eager execution. {#tbl-framework-archetype-strategy tbl-colwidths="[17,28,22,33]"}
 
 **Systems insight**: Compilation benefits scale with how much of the workload is optimizable. Compute Beasts (@tbl-training-benchmark: ResNet-50 sees `{python} CompilationBenchmark.resnet_tensorrt_speedup_str`$\times$ speedup from TensorRT) benefit most. Sparse Scatter workloads gain little because their bottleneck (embedding lookups) is inherently irregular.
 
@@ -2565,9 +2562,11 @@ Concretely, every tensor produced by a differentiable operation stores a `grad_f
 ```{.python}
 import torch
 
+
 x = torch.tensor([2.0], requires_grad=True)
 y = x * 3
 z = y.pow(2)
+
 
 # Traverse the reverse-linked graph
 print(z.grad_fn)  # PowBackward0
@@ -2679,12 +2678,15 @@ By default, `backward()` frees the graph after use. To run multiple backward pas
 x = torch.tensor([2.0], requires_grad=True)
 y = x**2
 
+
 # First backward pass - graph is freed by default
 y.backward()
 print(x.grad)  # tensor([4.])
 
+
 # Second backward on SAME y fails - graph was freed
 # y.backward()  # RuntimeError: graph already freed!
+
 
 # Solution: retain_graph=True keeps graph for multiple passes
 x.grad.zero_()
@@ -2960,6 +2962,9 @@ state = optimizer.state_dict()
 
 :::
 
+The mathematics of automatic differentiation were established decades before deep learning's resurgence. What changed was the systems engineering. Before framework automation, implementing gradient computation for a single fully connected layer meant writing separate forward and backward functions, manually tracking intermediate values, and verifying mathematical correctness across dozens of operations. A modern transformer involves hundreds of operations with complex dependencies; manual gradient derivation for attention, layer normalization, and residual connections would require months of careful work per architecture variant.
+
+
 ::: {#lst-checkpoint-save-load lst-cap="**Checkpoint Save and Load**: Save both model parameters and optimizer state to properly resume training with correct momentum and adaptive learning rate values."}
 
 ```{.python}
@@ -2978,8 +2983,6 @@ optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 ```
 
 :::
-
-The mathematics of automatic differentiation were established decades before deep learning's resurgence. What changed was the systems engineering. Before framework automation, implementing gradient computation for a single fully connected layer meant writing separate forward and backward functions, manually tracking intermediate values, and verifying mathematical correctness across dozens of operations. A modern transformer involves hundreds of operations with complex dependencies; manual gradient derivation for attention, layer normalization, and residual connections would require months of careful work per architecture variant.
 
 The breakthrough was turning this manual process into software infrastructure. A single matrix multiplication requires different gradient computations depending on which inputs require gradients, tensor shapes, hardware capabilities, and memory constraints. Autograd systems handle these variations transparently, which is why the rate of architectural innovation accelerated after frameworks matured. The mathematics did not change; software engineering made the mathematics practical to apply at scale.
 
@@ -3005,8 +3008,6 @@ When "OOM" (Out of Memory) errors appear despite `nvidia-smi` showing free memor
 
 A training iteration that takes 300 ms in profiling may take 500 ms in production because the AD system must coordinate with the memory allocator, the device manager, the operation scheduler, and the optimizer on every single step. Each gradient computation can trigger data movement between CPU and GPU, memory allocation for intermediate tensors, and kernel launches on accelerators. These system interactions dominate wall-clock time for small models and remain significant even at scale. The gap between what the programmer writes (a five-line training loop) and what the system executes (dozens of memory allocations, kernel launches, and synchronization points) is the central tension of AD system design.
 
-Beyond sequential overhead, the AD system must also exploit *concurrency*. Modern networks frequently contain independent branches---two convolutional paths processing the same input before merging, as in Inception-style architectures. On a GPU with sufficient resources, the framework's scheduler can execute both branch backward passes on separate CUDA streams, reducing backward pass time by up to 30--40 percent. The AD system therefore tracks dependencies for two purposes: correctness (computing the right gradients) *and* performance (scheduling independent computations concurrently). Frameworks hide this complexity behind `loss.backward()`, but the scheduling, memory allocation, and data movement decisions behind that call determine whether training runs at 40 percent or 80 percent of peak hardware utilization.
-
 ::: {#psp-frameworks-tape-based-vs-transform-based-autodiff .callout-perspective title="Tape-based vs. transform-based autodiff"}
 
 \index{Automatic Differentiation!tape-based vs. transform-based}
@@ -3015,6 +3016,8 @@ Beyond sequential overhead, the AD system must also exploit *concurrency*. Moder
 **JAX (Transform-based)**: Treats automatic differentiation as a high-level function transformation (`grad(f)`). Because JAX sees the mathematical function before execution, it can easily chain other transformations like `jit(grad(f))` or `vmap(grad(f))`, producing highly optimized, compiled kernels that often outperform dynamic frameworks on specialized hardware like TPUs.
 
 :::
+
+Beyond sequential overhead, the AD system must also exploit *concurrency*. Modern networks frequently contain independent branches---two convolutional paths processing the same input before merging, as in Inception-style architectures. On a GPU with sufficient resources, the framework's scheduler can execute both branch backward passes on separate CUDA streams, reducing backward pass time by up to 30--40 percent. The AD system therefore tracks dependencies for two purposes: correctness (computing the right gradients) *and* performance (scheduling independent computations concurrently). Frameworks hide this complexity behind `loss.backward()`, but the scheduling, memory allocation, and data movement decisions behind that call determine whether training runs at 40 percent or 80 percent of peak hardware utilization.
 
 The memory and system integration challenges examined earlier (caching allocators, activation storage, and checkpoint overhead) affect all frameworks. Yet *how* frameworks implement automatic differentiation in the first place varies significantly, with consequences for both *optimization potential* and *developer experience*. The distinction between *tape-based and transform-based autodiff* captures this architectural divergence.
 
@@ -3243,7 +3246,6 @@ The memory breakdown for ResNet-50 in @sec-ml-frameworks-principle-2-memorycompu
 2.  **Gradients**: `{python} AdminTax.admin_grads_gb_str` GB (same size as weights).
 3.  **Optimizer states (Adam)**: `{python} AdminTax.admin_opt_gb_str` GB ($4 \times$ FP16 weight memory for momentum and velocity stored in FP32).
 4.  **Activations**: For a batch size of `{python} AdminTax.admin_batch_str` and a `{python} AdminTax.admin_layers_str`-layer network, the framework must store every intermediate layer output for the backward pass.
-
     $$ \text{Activations} \approx \text{Batch} \times \text{Layers} \times \text{Width}^{2} \times 2 \text{ bytes} $$
     For a `{python} AdminTax.admin_width_str`-width model: `{python} AdminTax.admin_act_calc_math`. (Each layer's activation is a $\text{Width}{\times}\text{Width}$ matrix per sample---appropriate for transformer-style models where intermediate projections scale with hidden dimension squared.)
 
@@ -3400,7 +3402,8 @@ Memory layout implementation introduces distinct challenges in tensor design. Wh
 }
 \node[above=2pt of ZE2.north east]{\textbf{Column-Major Layout}};
 % Strides explanation (BOTTOM)
-\node[anchor=north west,align=left,inner sep=0pt] at ($(B10.south west)+(0,-0.2)$) {%
+\node[anchor=north west,align=left,inner sep=0pt,font=\fontsize{9pt}{12}\selectfont\usefont{T1}{phv}{m}{n}] 
+at ($(B10.south west)+(0,-0.3)$) {%
 \textbf{Stride Calculation:}\\
 Row-major strides: [3, 1]\\
 Column-major strides: [1, 2]\\
@@ -4183,12 +4186,13 @@ This is a graph traversal problem at its core. When a developer assigns an `nn.P
 
 The systems consequence is significant. Automatic parameter discovery enables `optimizer.step()` to update millions of parameters in a single vectorized operation, keeping the operations-per-parameter term efficient by avoiding per-parameter Python dispatch. Without this abstraction, each parameter update would require a separate Python function call, and the interpreter overhead alone would dominate training time for large models. @lst-parameter_registration demonstrates the core mechanism: attribute assignment triggers registration, and `.parameters()` returns all discovered tensors.
 
+The distinction between *parameters* and *buffers* illustrates a subtlety of the discovery mechanism. Parameters carry `requires_grad=True` and participate in gradient computation. Buffers, registered through `register_buffer()`, travel with the model during device transfers but remain excluded from gradient updates. This separation is essential for normalization layers, where running statistics must persist across batches but must not receive gradients. The same dual-track design appears in Keras (via `non_trainable_weights`) and Flax (via `state` vs. `params`).
+
 ::: {#lst-parameter_registration lst-cap="**Parameter Registration**: Automatic parameter tracking through attribute assignment enables optimizer access to all trainable weights without manual enumeration."}
 
 ```{.python}
 import torch
 import torch.nn as nn
-
 
 class CustomLayer(nn.Module):
     def __init__(self, input_size, output_size):
@@ -4202,7 +4206,6 @@ class CustomLayer(nn.Module):
     def forward(self, x):
         return torch.matmul(x, self.weight.t()) + self.bias
 
-
 layer = CustomLayer(10, 20)
 # Framework discovers both parameters automatically:
 for name, param in layer.named_parameters():
@@ -4210,8 +4213,6 @@ for name, param in layer.named_parameters():
 ```
 
 :::
-
-The distinction between *parameters* and *buffers* illustrates a subtlety of the discovery mechanism. Parameters carry `requires_grad=True` and participate in gradient computation. Buffers, registered through `register_buffer()`, travel with the model during device transfers but remain excluded from gradient updates. This separation is essential for normalization layers, where running statistics must persist across batches but must not receive gradients. The same dual-track design appears in Keras (via `non_trainable_weights`) and Flax (via `state` vs. `params`).
 
 ::: {#psp-frameworks-cross-framework-parameter-discovery .callout-perspective title="Cross-framework parameter discovery"}
 
@@ -4224,7 +4225,7 @@ The distinction between *parameters* and *buffers* illustrates a subtlety of the
 | **JAX/Flax**\index{Flax!JAX neural network library} | `params = model.init(key, x)` | Separate `state` dict            |
 | **TensorFlow**                                      | `module.trainable_variables`  | `module.non_trainable_variables` |
 
-: **Parameter Discovery APIs Across Frameworks**: Each framework exposes a different surface for distinguishing trainable parameters from nontrainable buffers, but all four solve the same underlying problem of letting optimizers find weights to update while preserving state (running statistics, frozen tensors) across forward passes. {#tbl-frameworks-parameter-discovery-apis}
+: **Parameter Discovery APIs Across Frameworks**: Each framework exposes a different surface for distinguishing trainable parameters from nontrainable buffers, but all four solve the same underlying problem of letting optimizers find weights to update while preserving state (running statistics, frozen tensors) across forward passes. {#tbl-frameworks-parameter-discovery-apis tbl-colwidths="[23,38,38]"}
 
 Despite syntactic differences, all frameworks solve the same problem: enabling optimizers to discover and update trainable parameters while preserving nontrainable state across forward passes.
 
@@ -4652,7 +4653,7 @@ The **Open Neural Network Exchange (ONNX)**\index{ONNX!definition}\index{ONNX!cr
 
 ::: {#fig-onnx fig-env="figure" fig-pos="htb" fig-cap="**Framework Interoperability**: ONNX enables model portability across frameworks, allowing training in one framework and deployment in another." fig-alt="Hub diagram with ONNX at center. Left side (export): PyTorch, TensorFlow, Keras, Caffe2, MXNet, Microsoft CNTK with arrows pointing inward. Right side (load): ONNX Runtime plus the same six frameworks with arrows pointing outward."}
 
-![](images/jpeg/onnx_new.jpg){width=60%}
+![](images/jpeg/onnx_new.jpg){width=75%}
 
 :::
 
