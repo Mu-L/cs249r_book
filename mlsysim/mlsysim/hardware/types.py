@@ -20,6 +20,7 @@ class MemoryHierarchy(BaseModel):
     # Flash storage (optional — for TinyML devices where weights live in flash)
     flash_capacity: Optional[Quantity] = None
     flash_bandwidth: Optional[Quantity] = None
+    l2_cache: Optional[Quantity] = None
 
 class StorageHierarchy(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)

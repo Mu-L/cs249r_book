@@ -88,8 +88,25 @@ class LanguageModels(Registry):
         kv_heads=8,
         inference_flops=2 * 70.6e9 * ureg.flop
     )
+    Llama3_405B = TransformerWorkload(
+        name="Llama-3.1-405B",
+        architecture="Transformer",
+        parameters=405e9 * param,
+        layers=126,
+        hidden_dim=16384,
+        heads=128,
+        kv_heads=8,
+        inference_flops=2 * 405e9 * ureg.flop,
+    )
 
 class VisionModels(Registry):
+    ResNet18 = CNNWorkload(
+        name="ResNet-18",
+        architecture="CNN",
+        parameters=11.7e6 * param,
+        inference_flops=1.8e9 * ureg.flop,
+        layers=18,
+    )
     ResNet50 = CNNWorkload(
         name="ResNet-50",
         architecture="CNN",

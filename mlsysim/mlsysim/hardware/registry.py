@@ -1,6 +1,10 @@
 from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy, IOInterconnect
 from ..core.registry import Registry
-from ..core.constants import (GB, GiB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, second, ureg, watt, LATENCY_NVLINK)
+from ..core.constants import (
+    GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
+    LATENCY_NVLINK, CPU_FLOPS_FP32, H100_L2_CACHE, SGX_BASE_LATENCY, SGX_EPC_CAPACITY,
+    SGX_OVERFLOW_LATENCY, TPUV1_TDP, TPUV1_TOPS_INT8, TPUV5P_L2_SRAM,
+)
 
 class CloudHardware(Registry):
     """Datacenter-scale accelerators (Volume II)."""
@@ -34,7 +38,11 @@ class CloudHardware(Registry):
         name="NVIDIA H100",
         release_year=2022,
         compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS}),
-        memory=MemoryHierarchy(capacity=80 * GiB, bandwidth=3.35 * TB / second),
+        memory=MemoryHierarchy(
+            capacity=80 * GiB,
+            bandwidth=3.35 * TB / second,
+            l2_cache=H100_L2_CACHE,
+        ),
         storage=StorageHierarchy(capacity=2 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
         nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=LATENCY_NVLINK),
@@ -150,9 +158,40 @@ class CloudHardware(Registry):
         name="Google TPU v5p",
         release_year=2023,
         compute=ComputeCore(peak_flops=459 * TFLOPs / second, precision_flops={"int8": 918 * TOPS}),
-        memory=MemoryHierarchy(capacity=95 * GiB, bandwidth=2.76 * TB / second),
+        memory=MemoryHierarchy(
+            capacity=95 * GiB,
+            bandwidth=2.76 * TB / second,
+            l2_cache=TPUV5P_L2_SRAM,
+        ),
         tdp=300 * watt,
         dispatch_tax=0.04 * ureg.ms
+    )
+
+    TPUv1 = HardwareNode(
+        name="Google TPU v1",
+        release_year=2017,
+        compute=ComputeCore(peak_flops=92 * TOPS, precision_flops={"int8": 92 * TOPS}),
+        memory=MemoryHierarchy(capacity=8 * GiB, bandwidth=34 * GB / second),
+        tdp=TPUV1_TDP,
+        dispatch_tax=0.05 * ureg.ms,
+    )
+
+    TPUv2 = HardwareNode(
+        name="Google TPU v2",
+        release_year=2018,
+        compute=ComputeCore(peak_flops=45 * TFLOPs / second, precision_flops={"bf16": 45 * TFLOPs / second}),
+        memory=MemoryHierarchy(capacity=16 * GiB, bandwidth=700 * GB / second),
+        tdp=200 * watt,
+        dispatch_tax=0.04 * ureg.ms,
+    )
+
+    TPUv3 = HardwareNode(
+        name="Google TPU v3",
+        release_year=2019,
+        compute=ComputeCore(peak_flops=105 * TFLOPs / second, precision_flops={"bf16": 105 * TFLOPs / second}),
+        memory=MemoryHierarchy(capacity=32 * GiB, bandwidth=900 * GB / second),
+        tdp=250 * watt,
+        dispatch_tax=0.04 * ureg.ms,
     )
 
     TPUv4 = HardwareNode(
@@ -162,6 +201,30 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=32 * ureg.GiB, bandwidth=1200 * GB / second),
         tdp=200 * ureg.W,
         dispatch_tax=0.04 * ureg.ms,
+    )
+
+    ReferenceCPU = HardwareNode(
+        name="Reference Desktop CPU",
+        release_year=2024,
+        compute=ComputeCore(
+            peak_flops=CPU_FLOPS_FP32,
+            precision_flops={"fp32": CPU_FLOPS_FP32},
+        ),
+        memory=MemoryHierarchy(capacity=64 * GiB, bandwidth=50 * GB / second),
+        tdp=150 * watt,
+        dispatch_tax=0.1 * ureg.ms,
+    )
+
+    IntelSGX = HardwareNode(
+        name="Intel SGX Enclave (Reference)",
+        release_year=2020,
+        compute=ComputeCore(peak_flops=CPU_FLOPS_FP32, precision_flops={"fp32": CPU_FLOPS_FP32}),
+        memory=MemoryHierarchy(
+            capacity=SGX_EPC_CAPACITY,
+            bandwidth=10 * GB / second,
+            sram_capacity=SGX_EPC_CAPACITY,
+        ),
+        dispatch_tax=SGX_BASE_LATENCY,
     )
 
     T4 = HardwareNode(
@@ -280,9 +343,6 @@ class EdgeHardware(Registry):
         dispatch_tax=0.1 * ureg.ms
     )
 
-    # Backward-compatible alias
-    Generic_Phone = MobileHardware.iPhone15Pro
-
 class TinyHardware(Registry):
     """Microcontrollers and sub-watt devices."""
     ESP32_S3 = HardwareNode(
@@ -309,7 +369,6 @@ class TinyHardware(Registry):
         embodied_carbon_kg=5.0,        # Including packaging and PCB assembly
         dispatch_tax=1.0 * ureg.ms     # TFLite Micro interpreter overhead
     )
-    ESP32 = ESP32_S3 # Alias for backward compatibility
 
     nRF52840 = HardwareNode(
         name="Nordic nRF52840 (Cortex-M4F)",
@@ -347,32 +406,3 @@ class Hardware(Registry):
     Edge = EdgeHardware
     Tiny = TinyHardware
 
-    # Common Aliases (Vetted only)
-    V100 = CloudHardware.V100
-    A100 = CloudHardware.A100
-    H100 = CloudHardware.H100
-    H200 = CloudHardware.H200
-    B200 = CloudHardware.B200
-    NVL72 = CloudHardware.GB200_NVL72
-    MI300X = CloudHardware.MI300X
-    MI250X = CloudHardware.MI250X
-    Gaudi2 = CloudHardware.Gaudi2
-    Gaudi3 = CloudHardware.Gaudi3
-    Trainium2 = CloudHardware.Trainium2
-    TPUv6 = CloudHardware.TPUv6
-    TPUv5p = CloudHardware.TPUv5p
-    TPUv4 = CloudHardware.TPUv4
-    T4 = CloudHardware.T4
-    CerebrasCS3 = CloudHardware.Cerebras_CS3
-
-    DGXSpark = WorkstationHardware.DGX_Spark
-    MacBook = WorkstationHardware.MacBookM3Max
-
-    iPhone = MobileHardware.iPhone15Pro
-    Snapdragon = MobileHardware.Snapdragon8Gen3
-    Jetson = EdgeHardware.JetsonOrinNX
-    ESP32 = TinyHardware.ESP32_S3
-    Himax = TinyHardware.HimaxWE1
-
-from ..systems.registry import Fabrics
-Hardware.Networks = Fabrics

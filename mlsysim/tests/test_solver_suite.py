@@ -15,7 +15,7 @@ pytestmark = pytest.mark.solver
 from mlsysim.hardware.registry import Hardware
 from mlsysim.models.registry import Models
 from mlsysim.systems.registry import Systems
-from mlsysim.infra.registry import Infra, Grids
+from mlsysim.infra.registry import Infrastructure, Grids
 from mlsysim.core.solver import (
     SingleNodeModel,
     ServingModel,
@@ -83,14 +83,14 @@ class TestSingleNodeModel:
     def test_oom_detection_huge_model_tiny_hardware(self):
         """GPT-4 on ESP32 must be infeasible."""
         gpt4 = Models.Language.GPT4
-        esp32 = Hardware.ESP32
+        esp32 = Hardware.Tiny.ESP32_S3
         perf = SingleNodeModel().solve(gpt4, esp32, batch_size=1, raise_errors=False)
         assert perf.feasible is False
 
     def test_oom_raises_when_requested(self):
         """OOMError should be raised when raise_errors=True."""
         gpt4 = Models.Language.GPT4
-        esp32 = Hardware.ESP32
+        esp32 = Hardware.Tiny.ESP32_S3
         with pytest.raises(OOMError):
             SingleNodeModel().solve(gpt4, esp32, batch_size=1, raise_errors=True)
 
@@ -467,7 +467,7 @@ class TestSustainabilityModel:
         """Higher PUE should increase total energy relative to IT energy."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        result = solver.solve(fleet, duration_days=1, datacenter=Infra.Quebec)
+        result = solver.solve(fleet, duration_days=1, datacenter=Infrastructure.Grids.Quebec)
         it_energy = result.it_energy_kwh.magnitude
         total_energy = result.total_energy_kwh.magnitude
         pue = result.pue
@@ -478,8 +478,8 @@ class TestSustainabilityModel:
         """Quebec (hydro, 20 gCO2/kWh) should emit far less carbon than Poland (coal, 820 gCO2/kWh)."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        result_quebec = solver.solve(fleet, duration_days=30, datacenter=Infra.Quebec)
-        result_poland = solver.solve(fleet, duration_days=30, datacenter=Infra.Poland)
+        result_quebec = solver.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.Quebec)
+        result_poland = solver.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.Poland)
         assert result_quebec.carbon_footprint_kg < result_poland.carbon_footprint_kg
         # Quebec should be roughly 41x less (20/820), allow wide margin
         ratio = result_poland.carbon_footprint_kg / result_quebec.carbon_footprint_kg
@@ -489,14 +489,14 @@ class TestSustainabilityModel:
         """Water usage should be non-negative and scale with energy."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        result = solver.solve(fleet, duration_days=30, datacenter=Infra.US_Avg)
+        result = solver.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.US_Avg)
         assert result.water_usage_liters >= 0
 
     def test_water_liquid_cooling_near_zero(self):
         """Liquid-cooled datacenter (WUE=0) should have zero water usage."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        result = solver.solve(fleet, duration_days=30, datacenter=Infra.Quebec)
+        result = solver.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.Quebec)
         # Quebec uses liquid cooling (WUE=0.0)
         assert result.water_usage_liters == pytest.approx(0.0, abs=0.01)
 
@@ -504,15 +504,15 @@ class TestSustainabilityModel:
         """Longer operation should consume more energy."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        result_1d = solver.solve(fleet, duration_days=1, datacenter=Infra.Quebec)
-        result_30d = solver.solve(fleet, duration_days=30, datacenter=Infra.Quebec)
+        result_1d = solver.solve(fleet, duration_days=1, datacenter=Infrastructure.Grids.Quebec)
+        result_30d = solver.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.Quebec)
         assert result_30d.total_energy_kwh.magnitude > result_1d.total_energy_kwh.magnitude
 
     def test_energy_positive(self):
         """Energy consumption should always be positive for non-zero duration."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        result = solver.solve(fleet, duration_days=1, datacenter=Infra.Quebec)
+        result = solver.solve(fleet, duration_days=1, datacenter=Infrastructure.Grids.Quebec)
         assert result.it_energy_kwh.magnitude > 0
         assert result.total_energy_kwh.magnitude > 0
 
@@ -580,7 +580,7 @@ class TestDataModel:
 
     def test_no_modeled_data_path_reports_unknown_stall(self):
         """If neither storage nor interconnect is modeled, report unknown zero supply."""
-        jetson = Hardware.Jetson
+        jetson = Hardware.Edge.JetsonOrinNX
         demand = Q_("1 GB/s")
         solver = DataModel()
         result = solver.solve(demand, jetson)
@@ -969,21 +969,21 @@ class TestEconomicsModel:
         """TCO should be positive."""
         solver = EconomicsModel()
         cluster = Systems.Clusters.Research_256
-        result = solver.solve(cluster, duration_days=30, grid=Infra.Quebec)
+        result = solver.solve(cluster, duration_days=30, grid=Infrastructure.Grids.Quebec)
         assert result.tco_usd > 0
 
     def test_capex_dominates_short_term(self):
         """For short durations, CapEx should dominate over OpEx."""
         solver = EconomicsModel()
         cluster = Systems.Clusters.Research_256
-        result = solver.solve(cluster, duration_days=1, grid=Infra.Quebec)
+        result = solver.solve(cluster, duration_days=1, grid=Infrastructure.Grids.Quebec)
         assert result.capex_usd > result.total_opex_usd
 
     def test_tco_is_sum_of_parts(self):
         """TCO = CapEx + OpEx_energy + OpEx_maintenance."""
         solver = EconomicsModel()
         cluster = Systems.Clusters.Research_256
-        result = solver.solve(cluster, duration_days=30, grid=Infra.Quebec)
+        result = solver.solve(cluster, duration_days=30, grid=Infrastructure.Grids.Quebec)
         expected = result.capex_usd + result.opex_energy_usd + result.opex_maintenance_usd
         assert result.tco_usd == pytest.approx(expected, rel=0.001)
 
@@ -994,21 +994,21 @@ class TestEconomicsModel:
 
         node = Node(
             name="ESP32 node",
-            accelerator=Hardware.ESP32,
+            accelerator=Hardware.Tiny.ESP32_S3,
             accelerators_per_node=1,
             intra_node_bw=Q_("1 GB/s"),
         )
         fleet = Fleet(name="ESP32 fleet", node=node, count=1, fabric=Fabrics.Ethernet_10G)
-        result = EconomicsModel().solve(fleet, duration_days=365, grid=Infra.Quebec)
+        result = EconomicsModel().solve(fleet, duration_days=365, grid=Infrastructure.Grids.Quebec)
 
-        assert Hardware.ESP32.unit_cost is None
+        assert Hardware.Tiny.ESP32_S3.unit_cost is None
         assert result.capex_usd == 0
         assert result.opex_maintenance_usd == 0
         assert result.tco_usd == pytest.approx(result.opex_energy_usd)
 
     def test_iowa_region_registered_for_examples(self):
         """Placement examples reference Iowa, so it must resolve in the grid registry."""
-        assert Infra.Grids.Iowa.name.startswith("Iowa")
+        assert Infrastructure.Grids.Iowa.name.startswith("Iowa")
 
 
 # ======================================================================
@@ -1283,7 +1283,7 @@ class TestSensitivitySolver:
         """Perturbations should not drop SRAM/flash fields from TinyML hardware."""
         solver = SensitivitySolver()
         tiny_model = Models.Tiny.WakeVision
-        esp32 = Hardware.ESP32
+        esp32 = Hardware.Tiny.ESP32_S3
         baseline = SingleNodeModel().solve(tiny_model, esp32, precision="fp16")
         result = solver.solve(tiny_model, esp32, precision="fp16")
 
@@ -1512,7 +1512,7 @@ class TestWeightStreamingModel:
         """Small batch on Cerebras CS-3 should be feasible."""
         solver = WeightStreamingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.CerebrasCS3,
+            Models.Language.Llama3_8B, Hardware.Cloud.Cerebras_CS3,
             seq_len=512, batch_size=1,
         )
         assert result.feasible is True
@@ -1522,7 +1522,7 @@ class TestWeightStreamingModel:
         """Bottleneck must be one of the two known regimes."""
         solver = WeightStreamingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.CerebrasCS3,
+            Models.Language.Llama3_8B, Hardware.Cloud.Cerebras_CS3,
             seq_len=512, batch_size=1,
         )
         assert result.bottleneck in ("Compute-Bound", "Interconnect-Bandwidth-Bound")
@@ -1531,7 +1531,7 @@ class TestWeightStreamingModel:
         """Optimal batch size must be at least 1."""
         solver = WeightStreamingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.CerebrasCS3,
+            Models.Language.Llama3_8B, Hardware.Cloud.Cerebras_CS3,
             seq_len=512, batch_size=1,
         )
         assert result.optimal_batch_size >= 1
@@ -1540,7 +1540,7 @@ class TestWeightStreamingModel:
         """Wafer memory utilization must be in [0, 1] when feasible."""
         solver = WeightStreamingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.CerebrasCS3,
+            Models.Language.Llama3_8B, Hardware.Cloud.Cerebras_CS3,
             seq_len=512, batch_size=1,
         )
         assert 0.0 <= result.wafer_memory_utilization <= 1.0
@@ -1549,7 +1549,7 @@ class TestWeightStreamingModel:
         """Huge batch * long sequence should overflow 44GB on-wafer SRAM."""
         solver = WeightStreamingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.CerebrasCS3,
+            Models.Language.Llama3_8B, Hardware.Cloud.Cerebras_CS3,
             seq_len=8192, batch_size=512,
         )
         # With 8192 seq_len * 512 batch * 32 heads * 128 head_dim * 32 layers * 2 (K+V) * 2 bytes
@@ -1561,7 +1561,7 @@ class TestWeightStreamingModel:
         """Both layer compute and injection times must be positive."""
         solver = WeightStreamingModel()
         result = solver.solve(
-            Models.Language.Llama3_8B, Hardware.CerebrasCS3,
+            Models.Language.Llama3_8B, Hardware.Cloud.Cerebras_CS3,
             seq_len=512, batch_size=1,
         )
         assert result.layer_compute_time.magnitude > 0
@@ -1747,6 +1747,6 @@ class TestSustainabilityEmbodied:
         """Adding embodied carbon should increase total carbon footprint."""
         fleet = Systems.Clusters.Research_256
         solver = SustainabilityModel()
-        without = solver.solve(fleet, duration_days=365, datacenter=Infra.Quebec)
-        with_embodied = solver.solve(fleet, duration_days=365, datacenter=Infra.Quebec, embodied_carbon_per_device=150)
+        without = solver.solve(fleet, duration_days=365, datacenter=Infrastructure.Grids.Quebec)
+        with_embodied = solver.solve(fleet, duration_days=365, datacenter=Infrastructure.Grids.Quebec, embodied_carbon_per_device=150)
         assert with_embodied.carbon_footprint_kg > without.carbon_footprint_kg

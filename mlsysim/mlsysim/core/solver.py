@@ -2632,13 +2632,13 @@ class PlacementOptimizer(BaseOptimizer):
               regions: List[str] = ["US_Avg", "Quebec", "Iowa"], 
               carbon_tax_per_ton: float = 100.0, mfu: float = 1.0) -> PlacementOptimizerResult:
         
-        from ..infra.registry import Infra
+        from ..infra.registry import Infrastructure
         econ_model = EconomicsModel()
         
         candidates = []
         
         for region_name in regions:
-            grid = getattr(Infra.Grids, region_name, None)
+            grid = getattr(Infrastructure.Grids, region_name, None)
             if not grid: continue
                 
             res = econ_model.solve(fleet, duration_days=duration_days, grid=grid, mfu=mfu)

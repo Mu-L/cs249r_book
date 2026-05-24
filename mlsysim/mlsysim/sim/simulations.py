@@ -15,7 +15,7 @@ from ..core.scenarios import Scenario
 from ..core.engine import Engine
 from ..core.solver import SustainabilityModel, EconomicsModel, ReliabilityModel
 from ..systems.types import Fleet
-from ..infra.registry import Infra
+from ..infra.registry import Infrastructure
 
 @dataclass
 class SimulationResult:
@@ -69,7 +69,7 @@ class ResourceSimulation(BaseSimulation):
         
         # 2. EXTRACT USER CHOICES
         region_name = choice.get("region", "US_Avg")
-        grid = getattr(Infra.Grids, region_name, Infra.Grids.US_Avg)
+        grid = getattr(Infrastructure.Grids, region_name, Infrastructure.Grids.US_Avg)
         duration_days = float(choice.get("duration_days", 365.0))
         
         # 3. SCALE TO FLEET (Persona Context)

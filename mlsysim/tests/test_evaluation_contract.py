@@ -88,7 +88,7 @@ def test_infeasible_single_node_marks_performance_failed():
     evaluation = SystemEvaluator.evaluate(
         scenario_name="oom",
         model_obj=Models.Language.GPT4,
-        hardware_obj=Hardware.ESP32,
+        hardware_obj=Hardware.Tiny.ESP32_S3,
         batch_size=1,
         precision="fp16",
         efficiency=0.5,

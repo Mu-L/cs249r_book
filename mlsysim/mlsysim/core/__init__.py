@@ -9,8 +9,9 @@ from .formulas import *
 # Point to the new vetted registries
 from ..hardware.registry import Hardware
 from ..models.registry import Models
-from ..systems.registry import Systems, Tiers
-from ..infra.registry import Infra
+from ..platforms.registry import Platforms
+from ..systems.registry import Systems
+from ..infra.registry import Infrastructure
 
 from .scenarios import Scenario, Scenarios, Applications, Fleet
 from .resolver_factory import ResolverFactory

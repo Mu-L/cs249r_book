@@ -31,7 +31,7 @@ from mlsysim.core.solver import (
     WeightStreamingModel,
 )
 from mlsysim.hardware.registry import Hardware
-from mlsysim.infra.registry import Grids, Infra
+from mlsysim.infra.registry import Grids, Infrastructure
 from mlsysim.models.registry import Models
 from mlsysim.models.types import TransformerWorkload
 from mlsysim.systems.registry import Systems
@@ -108,12 +108,12 @@ def frontier_cluster():
 
 @pytest.fixture(scope="session")
 def grid_quebec():
-    return Infra.Quebec
+    return Infrastructure.Grids.Quebec
 
 
 @pytest.fixture(scope="session")
 def grid_us_avg():
-    return Infra.Grids.US_Avg
+    return Infrastructure.Grids.US_Avg
 
 
 # ── Solver Fixtures ─────────────────────────────────────────────

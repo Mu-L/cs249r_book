@@ -22,7 +22,7 @@ def generate_hardware_appendix():
     
     rows = []
     # Cloud Tiers
-    for h in [Hardware.A100, Hardware.H100, Hardware.H200, Hardware.MI300X]:
+    for h in [Hardware.Cloud.A100, Hardware.Cloud.H100, Hardware.Cloud.H200, Hardware.Cloud.MI300X]:
         row = f"| {h.name} | {h.release_year} | {fmt_q(h.compute.peak_flops)} | {fmt_q(h.memory.bandwidth)} | {fmt_q(h.memory.capacity)} | {fmt_q(h.tdp, 0)} |"
         rows.append(row)
         

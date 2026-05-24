@@ -1,13 +1,15 @@
-from .types import GridProfile, RackProfile
+from .types import GridProfile, RackProfile, Datacenter
 from ..core.constants import (
     PUE_LIQUID_COOLED, PUE_BEST_AIR, PUE_LEGACY,
     WUE_EVAPORATIVE, WUE_LIQUID,
     CARBON_US_AVG_GCO2_KWH, CARBON_QUEBEC_GCO2_KWH, CARBON_IOWA_GCO2_KWH,
     CARBON_POLAND_GCO2_KWH, CARBON_NORWAY_GCO2_KWH,
-    RACK_POWER_TRADITIONAL_KW, RACK_POWER_AI_TYPICAL_KW
+    RACK_POWER_TRADITIONAL_KW, RACK_POWER_AI_TYPICAL_KW,
 )
+from ..core.registry import Registry
 
-class Grids:
+
+class Grids(Registry):
     Quebec = GridProfile(
         name="Quebec (Hydro)",
         carbon_intensity_g_kwh=CARBON_QUEBEC_GCO2_KWH,
@@ -17,7 +19,7 @@ class Grids:
         lat=52.9399,
         lon=-73.5491,
         renewable_pct=99.0,
-        metadata={"source_url": "https://www.hydroquebec.com/about/our-energy.html", "last_verified": "2025-03-06"}
+        metadata={"source_url": "https://www.hydroquebec.com/about/our-energy.html", "last_verified": "2025-03-06"},
     )
     Norway = GridProfile(
         name="Norway (Hydro)",
@@ -27,7 +29,7 @@ class Grids:
         primary_source="hydro",
         lat=60.472,
         lon=8.4689,
-        renewable_pct=98.0
+        renewable_pct=98.0,
     )
     US_Avg = GridProfile(
         name="US Average",
@@ -37,7 +39,7 @@ class Grids:
         primary_source="mixed",
         lat=39.8283,
         lon=-98.5795,
-        renewable_pct=21.0
+        renewable_pct=21.0,
     )
     Iowa = GridProfile(
         name="Iowa (Coal/Gas Reference)",
@@ -61,27 +63,32 @@ class Grids:
         primary_source="coal",
         lat=51.9194,
         lon=19.1451,
-        renewable_pct=17.0
+        renewable_pct=17.0,
     )
 
-class Racks:
+
+class Datacenters(Registry):
+    Quebec_Hydro = Datacenter(name="Quebec Hydro Campus", grid=Grids.Quebec)
+    Norway_Hydro = Datacenter(name="Norway Hydro Campus", grid=Grids.Norway)
+    US_Hyperscale = Datacenter(name="US Hyperscale Region", grid=Grids.US_Avg)
+    Iowa_Reference = Datacenter(name="Iowa Reference Site", grid=Grids.Iowa)
+    Poland_Coal = Datacenter(name="Poland Coal Region", grid=Grids.Poland)
+
+
+class Racks(Registry):
     Traditional = RackProfile(
         name="Traditional Enterprise",
         power_kw=RACK_POWER_TRADITIONAL_KW,
-        cooling_type="air"
+        cooling_type="air",
     )
     AI_Standard = RackProfile(
         name="AI Cluster (Standard)",
         power_kw=RACK_POWER_AI_TYPICAL_KW,
-        cooling_type="liquid"
+        cooling_type="liquid",
     )
 
-class Infra:
+
+class Infrastructure(Registry):
     Grids = Grids
+    Datacenters = Datacenters
     Racks = Racks
-    
-    Quebec = Grids.Quebec
-    Norway = Grids.Norway
-    US_Avg = Grids.US_Avg
-    Iowa = Grids.Iowa
-    Poland = Grids.Poland
