@@ -10,6 +10,7 @@
 #
 # Hardware specifications belong in: `mlsysim/hardware/registry.py`
 # Model specifications belong in: `mlsysim/models/registry.py`
+# Architecture formulas belong in: `mlsysim/physics/` (re-exported via core.formulas)
 #
 # Measurement units live in units.py; tuneable simulation defaults live in
 # defaults.py (import explicitly — not re-exported here).
