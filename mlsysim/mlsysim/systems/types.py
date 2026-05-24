@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Optional
-from ..core.constants import PUE_BEST_AIR
+from ..core.defaults import PUE_BEST_AIR
 from ..hardware.types import HardwareNode
 from ..infra.types import Datacenter, GridProfile
 from ..core.types import Quantity

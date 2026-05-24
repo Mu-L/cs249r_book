@@ -1,5 +1,5 @@
 from .types import GridProfile, RackProfile, Datacenter
-from ..core.constants import (
+from ..core.defaults import (
     PUE_LIQUID_COOLED, PUE_BEST_AIR, PUE_LEGACY,
     WUE_EVAPORATIVE, WUE_LIQUID,
     CARBON_US_AVG_GCO2_KWH, CARBON_QUEBEC_GCO2_KWH, CARBON_IOWA_GCO2_KWH,

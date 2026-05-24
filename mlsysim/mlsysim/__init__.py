@@ -52,9 +52,9 @@ from .core.constants import (
     # Common scaling constants
     THOUSAND, MILLION, BILLION, TRILLION,
     param, Kparam, Mparam, Bparam, Tparam,
-    CLOUD_ELECTRICITY_PER_KWH,
     HOURS_PER_DAY,
 )
+from .core.defaults import CLOUD_ELECTRICITY_PER_KWH
 
 GPT3_TRAINING_DAYS_REF = Models.Language.GPT3.training_days_ref
 GPT3_TRAINING_ACCELERATORS_REF = Models.Language.GPT3.training_accelerators_ref

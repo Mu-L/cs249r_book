@@ -129,45 +129,9 @@ ENERGY_ADD_INT8_PJ = 0.03 * ureg.picojoule
 # Network transfer energy (reference)
 NETWORK_ENERGY_1KB_PJ = 1_000_000 * ureg.picojoule  # ~1 microjoule for 1KB
 
-# --- Infrastructure & Grid ---
-LEAD_TIME_GPU_MONTHS = 6
-LEAD_TIME_SUBSTATION_MONTHS = 24
-GRID_INTERCONNECTION_QUEUE_US_GW = 2000
-
 # --- Physics ---
 # --- Physical Constants ---
 SPEED_OF_LIGHT_FIBER_KM_S = 200000 * ureg.kilometer / second
-
-# --- Cloud Pricing ---
-CLOUD_EGRESS_PER_GB = 0.09 * USD / GB  # AWS data transfer out (2024 baseline)
-CLOUD_ELECTRICITY_PER_KWH = 0.12 * USD / ureg.kilowatt_hour
-KG_PER_METRIC_TON = 1000
-
-# Storage Pricing (2024 baseline)
-STORAGE_COST_S3_STD = 23 * USD / TB / ureg.month
-STORAGE_COST_GLACIER = 1 * USD / TB / ureg.month
-STORAGE_COST_NVME_LOW = 100 * USD / TB / ureg.month
-STORAGE_COST_NVME_HIGH = 300 * USD / TB / ureg.month
-RETRIEVAL_COST_GLACIER = 0.02 * USD / GB
-
-# Labeling Pricing (2024 estimates)
-LABELING_COST_CROWD_LOW = 0.01 * USD
-LABELING_COST_CROWD_HIGH = 0.05 * USD
-LABELING_COST_BOX_LOW = 0.05 * USD
-LABELING_COST_BOX_HIGH = 0.20 * USD
-LABELING_COST_MEDICAL_LOW = 50 * USD
-LABELING_COST_MEDICAL_HIGH = 200 * USD
-
-# GPU pricing (scenario baselines)
-CLOUD_GPU_TRAINING_PER_HOUR = 4.0 * USD / hour
-CLOUD_GPU_INFERENCE_PER_HOUR = 2.5 * USD / hour
-TPU_V4_PER_HOUR = 4.0 * USD / hour
-FLEET_GPU_HOUR_COST_REF = 2.0 * USD / hour
-FLEET_SPOT_GPU_HOUR_COST_REF = 0.70 * USD / hour
-FLEET_INTERNAL_CHARGEBACK_PER_HOUR = 2.50 * USD / hour
-
-# --- Carbon (Scenario Baseline) ---
-CARBON_PER_GPU_HR_KG = 0.16 * ureg.kilogram
 
 # --- Mobile / Battery ---
 MOBILE_TDP_W = 3 * watt
@@ -229,12 +193,6 @@ SYNTHETIC_VERIFICATION_PASSES = 3
 
 # Inference Scaling
 LOGIC_WALL_REASONING_STEPS_EXAMPLE = 128
-
-# Statistics
-KS_TEST_COEFFICIENT = 1.36
-PSI_WARN_THRESHOLD = 0.10
-PSI_REVIEW_THRESHOLD = 0.20
-PSI_CRITICAL_THRESHOLD = 0.25
 
 # ML workflow lifecycle stages
 ML_WORKFLOW_STAGE_PROBLEM_DEFINITION = 1
@@ -326,9 +284,6 @@ DGX_PRICE_MAX = 5000 * USD
 TPU_POD_CHIPS = 4096
 TPU_POD_MEM = 131 * TB
 TPU_POD_POWER = 3 * ureg.megawatt
-
-# Reliability and diagnostic thresholds
-MEMORY_BIT_ERROR_RATE_PER_BIT = 1e-17
 
 # --- Shared Precision Map ---
 # Used by Engine, ServingModel, SynthesisSolver to map precision strings to byte widths.
