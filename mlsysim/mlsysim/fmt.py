@@ -33,7 +33,7 @@ def _get_markdown():
     return MarkdownStr
 
 
-def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False,
+def fmt(quantity, unit=None, precision=1, commas=True,
         prefix="", suffix=""):
     """
     Format a Pint Quantity (or plain number) for narrative text.
@@ -48,7 +48,7 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False,
         fmt(speedup, precision=0, commas=False, suffix="x")     # "8x"
 
     Safety: Raises ValueError if a non-zero value is formatted as "0"
-    due to insufficient precision (unless allow_zero=True).
+    due to insufficient precision.
     """
     if unit:
         # If a raw number is passed, assume it is already in base units.
@@ -71,11 +71,11 @@ def fmt(quantity, unit=None, precision=1, commas=True, allow_zero=False,
     except ValueError:
         numeric_result = None # Case for non-numeric strings if any
 
-    if numeric_result == 0.0 and abs(val) > 1e-12 and not allow_zero:
+    if numeric_result == 0.0 and abs(val) > 1e-12:
         raise ValueError(
             f"Formatting Precision Error: Value {val} was formatted as '{result}' "
             f"with precision={precision}. This hides the actual value. "
-            f"Increase precision or set allow_zero=True if this was intentional."
+            f"Increase precision or change units to avoid representing a non-zero value as zero."
         )
 
     decorated = f"{prefix}{result}{suffix}"
@@ -130,7 +130,7 @@ def fmt_unit(quantity, default="-"):
     return out
 
 
-def fmt_percent(ratio, precision=1, commas=False, allow_zero=False):
+def fmt_percent(ratio, precision=1, commas=False):
     """
     Format a ratio (0.0 to 1.0) as a percentage string for display.
     Use this for compound fractions (e.g. effective utilization) to avoid
