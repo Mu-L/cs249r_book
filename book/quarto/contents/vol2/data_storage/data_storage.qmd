@@ -394,7 +394,7 @@ The shuffling that ML training requires adds a complication. While each epoch re
 # │ Exports: StorageAccessPatternFacts.*
 from mlsysim import Models
 from mlsysim.core.constants import *
-from mlsysim.fmt import fmt
+from mlsysim.fmt import fmt, fmt_int
 
 class StorageAccessPatternFacts:
     gpt3_params = Models.Language.GPT3.parameters
@@ -403,10 +403,17 @@ class StorageAccessPatternFacts:
     token_id_bytes = BYTES_INT32.m_as(byte)
     tokenized_text_tb_val = (training_tokens * token_id_bytes * byte).m_as(TB)
     ckpt_total_gb_val = (gpt3_params.m_as(param) * 10) / 1e9
+    checkpoint_interval_min = 10
+    ckpt_node_count = 1024
+    ckpt_shard_gb = 4
     gpt3_params_b_str = fmt(gpt3_params.m_as(param) / BILLION, precision=0, commas=False)
     tokenized_text_tb_str = fmt(tokenized_text_tb_val, precision=0, commas=False)
     compressed_text_tb_str = fmt(compressed_text_tb_val, precision=0, commas=False)
     ckpt_total_gb_str = fmt(ckpt_total_gb_val, precision=0)
+    checkpoint_interval_min_str = fmt(checkpoint_interval_min, precision=0, commas=False)
+    ckpt_node_count_str = fmt(ckpt_node_count, precision=0, commas=True)
+    ckpt_shard_gb_str = fmt(ckpt_shard_gb, precision=0, commas=False)
+    ckpt_burst_tb_str = fmt_int(round((ckpt_node_count * ckpt_shard_gb * GB).m_as(TB)), commas=False)
 ```
 
 The second inversion is **working set size**. Traditional applications exhibit locality: a web server repeatedly accesses popular pages, and a cache holding the top 10 percent of content serves 90 percent of requests. ML training datasets are accessed uniformly. Our `{python} StorageAccessPatternFacts.tokenized_text_tb_str` TB tokenized corpus has no "popular" tokens; each is consumed once per epoch. A cache of any practical size holds only a tiny fraction of the dataset, and every sample is effectively "cold" when accessed. This lack of temporal locality renders traditional caching strategies ineffective. Even an LRU[^fn-lru-ml-failure] (Least Recently Used) cache, the workhorse of database systems, achieves a 0 percent hit rate on uniformly accessed data, because by the time a sample is accessed again in the next epoch, it has long been evicted to make room for other samples.
@@ -415,7 +422,7 @@ The second inversion is **working set size**. Traditional applications exhibit l
 
 The exception to this uniformity is multi-task or curriculum learning\index{Curriculum Learning!data locality}, where certain subsets of the dataset are accessed more frequently during specific training phases. In curriculum learning, the trainer begins with "easy" examples and progressively introduces harder ones. This creates a temporary working set that does exhibit locality, and local caching at the NVMe tier can exploit this structure. For the majority of large-scale pretraining workloads, however, the access pattern is effectively uniform, and the storage system must be designed for full-dataset streaming rather than hot-subset caching.
 
-The third inversion is **write pattern**. Transactional systems generate continuous streams of small writes, each immediately durable. ML systems generate occasional massive writes when saving checkpoints. A `{python} StorageAccessPatternFacts.gpt3_params_b_str`B parameter model checkpoint, including optimizer state, occupies roughly `{python} StorageAccessPatternFacts.ckpt_total_gb_str` GB. Saving it every ten minutes generates concentrated bursts that saturate bandwidth for seconds, followed by long idle periods. These bursts are the "checkpoint storms" that parallel file systems must absorb without disrupting ongoing training reads. The bursty write pattern is particularly challenging because all nodes in the cluster write their checkpoint shards simultaneously. If 1,024 nodes each write 4 GB, the parallel file system receives 4 TB of writes in a single burst, which must complete before the training pipeline can resume.
+The third inversion is **write pattern**. Transactional systems generate continuous streams of small writes, each immediately durable. ML systems generate occasional massive writes when saving checkpoints. A `{python} StorageAccessPatternFacts.gpt3_params_b_str`B parameter model checkpoint, including optimizer state, occupies roughly `{python} StorageAccessPatternFacts.ckpt_total_gb_str` GB. Saving it every `{python} StorageAccessPatternFacts.checkpoint_interval_min_str` minutes generates concentrated bursts that saturate bandwidth for seconds, followed by long idle periods. These bursts are the "checkpoint storms" that parallel file systems must absorb without disrupting ongoing training reads. The bursty write pattern is particularly challenging because all nodes in the cluster write their checkpoint shards simultaneously. If `{python} StorageAccessPatternFacts.ckpt_node_count_str` nodes each write `{python} StorageAccessPatternFacts.ckpt_shard_gb_str` GB, the parallel file system receives `{python} StorageAccessPatternFacts.ckpt_burst_tb_str` TB of writes in a single burst, which must complete before the training pipeline can resume.
 
 | **Workload Pattern** | **Traditional Assumption**                        | **ML Reality**                 |
 |:---------------------|:--------------------------------------------------|:-------------------------------|
@@ -1706,7 +1713,7 @@ from mlsysim.core.constants import *
 # │          .gds_trad_cpu_cores_str, .gds_bypass_cpu_seconds_str,
 # │          .gds_freed_cpu_cores_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import check, fmt
+from mlsysim.fmt import fmt_int,  check, fmt
 
 class GDSLatency:
     # ┌── 1. LOAD ─────────────────────────────────────────
@@ -1786,8 +1793,6 @@ GDS has practical limitations. Not all NVMe controllers support peer-to-peer PCI
 
 The architectural evolution from CPU-mediated I/O to direct storage access reflects a broader trend in ML systems: removing the CPU from the critical data path wherever possible. @sec-network-fabrics-rdma described RDMA, which removes the CPU from network data transfers. GDS does the same for storage transfers. The combined effect of RDMA and GDS is that data can flow from remote storage, through the network fabric, and into GPU memory without a single CPU instruction on the critical path. The CPU is freed to perform the tasks where it adds unique value: data augmentation, pipeline orchestration, and error handling.
 
-The GDS design principle also extends to checkpoint writes. In the traditional path, checkpoint data flows from GPU HBM through host DRAM (via PCIe) to NVMe (via CPU-mediated write). With GDS, the checkpoint can be written directly from GPU HBM to NVMe, eliminating the host DRAM copy. For a `{python} CompleteDataPathCheckpoint.ckpt_total_gb_str` GB checkpoint, this removes one full data copy and reduces the CPU's involvement in the write path, lowering $T_{\text{write}}$ further.
-
 ```{python}
 #| echo: false
 # ┌── LEGO ───────────────────────────────────────────────
@@ -1815,6 +1820,8 @@ class CompleteDataPathCheckpoint:
     checkpoint_count_str = fmt(checkpoint_count_val, precision=0)
     ckpt_fleet_total_pb_str = fmt(ckpt_fleet_total_pb_val, precision=1)
 ```
+
+The GDS design principle also extends to checkpoint writes. In the traditional path, checkpoint data flows from GPU HBM through host DRAM (via PCIe) to NVMe (via CPU-mediated write). With GDS, the checkpoint can be written directly from GPU HBM to NVMe, eliminating the host DRAM copy. For a `{python} CompleteDataPathCheckpoint.ckpt_total_gb_str` GB checkpoint, this removes one full data copy and reduces the CPU's involvement in the write path, lowering $T_{\text{write}}$ further.
 
 ### The complete data path {#sec-storage-complete-path}
 
@@ -1905,6 +1912,8 @@ class BuildVsBuyStorageEconomics:
     cloud_total_annual_str = fmt(cloud_total_annual, precision=0)
     annual_ops_str = fmt(annual_ops, precision=0)
     net_annual_savings_str = fmt(net_annual_savings, precision=0)
+    reads_per_year_str = fmt(reads_per_year, precision=0, commas=False)
+    cloud_cost_gb_month_str = fmt(cloud_cost_gb_month, precision=2, prefix="$", commas=False)
     breakeven_low_years_str = fmt(breakeven_low_years, precision=1, commas=False)
     breakeven_high_years_str = fmt(breakeven_high_years, precision=1, commas=False)
     breakeven_range_str = MarkdownStr(f"{breakeven_low_years_str}--{breakeven_high_years_str}")
@@ -1996,7 +2005,7 @@ class StorageTieringCorpus:
     tokenized_text_tb_str = fmt((1.5 * TRILLION * BYTES_INT32.m_as(byte) * byte).m_as(TB), precision=0, commas=False)
 ```
 
-The decision to **build vs. buy** storage infrastructure hinges on the trade-off between the high capital expenditure of an on-premises parallel file system and the recurring operational expenditure of cloud object storage. A 1-petabyte Lustre deployment costs roughly \$3–5 million in hardware, plus an additional \$`{python} BuildVsBuyStorageEconomics.annual_ops_str` per year in operational overhead for power, cooling, and engineering support. Storing 1 PB in a cloud object store at \$0.02/GB/month costs \$`{python} BuildVsBuyStorageEconomics.cloud_storage_annual_str` per year for storage alone. However, egress fees for accessing the data dominate the total cost: reading that petabyte just ten times in a year adds \$`{python} BuildVsBuyStorageEconomics.cloud_egress_annual_str` in data transfer fees. Under these assumptions, annual cloud delivery costs \$`{python} BuildVsBuyStorageEconomics.cloud_total_annual_str`; after subtracting \$`{python} BuildVsBuyStorageEconomics.annual_ops_str` of on-premises operations, the net savings are \$`{python} BuildVsBuyStorageEconomics.net_annual_savings_str` per year. The resulting hardware break-even is roughly `{python} BuildVsBuyStorageEconomics.breakeven_range_str` years, not 18 to 24 months. Reaching an 18- to 24-month payback requires a hotter workload with many more full-dataset reads per year, lower capital expense, or non-egress drivers such as checkpoint latency and shared-namespace requirements. For our running example, the `{python} StorageEconomicsCorpus.tokenized_text_tb_str` TB tokenized corpus is much smaller than 1 PB, so the local-storage case is driven more by latency, repeated experiments, and checkpoint staging than by one-year egress savings alone.
+The decision to **build vs. buy** storage infrastructure hinges on the trade-off between the high capital expenditure of an on-premises parallel file system and the recurring operational expenditure of cloud object storage. A 1-petabyte Lustre deployment costs roughly \$3–5 million in hardware, plus an additional \$`{python} BuildVsBuyStorageEconomics.annual_ops_str` per year in operational overhead for power, cooling, and engineering support. Storing 1 PB in a cloud object store at `{python} BuildVsBuyStorageEconomics.cloud_cost_gb_month_str`/GB/month costs \$`{python} BuildVsBuyStorageEconomics.cloud_storage_annual_str` per year for storage alone. However, egress fees for accessing the data dominate the total cost: reading that petabyte `{python} BuildVsBuyStorageEconomics.reads_per_year_str` times in a year adds \$`{python} BuildVsBuyStorageEconomics.cloud_egress_annual_str` in data transfer fees. Under these assumptions, annual cloud delivery costs \$`{python} BuildVsBuyStorageEconomics.cloud_total_annual_str`; after subtracting \$`{python} BuildVsBuyStorageEconomics.annual_ops_str` of on-premises operations, the net savings are \$`{python} BuildVsBuyStorageEconomics.net_annual_savings_str` per year. The resulting hardware break-even is roughly `{python} BuildVsBuyStorageEconomics.breakeven_range_str` years, not 18 to 24 months. Reaching an 18- to 24-month payback requires a hotter workload with many more full-dataset reads per year, lower capital expense, or non-egress drivers such as checkpoint latency and shared-namespace requirements. For our running example, the `{python} StorageEconomicsCorpus.tokenized_text_tb_str` TB tokenized corpus is much smaller than 1 PB, so the local-storage case is driven more by latency, repeated experiments, and checkpoint staging than by one-year egress savings alone.
 
 Hardware degradation introduces the need for a **storage refresh cycle**. NVMe drives are rated for a specific write endurance, measured in Drive Writes Per Day (DWPD) over a typical five-year warranty period. Most large-scale ML training workloads are predominantly read-heavy once the initial dataset is ingested, so drives in a training cluster often last well beyond their rated write lifespan. The primary driver for a refresh cycle is therefore not wear but the rapid increase in storage density: drive capacity doubles at a similar price point every three to four years. Refreshing a cluster from 7.68 TB to 15.36 TB NVMe drives doubles the local cache capacity, enabling larger datasets to be staged directly on compute nodes and reducing dependence on the parallel file system for steady-state reads.
 
