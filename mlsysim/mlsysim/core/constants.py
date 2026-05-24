@@ -13,6 +13,8 @@
 #
 # Measurement units live in units.py; tuneable simulation defaults live in
 # defaults.py (import explicitly — not re-exported here).
+#
+# CI: mlsysim/tests/test_constants_allowlist.py guards this contract.
 
 from .units import *  # noqa: F401,F403 — re-export full unit registry
 
