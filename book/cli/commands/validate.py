@@ -927,7 +927,9 @@ class ValidateCommand:
     def _qmd_files(self, root: Path) -> List[Path]:
         if root.is_file():
             return [root] if root.suffix == ".qmd" else []
-        return sorted(root.rglob("*.qmd"))
+        return sorted(
+            p for p in root.rglob("*.qmd") if "_shelved" not in p.name
+        )
 
     def _read_text(self, path: Path) -> str:
         try:
