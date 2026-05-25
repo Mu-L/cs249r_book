@@ -38,6 +38,10 @@ CLUSTER_MEDIUM_GPUS = 2_048
 CLUSTER_LARGE_GPUS = 8_192
 CLUSTER_MEGA_GPUS = 100_000
 
+# Fleet topology assumptions (override for non-DGX node counts).
+GPUS_PER_HOST = 8
+ALLREDUCE_FACTOR = 2
+
 # --- Cloud TPU Pod (reference fleet envelope) ---
 TPU_POD_CHIPS = 4096
 TPU_POD_MEM = 131 * TB

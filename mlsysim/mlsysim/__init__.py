@@ -41,7 +41,11 @@ from .core.solver import (
 
 # AUTHORITATIVE MEASUREMENT (units + physics-only constants)
 from .core.constants import *  # noqa: F401,F403
-from .core.defaults import CLOUD_ELECTRICITY_PER_KWH
+from .core.defaults import (
+    ALLREDUCE_FACTOR,
+    CLOUD_ELECTRICITY_PER_KWH,
+    GPUS_PER_HOST,
+)
 
 # AUTHORITATIVE PHYSICS FORMULAS
 from .physics import *  # noqa: F401,F403

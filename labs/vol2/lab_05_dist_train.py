@@ -74,7 +74,7 @@ async def _():
     import mlsysim
     from mlsysim import Hardware
     from mlsysim.core.defaults import INFINIBAND_NDR_BW_GBS
-    from mlsysim.core.constants import GPUS_PER_HOST
+    from mlsysim.core.defaults import GPUS_PER_HOST
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100

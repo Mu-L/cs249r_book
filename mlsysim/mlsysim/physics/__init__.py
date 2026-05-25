@@ -47,7 +47,6 @@ from .statistics import (
 )
 
 __all__ = [
-    "_ensure_unit",
     "calc_network_latency_ms",
     "dTime",
     "calc_training_time",

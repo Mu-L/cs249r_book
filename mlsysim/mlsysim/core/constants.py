@@ -65,7 +65,6 @@ ENERGY_DRAM_PJ_PER_BYTE = 160 * ureg.picojoule / byte
 ENERGY_FLOP_FP32_PJ = 3.7 * ureg.picojoule / flop   # FP32 multiply-add
 ENERGY_FLOP_FP16_PJ = 1.1 * ureg.picojoule / flop   # FP16 multiply-add
 ENERGY_OP_INT8_PJ = 0.2 * ureg.picojoule / count    # INT8 multiply-add
-ENERGY_FLOP_PJ = 4.6 * ureg.picojoule / flop         # Generic (legacy alias)
 ENERGY_SRAM_L1_PJ = 0.5 * ureg.picojoule             # L1 cache access
 ENERGY_SRAM_L2_PJ = 2.0 * ureg.picojoule             # L2 cache access
 ENERGY_REG_PJ = 0.01 * ureg.picojoule                # Register file access
@@ -138,10 +137,6 @@ MCU_RAM_KIB = 512 * KiB
 CLOUD_MEM_GIB = 100 * GiB
 MOBILE_MEM_GIB = 8 * GiB
 TINY_MEM_KIB = 512 * KiB
-
-# Communication assumptions
-ALLREDUCE_FACTOR = 2
-GPUS_PER_HOST = 8
 
 # Google Search (Reference)
 GOOGLE_SEARCHES_PER_DAY = 8.5e9
