@@ -43,8 +43,21 @@ from .defaults import (
 from .types import Quantity
 from ..models.types import Workload, TransformerWorkload, SparseTransformerWorkload
 from ..hardware.types import HardwareNode
-from ..systems.types import Fleet, NetworkFabric
+from ..systems.types import Fleet, NetworkFabric, Node
 from ..infra.types import Datacenter
+
+def _intra_node_latency(node: Node):
+    """Resolve NVLink latency from the node's accelerator spec."""
+    nvlink = node.accelerator.nvlink
+    if nvlink and nvlink.latency is not None:
+        return nvlink.latency
+    return LATENCY_NVLINK
+
+
+def _inter_node_latency(fabric: NetworkFabric):
+    """Resolve fabric latency, falling back to reference IB latency."""
+    return fabric.latency or LATENCY_INFINIBAND
+
 
 class BaseResolver(ABC):
     """Base class for all mlsysim analytical components (Models, Solvers, Optimizers).
@@ -295,7 +308,7 @@ class DistributedModel(BaseModel):
                     gpus_per_node=fleet.node.accelerators_per_node,
                     intra_node_bw=fleet.node.intra_node_bw,
                     inter_node_bw=fleet.fabric.bandwidth / fleet.fabric.oversubscription_ratio,
-                    inter_node_lat=fleet.fabric.latency or LATENCY_INFINIBAND
+                    inter_node_lat=_inter_node_latency(fleet.fabric)
                 )
             else:
                 # Single node or small DP: Intra-node only
@@ -303,7 +316,7 @@ class DistributedModel(BaseModel):
                     gradient_size,
                     dp_size,
                     fleet.node.intra_node_bw,
-                    LATENCY_NVLINK
+                    _intra_node_latency(fleet.node)
                 )
         else:
             t_comm_dp = Q_("0 ms")
@@ -326,10 +339,10 @@ class DistributedModel(BaseModel):
             # Select bandwidth: NVLink if TP fits within a node, IB if it spans nodes
             if tp_size <= fleet.node.accelerators_per_node:
                 tp_bw = fleet.node.intra_node_bw
-                tp_lat = LATENCY_NVLINK
+                tp_lat = _intra_node_latency(fleet.node)
             else:
                 tp_bw = fleet.fabric.bandwidth / fleet.fabric.oversubscription_ratio
-                tp_lat = fleet.fabric.latency or LATENCY_INFINIBAND
+                tp_lat = _inter_node_latency(fleet.fabric)
             t_comm_tp = calc_ring_allreduce_time(
                 tp_volume / n_layers,  # per-layer volume
                 tp_size,
@@ -362,7 +375,7 @@ class DistributedModel(BaseModel):
                 message_bytes=token_volume,
                 n_gpus=ep_size,
                 bandwidth_bytes_s=fleet.fabric.bandwidth / fleet.fabric.oversubscription_ratio,
-                latency_s=fleet.fabric.latency or LATENCY_INFINIBAND
+                latency_s=_inter_node_latency(fleet.fabric)
             )
         else:
             t_comm_ep = Q_("0 ms")
@@ -1292,7 +1305,7 @@ class MoERoutingModel(BaseModel):
                 message_bytes=routing_payload_bytes,
                 n_gpus=ep_size,
                 bandwidth_bytes_s=fleet.fabric.bandwidth / fleet.fabric.oversubscription_ratio,
-                latency_s=fleet.fabric.latency or LATENCY_INFINIBAND,
+                latency_s=_inter_node_latency(fleet.fabric),
             )
 
         trace = [

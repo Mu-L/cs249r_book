@@ -36,7 +36,8 @@ def main() -> int:
     _run(
         "mlsysim pytest (registry gates)",
         [py, "-m", "pytest", "tests/test_constants_allowlist.py",
-         "tests/test_no_legacy_constant_refs.py", "tests/test_appendix_constants.py", "-q"],
+         "tests/test_no_legacy_constant_refs.py", "tests/test_appendix_constants.py",
+         "tests/test_registry_no_duplicate_specs.py", "-q"],
         cwd=REPO_ROOT / "mlsysim",
     )
     _run("book registry source scan", [py, "book/tools/audit/book_check_registry_sources.py"])

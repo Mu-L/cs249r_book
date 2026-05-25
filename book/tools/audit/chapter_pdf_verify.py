@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Build chapter HTML, audit raw output, and track pass/fail in a ledger.
+"""Build chapter PDF, audit TeX/PDF output, and track pass/fail in a ledger.
 
 Usage (repo root)::
 
-    python3 book/tools/audit/chapter_html_verify.py --list
-    python3 book/tools/audit/chapter_html_verify.py --vol1 introduction
-    python3 book/tools/audit/chapter_html_verify.py --vol1 --all
-    python3 book/tools/audit/chapter_html_verify.py --report
+    python3 book/tools/audit/chapter_pdf_verify.py --list
+    python3 book/tools/audit/chapter_pdf_verify.py --vol1 introduction
+    python3 book/tools/audit/chapter_pdf_verify.py --vol1 --all
+    python3 book/tools/audit/chapter_pdf_verify.py --report
 
-Ledger: book/tools/audit/artifacts/chapter_html_audit.json
-Table:   book/tools/audit/artifacts/chapter_html_audit.md
+Ledger: book/tools/audit/artifacts/chapter_pdf_audit.json
+Table:   book/tools/audit/artifacts/chapter_pdf_audit.md
+
+Builds one chapter at a time via ``./book/binder build pdf --volN <chapter>``.
+Archives PDF + keep-tex output under ``book/quarto/_build/pdf-audit/``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -26,10 +30,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-AUDIT_HTML = REPO_ROOT / "book/tools/audit/fmt/audit_html.py"
-LEDGER_JSON = REPO_ROOT / "book/tools/audit/artifacts/chapter_html_audit.json"
-LEDGER_MD = REPO_ROOT / "book/tools/audit/artifacts/chapter_html_audit.md"
+BOOK_DIR = REPO_ROOT / "book/quarto"
+LEDGER_JSON = REPO_ROOT / "book/tools/audit/artifacts/chapter_pdf_audit.json"
+LEDGER_MD = REPO_ROOT / "book/tools/audit/artifacts/chapter_pdf_audit.md"
 
+PDF_NAMES = {
+    "vol1": "Machine-Learning-Systems-Vol1.pdf",
+    "vol2": "Machine-Learning-Systems-Vol2.pdf",
+}
+TEX_NAMES = {
+    "vol1": "Machine-Learning-Systems-Vol1.tex",
+    "vol2": "Machine-Learning-Systems-Vol2.tex",
+}
+
+# Same inline-Python chapter list as chapter_html_verify.py
 CHAPTERS: dict[str, list[str]] = {
     "vol1": [
         "introduction/introduction",
@@ -81,14 +95,39 @@ CHAPTERS: dict[str, list[str]] = {
     ],
 }
 
-HTML_ERROR_PATTERNS = [
+TEX_ERROR_PATTERNS = [
+    re.compile(r"! LaTeX Error", re.I),
+    re.compile(r"Undefined control sequence", re.I),
+    re.compile(r"Missing \$ inserted", re.I),
+    re.compile(r"Package .+ Error", re.I),
+    re.compile(r"Emergency stop", re.I),
+    re.compile(r"Runaway argument", re.I),
+    re.compile(r"Traceback \(most recent call last\)"),
     re.compile(r"NameError:", re.I),
-    re.compile(r"KeyError:", re.I),
     re.compile(r"AttributeError:", re.I),
     re.compile(r"ModuleNotFoundError:", re.I),
-    re.compile(r"Traceback \(most recent call last\)"),
-    re.compile(r"Error rendering"),
+    re.compile(r"Error rendering", re.I),
+    re.compile(r"`\{python\}"),
 ]
+
+PDF_TEXT_ERROR_PATTERNS = [
+    re.compile(r"Traceback \(most recent call last\)"),
+    re.compile(r"NameError:", re.I),
+    re.compile(r"AttributeError:", re.I),
+    re.compile(r"ModuleNotFoundError:", re.I),
+    re.compile(r"Error rendering", re.I),
+    re.compile(r"\b(?:Figure|Table|Section|Equation)\s+\?\?+", re.I),
+]
+
+PDF_TEXT_WARN_PATTERNS = [
+    re.compile(r"\?@(?:fig|sec|tbl|eq)-"),
+    re.compile(r"@(?:fig|sec|tbl|eq)-[A-Za-z0-9_:-]+"),
+]
+
+MATH_ENVS = (
+    "equation", "equation*", "align", "align*", "aligned", "gather", "gather*",
+    "multline", "multline*", "split", "flalign", "flalign*", "eqnarray", "eqnarray*",
+)
 
 
 @dataclass
@@ -96,13 +135,18 @@ class ChapterResult:
     vol: str
     chapter: str
     qmd: str
-    html: str
+    pdf: str
+    tex: str
     status: str  # pass | fail | pending | skip
     build_ok: bool = False
     build_seconds: float = 0.0
-    html_spurious_clean: bool | None = None
-    html_error_hits: list[str] = field(default_factory=list)
-    lego_focal_ok: bool | None = None
+    pdf_bytes: int = 0
+    tex_error_hits: list[str] = field(default_factory=list)
+    pdf_text_hits: list[str] = field(default_factory=list)
+    pdf_text_warnings: list[str] = field(default_factory=list)
+    math_imbalance: list[str] = field(default_factory=list)
+    display_math_blocks: int = 0
+    inline_math_lines: int = 0
     prose_ok: bool | None = None
     registry_ok: bool | None = None
     notes: str = ""
@@ -117,15 +161,12 @@ def _qmd_path(vol: str, ch_path: str) -> Path:
     return REPO_ROOT / "book/quarto/contents" / vol / f"{ch_path}.qmd"
 
 
-def _build_html(vol: str, ch_path: str) -> tuple[bool, float, str]:
+def _build_pdf(vol: str, ch_path: str) -> tuple[bool, float, str]:
     name = ch_path.split("/")[-1]
-    binder_vol = f"--{vol}"
-    binder_ch = f"{vol}/{name}"
-    log = Path(f"/tmp/render_{vol}_{name}.log")
+    log = Path(f"/tmp/render_pdf_{vol}_{name}.log")
     t0 = time.monotonic()
     proc = subprocess.run(
-        ["./book/binder", "build", "html", binder_vol, binder_ch,
-         "--skip-hygiene", "--skip-validate"],
+        ["./book/binder", "build", "pdf", f"--{vol}", name],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -135,61 +176,69 @@ def _build_html(vol: str, ch_path: str) -> tuple[bool, float, str]:
     return proc.returncode == 0, elapsed, str(log)
 
 
-def _live_html(vol: str, ch_path: str) -> Path:
-    build_dir = REPO_ROOT / "book/quarto/_build" / f"html-{vol}" / "contents" / vol
-    return build_dir / f"{ch_path}.html"
+def _live_pdf(vol: str) -> Path:
+    return BOOK_DIR / "_build" / f"pdf-{vol}" / PDF_NAMES[vol]
 
 
-def _archive_html(vol: str, ch_path: str, live: Path) -> Path:
+def _live_tex(vol: str) -> Path:
+    return BOOK_DIR / TEX_NAMES[vol]
+
+
+def _archive_artifacts(vol: str, ch_path: str, live_pdf: Path, live_tex: Path) -> tuple[Path, Path]:
     name = ch_path.split("/")[-1]
-    archive_dir = REPO_ROOT / "book/quarto/_build/html-audit" / vol
+    archive_dir = BOOK_DIR / "_build/pdf-audit" / vol
     archive_dir.mkdir(parents=True, exist_ok=True)
-    dest = archive_dir / f"{name}.html"
-    dest.write_bytes(live.read_bytes())
-    return dest
+    pdf_dest = archive_dir / f"{name}.pdf"
+    tex_dest = archive_dir / f"{name}.tex"
+    shutil.copy2(live_pdf, pdf_dest)
+    shutil.copy2(live_tex, tex_dest)
+    return pdf_dest, tex_dest
 
 
-def _audit_spurious(html: Path) -> tuple[bool, list[str]]:
-    proc = subprocess.run(
-        [sys.executable, str(AUDIT_HTML), str(html)],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode == 0 and "CLEAN" in proc.stdout:
-        return True, []
-    issues = [ln for ln in (proc.stdout or proc.stderr).splitlines() if ln.strip()]
-    return False, issues[:10]
-
-
-def _scan_html_errors(html: Path) -> list[str]:
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        return []
-    soup = BeautifulSoup(html.read_text(encoding="utf-8", errors="replace"), "html.parser")
-    content = soup.find("main") or soup.body
-    if not content:
-        return []
-    for tag in content(["script", "style", "pre", "code"]):
-        tag.decompose()
-    text = content.get_text(separator=" ")
+def _scan_tex(tex: Path) -> tuple[list[str], list[str], int, int]:
+    text = tex.read_text(encoding="utf-8", errors="replace")
     hits: list[str] = []
-    for pat in HTML_ERROR_PATTERNS:
+    for pat in TEX_ERROR_PATTERNS:
         if pat.search(text):
             hits.append(pat.pattern)
-    return hits
+
+    imbalances: list[str] = []
+    for env in MATH_ENVS:
+        begin_n = len(re.findall(rf"\\begin\{{{re.escape(env)}\}}", text))
+        end_n = len(re.findall(rf"\\end\{{{re.escape(env)}\}}", text))
+        if begin_n != end_n:
+            imbalances.append(f"{env}: begin={begin_n} end={end_n}")
+
+    display_start = len(re.findall(r"\\begin\{(?:equation|align|gather|multline|flalign|eqnarray)", text))
+    bracket_begin = len(re.findall(r"(?<!\\)\\\[", text))
+    bracket_end = len(re.findall(r"(?<!\\)\\\]", text))
+    if bracket_begin != bracket_end:
+        imbalances.append(f"display brackets: [={bracket_begin} ]={bracket_end}")
+
+    inline_paren = sum(1 for ln in text.splitlines() if "\\(" in ln or "\\)" in ln)
+    inline_dollar = sum(1 for ln in text.splitlines() if re.search(r"(?<!\$)\$(?!\$)", ln))
+
+    return hits, imbalances, display_start + max(0, text.count("\\[")), inline_paren + inline_dollar
 
 
-def _lego_focal(qmd: Path) -> tuple[bool, str]:
+def _scan_pdf_text(pdf: Path) -> tuple[list[str], list[str]]:
     proc = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "book/tools/audit/lego_focal_verify.py"), str(qmd)],
-        cwd=REPO_ROOT,
+        ["pdftotext", "-layout", str(pdf), "-"],
         capture_output=True,
         text=True,
     )
-    out = (proc.stdout or "") + (proc.stderr or "")
-    ok = proc.returncode == 0 and "issues=0" in out
-    return ok, out.strip().splitlines()[-1] if out.strip() else "no output"
+    if proc.returncode != 0:
+        return ["pdftotext failed"], []
+    body = proc.stdout or ""
+    hits: list[str] = []
+    warnings: list[str] = []
+    for pat in PDF_TEXT_ERROR_PATTERNS:
+        if pat.search(body):
+            hits.append(pat.pattern)
+    for pat in PDF_TEXT_WARN_PATTERNS:
+        if pat.search(body):
+            warnings.append(pat.pattern)
+    return hits, warnings
 
 
 def _prose_exec(qmd: Path, timeout_s: int = 120) -> tuple[bool, str]:
@@ -229,7 +278,8 @@ def verify_chapter(vol: str, ch_path: str, skip_build: bool = False) -> ChapterR
         vol=vol,
         chapter=name,
         qmd=str(qmd.relative_to(REPO_ROOT)),
-        html="",
+        pdf="",
+        tex="",
         status="pending",
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -244,58 +294,75 @@ def verify_chapter(vol: str, ch_path: str, skip_build: bool = False) -> ChapterR
     if not reg_ok:
         res.notes += f"registry: {reg_msg}; "
 
-    lego_ok, lego_msg = _lego_focal(qmd)
-    res.lego_focal_ok = lego_ok
-    if not lego_ok:
-        res.notes += f"lego: {lego_msg}; "
-
     prose_ok, prose_msg = _prose_exec(qmd)
     res.prose_ok = prose_ok
     if not prose_ok:
         res.notes += f"prose: {prose_msg}; "
 
     if skip_build:
-        archive = REPO_ROOT / "book/quarto/_build/html-audit" / vol / f"{name}.html"
-        if not archive.is_file():
+        archive_pdf = BOOK_DIR / "_build/pdf-audit" / vol / f"{name}.pdf"
+        archive_tex = BOOK_DIR / "_build/pdf-audit" / vol / f"{name}.tex"
+        if not archive_pdf.is_file() or not archive_tex.is_file():
             res.status = "pending"
-            res.notes += "no archived HTML (--skip-build)"
+            res.notes += "no archived PDF/TEX (--skip-build)"
             return res
-        html = archive
+        pdf, tex = archive_pdf, archive_tex
+        res.build_ok = True
     else:
-        build_ok, secs, log = _build_html(vol, ch_path)
+        build_ok, secs, log = _build_pdf(vol, ch_path)
         res.build_ok = build_ok
         res.build_seconds = round(secs, 1)
         if not build_ok:
             res.status = "fail"
             res.notes += f"build failed ({log}); "
             return res
-        live = _live_html(vol, ch_path)
-        if not live.is_file():
+        live_pdf = _live_pdf(vol)
+        live_tex = _live_tex(vol)
+        if not live_pdf.is_file() or not live_tex.is_file():
             res.status = "fail"
-            res.notes += f"HTML missing at {live}; "
+            res.notes += "PDF or TEX missing after build; "
             return res
-        html = _archive_html(vol, ch_path, live)
+        pdf, tex = _archive_artifacts(vol, ch_path, live_pdf, live_tex)
 
-    res.html = str(html.relative_to(REPO_ROOT))
-    res.html_error_hits = _scan_html_errors(html)
-    clean, spurious = _audit_spurious(html)
-    res.html_spurious_clean = clean
-    if res.html_error_hits:
-        res.notes += f"html errors: {res.html_error_hits}; "
-    if not clean:
-        res.notes += f"spurious .0: {spurious[:2]}; "
+    res.pdf = str(pdf.relative_to(REPO_ROOT))
+    res.tex = str(tex.relative_to(REPO_ROOT))
+    res.pdf_bytes = pdf.stat().st_size
+
+    tex_hits, math_imb, display_n, inline_n = _scan_tex(tex)
+    res.tex_error_hits = tex_hits
+    res.math_imbalance = math_imb
+    res.display_math_blocks = display_n
+    res.inline_math_lines = inline_n
+
+    if shutil.which("pdftotext"):
+        pdf_hits, pdf_warn = _scan_pdf_text(pdf)
+        res.pdf_text_hits = pdf_hits
+        res.pdf_text_warnings = pdf_warn
+        if pdf_warn:
+            res.notes += f"xref warnings (single-chapter PDF): {len(pdf_warn)} patterns; "
+    else:
+        res.notes += "pdftotext unavailable; "
+
+    if res.tex_error_hits:
+        res.notes += f"tex errors: {res.tex_error_hits}; "
+    if res.math_imbalance:
+        res.notes += f"math imbalance: {res.math_imbalance}; "
+    if res.pdf_text_hits:
+        res.notes += f"pdf errors: {res.pdf_text_hits}; "
 
     passed = (
         res.build_ok
-        and not res.html_error_hits
-        and res.html_spurious_clean
-        and res.lego_focal_ok
+        and not res.tex_error_hits
+        and not res.math_imbalance
+        and not res.pdf_text_hits
         and res.prose_ok
         and res.registry_ok
     )
     res.status = "pass" if passed else "fail"
     if passed:
-        res.notes = "OK — build + HTML clean + LEGO/registry consistent"
+        res.notes = (
+            f"OK — PDF+TeX clean; display_math={display_n}, inline_math_lines={inline_n}"
+        )
     return res
 
 
@@ -313,10 +380,7 @@ def save_ledger(ledger: dict) -> None:
 
 
 def _write_markdown_table(ledger: dict) -> None:
-    rows = []
-    for key in sorted(ledger.get("chapters", {}).keys()):
-        c = ledger["chapters"][key]
-        rows.append(c)
+    rows = [ledger["chapters"][k] for k in sorted(ledger.get("chapters", {}).keys())]
 
     def yn(v):
         if v is True:
@@ -326,14 +390,14 @@ def _write_markdown_table(ledger: dict) -> None:
         return "—"
 
     lines = [
-        "# Chapter HTML audit ledger",
+        "# Chapter PDF audit ledger",
         "",
         f"Updated: {ledger.get('updated_at', '')}",
         "",
-        "Registry migration chapter verification: build HTML → raw HTML scan → LEGO/prose/registry checks.",
+        "Per-chapter PDF build → keep-tex scan (math env balance + error patterns) → pdftotext scan.",
         "",
-        "| Vol | Chapter | Status | Build | HTML | Spurious | LEGO | Prose | Registry | s | Notes |",
-        "|-----|---------|--------|-------|------|----------|------|-------|----------|---|-------|",
+        "| Vol | Chapter | Status | Build | TeX | Math | PDF text | Prose | Registry | s | KB | Notes |",
+        "|-----|---------|--------|-------|-----|------|----------|-------|----------|---|----|-------|",
     ]
     pass_n = fail_n = pending_n = 0
     for c in rows:
@@ -344,19 +408,23 @@ def _write_markdown_table(ledger: dict) -> None:
             fail_n += 1
         else:
             pending_n += 1
-        notes = (c.get("notes") or "").replace("|", "\\|")[:80]
+        kb = round(c.get("pdf_bytes", 0) / 1024) if c.get("pdf_bytes") else ""
+        notes = (c.get("notes") or "").replace("|", "\\|")[:70]
         lines.append(
             f"| {c['vol']} | {c['chapter']} | **{st}** | {yn(c.get('build_ok'))} | "
-            f"{yn(not c.get('html_error_hits')) if c.get('html') else '—'} | "
-            f"{yn(c.get('html_spurious_clean'))} | {yn(c.get('lego_focal_ok'))} | "
+            f"{yn(not c.get('tex_error_hits')) if c.get('tex') else '—'} | "
+            f"{yn(not c.get('math_imbalance')) if c.get('tex') else '—'} | "
+            f"{yn(not c.get('pdf_text_hits')) if c.get('pdf') else '—'} | "
             f"{yn(c.get('prose_ok'))} | {yn(c.get('registry_ok'))} | "
-            f"{c.get('build_seconds', '')} | {notes} |"
+            f"{c.get('build_seconds', '')} | {kb} | {notes} |"
         )
     lines.extend([
         "",
         f"**Summary:** {pass_n} pass / {fail_n} fail / {pending_n} pending / {len(rows)} total",
         "",
-        "Re-run one chapter: `python3 book/tools/audit/chapter_html_verify.py --vol1 training`",
+        "Re-run one chapter: `python3 book/tools/audit/chapter_pdf_verify.py --vol1 training`",
+        "",
+        "Archived artifacts: `book/quarto/_build/pdf-audit/<vol>/<chapter>.{pdf,tex}`",
         "",
     ])
     LEDGER_MD.write_text("\n".join(lines), encoding="utf-8")
@@ -364,12 +432,12 @@ def _write_markdown_table(ledger: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vol1", nargs="*", metavar="CHAPTER", help="Vol1 chapter(s) by short name")
-    parser.add_argument("--vol2", nargs="*", metavar="CHAPTER", help="Vol2 chapter(s) by short name")
-    parser.add_argument("--all", action="store_true", help="All chapters in selected volume(s)")
-    parser.add_argument("--list", action="store_true", help="List chapters")
-    parser.add_argument("--report", action="store_true", help="Regenerate markdown table only")
-    parser.add_argument("--skip-build", action="store_true", help="Audit archived HTML only")
+    parser.add_argument("--vol1", nargs="*", metavar="CHAPTER")
+    parser.add_argument("--vol2", nargs="*", metavar="CHAPTER")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--list", action="store_true")
+    parser.add_argument("--report", action="store_true")
+    parser.add_argument("--skip-build", action="store_true")
     args = parser.parse_args()
 
     if args.list:
@@ -416,7 +484,11 @@ def main() -> int:
         result = verify_chapter(vol, ch_path, skip_build=args.skip_build)
         ledger["chapters"][cid] = asdict(result)
         save_ledger(ledger)
-        print(f"  {result.status.upper()} ({result.build_seconds}s) — {result.notes[:120]}")
+        print(
+            f"  {result.status.upper()} ({result.build_seconds}s, "
+            f"math={result.display_math_blocks}d+{result.inline_math_lines}i) — "
+            f"{result.notes[:100]}"
+        )
         if result.status == "fail":
             fail += 1
 

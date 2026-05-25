@@ -20,21 +20,21 @@ class Nodes(Registry):
         name="DGX H100",
         accelerator=Hardware.Cloud.H100,
         accelerators_per_node=8,
-        intra_node_bw=900 * ureg.GB / ureg.second,
+        intra_node_bw=Hardware.Cloud.H100.nvlink.bandwidth,
         nics_per_node=8,
     )
     DGX_A100 = Node(
         name="DGX A100",
         accelerator=Hardware.Cloud.A100,
         accelerators_per_node=8,
-        intra_node_bw=600 * ureg.GB / ureg.second,
+        intra_node_bw=Hardware.Cloud.A100.nvlink.bandwidth,
         nics_per_node=8,
     )
     DGX_B200 = Node(
         name="DGX B200",
         accelerator=Hardware.Cloud.B200,
         accelerators_per_node=8,
-        intra_node_bw=1800 * ureg.GB / ureg.second,
+        intra_node_bw=Hardware.Cloud.B200.nvlink.bandwidth,
         nics_per_node=8,
     )
 
