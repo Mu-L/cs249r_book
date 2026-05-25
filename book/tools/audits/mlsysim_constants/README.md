@@ -18,7 +18,7 @@ should source values after migration.
 | Solver/engine defaults | `mlsysim/core/calibration.py` → `mlsysim.core.calibration.*` |
 | Economics | `mlsysim/infra/pricing.py` → `Infrastructure.Pricing.*` |
 | Physics / units only | `mlsysim/core/constants.py`, `mlsysim/physics/` |
-| Symbol → replacement map | `scripts/map_constants.py`, `book/tools/audit/migrate_constants_to_registry.py` |
+| Symbol → replacement map | `book/tools/audit/migrate_constants_to_registry.py` |
 | Live manifest | `book/tools/audit/artifacts/registry_migration_manifest.json` |
 
 Regenerate `target_source` fields after map changes:
