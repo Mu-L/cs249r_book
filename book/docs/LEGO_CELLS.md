@@ -70,10 +70,16 @@ The A100 ridge is `{python} A100RidgeExample.ridge_str` FLOP/byte.
   symbols (`H100_FLOPS_FP16_TENSOR_val_str`, `GPUS_PER_HOST_str`, …). Use
   scenario-descriptive names (`h100_peak_fp16_val_str`, `dgx_h100_gpus_per_node_str`)
   with registry paths on the RHS. `./binder check registry --scope sources` enforces this.
-- **Hardcoded walkthrough operands** — in callout **Math** / **Step** prose that
-  already uses ``{python} Class.field_str``, do not type intermediate numbers
-  (`1,287,000 kWh`, `times 429 g/kWh`, `USD 18,000`). Export them from the cell.
+- **Hardcoded walkthrough operands** — in callout **Problem** / **Setup** / **Step** prose that
+  already uses ``{python} Class.field_str``, do not type scenario inputs or intermediate
+  numbers (`100 GPUs`, `70B × 2`, `10×`, `/365`, `\$2/GPU-hour`). Export setup inputs,
+  operands, rates, and multipliers from the cell.
   `./binder check code --scope lego-prose-literals` flags common cases.
+
+**Scope boundary (judgment):** The gate targets *computational* callouts—where a
+LEGO cell derives ``{python} *_str`` from scenario inputs. Pure narrative
+(``100--1,000× more expensive than arithmetic``), teaching asides, and footnotes
+stay literal. If a number is an input to or step in worked math, export it.
 
 ## Review checklist
 

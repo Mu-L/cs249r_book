@@ -188,6 +188,7 @@ class GangSchedulingDeadlock:
     partial_gpus = n_total_gpus // n_jobs
     gs_n_gpus_str = fmt(n_total_gpus, precision=0, commas=False)
     gs_n_jobs_str = fmt(n_jobs, precision=0, commas=False)
+    gs_gpus_per_job_str = fmt(gpus_per_job, precision=0, commas=False)
     gs_partial_gpus_str = fmt(partial_gpus, precision=0, commas=False)
     gs_waste_m_str = fmt(waste_per_hour, precision=0)
 ```
@@ -198,9 +199,9 @@ class GangSchedulingDeadlock:
 
 **Math**:
 
-1. **Team A Status**: Holds 512, Needs 1,024. Progress = **0 percent**.
-2. **Team B Status**: Holds 512, Needs 1,024. Progress = **0 percent**.
-3. **Cluster Status**: 1,024 GPUs allocated, 0 samples processed.
+1. **Team A Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = **0 percent**.
+2. **Team B Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = **0 percent**.
+3. **Cluster Status**: `{python} GangSchedulingDeadlock.gs_n_gpus_str` GPUs allocated, 0 samples processed.
 4. **Waste**: `{python} GangSchedulingDeadlock.gs_waste_m_str` dollars per hour in idle electricity and capital.
 
 **Systems insight**: This is a **Circular Dependency**\index{Deadlock!circular dependency}: Team A is waiting for Team B's GPUs, and Team B is waiting for Team A's. Without **Gang Scheduling** (all-or-nothing allocation), cluster efficiency drops to zero. In a large fleet, even a 5-minute deadlock can cost thousands of dollars. Schedulers like Kubernetes (via Coscheduling plugins) and Slurm enforce atomicity to ensure that if a job cannot run in full, it does not run at all.
@@ -1801,6 +1802,13 @@ class GpuSharingRoi:
     gs_saved_gpus_str = fmt(saved_gpus, precision=0)
     gs_saved_pct_str = fmt(saved_pct, precision=1)
     gs_annual_str = fmt(annual_savings, precision=0)
+    small_model_params_b = 7
+    gs_small_model_b_str = fmt(small_model_params_b, precision=0, commas=False, suffix="B")
+    gs_large_model_b_str = fmt(
+        int(Models.Language.GPT3.parameters.m_as(param) / BILLION),
+        precision=0,
+        commas=False,
+    ) + "B"
     gs_n_small_str = fmt(n_small, precision=0, commas=False)
     gs_a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False)
     gs_small_footprint_str = fmt(small_footprint_gb, precision=0, commas=False)
@@ -1808,17 +1816,19 @@ class GpuSharingRoi:
     gs_n_large_str = fmt(n_large, precision=0, commas=False)
     gs_gpus_per_large_str = fmt(gpus_per_large, precision=0, commas=False)
     gs_excl_used_mem_str = fmt(excl_used_mem_gb, precision=0, commas=False)
+    gs_large_footprint_str = fmt(large_footprint_gb, precision=0, commas=False)
+    gs_gpu_hour_rate_str = fmt(gpu_rate.m_as(USD / hour), precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-gpu-sharing-roi .callout-notebook title="GPU sharing ROI"}
 
-Consider a fleet serving 100 distinct 7B models (26 GB footprint each) and 10 distinct 175B models (350 GB footprint each). <!-- lego-ok: model counts, footprints, and GPU specs are input assumptions -->
+Consider a fleet serving `{python} GpuSharingRoi.gs_n_small_str` distinct `{python} GpuSharingRoi.gs_small_model_b_str` models (`{python} GpuSharingRoi.gs_small_footprint_str` GB footprint each) and `{python} GpuSharingRoi.gs_n_large_str` distinct `{python} GpuSharingRoi.gs_large_model_b_str` models (`{python} GpuSharingRoi.gs_large_footprint_str` GB footprint each).
 
-**Strategy A -- Exclusive access (one model per GPU)**: The 7B models require `{python} GpuSharingRoi.gs_n_small_str` A100 GPUs (`{python} GpuSharingRoi.gs_a100_mem_str` GB each), achieving only `{python} GpuSharingRoi.gs_excl_util_str` percent memory utilization (`{python} GpuSharingRoi.gs_n_small_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` GB used out of `{python} GpuSharingRoi.gs_excl_total_mem_str` GB total). The 175B models require `{python} GpuSharingRoi.gs_excl_large_str` GPUs (`{python} GpuSharingRoi.gs_n_large_str` models $\times$ `{python} GpuSharingRoi.gs_gpus_per_large_str` GPUs each for tensor parallelism). Total fleet: `{python} GpuSharingRoi.gs_excl_total_str` GPUs.
+**Strategy A -- Exclusive access (one model per GPU)**: The `{python} GpuSharingRoi.gs_small_model_b_str` models require `{python} GpuSharingRoi.gs_n_small_str` A100 GPUs (`{python} GpuSharingRoi.gs_a100_mem_str` GB each), achieving only `{python} GpuSharingRoi.gs_excl_util_str` percent memory utilization (`{python} GpuSharingRoi.gs_n_small_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` GB used out of `{python} GpuSharingRoi.gs_excl_total_mem_str` GB total). The `{python} GpuSharingRoi.gs_large_model_b_str` models require `{python} GpuSharingRoi.gs_excl_large_str` GPUs (`{python} GpuSharingRoi.gs_n_large_str` models $\times$ `{python} GpuSharingRoi.gs_gpus_per_large_str` GPUs each for tensor parallelism). Total fleet: `{python} GpuSharingRoi.gs_excl_total_str` GPUs.
 
-**Strategy B -- Mixed sharing (MPS for small, exclusive for large)**: Pack `{python} GpuSharingRoi.gs_models_per_gpu_str` models per A100 for the 7B models (`{python} GpuSharingRoi.gs_models_per_gpu_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` = `{python} GpuSharingRoi.gs_shared_mem_str` GB, well within `{python} GpuSharingRoi.gs_a100_mem_str` GB), requiring only `{python} GpuSharingRoi.gs_shared_gpus_str` GPUs at `{python} GpuSharingRoi.gs_shared_util_str` percent memory utilization. The 175B models remain unchanged at `{python} GpuSharingRoi.gs_excl_large_str` GPUs. Total fleet: `{python} GpuSharingRoi.gs_shared_total_str` GPUs.
+**Strategy B -- Mixed sharing (MPS for small, exclusive for large)**: Pack `{python} GpuSharingRoi.gs_models_per_gpu_str` models per A100 for the `{python} GpuSharingRoi.gs_small_model_b_str` models (`{python} GpuSharingRoi.gs_models_per_gpu_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` = `{python} GpuSharingRoi.gs_shared_mem_str` GB, well within `{python} GpuSharingRoi.gs_a100_mem_str` GB), requiring only `{python} GpuSharingRoi.gs_shared_gpus_str` GPUs at `{python} GpuSharingRoi.gs_shared_util_str` percent memory utilization. The `{python} GpuSharingRoi.gs_large_model_b_str` models remain unchanged at `{python} GpuSharingRoi.gs_excl_large_str` GPUs. Total fleet: `{python} GpuSharingRoi.gs_shared_total_str` GPUs.
 
-Sharing reduces the fleet size by `{python} GpuSharingRoi.gs_saved_pct_str` percent (`{python} GpuSharingRoi.gs_saved_gpus_str` fewer GPUs). At \$2 per GPU-hour, this saves approximately \$`{python} GpuSharingRoi.gs_annual_str` annually in compute costs, purely through scheduling policy.
+Sharing reduces the fleet size by `{python} GpuSharingRoi.gs_saved_pct_str` percent (`{python} GpuSharingRoi.gs_saved_gpus_str` fewer GPUs). At \$`{python} GpuSharingRoi.gs_gpu_hour_rate_str`/GPU-hour, this saves approximately \$`{python} GpuSharingRoi.gs_annual_str` annually in compute costs, purely through scheduling policy.
 
 :::
 
@@ -1888,17 +1898,19 @@ class DiurnalGpuShift:
     ds_serving_peak_str = fmt(serving_peak, precision=0, commas=False)
     ds_serving_avg_str = fmt(serving_avg, precision=0, commas=False)
     ds_training_fixed_str = fmt(training_fixed, precision=0, commas=False)
+    ds_fleet_gpus_str = fmt(fleet, precision=0, commas=True)
+    ds_gpu_hour_rate_str = fmt(gpu_rate.m_as(USD / hour), precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-diurnal-gpu-shift .callout-notebook title="The diurnal GPU shift"}
 
-Consider a fleet of 1,000 GPUs managed under two regimes: <!-- lego-ok: fleet size, serving/training splits are input assumptions -->
+Consider a fleet of `{python} DiurnalGpuShift.ds_fleet_gpus_str` GPUs managed under two regimes:
 
 **Scenario A -- Static Partitioning**: The serving pool reserves `{python} DiurnalGpuShift.ds_serving_peak_str` GPUs to handle peak demand, but average usage is only `{python} DiurnalGpuShift.ds_serving_avg_str` GPUs (37.5 percent utilization). The training pool reserves `{python} DiurnalGpuShift.ds_training_fixed_str` GPUs, and backlog ensures 100 percent utilization. Result: `{python} DiurnalGpuShift.ds_serving_avg_str` + `{python} DiurnalGpuShift.ds_training_fixed_str` = `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: **`{python} DiurnalGpuShift.ds_static_util_str` percent**.
 
 **Scenario B -- Dynamic Sharing**: Serving claims GPUs strictly as needed (average 150). Training reclaims unused serving GPUs (average 250), minus a 120-GPU safety buffer. The orchestrator shifts approximately `{python} DiurnalGpuShift.ds_reclaimed_str` GPUs between roles twice daily based on diurnal forecasts. Result: serving (150) + training (600 + `{python} DiurnalGpuShift.ds_reclaimed_str`) = `{python} DiurnalGpuShift.ds_dynamic_active_str` active GPUs (the second training term is reclaimed serving capacity). Fleet utilization: **`{python} DiurnalGpuShift.ds_dynamic_util_str` percent**.
 
-Dynamic sharing recovers `{python} DiurnalGpuShift.ds_reclaimed_str` GPUs of effective capacity. At \$2 per GPU-hour, this creates approximately \$`{python} DiurnalGpuShift.ds_annual_str` million per year in value without purchasing a single additional accelerator.
+Dynamic sharing recovers `{python} DiurnalGpuShift.ds_reclaimed_str` GPUs of effective capacity. At \$`{python} DiurnalGpuShift.ds_gpu_hour_rate_str`/GPU-hour, this creates approximately \$`{python} DiurnalGpuShift.ds_annual_str` million per year in value without purchasing a single additional accelerator.
 
 :::
 

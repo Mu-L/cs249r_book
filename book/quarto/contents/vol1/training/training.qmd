@@ -2481,6 +2481,7 @@ class GPT2DataPipeline:
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     tokens_per_batch_str = fmt_int(tokens_per_batch // THOUSAND, commas=False, suffix="K")
+    token_rate_str = fmt_int(token_rate // THOUSAND, commas=False, suffix="K")
     tokenization_ms_str = fmt(tokenization_ms, precision=1, commas=False)
     batch_kb_str = fmt(batch_kb, precision=1, commas=False)
     pcie_gen3_str = fmt(pcie_bw, precision=2, commas=False)
@@ -2523,9 +2524,9 @@ Training language models like GPT-2 requires a specialized data pipeline optimiz
 
    - BPE (Byte-Pair Encoding) tokenizer (50,257 vocabulary) converts text to token IDs
    - BPE segments text into subword units (for example, "unbreakable" → ["un", "break", "able"])
-   - Processing rate: ~500K tokens/s per CPU core
+   - Processing rate: ~`{python} GPT2DataPipeline.token_rate_str` tokens/s per CPU core
    - For batch size $B=32$ and sequence length $S=1024$: need `{python} GPT2DataPipeline.tokens_per_batch_str` tokens/batch
-   - Single core: `{python} GPT2DataPipeline.tokens_per_batch_str` tokens ÷ 500K tokens/s = `{python} GPT2DataPipeline.tokenization_ms_str` ms per batch
+   - Single core: `{python} GPT2DataPipeline.tokens_per_batch_str` tokens ÷ `{python} GPT2DataPipeline.token_rate_str` tokens/s = `{python} GPT2DataPipeline.tokenization_ms_str` ms per batch
    - Bottleneck: GPU forward pass only takes 80 ms
 3. Batching & Padding (CPU)
    - Pad sequences to uniform length (1024 tokens)
@@ -5478,6 +5479,7 @@ class GPT2WalkthroughCalc:
     memory_reduction_str = fmt(memory_reduction, precision=1, commas=False)
     amp_reduction_str = fmt(amp_reduction_pct, precision=1, commas=False)
     recompute_overhead_str = fmt(recompute_overhead_pct, precision=0, commas=False)
+    checkpoint_factor_str = fmt(checkpoint_factor, precision=0, commas=False)
 ```
 
 ::: {#exmp-training-gpt-2-optimization-v100 .callout-example title="GPT-2 optimization on V100"}
@@ -5491,7 +5493,7 @@ class GPT2WalkthroughCalc:
 
 **Steps 1--3: Solve the memory problem.**
 
-The memory analysis from @sec-model-training-mixedprecision-training-9218 applies directly. Baseline FP32 requires `{python} GPT2WalkthroughCalc.total_fp32_str` GB, an immediate OOM on a `{python} GPT2WalkthroughCalc.v100_mem_str` GB V100 GPU (**Machine** constraint in D·A·M terms). Applying mixed precision (AMP) reduces this to `{python} GPT2WalkthroughCalc.total_amp_str` GB (`{python} GPT2WalkthroughCalc.amp_reduction_str` percent reduction), but still exceeds `{python} GPT2WalkthroughCalc.v100_mem_str` GB. Adding gradient checkpointing (every four layers) reduces activations by 4$\times$, bringing the total to `{python} GPT2WalkthroughCalc.total_ckpt_str` GB. It fits, at the cost of `{python} GPT2WalkthroughCalc.recompute_overhead_str` percent more compute for activation recomputation.
+The memory analysis from @sec-model-training-mixedprecision-training-9218 applies directly. Baseline FP32 requires `{python} GPT2WalkthroughCalc.total_fp32_str` GB, an immediate OOM on a `{python} GPT2WalkthroughCalc.v100_mem_str` GB V100 GPU (**Machine** constraint in D·A·M terms). Applying mixed precision (AMP) reduces this to `{python} GPT2WalkthroughCalc.total_amp_str` GB (`{python} GPT2WalkthroughCalc.amp_reduction_str` percent reduction), but still exceeds `{python} GPT2WalkthroughCalc.v100_mem_str` GB. Adding gradient checkpointing (every four layers) reduces activations by `{python} GPT2WalkthroughCalc.checkpoint_factor_str`$\times$, bringing the total to `{python} GPT2WalkthroughCalc.total_ckpt_str` GB. It fits, at the cost of `{python} GPT2WalkthroughCalc.recompute_overhead_str` percent more compute for activation recomputation.
 
 With memory solved, the next step is determining whether throughput is acceptable.
 
@@ -5605,7 +5607,7 @@ class GPT2SummaryCalc:
     host_cpu_power_w = 200
     pue = 1.2
     electricity_usd_per_kwh = 0.10
-    grid_kg_co2_per_kwh = 0.45
+    grid_kg_co2_per_kwh = Infrastructure.Grids.US_Avg.carbon_intensity_kg_kwh
 
     b_total_mem = b_param + b_grad + b_master + b_opt + b_act
     o_total_mem = o_param + o_grad + o_master + o_opt + o_act
@@ -5643,22 +5645,23 @@ class GPT2SummaryCalc:
     o_cost_str = f"${fmt(o_cost, precision=1, commas=True)}"
     o_carbon_str = f"~{fmt(o_carbon, precision=1, commas=False)} tons CO~2~"
     energy_reduction_pct_str = fmt(energy_reduction_pct, precision=0, commas=False)
+    grid_kg_kwh_str = fmt(grid_kg_co2_per_kwh, precision=2, commas=False)
 ```
 
 @tbl-gpt2-summary compiles the cluster-level impact of applying mixed-precision training, gradient checkpointing, and the data-pipeline utilization gains from the walkthrough to GPT-2.
 
-| **Metric**                                                   |               **FP32 Baseline**                |                 **Optimized**                  | **Technique Applied**               |
-|:-------------------------------------------------------------|:----------------------------------------------:|:----------------------------------------------:|:------------------------------------|
-| **Parameters**                                               |     `{python} GPT2SummaryCalc.b_param_str`     |     `{python} GPT2SummaryCalc.o_param_str`     | Mixed precision (FP16)              |
-| **Gradients**                                                |     `{python} GPT2SummaryCalc.b_grad_str`      |     `{python} GPT2SummaryCalc.o_grad_str`      | Mixed precision (FP16)              |
-| **Master Weights**                                           |    `{python} GPT2SummaryCalc.b_master_str`     |    `{python} GPT2SummaryCalc.o_master_str`     | AMP Overhead                        |
-| **Optimizer State (Adam)**                                   |      `{python} GPT2SummaryCalc.b_opt_str`      |      `{python} GPT2SummaryCalc.o_opt_str`      | Unchanged (FP32 moments)            |
-| **Activations (batch=32)**                                   |      `{python} GPT2SummaryCalc.b_act_str`      |      `{python} GPT2SummaryCalc.o_act_str`      | Gradient checkpointing + FP16       |
-| **Total Memory**                                             | **`{python} GPT2SummaryCalc.b_total_mem_str`** | **`{python} GPT2SummaryCalc.o_total_mem_str`** | —                                   |
-| **Training Time (32 V100s)**                                 |     `{python} GPT2SummaryCalc.b_time_str`      |     `{python} GPT2SummaryCalc.o_time_str`      | Data prefetching + utilization      |
-| **Energy Consumption**                                       |    `{python} GPT2SummaryCalc.b_energy_str`     |    `{python} GPT2SummaryCalc.o_energy_str`     | Reduced time + improved efficiency  |
-| **Electricity Cost (USD 0.10/kWh)**                          |     `{python} GPT2SummaryCalc.b_cost_str`      |     `{python} GPT2SummaryCalc.o_cost_str`      | —                                   |
-| **Carbon Footprint**\index{Carbon Footprint!training impact} |    `{python} GPT2SummaryCalc.b_carbon_str`     |    `{python} GPT2SummaryCalc.o_carbon_str`     | Regional grid average (0.45 kg/kWh) |
+| **Metric**                                                   |               **FP32 Baseline**                |                 **Optimized**                  | **Technique Applied**                                                     |
+|:-------------------------------------------------------------|:----------------------------------------------:|:----------------------------------------------:|:--------------------------------------------------------------------------|
+| **Parameters**                                               |     `{python} GPT2SummaryCalc.b_param_str`     |     `{python} GPT2SummaryCalc.o_param_str`     | Mixed precision (FP16)                                                    |
+| **Gradients**                                                |     `{python} GPT2SummaryCalc.b_grad_str`      |     `{python} GPT2SummaryCalc.o_grad_str`      | Mixed precision (FP16)                                                    |
+| **Master Weights**                                           |    `{python} GPT2SummaryCalc.b_master_str`     |    `{python} GPT2SummaryCalc.o_master_str`     | AMP Overhead                                                              |
+| **Optimizer State (Adam)**                                   |      `{python} GPT2SummaryCalc.b_opt_str`      |      `{python} GPT2SummaryCalc.o_opt_str`      | Unchanged (FP32 moments)                                                  |
+| **Activations (batch=32)**                                   |      `{python} GPT2SummaryCalc.b_act_str`      |      `{python} GPT2SummaryCalc.o_act_str`      | Gradient checkpointing + FP16                                             |
+| **Total Memory**                                             | **`{python} GPT2SummaryCalc.b_total_mem_str`** | **`{python} GPT2SummaryCalc.o_total_mem_str`** | —                                                                         |
+| **Training Time (32 V100s)**                                 |     `{python} GPT2SummaryCalc.b_time_str`      |     `{python} GPT2SummaryCalc.o_time_str`      | Data prefetching + utilization                                            |
+| **Energy Consumption**                                       |    `{python} GPT2SummaryCalc.b_energy_str`     |    `{python} GPT2SummaryCalc.o_energy_str`     | Reduced time + improved efficiency                                        |
+| **Electricity Cost (USD 0.10/kWh)**                          |     `{python} GPT2SummaryCalc.b_cost_str`      |     `{python} GPT2SummaryCalc.o_cost_str`      | —                                                                         |
+| **Carbon Footprint**\index{Carbon Footprint!training impact} |    `{python} GPT2SummaryCalc.b_carbon_str`     |    `{python} GPT2SummaryCalc.o_carbon_str`     | Regional grid average (`{python} GPT2SummaryCalc.grid_kg_kwh_str` kg/kWh) |
 
 : **GPT-2 Training Optimization Summary**: Applying mixed-precision training and gradient checkpointing reduces memory from `{python} GPT2SummaryCalc.b_total_mem_str` to `{python} GPT2SummaryCalc.o_total_mem_str`; the data-pipeline utilization gains in the walkthrough reduce training time by 40 percent, energy consumption by `{python} GPT2SummaryCalc.energy_reduction_pct_str` percent, and carbon footprint proportionally. {#tbl-gpt2-summary tbl-colwidths="[30,18,18,34]"}
 
