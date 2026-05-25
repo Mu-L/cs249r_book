@@ -100,6 +100,7 @@ class LanguageModels(Registry):
         hidden_dim=8192,
         heads=64,
         kv_heads=8,
+        training_tokens=2e12 * count,
         inference_flops=2 * 70e9 * ureg.flop,
         metadata=Metadata(provenance=pc.META_LLAMA),
     )
