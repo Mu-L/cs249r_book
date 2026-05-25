@@ -2133,42 +2133,26 @@ While model serving dictates its own economic calculus, the training phase intro
 ```{python}
 #| echo: false
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Context: @sec-storage-checkpointing
-# │ Exports: CheckpointStorageContext.*
+# │ Context: Checkpoint section intro — model scale and checkpoint size
+# │ Exports: CheckpointModelIntro.gpt3_params_b_str, .ckpt_total_gb_str
 from mlsysim import Models
 from mlsysim.core.constants import *
 from mlsysim.fmt import fmt
 
-class CheckpointStorageContext:
+class CheckpointModelIntro:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     gpt3_params = Models.Language.GPT3.parameters
-    training_tokens = 1.5 * TRILLION
-    compressed_text_tb_val = 3
-    token_id_bytes = BYTES_INT32.m_as(byte)
-    training_days = 30
-    checkpoint_interval_min = 10
-    tokenized_text_tb_val = (training_tokens * token_id_bytes * byte).m_as(TB)
     ckpt_total_gb_val = (gpt3_params.m_as(param) * 10) / 1e9
-    checkpoint_count_val = training_days * 24 * 60 // checkpoint_interval_min
-    ckpt_fleet_total_pb_val = (ckpt_total_gb_val * checkpoint_count_val * GB).m_as(PB)
-    retention_recent_tb_val = 3 * ckpt_total_gb_val / 1000
-    retained_every_100_count_val = checkpoint_count_val // 100
-    archive_lineage_tb_val = retained_every_100_count_val * ckpt_total_gb_val / 1000 + compressed_text_tb_val + tokenized_text_tb_val
-
-    # ┌── 4. OUTPUT ───────────────────────────────────────
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     gpt3_params_b_str = fmt(gpt3_params.m_as(param) / BILLION, precision=0, commas=False)
     ckpt_total_gb_str = fmt(ckpt_total_gb_val, precision=0)
-    checkpoint_count_str = fmt(checkpoint_count_val, precision=0)
-    ckpt_fleet_total_pb_str = fmt(ckpt_fleet_total_pb_val, precision=1)
-    retention_recent_tb_str = fmt(retention_recent_tb_val, precision=2, commas=False)
-    retained_every_100_count_str = fmt(retained_every_100_count_val, precision=0)
-    archive_lineage_tb_str = fmt(archive_lineage_tb_val, precision=1, commas=False)
 ```
 
 ## Checkpoint Storage {#sec-storage-checkpointing}
 
 \index{Checkpoint!storage architecture}When a thousand GPUs have been training for six hours since the last checkpoint and a power supply fails, what determines how much work is lost? The answer is entirely a storage problem: how quickly the most recent checkpoint was saved, and where it resides. Checkpoints are the most demanding write workload in the storage hierarchy. They are also among the most consequential: a lost checkpoint after a hardware failure means repeating hours or days of training. The interaction between checkpoint storage and fault tolerance strategy is covered in depth in @sec-fault-tolerance-reliability, where the Young-Daly formula (@sec-fault-tolerance-young-daly) derives the optimal checkpoint frequency from cluster failure rates and checkpoint write time. Here we focus on the storage architecture that minimizes $T_{\text{write}}$, the time the training pipeline pauses to save a checkpoint.
 
-A `{python} CheckpointStorageContext.gpt3_params_b_str`B parameter model with Adam optimizer\index{Adam Optimizer!state size} generates checkpoints of approximately `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. The checkpoint includes model weights (`350` GB in FP16), optimizer state (momentum and variance, `1,400` GB in FP32), learning rate scheduler state, random number generator state, and the current data loader position. Every GPU in the cluster saves its shard of the checkpoint simultaneously, creating a checkpoint storm that the storage system must absorb without disrupting ongoing training reads.
+A `{python} CheckpointModelIntro.gpt3_params_b_str`B parameter model with Adam optimizer\index{Adam Optimizer!state size} generates checkpoints of approximately `{python} CheckpointModelIntro.ckpt_total_gb_str` GB. The checkpoint includes model weights (`350` GB in FP16), optimizer state (momentum and variance, `1,400` GB in FP32), learning rate scheduler state, random number generator state, and the current data loader position. Every GPU in the cluster saves its shard of the checkpoint simultaneously, creating a checkpoint storm that the storage system must absorb without disrupting ongoing training reads.
 
 ::: {#dfn-data-storage-checkpoint-storm .callout-definition title="Checkpoint storm"}
 
@@ -2222,8 +2206,8 @@ class CheckpointStormDefinition:
     optimizer_state_gb_str = fmt(optimizer_state_gb, precision=0, commas=False)
     zero3_total_tb_str = fmt(zero3_total_tb, precision=2, commas=False)
     zero3_write_s_str = fmt(zero3_write_s, precision=1, commas=False)
-    naive_total_tb_str = fmt(naive_total_tb, precision=0, commas=False)
-    naive_write_s_str = fmt(naive_write_s, precision=0)
+    naive_total_tb_str = fmt(naive_total_tb, precision=1, commas=False)
+    naive_write_s_str = fmt(naive_write_s, precision=1)
     naive_write_min_str = fmt(naive_write_min, precision=1, commas=False)
     nodes_str = fmt(nodes, precision=0, commas=True)
 ```
@@ -2299,9 +2283,24 @@ class CheckpointStormCalc:
     pfs_aggregate_bw_gbs_str = fmt(pfs_aggregate_bw_gbs, precision=0, commas=False)
 ```
 
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Checkpoint storm callout — total checkpoint size recap
+# │ Exports: CheckpointTotalGbRecap.ckpt_total_gb_str
+from mlsysim import Models
+from mlsysim.core.constants import *
+from mlsysim.fmt import fmt
+
+class CheckpointTotalGbRecap:
+    ckpt_total_gb_val = (Models.Language.GPT3.parameters.m_as(param) * 10) / 1e9
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    ckpt_total_gb_str = fmt(ckpt_total_gb_val, precision=0)
+```
+
 ::: {#nbk-data-storage-checkpoint-storm .callout-notebook title="The checkpoint storm"}
 
-**Problem**: A `{python} CheckpointStormCalc.nodes_str`-node cluster saves a 175B-parameter checkpoint every `{python} CheckpointStormCalc.checkpoint_interval_min_str` minutes. Each checkpoint totals `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. With ZeRO-3, each node saves roughly `{python} CheckpointStormCalc.per_node_shard_gb_str` GB.
+**Problem**: A `{python} CheckpointStormCalc.nodes_str`-node cluster saves a 175B-parameter checkpoint every `{python} CheckpointStormCalc.checkpoint_interval_min_str` minutes. Each checkpoint totals `{python} CheckpointTotalGbRecap.ckpt_total_gb_str` GB. With ZeRO-3, each node saves roughly `{python} CheckpointStormCalc.per_node_shard_gb_str` GB.
 
 1. **Per-node write to local NVMe** (`{python} CheckpointStormCalc.local_drive_count_str` drives at `{python} CheckpointStormCalc.local_drive_bw_gbs_str` GB/s each = `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s): `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\div$ `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s $\approx$ `{python} CheckpointStormCalc.local_write_s_str` seconds.
 2. **Async copy to PFS**\index{Checkpointing!async PFS copy}: `{python} CheckpointStormCalc.nodes_str` nodes$\times$ `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\approx$ `{python} CheckpointStormCalc.total_pfs_tb_str` TB total. If the PFS provides `{python} CheckpointStormCalc.pfs_aggregate_bw_tbs_str` TB/s aggregate, the storm completes in roughly `{python} CheckpointStormCalc.pfs_copy_s_str` seconds.
@@ -2313,11 +2312,34 @@ class CheckpointStormCalc:
 
 :::
 
-The **tiered staging** strategy minimizes $T_{\text{write}}$ by writing in two phases. In the first phase, each node writes its checkpoint shard to local NVMe at full bandwidth. With four NVMe drives providing 28 GB/s aggregate, a per-node shard of roughly 7 GB (a 256-node ZeRO-3 split of the `{python} CheckpointStorageContext.ckpt_total_gb_str` GB total checkpoint) completes in roughly 0.25 seconds. The training pipeline can resume immediately after the local write completes.
+The **tiered staging** strategy minimizes $T_{\text{write}}$ by writing in two phases. In the first phase, each node writes its checkpoint shard to local NVMe at full bandwidth. With four NVMe drives providing 28 GB/s aggregate, a per-node shard of roughly 7 GB (a 256-node ZeRO-3 split of the `{python} CheckpointTotalGbRecap.ckpt_total_gb_str` GB total checkpoint) completes in roughly 0.25 seconds. The training pipeline can resume immediately after the local write completes.
 
 In the second phase, a background process asynchronously copies the local checkpoint to the parallel file system for durability. This copy can overlap with the next training iteration, so it does not block the pipeline. The risk is that if the node fails before the async copy completes, the local checkpoint is lost. The mitigation is to replicate checkpoints to at least two peer nodes' NVMe drives before declaring the save complete, providing durability even if one node fails.
 
-The total storage consumed by checkpoints over the life of a training run is substantial. A 175B parameter model checkpointed every 10 minutes over a 30-day training run generates roughly `{python} CheckpointStorageContext.checkpoint_count_str` checkpoints, each `{python} CheckpointStorageContext.ckpt_total_gb_str` GB, for a total of approximately `{python} CheckpointStorageContext.ckpt_fleet_total_pb_str` PB of checkpoint data. Retaining all of them is neither necessary nor economical. A common retention policy keeps the three most recent checkpoints on the parallel file system for fast recovery, copies every 100th checkpoint to object storage for long-term auditability, and deletes the rest. This policy reduces the parallel file system checkpoint footprint from `{python} CheckpointStorageContext.ckpt_fleet_total_pb_str` PB to roughly `{python} CheckpointStorageContext.retention_recent_tb_str` TB (three live full checkpoints) while preserving `{python} CheckpointStorageContext.retained_every_100_count_str` historical snapshots in object storage for posttraining analysis.
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Checkpoint retention paragraph below — fleet totals over 30-day run
+# │ Exports: CheckpointFleetRetention.*
+from mlsysim import Models
+from mlsysim.core.constants import *
+from mlsysim.fmt import fmt
+
+class CheckpointFleetRetention:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    ckpt_total_gb_val = (Models.Language.GPT3.parameters.m_as(param) * 10) / 1e9
+    checkpoint_count_val = 30 * 24 * 60 // 10
+    ckpt_fleet_total_pb_val = (ckpt_total_gb_val * checkpoint_count_val * GB).m_as(PB)
+    retention_recent_tb_val = 3 * ckpt_total_gb_val / 1000
+    retained_every_100_count_val = checkpoint_count_val // 100
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    checkpoint_count_str = fmt(checkpoint_count_val, precision=0)
+    ckpt_fleet_total_pb_str = fmt(ckpt_fleet_total_pb_val, precision=1)
+    retention_recent_tb_str = fmt(retention_recent_tb_val, precision=2, commas=False)
+    retained_every_100_count_str = fmt(retained_every_100_count_val, precision=0)
+```
+
+The total storage consumed by checkpoints over the life of a training run is substantial. A 175B parameter model checkpointed every 10 minutes over a 30-day training run generates roughly `{python} CheckpointFleetRetention.checkpoint_count_str` checkpoints, each `{python} CheckpointTotalGbRecap.ckpt_total_gb_str` GB, for a total of approximately `{python} CheckpointFleetRetention.ckpt_fleet_total_pb_str` PB of checkpoint data. Retaining all of them is neither necessary nor economical. A common retention policy keeps the three most recent checkpoints on the parallel file system for fast recovery, copies every 100th checkpoint to object storage for long-term auditability, and deletes the rest. This policy reduces the parallel file system checkpoint footprint from `{python} CheckpointFleetRetention.ckpt_fleet_total_pb_str` PB to roughly `{python} CheckpointFleetRetention.retention_recent_tb_str` TB (three live full checkpoints) while preserving `{python} CheckpointFleetRetention.retained_every_100_count_str` historical snapshots in object storage for posttraining analysis.
 
 Incremental checkpointing offers a further optimization for reducing $T_{\text{write}}$. Rather than saving the entire model state every checkpoint, an incremental checkpoint saves only the parameters that changed since the last full checkpoint. For models where a large fraction of parameters are frozen (such as fine-tuning scenarios where only the last few layers are updated), incremental checkpoints can be orders of magnitude smaller than full checkpoints. The trade-off is recovery complexity: restoring from an incremental checkpoint requires applying a chain of incremental updates to a base checkpoint, which extends recovery time. Most production systems use a hybrid approach, saving incremental checkpoints frequently and full checkpoints periodically (every 10th to 100th increment).
 
@@ -2358,7 +2380,7 @@ class CheckpointStorageDesignPrompt:
 
 ::: {#chk-data-storage-checkpoint-storage-design .callout-checkpoint title="Checkpoint storage design"}
 
-A training cluster of `{python} CheckpointStorageDesignPrompt.nodes_str` nodes saves a 175B-parameter model checkpoint every `{python} CheckpointStorageDesignPrompt.checkpoint_interval_min_str` minutes. Each checkpoint is `{python} CheckpointStorageContext.ckpt_total_gb_str` GB total, distributed across all nodes.
+A training cluster of `{python} CheckpointStorageDesignPrompt.nodes_str` nodes saves a 175B-parameter model checkpoint every `{python} CheckpointStorageDesignPrompt.checkpoint_interval_min_str` minutes. Each checkpoint is `{python} CheckpointTotalGbRecap.ckpt_total_gb_str` GB total, distributed across all nodes.
 
 1. What is the per-node checkpoint size?
 2. If each node writes to local NVMe at `{python} CheckpointStorageDesignPrompt.local_nvme_bw_gbs_str` GB/s, what is $T_{\text{write}}$ for the local write?
@@ -2377,9 +2399,9 @@ Asynchronous checkpointing reduces the training pause by writing in the backgrou
 
 The choice between synchronous and asynchronous checkpointing depends on the ratio of $T_{\text{write}}$ to $T_{\text{iteration}}$. If $T_{\text{write}}$ is small relative to $T_{\text{iteration}}$ (for example, 1 second vs. 200 ms per iteration, meaning the checkpoint pause costs 5 iterations), synchronous checkpointing is acceptable. If $T_{\text{write}}$ is large (for example, 30 seconds for a 500B+ parameter model), the training pause is prohibitive, and asynchronous checkpointing becomes essential. @sec-fault-tolerance-reliability-reliability-synchronous-vs-asynchronous-checkpointing-ecc1 formalizes this trade-off.
 
-Beyond the choice of synchronous or asynchronous methods, **checkpoint format optimization** reduces the per-node I/O volume. In standard data-parallel training, every node holds an identical copy of the model weights. A naive checkpoint would redundantly save this data from every node. Modern frameworks avoid this redundancy. DeepSpeed's **zero-redundancy checkpointing**\index{Checkpointing!zero-redundancy} uses its ZeRO optimizer-state partitioning: each of the $H$ nodes saves only its $1/H$ shard of the optimizer state, and a single consolidated copy of the weights is saved, drastically reducing the I/O volume per node. Similarly, PyTorch's **Distributed Checkpoint (DCP)**\index{Distributed Checkpoint} protocol saves each rank's sharded data to a unique file, enabling fully parallel writes to storage without any single-node bottleneck. For our 175B model using ZeRO-3 across 256 nodes, this optimization means each node writes only its roughly 7 GB shard of the total `{python} CheckpointStorageContext.ckpt_total_gb_str` GB state, reducing the local write from minutes to around a second on one NVMe drive, or well below a second on a local stripe.
+Beyond the choice of synchronous or asynchronous methods, **checkpoint format optimization** reduces the per-node I/O volume. In standard data-parallel training, every node holds an identical copy of the model weights. A naive checkpoint would redundantly save this data from every node. Modern frameworks avoid this redundancy. DeepSpeed's **zero-redundancy checkpointing**\index{Checkpointing!zero-redundancy} uses its ZeRO optimizer-state partitioning: each of the $H$ nodes saves only its $1/H$ shard of the optimizer state, and a single consolidated copy of the weights is saved, drastically reducing the I/O volume per node. Similarly, PyTorch's **Distributed Checkpoint (DCP)**\index{Distributed Checkpoint} protocol saves each rank's sharded data to a unique file, enabling fully parallel writes to storage without any single-node bottleneck. For our 175B model using ZeRO-3 across 256 nodes, this optimization means each node writes only its roughly 7 GB shard of the total `{python} CheckpointTotalGbRecap.ckpt_total_gb_str` GB state, reducing the local write from minutes to around a second on one NVMe drive, or well below a second on a local stripe.
 
-Threading these numbers through our running example makes the checkpoint overhead concrete. The full checkpoint for the 175B parameter model includes 350 GB of FP16 model weights and roughly 1,400 GB of Adam optimizer state, totaling approximately `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. With ZeRO-3 partitioning this state across 256 nodes, each node is responsible for roughly 7 GB. Writing this shard to four local NVMe drives at 28 GB/s aggregate takes roughly 0.25 seconds. The subsequent asynchronous copy to the durable parallel file system, assuming a conservative 4 GB/s of dedicated bandwidth per node, completes in just under two seconds. The exposed pipeline pause is the local write, while the longer PFS copy happens in the background and overlaps with subsequent training. At a checkpoint interval of 10 minutes, the exposed checkpoint overhead is less than 0.1 percent of training time.
+Threading these numbers through our running example makes the checkpoint overhead concrete. The full checkpoint for the 175B parameter model includes 350 GB of FP16 model weights and roughly 1,400 GB of Adam optimizer state, totaling approximately `{python} CheckpointTotalGbRecap.ckpt_total_gb_str` GB. With ZeRO-3 partitioning this state across 256 nodes, each node is responsible for roughly 7 GB. Writing this shard to four local NVMe drives at 28 GB/s aggregate takes roughly 0.25 seconds. The subsequent asynchronous copy to the durable parallel file system, assuming a conservative 4 GB/s of dedicated bandwidth per node, completes in just under two seconds. The exposed pipeline pause is the local write, while the longer PFS copy happens in the background and overlaps with subsequent training. At a checkpoint interval of 10 minutes, the exposed checkpoint overhead is less than 0.1 percent of training time.
 
 Feature stores and model registries, the operational systems that manage feature serving and model versioning, are built on top of this storage hierarchy. Their architecture is examined as production ML operations concerns in @sec-ml-operations-scale-feature-store-operations-2a36 and @sec-ml-operations-scale-model-registries-scale-ccba.
 
