@@ -23,7 +23,6 @@ app = marimo.App(width="full")
 # Design Ledger: saves chapter="v2_14"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -38,23 +37,17 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware, Infrastructure
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -64,25 +57,23 @@ async def _():
     _cloud = Hardware.Cloud.H100
     _edge  = Hardware.Edge.JetsonOrinNX
 
-    # ── Sustainability constants ────────────────────────────────────────────
-    # Grid carbon intensities (gCO2/kWh) — Source: IEA (2023), chapter data
-    CI_QUEBEC    = 20     # Hydro-dominant
-    CI_ICELAND   = 28     # Geothermal + hydro
-    CI_FRANCE    = 56     # Nuclear-dominant
-    CI_US_AVG    = 429    # Mixed grid
-    CI_TEXAS     = 400    # Mixed (EPA eGRID South Central)
-    CI_GERMANY   = 385    # Coal + wind transition
-    CI_CHINA_AVG = 555    # Coal-heavy
-    CI_POLAND    = 820    # Coal-dominant
-    CI_INDIA     = 720    # Coal-heavy
+    # ── Sustainability constants from Infrastructure registry ───────────────
+    _grids = Infrastructure.Grids
+    CI_QUEBEC    = float(_grids.Quebec.carbon_intensity_g_kwh)
+    CI_ICELAND   = float(_grids.Iceland.carbon_intensity_g_kwh)
+    CI_FRANCE    = float(_grids.France.carbon_intensity_g_kwh)
+    CI_GERMANY   = float(_grids.Germany.carbon_intensity_g_kwh)
+    CI_US_AVG    = float(_grids.US_Avg.carbon_intensity_g_kwh)
+    CI_TEXAS     = float(_grids.Texas.carbon_intensity_g_kwh)
+    CI_INDIA     = float(_grids.India_Avg.carbon_intensity_g_kwh)
+    CI_POLAND    = float(_grids.Poland.carbon_intensity_g_kwh)
 
-    # PUE values — Source: chapter facility metrics section
-    PUE_LIQUID   = 1.06   # Liquid-cooled hyperscale
-    PUE_AIR      = 1.12   # Best air-cooled
-    PUE_LEGACY   = 1.58   # Legacy facility
+    _cooling = Infrastructure.FacilityCooling
+    PUE_LIQUID   = float(_cooling.LiquidCooled.pue)
+    PUE_AIR      = float(_cooling.BestAir.pue)
+    PUE_LEGACY   = float(_cooling.Legacy.pue)
 
-    # Hardware power from registry — Source: chapter lifecycle section
-    H100_EMBODIED_KG = 175.0   # kg CO2eq per H100 (midpoint 150-200)
+    H100_EMBODIED_KG = _cloud.embodied_carbon_kg
     H100_TDP_W       = _cloud.tdp.m_as("W")   # 700 W from registry
     EDGE_TDP_W       = _edge.tdp.m_as("W")    # 25 W — edge power for comparison
 
@@ -107,7 +98,6 @@ async def _():
         JEVONS_ELASTICITY_INELASTIC, JEVONS_ELASTICITY_UNIT, JEVONS_ELASTICITY_ELASTIC,
         DecisionLog,
     )
-
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────
 
@@ -159,7 +149,6 @@ def _(mo, LAB_CSS, COLORS):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ──────────────────────────────────────────────────────
 
@@ -225,7 +214,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ───────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -244,11 +232,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: PART A WIDGETS ──────────────────────────────────────────────────
 
@@ -266,7 +252,6 @@ def _(mo):
     partA_years_slider = mo.ui.slider(start=1, stop=10, value=7, step=1, label="Timeline (years)")
     return (partA_pred, partA_years_slider)
 
-
 # ─── CELL 5: PART B WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -283,7 +268,6 @@ def _(mo):
     partB_energy_slider = mo.ui.slider(start=1000, stop=100000, value=10000, step=1000, label="Training energy (MWh)")
     partB_pue_slider = mo.ui.slider(start=1.0, stop=2.0, value=1.12, step=0.02, label="PUE")
     return (partB_energy_slider, partB_pred, partB_pue_slider)
-
 
 # ─── CELL 6: PART C WIDGETS ──────────────────────────────────────────────────
 
@@ -303,7 +287,6 @@ def _(mo):
     partC_gpu_count = mo.ui.slider(start=100, stop=10000, value=1000, step=100, label="GPU count")
     return (partC_gpu_count, partC_pred, partC_refresh_slider, partC_util_slider)
 
-
 # ─── CELL 7: PART D WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -317,7 +300,6 @@ def _(mo):
     partD_cap_toggle = mo.ui.switch(label="Carbon cap enabled", value=False)
     partD_cap_level = mo.ui.slider(start=0.5, stop=2.0, value=1.0, step=0.1, label="Cap level (fraction of baseline)")
     return (partD_cap_level, partD_cap_toggle, partD_eff_slider, partD_elast_slider, partD_pred)
-
 
 # ─── CELL 8: PART E WIDGETS ──────────────────────────────────────────────────
 
@@ -333,11 +315,9 @@ def _(mo):
     partE_cap = mo.ui.slider(start=0.3, stop=1.5, value=1.0, step=0.1, label="Carbon cap (fraction of baseline)")
     return (partE_cap, partE_eff_gain, partE_geo, partE_temporal)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 9: TABS ────────────────────────────────────────────────────────────
 
@@ -1235,11 +1215,9 @@ achieves 50%+ reduction targets.
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 10: LEDGER HUD ─────────────────────────────────────────────────────
 
@@ -1273,7 +1251,6 @@ def _(mo, ledger, COLORS, partA_pred, partB_pred, partC_pred, partD_pred, partD_
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

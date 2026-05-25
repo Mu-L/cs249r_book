@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -17,49 +15,44 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim.core.defaults import (
-        INFINIBAND_NDR_BW_GBS,
-        INFINIBAND_HDR_BW_GBS,
-        IB_NDR_LATENCY_US,
-        IB_HDR_LATENCY_US,
-        DEFAULT_OVERLAP_EFFICIENCY,
-    )
-    from mlsysim.core.formulas import (
+    from mlsysim import Hardware, Models, Systems
+    from mlsysim.core import calibration
+    from mlsysim import ureg
+    from mlsysim.physics import (
         calc_ring_allreduce_time,
         calc_tree_allreduce_time,
         calc_hierarchical_allreduce_time,
     )
-    from mlsysim.core.constants import ureg, NVLINK_H100_BW
+
+    IB_NDR_LATENCY_US = Systems.Fabrics.InfiniBand_NDR.latency.m_as("microsecond")
+    IB_HDR_LATENCY_US = Systems.Fabrics.InfiniBand_HDR.latency.m_as("microsecond")
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    INFINIBAND_HDR_BW_GBS = Systems.Fabrics.InfiniBand_HDR.bandwidth.m_as("GB/s")
+    DEFAULT_OVERLAP_EFFICIENCY = calibration.DEFAULT_OVERLAP_EFFICIENCY
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    _H100_REG = mlsysim.Hardware.Cloud.H100
-    _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
+    _H100_REG = Hardware.Cloud.H100
+    _EDGE_REG = Hardware.Edge.JetsonOrinNX
 
     H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
     H100_BW_GBS = _H100_REG.memory.bandwidth.m_as("GB/s")
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
     EDGE_BW_GBS = _EDGE_REG.memory.bandwidth.m_as("GB/s")
 
-    NVLINK_GBS = NVLINK_H100_BW.m_as("GB/s")
+    NVLINK_GBS = _H100_REG.nvlink.bandwidth.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
-    GPT2_PARAMS = GPT2.parameters.m_as("dimensionless")
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS = GPT2.parameters.m_as("count")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -75,7 +68,6 @@ async def _():
         calc_ring_allreduce_time, calc_tree_allreduce_time,
         calc_hierarchical_allreduce_time,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -124,7 +116,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -189,8 +180,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -205,7 +194,6 @@ def _(mo):
       gradient compression trade-offs, communication-computation overlap.
     """), kind="info")
     return
-
 
 @app.cell(hide_code=True)
 def _(
@@ -326,7 +314,6 @@ def _(mo):
     pE_bucket = mo.ui.checkbox(label="Bucket fusion")
     pE_overlap = mo.ui.checkbox(label="Backward overlap")
     return (pE_bucket, pE_fp16, pE_hier, pE_overlap)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1053,8 +1040,6 @@ shard contention, prefetching limits, and checkpoint economics.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1089,7 +1074,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

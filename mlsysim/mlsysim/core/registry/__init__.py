@@ -14,19 +14,19 @@ class Registry:
     def list(cls, sort_by: Optional[str] = None, reverse: bool = False) -> List[Any]:
         """
         Returns a list of all registry items, optionally sorted.
+        Recurses into nested Registry subclasses (e.g. Hardware.Cloud.*).
         """
-        items = []
+        items: List[Any] = []
         for attr_name in dir(cls):
             if attr_name.startswith("_") or attr_name == "list":
                 continue
 
             attr = getattr(cls, attr_name)
 
-            # Skip sub-classes (hierarchical registries) unless they are items themselves
             if isinstance(attr, type) and issubclass(attr, Registry):
+                items.extend(attr.list())
                 continue
 
-            # Skip callable methods
             if callable(attr):
                 continue
 

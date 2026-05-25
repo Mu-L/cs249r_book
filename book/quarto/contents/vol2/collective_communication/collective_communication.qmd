@@ -94,8 +94,10 @@ Beyond these physical limits, protocol overhead adds a per-message software tax.
 These three constraints interact multiplicatively. Latency sets the floor for every message regardless of size. Bandwidth caps the throughput for large transfers. Protocol overhead adds a per-message tax that penalizes fine-grained communication. A quick AllReduce estimate makes their combined cost concrete for a realistic training scenario.
 
 ```{python}
-#| label: allreduce-napkin-math
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: allreduce-napkin-math
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ALLREDUCE COST—70B MODEL NAPKIN MATH
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -123,40 +125,54 @@ class AllReduceCost:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    llama_params_b = 70
-    bytes_per_param = 2 # BF16 gradients (standard for Llama-class training)
+    from mlsysim.physics import calc_ring_allreduce_time
+    from mlsysim import Models, Hardware
+
+    m = Models.Language.Llama2_70B
+    ib_ndr = Systems.Fabrics.InfiniBand_NDR
     n_gpus = 64
-    ib_bw_gbs = 50 # GB/s NDR 400 Gbps per port
+    ib_bw = Systems.Fabrics.InfiniBand_NDR
     alpha_us = 3 # microseconds
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    gradient_size_gb = llama_params_b * bytes_per_param
+    # Gradient size (BF16 = 2 bytes/param)
+    gradient_qty = m.parameters.m_as(param) * 2 * ureg.byte
+    gradient_size_gb = gradient_qty.m_as(GB)
 
-    # Step 1: Ring AllReduce bandwidth term: 2 * (N-1)/N * n/beta
+    # Use library formula for Ring AllReduce time
+    # Note: calc_ring_allreduce_time handles both bandwidth and latency (alpha)
+    t_ring = calc_ring_allreduce_time(
+        message_bytes=gradient_qty,
+        n_gpus=n_gpus,
+        bandwidth_bytes_s=ib_ndr.bandwidth,
+        latency_s=alpha_us * ureg.microsecond
+    )
+    ring_total_ms = t_ring.m_as("ms")
+
+    # Break out terms for pedagogical display
     ring_bw_factor = 2 * (n_gpus - 1) / n_gpus
-    ring_bw_time_ms = (ring_bw_factor * gradient_size_gb/ib_bw_gbs) * 1000
-
-    # Step 2: Ring AllReduce latency term: 2*(N-1)*alpha
-    ring_lat_time_ms = (2 * (n_gpus - 1) * alpha_us) / MS_PER_SEC
-
-    # Step 3: Total
-    ring_total_ms = ring_bw_time_ms + ring_lat_time_ms
+    ring_bw_time_ms = (ring_bw_factor * gradient_size_gb / ib_bw.bandwidth.m_as(GB/second)) * 1000
+    ring_lat_time_ms = ring_total_ms - ring_bw_time_ms
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(ring_total_ms > 5000, f"AllReduce ({ring_total_ms:.0f}ms) should be significant (>5s) for 70B BF16 model.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     gradient_size_gb_str = fmt(gradient_size_gb, precision=0, commas=False)
-    ring_bw_time_ms_str = fmt(ring_bw_time_ms, precision=0)
+    ring_bw_time_ms_str = fmt(ring_bw_time_ms, precision=1)
     ring_lat_time_ms_str = fmt(ring_lat_time_ms, precision=1, commas=False)
-    ring_total_ms_str = fmt(ring_total_ms, precision=0)
+    ring_total_ms_str = fmt(ring_total_ms, precision=1)
     n_gpus_napkin_str = fmt(n_gpus, precision=0, commas=False)
     ring_bw_factor_str = fmt(ring_bw_factor, precision=2, commas=False)
+    ib_bw_gbs_str = fmt(ib_bw.bandwidth.m_as(GB/second), precision=0, commas=False)
+    alpha_us_str = fmt(alpha_us, precision=0, commas=False)
+    lat_steps_str = fmt(2 * (n_gpus - 1), precision=0, commas=False)
+    params_b_str = fmt(m.parameters.m_as(param) / BILLION, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-allreduce-cost-70b-model .callout-notebook title="AllReduce cost for a 70B model"}
 
-**Problem**: A 70 billion parameter model trains with data parallelism across `{python} AllReduceCost.n_gpus_napkin_str` GPUs connected by InfiniBand NDR (50 GB/s per port). Each GPU computes gradients in BF16 (2 bytes per parameter, standard for Llama-class training). How long does one AllReduce take?
+**Problem**: A `{python} AllReduceCost.params_b_str` billion parameter model trains with data parallelism across `{python} AllReduceCost.n_gpus_napkin_str` GPUs connected by InfiniBand NDR (`{python} AllReduceCost.ib_bw_gbs_str` GB/s per port). Each GPU computes gradients in BF16 (2 bytes per parameter, standard for Llama-class training). How long does one AllReduce take?
 
 **Step 1**: Size the gradient payload.
 Each GPU produces a full gradient tensor: $70 \times 10^9 \times 2\ \text{bytes} =$ `{python} AllReduceCost.gradient_size_gb_str` GB.
@@ -164,12 +180,12 @@ Each GPU produces a full gradient tensor: $70 \times 10^9 \times 2\ \text{bytes}
 **Step 2**: Apply the Ring AllReduce bandwidth formula.
 $$T_{\text{bandwidth}} = 2 \cdot \frac{N-1}{N} \cdot \frac{n}{\beta}$$
 
-Substituting: $T_{\text{bandwidth}}$ = `{python} AllReduceCost.ring_bw_factor_str`$\times$ 140 GB/50 GB/s $\approx$ `{python} AllReduceCost.ring_bw_time_ms_str` ms.
+Substituting: $T_{\text{bandwidth}}$ = `{python} AllReduceCost.ring_bw_factor_str` $\times$ `{python} AllReduceCost.gradient_size_gb_str` GB / `{python} AllReduceCost.ib_bw_gbs_str` GB/s $\approx$ `{python} AllReduceCost.ring_bw_time_ms_str` ms.
 
 **Step 3**: Add the latency term.
 $$T_{\text{latency}} = 2(N-1) \cdot \alpha$$
 
-Substituting: $T_{\text{latency}} = 2 \times 63 \times 3\ \mu\text{s} =$ `{python} AllReduceCost.ring_lat_time_ms_str` ms.
+Substituting: $T_{\text{latency}} =$ `{python} AllReduceCost.lat_steps_str` $\times$ `{python} AllReduceCost.alpha_us_str` $\mu\text{s} =$ `{python} AllReduceCost.ring_lat_time_ms_str` ms.
 
 **Step 4**: Total communication time.
 Total: $T_{\text{AllReduce}} \approx$ `{python} AllReduceCost.ring_bw_time_ms_str` + `{python} AllReduceCost.ring_lat_time_ms_str` $\approx$ `{python} AllReduceCost.ring_total_ms_str` ms.
@@ -194,6 +210,8 @@ Communication algorithms operate at the Distribution Layer of the fleet stack. T
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ COMPUTE-COMM TIMELINE (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -211,19 +229,43 @@ Communication algorithms operate at the Distribution Layer of the fleet stack. T
 # │ Stacked barh of compute/comm/sync at 8/64/512/4096 GPUs; show
 import numpy as np
 import matplotlib.pyplot as plt
-from mlsysim import viz
+from mlsysim import viz, Models, Hardware, Engine
 
 fig, ax, COLORS, plt = viz.setup_plot(figsize=(8, 4.5))
 
-# Scenarios: GPU count and time breakdown (compute, communication, sync overhead)
+# ┌── 2. COMPUTE FRACTIONS ─────────────────────────────────────────────────────
+# Use Engine to solve for real compute vs comm ratios across scales
+m = Models.Language.Llama2_70B
+h = Hardware.Cloud.H100
+gpu_counts_num = [8, 64, 512, 4096]
 
-# ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
-gpu_counts = ['8 GPUs\n(1 node)', '64 GPUs\n(8 nodes)', '512 GPUs\n(64 nodes)', '4,096 GPUs\n(512 nodes)']
-compute_pct  = [75, 45, 30, 20]
-comm_pct     = [25, 50, 60, 65]
-sync_pct     = [ 0,  5, 10, 15]
+compute_pct = []
+comm_pct = []
+sync_pct = []
 
-y_pos = np.arange(len(gpu_counts))
+for n in gpu_counts_num:
+    # Use Engine.solve for large-batch training step approximation
+    p = Engine.solve(m, h, batch_size=32, is_training=True)
+    t_comp = p.latency_compute.m_as("ms")
+
+    # Simple Ring AllReduce estimate for the scale
+    from mlsysim.physics import calc_ring_allreduce_time
+    grad_size = m.parameters.m_as(param) * 2 * ureg.byte
+    # Effective BW decreases at scale due to topology
+    bw = h.memory.bandwidth if n <= 8 else Systems.Fabrics.InfiniBand_NDR.bandwidth
+    t_comm = calc_ring_allreduce_time(grad_size, n, bw, 0*ureg.ms).m_as("ms")
+
+    total = t_comp + t_comm
+    # Add synthetic sync overhead (scales with log N)
+    sync_val = 0.05 * total * np.log2(n/8 + 1)
+    total_with_sync = total + sync_val
+
+    compute_pct.append(t_comp / total_with_sync * 100)
+    comm_pct.append(t_comm / total_with_sync * 100)
+    sync_pct.append(sync_val / total_with_sync * 100)
+
+gpu_counts_labels = ['8 GPUs\n(1 node)', '64 GPUs\n(8 nodes)', '512 GPUs\n(64 nodes)', '4,096 GPUs\n(512 nodes)']
+y_pos = np.arange(len(gpu_counts_num))
 bar_height = 0.5
 
 # Stacked horizontal bars
@@ -238,7 +280,7 @@ bars_sync = ax.barh(y_pos, sync_pct, height=bar_height,
 # Label each segment with percentage
 
 # ┌── 3. RENDER ────────────────────────────────────────────────────────────────
-for i in range(len(gpu_counts)):
+for i in range(len(gpu_counts_labels)):
     # Compute label
     if compute_pct[i] > 10:
         ax.text(compute_pct[i] / 2, i, f'{compute_pct[i]}%',
@@ -260,11 +302,11 @@ ax.annotate('InfiniBand-limited\n(50 GB/s per port)', xy=(88, 2.5), xytext=(88, 
             fontsize=7, ha='center', color=COLORS['OrangeLine'], fontweight='bold')
 
 ax.set_yticks(y_pos)
-ax.set_yticklabels(gpu_counts, fontsize=9)
+ax.set_yticklabels(gpu_counts_labels, fontsize=9)
 ax.set_xlabel('Fraction of Training Step (%)')
 ax.set_xlim(0, 105)
 ax.invert_yaxis()
-ax.set_ylim(len(gpu_counts)-0.5, -0.7) # <-- space above top bar
+ax.set_ylim(len(gpu_counts_labels)-0.5, -0.7) # <-- space above top bar
 ax.legend(loc='upper right', fontsize=8, ncol=3)
 
 plt.tight_layout()
@@ -341,8 +383,10 @@ The **critical message size**\index{Critical Message Size} $n^* = \alpha \cdot \
 Applying the critical message size formula to a concrete workload reveals which optimization strategy matters most:
 
 ```{python}
-#| label: critical-msg-size-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: critical-msg-size-calc
 from mlsysim.fmt import check, fmt
 from mlsysim.core.constants import byte, KB
 
@@ -381,8 +425,10 @@ The critical message size separates two distinct operating regimes:
 A direct comparison of two message sizes illustrates how the bottleneck shifts between these regimes:
 
 ```{python}
-#| label: latency-vs-bw-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: latency-vs-bw-calc
 from mlsysim.fmt import check, fmt
 from mlsysim.core.constants import MS_PER_SEC
 
@@ -409,24 +455,26 @@ class LatencyVsBw:
     beta_str = fmt(beta_gbs, precision=0, commas=False)
     bw_a_us_str = fmt(bw_a_us, precision=0, commas=False)
     total_a_us_str = fmt(total_a_us, precision=0, commas=False)
-    lat_pct_a_str = fmt(lat_pct_a, precision=0, commas=False)
+    lat_pct_a_str = fmt(lat_pct_a, precision=1, commas=False)
     bw_b_us_str = fmt(bw_b_us, precision=0)
     bw_b_ms_str = fmt(bw_b_ms, precision=0, commas=False)
     total_b_us_str = fmt(total_b_us, precision=0)
     lat_pct_b_str = fmt(lat_pct_b, precision=2, commas=False)
+    msg_a_mb_str = fmt(msg_a_bytes / 1e6, precision=0, commas=False)
+    msg_b_gb_str = fmt(msg_b_bytes / 1e9, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-latency-vs-bandwidth-dominance .callout-notebook title="Latency vs. bandwidth dominance"}
 
-**Problem**: Consider synchronizing a 1 MB buffer vs. a 1 GB buffer on InfiniBand NDR with $\alpha =$ `{python} LatencyVsBw.alpha_str` $\mu\text{s}$ and $\beta =$ `{python} LatencyVsBw.beta_str` GB/s. How does the bottleneck shift?
+**Problem**: Consider synchronizing a `{python} LatencyVsBw.msg_a_mb_str` MB buffer vs. a `{python} LatencyVsBw.msg_b_gb_str` GB buffer on InfiniBand NDR with $\alpha =$ `{python} LatencyVsBw.alpha_str` $\mu\text{s}$ and $\beta =$ `{python} LatencyVsBw.beta_str` GB/s. How does the bottleneck shift?
 
-**Case A: 1 MB Message**
+**Case A: `{python} LatencyVsBw.msg_a_mb_str` MB Message**
 
 *   Bandwidth Time: $10^6 / (50 \times 10^{9})$ = `{python} LatencyVsBw.bw_a_us_str` $\mu\text{s}$.
 *   Latency Time: $2\ \mu\text{s}$.
 *   **Total**: `{python} LatencyVsBw.total_a_us_str` μs. Latency is `{python} LatencyVsBw.lat_pct_a_str` percent of total, still meaningful.
 
-**Case B: 1 GB Message**
+**Case B: `{python} LatencyVsBw.msg_b_gb_str` GB Message**
 
 *   Bandwidth Time: $10^9 / (50 \times 10^{9})$ = `{python} LatencyVsBw.bw_b_us_str` $\mu\text{s}$ = `{python} LatencyVsBw.bw_b_ms_str` ms.
 *   Latency Time: $2\ \mu\text{s}$.
@@ -461,8 +509,10 @@ The α-β model assumes the processor is idle during communication. For **pipeli
 LogP distinguishes **network latency** ($L_{\text{lat}}$, which can be hidden) from **processor overhead** ($o$, which *cannot*). A system can overlap communication with computation only if the compute kernel runs longer than the overhead. A small overlap calculation makes this distinction concrete:
 
 ```{python}
-#| label: logp-overlap-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: logp-overlap-calc
 from mlsysim.fmt import check, fmt
 
 class LogPOverlap:
@@ -517,8 +567,10 @@ In practice, most engineering calculations start with the $\alpha$-$\beta$ model
 The alpha-beta model becomes most valuable when applied to real training configurations. Consider a concrete scenario: training a Llama-class 70B parameter model using data parallelism across 128 GPUs spanning 16 nodes of 8 GPUs each. The gradient tensor is 140 GB in BF16 (70 billion parameters at 2 bytes each, standard for Llama-class training). During each training step, this entire gradient must be synchronized across all workers.
 
 ```{python}
-#| label: llama-budget-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: llama-budget-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ LLAMA 70B COMMUNICATION BUDGET
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -532,16 +584,16 @@ The alpha-beta model becomes most valuable when applied to real training configu
 # │ How: α-β model applied per tier: NVLink ReduceScatter → IB Ring → NVLink
 # │      AllGather; comm-to-compute ratio computed for both strategies.
 # │
-# │ Imports: mlsysim.core.constants (MS_PER_SEC, NVLINK_H100_BW,
-# │          INFINIBAND_NDR_BW, GB, second)
+# │ Imports: mlsysim.core.constants (MS_PER_SEC, Hardware.Cloud.H100.nvlink.bandwidth,
+# │          Systems.Fabrics.InfiniBand_NDR.bandwidth, GB, second)
 # │ Exports: gradient_bf16_gb_str, intra_rs_time_ms_str, inter_payload_gb_str,
 # │          inter_ring_bw_time_ms_str, inter_ring_lat_time_ms_str,
 # │          intra_ag_time_ms_str, hier_total_llama_ms_str, flat_total_ms_str,
 # │          ccr_hier_str, ccr_flat_str, n_gpus_llama_str,
 # │          nvlink_bw_str, ib_bw_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import MS_PER_SEC, NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second
-from mlsysim.fmt import fmt
+from mlsysim.core.constants import MS_PER_SEC, GB, second
+from mlsysim.fmt import fmt_int,  fmt
 
 class LlamaBudgetCalc:
     """Hierarchical vs. flat Ring AllReduce timing budget for a 70B model on 128 GPUs."""
@@ -552,9 +604,9 @@ class LlamaBudgetCalc:
     param_count_b       = 70
     gradient_bf16_gb    = param_count_b * 2   # 140 GB in BF16
 
-    nvlink_bw   = NVLINK_H100_BW.m_as(GB/second)         # GB/s (H100 NVLink 4.0)
+    nvlink_bw   = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second)         # GB/s (H100 NVLink 4.0)
     nvlink_alpha = 1.5                                    # us
-    ib_bw        = INFINIBAND_NDR_BW.m_as(GB/second)        # GB/s per port (NDR 400 Gbps)
+    ib_bw        = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second)        # GB/s per port (NDR 400 Gbps)
     ib_alpha     = 3                                      # us
     compute_per_step_ms = 200  # approximate for illustration
 
@@ -582,18 +634,18 @@ class LlamaBudgetCalc:
     ccr_flat = flat_total_ms/compute_per_step_ms
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    from mlsysim.fmt import check
+    from mlsysim.fmt import fmt_int,  check
     check(flat_total_ms > hier_total_llama_ms, "Flat AllReduce should be much slower than Hierarchical")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     gradient_bf16_gb_str       = fmt(gradient_bf16_gb, precision=0, commas=False)
     intra_rs_time_ms_str       = fmt(intra_rs_time_ms, precision=1, commas=False)
     inter_payload_gb_str       = fmt(inter_payload_gb, precision=1, commas=False)
-    inter_ring_bw_time_ms_str  = fmt(inter_ring_bw_time_ms, precision=0, commas=False)
+    inter_ring_bw_time_ms_str  = fmt(inter_ring_bw_time_ms, precision=1, commas=False)
     inter_ring_lat_time_ms_str = fmt(inter_ring_lat_time_ms, precision=2, commas=False)
     intra_ag_time_ms_str       = fmt(intra_ag_time_ms, precision=1, commas=False)
-    hier_total_llama_ms_str    = fmt(hier_total_llama_ms, precision=0, commas=False)
-    flat_total_ms_str          = fmt(flat_total_ms, precision=0)
+    hier_total_llama_ms_str    = fmt(hier_total_llama_ms, precision=1, commas=False)
+    flat_total_ms_str          = fmt_int(round(flat_total_ms))
     ccr_hier_str               = fmt(ccr_hier, precision=1, commas=False)
     ccr_flat_str               = fmt(ccr_flat, precision=1, commas=False)
     n_gpus_llama_str           = fmt(n_gpus_llama, precision=0, commas=False)
@@ -699,8 +751,10 @@ This is why **Expert Parallelism (MoE)** and large-scale **Recommendation System
 To make the AllToAll pattern concrete, consider a Mixture of Experts model with 64 experts distributed across 8 GPUs (8 experts per GPU). During each forward pass, a gating network assigns each input token to one or more experts. The tokens assigned to experts on remote GPUs must be physically moved to those GPUs before computation can proceed, and the results must be moved back afterward.
 
 ```{python}
-#| label: moe-alltoall-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: moe-alltoall-calc
 from mlsysim.fmt import check, fmt
 
 class MoeAllToAll:
@@ -748,15 +802,21 @@ class MoeAllToAll:
     per_transfer_us_str = fmt(per_transfer_us, precision=0, commas=False)
     serialized_us_str = fmt(serialized_us, precision=0, commas=False)
     parallel_us_str = fmt(parallel_us, precision=0, commas=False)
+    total_tokens_str = fmt(total_tokens, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus, precision=0, commas=False)
+    hidden_dim_str = fmt(hidden_dim, precision=0, commas=False)
+    n_experts_str = fmt(n_experts, precision=0, commas=False)
+    experts_per_gpu_str = fmt(experts_per_gpu, precision=0, commas=False)
+    remote_gpus_str = fmt(remote_gpus, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-alltoall-moe-token-routing .callout-notebook title="AllToAll for MoE token routing"}
 
-**Problem**: A MoE model processes a batch of 4096 tokens across 8 GPUs (`{python} MoeAllToAll.tokens_per_gpu_str` tokens per GPU). Each token is a 2048-dimensional hidden state in BF16 (`{python} MoeAllToAll.kb_per_token_str` KB per token). The gating network assigns each token to exactly 1 of 64 experts (8 experts per GPU). Assuming uniform routing (each expert receives $4096/64$ = `{python} MoeAllToAll.tokens_per_expert_str` tokens), how much data does each GPU send and receive?
+**Problem**: A MoE model processes a batch of `{python} MoeAllToAll.total_tokens_str` tokens across `{python} MoeAllToAll.n_gpus_str` GPUs (`{python} MoeAllToAll.tokens_per_gpu_str` tokens per GPU). Each token is a `{python} MoeAllToAll.hidden_dim_str`-dimensional hidden state in BF16 (`{python} MoeAllToAll.kb_per_token_str` KB per token). The gating network assigns each token to exactly 1 of `{python} MoeAllToAll.n_experts_str` experts (`{python} MoeAllToAll.experts_per_gpu_str` experts per GPU). Assuming uniform routing (each expert receives `{python} MoeAllToAll.tokens_per_expert_str` tokens), how much data does each GPU send and receive?
 
 **Math**:
 
-Each GPU holds `{python} MoeAllToAll.tokens_per_gpu_str` tokens that need to reach 64 different experts across 8 GPUs. With uniform routing, each GPU sends $512/8$ = `{python} MoeAllToAll.tokens_per_transfer_str` tokens to each of the other 7 GPUs (keeping `{python} MoeAllToAll.tokens_per_transfer_str` tokens local).
+Each GPU holds `{python} MoeAllToAll.tokens_per_gpu_str` tokens that need to reach `{python} MoeAllToAll.n_experts_str` different experts across `{python} MoeAllToAll.n_gpus_str` GPUs. With uniform routing, each GPU sends `{python} MoeAllToAll.tokens_per_transfer_str` tokens to each of the other `{python} MoeAllToAll.remote_gpus_str` GPUs (keeping `{python} MoeAllToAll.tokens_per_transfer_str` tokens local).
 
 *   Data per GPU-to-GPU transfer: `{python} MoeAllToAll.tokens_per_transfer_str` tokens $\times$ `{python} MoeAllToAll.kb_per_token_str` KB/token = `{python} MoeAllToAll.data_per_transfer_kb_str` KB
 *   Total data sent per GPU: 7 $\times$ `{python} MoeAllToAll.data_per_transfer_kb_str` KB = `{python} MoeAllToAll.total_sent_mb_str` MB
@@ -862,8 +922,10 @@ The key property visible in @fig-ring-allreduce is that every link carries data 
 To make the ring algorithm concrete, consider a step-by-step trace with 4 GPUs reducing a vector of 4 elements by summation. Each GPU $i$ starts with a local gradient vector $g_i = [a_i, b_i, c_i, d_i]$. The vector is split into 4 chunks (one per GPU), and the algorithm proceeds through two phases.
 
 ```{python}
-#| label: ring-trace-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: ring-trace-calc
 from mlsysim.fmt import check, fmt
 
 class RingTrace:
@@ -1015,6 +1077,8 @@ In practice, the bandwidth term approaches $2M/\beta$ (optimal) while maintainin
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ALLREDUCE CROSSOVER (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1035,7 +1099,6 @@ import numpy as np
 
 plt.style.use('seaborn-v0_8-whitegrid')
 
-
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
 N = 256
 bandwidth_gbps = 200
@@ -1053,7 +1116,6 @@ t_tree_ms = t_tree * 1000
 t_dbt_ms = t_dbt * 1000
 
 fig, ax = plt.subplots(figsize=(10, 6))
-
 
 # ┌── 3. RENDER ────────────────────────────────────────────────────────────────
 ax.loglog(message_sizes, t_ring_ms, label='Ring (Bandwidth Optimal)', color='#e74c3c', linewidth=2.5)
@@ -1143,8 +1205,11 @@ In practice, NCCL's algorithm selection is more nuanced than a simple two-way sp
 Nevertheless, the crossover formula remains the essential mental model for understanding *why* libraries make the choices they do. When a library selects an unexpected algorithm, the crossover analysis provides the reasoning framework to evaluate whether the choice is correct or whether manual override is warranted. A concrete buffer-size calculation applies this framework to a realistic decision:
 
 ```{python}
-#| label: ring-vs-tree-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.fmt import fmt_int
+from mlsysim.core.constants import *
+#| label: ring-vs-tree-calc
 from mlsysim.fmt import check, fmt
 from mlsysim.core.constants import US, second, GB, MB
 import math
@@ -1164,6 +1229,7 @@ class RingVsTree:
     ring_total_us = ring_lat_us + ring_bw_us
     tree_total_us = tree_lat_us + tree_bw_us
     crossover_mb = (N * (alpha_us * US) * (beta_gbs * GB / second) / log2N).m_as(MB)
+    tree_win_margin_pct = (ring_total_us - tree_total_us) / ring_total_us * 100
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(ring_lat_us == 1260, f"Ring lat = {ring_lat_us}")
     check(tree_lat_us == 120, f"Tree lat = {tree_lat_us}")
@@ -1175,16 +1241,19 @@ class RingVsTree:
     beta_str = fmt(beta_gbs, precision=0, commas=False)
     ring_lat_str = fmt(ring_lat_us, precision=0)
     tree_lat_str = fmt(tree_lat_us, precision=0, commas=False)
-    ring_bw_str = fmt(ring_bw_us, precision=0, commas=False)
+    ring_bw_str = fmt(ring_bw_us, precision=1, commas=False)
     tree_bw_str = fmt(tree_bw_us, precision=0)
-    ring_total_str = fmt(ring_total_us, precision=0)
+    ring_total_str = fmt(ring_total_us, precision=1)
     tree_total_str = fmt(tree_total_us, precision=0)
     crossover_str = fmt(crossover_mb, precision=1, commas=False)
+    M_mb_str = fmt(M_mb, precision=0, commas=False)
+    N_str = fmt(N, precision=0, commas=False)
+    tree_win_margin_pct_str = fmt_int(tree_win_margin_pct, commas=False)
 ```
 
 ::: {#nbk-collective-communication-ring-vs-tree-crossover .callout-notebook title="The ring vs. tree crossover"}
 
-**Problem**: A cluster synchronizes a **1 MB** buffer across **64 GPUs**. The network has latency $\alpha =$ `{python} RingVsTree.alpha_str` $\mu\text{s}$ and bandwidth $\beta =$ `{python} RingVsTree.beta_str` GB/s. Which algorithm performs better: Ring or Tree?
+**Problem**: A cluster synchronizes a **`{python} RingVsTree.M_mb_str` MB** buffer across **`{python} RingVsTree.N_str` GPUs**. The network has latency $\alpha =$ `{python} RingVsTree.alpha_str` $\mu\text{s}$ and bandwidth $\beta =$ `{python} RingVsTree.beta_str` GB/s. Which algorithm performs better: Ring or Tree?
 
 **Math**:
 
@@ -1206,7 +1275,7 @@ class RingVsTree:
 | **Tree**      | `{python} RingVsTree.tree_lat_str` μs | `{python} RingVsTree.tree_bw_str` μs | **`{python} RingVsTree.tree_total_str` μs** |
 : **Ring vs. tree AllReduce timing for a 1 MB buffer on 64 GPUs**: Latency, bandwidth, and total-time terms with $\alpha = 10\ \mu\text{s}$ and $\beta = 10\ \text{GB/s}$. {#tbl-collective-communication-ring-vs-tree-1mb-64gpu}
 
-**Tree wins**, but only by 10 percent. For this 1 MB message, we are near the crossover point.
+**Tree wins**, but only by `{python} RingVsTree.tree_win_margin_pct_str` percent. For this `{python} RingVsTree.M_mb_str` MB message, we are near the crossover point.
 
 **Systems insight**: Ring's latency penalty (10$\times$ worse than Tree) nearly balances Tree's bandwidth penalty (6$\times$ worse than Ring). The log-aware crossover estimate predicts $M_{\text{crossover}} \approx N \alpha \beta / \log_2 N = 64 \times 10\ \mu\text{s} \times 10\ \text{GB/s} / 6 \approx$ `{python} RingVsTree.crossover_str` MB. At 1 MB, we are just below crossover, so Tree wins. At 10 MB, Ring would dominate.
 
@@ -1232,8 +1301,10 @@ Verify your understanding of Ring vs. Tree AllReduce trade-offs:
 The algorithms above assume a flat network where every link has the same bandwidth. Real data centers violate this assumption by an order of magnitude or more. Not all wires are created equal.
 
 ```{python}
-#| label: comm-infra-scenario
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: comm-infra-scenario
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ COMMUNICATION INFRASTRUCTURE SPECS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1243,17 +1314,17 @@ The algorithms above assume a flat network where every link has the same bandwid
 # │ Show: ~900 GB/s NVLink; ~50 GB/s InfiniBand NDR.
 # │ How: pulling constants from mlsysim.core.constants.
 # │
-# │ Imports: mlsysim.core.constants (NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second)
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.H100.nvlink.bandwidth, Systems.Fabrics.InfiniBand_NDR.bandwidth, GB, second)
 # │ Exports: nvlink_h100_bw_gbs_str, ib_ndr_bw_gbs_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second
+from mlsysim.core.constants import GB, second
 
 class CommInfraScenario:
     """Communication infrastructure bandwidth reference."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    nvlink_raw = NVLINK_H100_BW
-    ib_ndr_raw = INFINIBAND_NDR_BW
+    nvlink_raw = Hardware.Cloud.H100.nvlink.bandwidth
+    ib_ndr_raw = Systems.Fabrics.InfiniBand_NDR.bandwidth
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     nvlink_gbs = nvlink_raw.m_as(GB/second)
@@ -1306,8 +1377,10 @@ Each node performs a local AllGather to distribute the final result to all $G$ G
 The net effect: inter-node traffic is reduced by a factor of $G$ (GPUs per node), effectively **multiplying the apparent inter-node bandwidth by $G$**. A simple 8-node budget makes this bandwidth multiplication concrete:
 
 ```{python}
-#| label: hierarchical-allreduce-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: hierarchical-allreduce-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ HIERARCHICAL ALLREDUCE—8-NODE CLUSTER ANALYSIS
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1320,13 +1393,13 @@ The net effect: inter-node traffic is reduced by a factor of $G$ (GPUs per node)
 # │ How: Flat: T = 2M/β_IB; Hierarchical: T = T_rs + T_inter + T_ag with
 # │      NVLink for intra-node phases and IB for inter-node phase.
 # │
-# │ Imports: mlsysim.core.constants (MB, GB, second, ms, NVLINK_H100_BW,
-# │          INFINIBAND_NDR_BW, MS_PER_SEC)
+# │ Imports: mlsysim.core.constants (MB, GB, second, ms, Hardware.Cloud.H100.nvlink.bandwidth,
+# │          Systems.Fabrics.InfiniBand_NDR.bandwidth, MS_PER_SEC)
 # │ Exports: flat_time_ms_str, intra_data_mb_str, intra_rs_ms_str,
 # │          inter_data_mb_str, inter_time_ms_str, intra_ag_ms_str,
 # │          hier_total_ms_str, speedup_str, ib_bw_gbs_str, nvlink_bw_gbs_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import MB, GB, second, ms, NVLINK_H100_BW, INFINIBAND_NDR_BW, MS_PER_SEC
+from mlsysim.core.constants import MB, GB, second, ms, MS_PER_SEC
 from mlsysim.fmt import fmt
 
 class HierarchicalAllreduceCalc:
@@ -1335,8 +1408,8 @@ class HierarchicalAllreduceCalc:
     n_nodes_har    = 8
     gpus_per_node  = 8
     gradient_gb    = 1       # 1 GB gradient buffer
-    ib_bw_gbs      = INFINIBAND_NDR_BW.m_as(GB/second)        # InfiniBand NDR 400 Gbps per port
-    nvlink_bw_gbs  = NVLINK_H100_BW.m_as(GB/second)            # NVLink 4.0 (H100)
+    ib_bw_gbs      = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second)        # InfiniBand NDR 400 Gbps per port
+    nvlink_bw_gbs  = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second)            # NVLink 4.0 (H100)
     ib_alpha_us    = 3
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -1365,23 +1438,28 @@ class HierarchicalAllreduceCalc:
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     flat_time_ms_str  = fmt(flat_time_ms, precision=0, commas=False)
     intra_data_mb_str = fmt(intra_data_mb, precision=0, commas=False)
-    intra_rs_ms_str   = fmt(intra_rs_ms, precision=0, commas=False)
+    intra_rs_ms_str   = fmt(intra_rs_ms, precision=1, commas=False)
     inter_data_mb_str = fmt(inter_data_mb, precision=0, commas=False)
-    inter_time_ms_str = fmt(inter_time_ms, precision=0, commas=False)
-    intra_ag_ms_str   = fmt(intra_ag_ms, precision=0, commas=False)
-    hier_total_ms_str = fmt(hier_total_ms, precision=0, commas=False)
+    inter_time_ms_str = fmt(inter_time_ms, precision=1, commas=False)
+    intra_ag_ms_str   = fmt(intra_ag_ms, precision=1, commas=False)
+    hier_total_ms_str = fmt(hier_total_ms, precision=1, commas=False)
     ib_bw_gbs_str     = fmt(ib_bw_gbs, precision=0, commas=False)
     nvlink_bw_gbs_str = fmt(nvlink_bw_gbs, precision=0, commas=False)
     speedup_str       = fmt(speedup, precision=1, commas=False)
+    n_nodes_str       = fmt(n_nodes_har, precision=0, commas=False)
+    gpus_per_node_str = fmt(gpus_per_node, precision=0, commas=False)
+    n_gpus_total_str  = fmt(n_nodes_har * gpus_per_node, precision=0, commas=False)
+    gradient_gb_str   = fmt(gradient_gb, precision=0, commas=False)
+    flat_send_gb_str  = fmt(flat_data_gb, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-hierarchical-bandwidth-multiplier .callout-notebook title="The hierarchical bandwidth multiplier"}
 
-**Problem**: A cluster has 8 nodes, each with 8 GPUs (64 GPUs total). The system must AllReduce a 1 GB gradient buffer. Compare flat Ring AllReduce vs. Hierarchical AllReduce.
+**Problem**: A cluster has `{python} HierarchicalAllreduceCalc.n_nodes_str` nodes, each with `{python} HierarchicalAllreduceCalc.gpus_per_node_str` GPUs (`{python} HierarchicalAllreduceCalc.n_gpus_total_str` GPUs total). The system must AllReduce a `{python} HierarchicalAllreduceCalc.gradient_gb_str` GB gradient buffer. Compare flat Ring AllReduce vs. Hierarchical AllReduce.
 
 **Flat Ring AllReduce (ignoring hierarchy)**:
 
-- Each GPU sends ~2 GB total (the bandwidth-optimal Ring AllReduce formula).
+- Each GPU sends ~`{python} HierarchicalAllreduceCalc.flat_send_gb_str` GB total (the bandwidth-optimal Ring AllReduce formula).
 - The ring crosses node boundaries multiple times.
 - **Effective bandwidth**\index{Bandwidth!effective}: Limited by the slowest link = `{python} HierarchicalAllreduceCalc.ib_bw_gbs_str` GB/s (InfiniBand).
 - **Time**: $\approx 2 \times 1\ \text{GB} / 50\ \text{GB/s}$ = `{python} HierarchicalAllreduceCalc.flat_time_ms_str` ms (bandwidth term dominates).
@@ -1405,8 +1483,10 @@ These three phases confine most traffic within each node before crossing the slo
 The hierarchical approach generalizes beyond two levels. Large clusters with multiple racks connected through spine switches introduce a third bandwidth tier (rack-to-rack at reduced bisection bandwidth). Extending the same calculation to a rack-scale cluster quantifies the impact of this additional hierarchy.
 
 ```{python}
-#| label: three-level-napkin
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: three-level-napkin
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ THREE-LEVEL HIERARCHICAL ALLREDUCE—RACK-SCALE BUDGET
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1419,7 +1499,7 @@ The hierarchical approach generalizes beyond two levels. Large clusters with mul
 # │ How: α-β model per tier; each level reduces payload by GPUs-per-unit before
 # │      crossing the next, slower boundary (oversubscription ratio 2:1).
 # │
-# │ Imports: mlsysim.core.constants (NVLINK_H100_BW, INFINIBAND_NDR_BW,
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.H100.nvlink.bandwidth, Systems.Fabrics.InfiniBand_NDR.bandwidth,
 # │          GB, second)
 # │ Exports: total_gpus_3l_str, gradient_3l_gb_str, step1_payload_gb_str,
 # │          step1_time_ms_str, step2_payload_gb_str, step2_ring_bw_ms_str,
@@ -1436,10 +1516,10 @@ class ThreeLevelNapkin:
     gpus_per_node_3l = 8
     total_gpus_3l  = n_racks * nodes_per_rack * gpus_per_node_3l
 
-    from mlsysim.core.constants import NVLINK_H100_BW, INFINIBAND_NDR_BW, GB, second as _sec_3l
+    from mlsysim.core.constants import GB, second as _sec_3l
     gradient_3l_gb = 2    # 2 GB gradient (BF16 for a ~1B model)
-    nvlink_bw_3l   = NVLINK_H100_BW.m_as(GB/_sec_3l)            # H100 NVLink 4.0
-    ib_bw_3l       = INFINIBAND_NDR_BW.m_as(GB/_sec_3l)         # InfiniBand NDR 400 Gbps per port
+    nvlink_bw_3l   = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/_sec_3l)            # H100 NVLink 4.0
+    ib_bw_3l       = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/_sec_3l)         # InfiniBand NDR 400 Gbps per port
     cross_rack_bw  = ib_bw_3l / 2                                # 2:1 oversubscription
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -1480,11 +1560,14 @@ class ThreeLevelNapkin:
     nvlink_bw_3l_str     = fmt(nvlink_bw_3l, precision=0, commas=False)
     ib_bw_3l_str         = fmt(ib_bw_3l, precision=0, commas=False)
     cross_rack_bw_str    = fmt(cross_rack_bw, precision=0, commas=False)
+    n_racks_str          = fmt(n_racks, precision=0, commas=False)
+    nodes_per_rack_str   = fmt(nodes_per_rack, precision=0, commas=False)
+    gpus_per_node_3l_str = fmt(gpus_per_node_3l, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-three-level-hierarchical-bandwidth-budget .callout-notebook title="Three-level hierarchical bandwidth budget"}
 
-**Problem**: A `{python} ThreeLevelNapkin.total_gpus_3l_str`-GPU cluster is arranged as 4 racks of 4 nodes of 8 GPUs. Cross-rack bandwidth is oversubscribed 2:1 (effective 25 GB/s). How much does 3-level hierarchical AllReduce reduce cross-rack traffic for a `{python} ThreeLevelNapkin.gradient_3l_gb_str` GB gradient?
+**Problem**: A `{python} ThreeLevelNapkin.total_gpus_3l_str`-GPU cluster is arranged as `{python} ThreeLevelNapkin.n_racks_str` racks of `{python} ThreeLevelNapkin.nodes_per_rack_str` nodes of `{python} ThreeLevelNapkin.gpus_per_node_3l_str` GPUs. Cross-rack bandwidth is oversubscribed 2:1 (effective `{python} ThreeLevelNapkin.cross_rack_bw_str` GB/s). How much does 3-level hierarchical AllReduce reduce cross-rack traffic for a `{python} ThreeLevelNapkin.gradient_3l_gb_str` GB gradient?
 
 **Level 1 (Intra-Node, NVLink)**: ReduceScatter reduces each GPU's contribution by 8$\times$. Each GPU sends `{python} ThreeLevelNapkin.step1_payload_gb_str` GB at `{python} ThreeLevelNapkin.nvlink_bw_3l_str` GB/s = `{python} ThreeLevelNapkin.step1_time_ms_str` ms.
 
@@ -1654,8 +1737,10 @@ The long-run average of transmitted gradients equals the long-run average of tru
 The telescoping property of compression error across time is why error feedback transforms a biased, nonconvergent method into an unbiased, convergent one. Theoretical analysis shows that with error feedback, compressed SGD converges at the same asymptotic rate as uncompressed SGD, with only constant-factor slowdowns [@stich2018sparsified; @karimireddy2019error]. A short trace shows how error feedback preserves gradient information that naive compression would lose:
 
 ```{python}
-#| label: error-feedback-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: error-feedback-calc
 from mlsysim.fmt import check, fmt, MarkdownStr
 
 class ErrorFeedbackTrace:
@@ -1684,6 +1769,7 @@ class ErrorFeedbackTrace:
     true_str = fmt(true_cumulative, precision=1, commas=False)
     naive_str = fmt(naive_transmitted, precision=0, commas=False)
     conservation_str = MarkdownStr(f"{cum_transmitted} + ({final_error:.1f})")
+    naive_loss_pct_str = fmt(100, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-error-feedback-mechanism .callout-notebook title="Error feedback mechanism"}
@@ -1702,7 +1788,7 @@ class ErrorFeedbackTrace:
 
 : **Naive Compression Trace (No Error Feedback)**: Five-step worked trace showing how a greedy 1-bit quantizer transmits zero whenever individual gradients fall below the threshold. {#tbl-error-feedback-naive}
 
-**Naive compression outcome**: After 5 steps, the system has transmitted **`{python} ErrorFeedbackTrace.naive_str`** but the true cumulative gradient is **`{python} ErrorFeedbackTrace.true_str`**. The parameter never updates, and **100 percent of gradient information is lost**.
+**Naive compression outcome**: After 5 steps, the system has transmitted **`{python} ErrorFeedbackTrace.naive_str`** but the true cumulative gradient is **`{python} ErrorFeedbackTrace.true_str`**. The parameter never updates, and **`{python} ErrorFeedbackTrace.naive_loss_pct_str` percent of gradient information is lost**.
 
 **With Error Feedback** (@tbl-error-feedback):
 
@@ -1740,8 +1826,10 @@ Microsoft reported that 1-bit Adam achieves 3.5$\times$ communication volume red
 The success of 1-bit Adam illustrates a broader principle: compression is most effective when it is co-designed with the optimization algorithm. Compressing raw gradients discards information indiscriminately. Compressing optimizer states exploits the structure of the optimization trajectory, achieving higher compression ratios with less convergence impact.
 
 ```{python}
-#| label: compression-payback-notebook
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: compression-payback-notebook
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ COMPRESSION PAYBACK (NOTEBOOK)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1773,7 +1861,6 @@ class CompressionPayback:
     cp_ratio_str = fmt(ratio, precision=0, commas=False)
     cp_overhead_ms_str = fmt(t_overhead_ms, precision=0, commas=False)
     cp_speedup_str = fmt(speedup, precision=1, commas=False)
-
 ```
 
 ::: {#nbk-collective-communication-payback-compression .callout-notebook title="The payback of compression"}
@@ -1957,8 +2044,10 @@ A third limitation arises from memory pressure. Overlapping communication with c
 A realistic training configuration shows how much communication remains exposed after overlap.
 
 ```{python}
-#| label: overlap-budget-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: overlap-budget-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ COMMUNICATION-COMPUTATION OVERLAP BUDGET—7B TRANSFORMER
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1985,6 +2074,8 @@ class OverlapBudgetCalc:
     gradient_per_layer_mb_val = 880  # MB per layer (7B model, FP32)
     bucket_size_mb         = 100   # MB per AllReduce bucket
     allreduce_per_bucket_ms = 3    # ms per bucket (hierarchical on IB NDR)
+    n_gpus_overlap         = 64
+    params_b_overlap       = 7
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     total_backward_ms      = n_layers_overlap * backward_per_layer_ms
@@ -2009,16 +2100,22 @@ class OverlapBudgetCalc:
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     total_backward_ms_str      = fmt(total_backward_ms, precision=0, commas=False)
-    allreduce_per_layer_ms_str = fmt(allreduce_per_layer_ms, precision=0, commas=False)
-    no_overlap_ms_str          = fmt(no_overlap_ms, precision=0, commas=False)
-    with_overlap_ms_str        = fmt(with_overlap_ms, precision=0, commas=False)
-    overlap_savings_pct_str    = fmt(overlap_savings_pct, precision=0, commas=False)
-    exposed_per_layer_ms_str   = fmt(exposed_per_layer_ms, precision=0, commas=False)
+    allreduce_per_layer_ms_str = fmt(allreduce_per_layer_ms, precision=1, commas=False)
+    no_overlap_ms_str          = fmt(no_overlap_ms, precision=1, commas=False)
+    with_overlap_ms_str        = fmt(with_overlap_ms, precision=1, commas=False)
+    overlap_savings_pct_str    = fmt(overlap_savings_pct, precision=1, commas=False)
+    exposed_per_layer_ms_str   = fmt(exposed_per_layer_ms, precision=1, commas=False)
+    n_layers_str               = fmt(n_layers_overlap, precision=0, commas=False)
+    backward_per_layer_ms_str  = fmt(backward_per_layer_ms, precision=0, commas=False)
+    n_gpus_overlap_str         = fmt(n_gpus_overlap, precision=0, commas=False)
+    gradient_per_layer_mb_str  = fmt(gradient_per_layer_mb_val, precision=0, commas=False)
+    bucket_size_mb_str         = fmt(bucket_size_mb, precision=0, commas=False)
+    params_b_overlap_str       = fmt(params_b_overlap, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-overlap-budget-7b-transformer .callout-notebook title="Overlap budget for a 7B transformer"}
 
-**Problem**: A 32-layer transformer model (7B parameters) is trained on 64 GPUs. Each layer's backward pass takes 15 ms. The hierarchical AllReduce for each layer's gradients (~880 MB per layer) takes `{python} OverlapBudgetCalc.allreduce_per_layer_ms_str` ms using 100 MB buckets. What is the step time with and without overlap?
+**Problem**: A `{python} OverlapBudgetCalc.n_layers_str`-layer transformer model (`{python} OverlapBudgetCalc.params_b_overlap_str`B parameters) is trained on `{python} OverlapBudgetCalc.n_gpus_overlap_str` GPUs. Each layer's backward pass takes `{python} OverlapBudgetCalc.backward_per_layer_ms_str` ms. The hierarchical AllReduce for each layer's gradients (~`{python} OverlapBudgetCalc.gradient_per_layer_mb_str` MB per layer) takes `{python} OverlapBudgetCalc.allreduce_per_layer_ms_str` ms using `{python} OverlapBudgetCalc.bucket_size_mb_str` MB buckets. What is the step time with and without overlap?
 
 **Without overlap (sequential)**:
 
@@ -2037,16 +2134,18 @@ $T_{\text{pipelined}} = T_{\text{backward}} + T_{\text{first layer comm}} + (N_L
 The combination of hierarchical AllReduce (reducing the volume of data to communicate), rail-optimized routing (maximizing the throughput of each communication operation), and layer-by-layer overlap (hiding the remaining communication behind computation) forms the complete communication optimization stack for production distributed training. Each technique addresses a different term in the performance equation: hierarchical algorithms reduce $M$, topology-aware routing maximizes effective $\beta$, and overlap amortizes $\alpha$ by running communication concurrently with computation. When all three are applied together, the communication overhead for a well-configured system falls to 5--15 percent of total step time, down from the 50--80 percent that a naive flat, synchronous approach would impose.
 
 ```{python}
-#| label: napkin-overlap-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: napkin-overlap-calc
 from mlsysim.fmt import check, fmt
 
 class NapkinOverlap:
     # ┌── 1. LOAD ──────────────────────────────────────────
-    from mlsysim.core.constants import NVLINK_H100_BW, GB, second as _sec_no
-    params_b = 70
+    from mlsysim.core.constants import GB, second as _sec_no
+    params_b = Models.Language.Llama2_70B.parameters.m_as(Bparam)
     bytes_per_param = 2       # FP16
-    nvlink_bw_gbs = NVLINK_H100_BW.m_as(GB/_sec_no)
+    nvlink_bw_gbs = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/_sec_no)
     compute_s = 2.1
     # ┌── 2. EXECUTE ───────────────────────────────────────
     gradient_gb = params_b * bytes_per_param
@@ -2060,15 +2159,18 @@ class NapkinOverlap:
     gradient_gb_str = fmt(gradient_gb, precision=0, commas=False)
     comm_s_str = fmt(comm_s, precision=2, commas=False)
     compute_s_str = fmt(compute_s, precision=1, commas=False)
-    overlap_pct_str = fmt(overlap_pct, precision=0, commas=False)
+    overlap_pct_str = fmt(overlap_pct, precision=1, commas=False)
+    nvlink_bw_gbs_str = fmt(nvlink_bw_gbs, precision=0, commas=False)
+    params_b_str = fmt(params_b, precision=0, commas=False, suffix="B")
+    bytes_per_param_str = fmt(bytes_per_param, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-napkin-math-overlap-budget .callout-notebook title="The overlap budget"}
 
 This analysis determines whether the communication cost of a 70B parameter model on 8 GPUs can be hidden behind computation. The physics determines the answer.
 
-1.  **Gradient size**: 70B params $\times$ 2 bytes (FP16) = `{python} NapkinOverlap.gradient_gb_str` GB.
-2.  **Communication time**: Using Ring AllReduce on NVLink (900 GB/s), time is $\approx \frac{2 \cdot M}{900\text{ GB/s}}$ = `{python} NapkinOverlap.comm_s_str` s.
+1.  **Gradient size**: `{python} NapkinOverlap.params_b_str` params $\times$ `{python} NapkinOverlap.bytes_per_param_str` bytes (FP16) = `{python} NapkinOverlap.gradient_gb_str` GB.
+2.  **Communication time**: Using Ring AllReduce on NVLink (`{python} NapkinOverlap.nvlink_bw_gbs_str` GB/s), time is $\approx 2 \cdot M / \beta$ = `{python} NapkinOverlap.comm_s_str` s.
 3.  **Compute time**: A typical forward/backward pass for a block of this size takes $\approx$ `{python} NapkinOverlap.compute_s_str` s.
 4.  **Overlap ratio**: `{python} NapkinOverlap.comm_s_str` s divided by `{python} NapkinOverlap.compute_s_str` s $\approx$ `{python} NapkinOverlap.overlap_pct_str` percent.
 
@@ -2106,7 +2208,24 @@ Networks are not perfect. A bad cable can flip bits. Unlike TCP (which checksums
 
 **Fallacy**: *Flat AllReduce is good enough for multi-node training.*
 
-A flat Ring AllReduce treats all links as equal, routing data across `{python} CommInfraScenario.ib_ndr_bw_gbs_str` GB/s InfiniBand when `{python} CommInfraScenario.nvlink_h100_bw_gbs_str` GB/s NVLink is available within the node. For an 8-node cluster with 8 GPUs per node, hierarchical AllReduce reduces inter-node traffic by 8$\times$ compared to flat Ring, achieving roughly a 6$\times$ speedup. Ignoring the bandwidth hierarchy leaves the majority of intra-node bandwidth unused while overloading the scarce inter-node bandwidth.
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Fallacies — flat AllReduce ignores bandwidth hierarchy.
+# │ Goal: Recap NVLink vs InfiniBand NDR bandwidth locally.
+# │ Exports: CommInfraRecap.nvlink_h100_bw_gbs_str, CommInfraRecap.ib_ndr_bw_gbs_str
+from mlsysim import *
+from mlsysim.core.constants import *
+from mlsysim.core.constants import GB, second
+class CommInfraRecap:
+    nvlink_gbs = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second)
+    ib_gbs = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second)
+    from mlsysim.fmt import fmt
+    nvlink_h100_bw_gbs_str = fmt(nvlink_gbs, precision=0, commas=False)
+    ib_ndr_bw_gbs_str = fmt(ib_gbs, precision=0, commas=False)
+```
+
+A flat Ring AllReduce treats all links as equal, routing data across `{python} CommInfraRecap.ib_ndr_bw_gbs_str` GB/s InfiniBand when `{python} CommInfraRecap.nvlink_h100_bw_gbs_str` GB/s NVLink is available within the node. For an 8-node cluster with 8 GPUs per node, hierarchical AllReduce reduces inter-node traffic by 8$\times$ compared to flat Ring, achieving roughly a 6$\times$ speedup. Ignoring the bandwidth hierarchy leaves the majority of intra-node bandwidth unused while overloading the scarce inter-node bandwidth.
 
 **Pitfall**: *Ignoring rank-to-GPU mapping for topology-aware routing.*
 

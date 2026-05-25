@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -17,27 +15,21 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim import Engine, Models, Hardware
+    from mlsysim import Engine, Hardware, Models
 
     A100_TFLOPS = Hardware.Cloud.A100.compute.peak_flops.m_as("TFLOPs/s")
     A100_BW     = Hardware.Cloud.A100.memory.bandwidth.m_as("GB/s")
 
-    RESNET50_FLOPS = Models.ResNet50.inference_flops.m_as("flop")
+    RESNET50_FLOPS = Models.Vision.ResNet50.inference_flops.m_as("flop")
     DSCNN_FLOPS = Models.Tiny.DS_CNN.inference_flops.m_as("flop")
 
     ESP32_TFLOPS = Hardware.Tiny.ESP32_S3.compute.peak_flops.m_as("TFLOPs/s")
@@ -54,7 +46,6 @@ async def _():
         ESP32_TFLOPS,
         ledger,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -103,7 +94,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -168,8 +158,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -184,7 +172,6 @@ def _(mo):
     - **The Data Cascades section (Ch. 4)** -- Error amplification and data contracts.
     """), kind="info")
     return
-
 
 @app.cell(hide_code=True)
 def _(
@@ -294,7 +281,6 @@ def _(mo):
         label="Duty cycle (hours per day)",
     )
     return (partD_duty, partD_tolerance)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1025,8 +1011,6 @@ That is **six nines** of rejection -- far beyond typical "99% accuracy" claims.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1063,7 +1047,6 @@ def _(COLORS, ledger, mo, partA_prediction, partB_prediction, partC_prediction, 
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

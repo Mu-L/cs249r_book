@@ -30,7 +30,6 @@ app = marimo.App(width="full")
 #   H100_COST_HR       = 3.0    $/GPU-hour cloud pricing
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -44,38 +43,35 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim import Hardware
+    from mlsysim import Hardware, Models, Infrastructure, Engine
+    from mlsysim import calc_kv_cache_size
+
+    LLAMA2_70B = Models.Language.Llama2_70B
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100
     T4 = Hardware.Cloud.T4
     EDGE = Hardware.Edge.JetsonOrinNX
     H100_RAM_GB = H100.memory.capacity.m_as("GB")
-    H100_COST_HR = 3.0
-    T4_COST_HR = 0.35
+    H100_COST_HR = Infrastructure.Pricing.Fleet.GpuHourRef.rate.m_as("USD/hour")
+    T4_COST_HR = Infrastructure.Pricing.Cloud.GpuInferencePerHour.rate.m_as("USD/hour")
     EDGE_RAM_GB = EDGE.memory.capacity.m_as("GB")
     TRAINING_COST_2M = 2_000_000  # $2M training cost for 70B model
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
         _ = await ledger.load_async()
-    return COLORS, LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np, H100_RAM_GB, H100_COST_HR, T4_COST_HR, TRAINING_COST_2M, DecisionLog, Hardware, H100, T4, EDGE, EDGE_RAM_GB
-
+    return COLORS, LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np, H100_RAM_GB, H100_COST_HR, T4_COST_HR, TRAINING_COST_2M, DecisionLog, Hardware, H100, T4, EDGE, EDGE_RAM_GB, LLAMA2_70B, calc_kv_cache_size, Engine
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -113,7 +109,6 @@ def _(COLORS, LAB_CSS, mo):
     </div>
     """)
     return
-
 
 # ─── CELL 2: BRIEFING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -174,7 +169,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ──────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -187,7 +181,6 @@ def _(mo):
     - The Queuing Theory section from the Fleet Orchestration chapter -- Kingman's formula
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
@@ -207,7 +200,6 @@ def _(mo):
         label="You spent $2M training a 70B LLM. At 100 QPS and $0.01/query, when does cumulative serving cost exceed training cost?",
     )
     return (partA_prediction,)
-
 
 # ─── CELL 5: Part A controls + Part A reflection + Part B prediction ─────────
 @app.cell(hide_code=True)
@@ -240,7 +232,6 @@ def _(mo):
     )
     return (a1_cost_query, a1_optimization, a1_qps, a1_weeks, partA_reflection, partB_prediction)
 
-
 # ─── CELL 6: Part B controls + Part B reflection ────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -269,7 +260,6 @@ def _(mo):
     )
     return (a2_context_len, a2_model_size, a2_n_gpus, a2_precision, partB_reflection)
 
-
 # ─── CELL 6b: Part C prediction + controls ─────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -295,7 +285,6 @@ def _(mo):
         label="Why is continuous batching the standard for production LLM serving?",
     )
     return (c1_avg_len, c1_batch_size, c1_max_len, partC_prediction, partC_reflection)
-
 
 # ─── CELL 6c: Part D prediction + controls ─────────────────────────────────
 @app.cell(hide_code=True)
@@ -332,7 +321,6 @@ def _(mo):
     )
     return (d1_batching, d1_gpus_per_replica, d1_quant, d1_target_qps, partD_prediction, partD_reflection)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -341,7 +329,8 @@ def _(mo):
 def _(
     COLORS, H100_RAM_GB, H100_COST_HR, TRAINING_COST_2M,
     apply_plotly_theme, go, math, mo,
-    np, a1_cost_query, a1_optimization, a1_qps,
+    np, LLAMA2_70B, calc_kv_cache_size, Engine, H100,
+    a1_cost_query, a1_optimization, a1_qps,
     a1_weeks, a2_context_len, a2_model_size, a2_n_gpus,
     a2_precision, c1_avg_len, c1_batch_size, c1_max_len,
     d1_batching, d1_gpus_per_replica, d1_quant, d1_target_qps,
@@ -618,13 +607,29 @@ def _(
         _weight_gb = _params_b * 1e9 * _bytes_per_elem / 1e9
         _available_gb = max(0, _total_hbm_gb - _weight_gb)
 
-        # KV cache per request (bytes)
-        # KV = 2 * layers * hidden * seq_len * 2 bytes (FP16 for KV regardless of weight precision)
-        _kv_per_req_bytes = 2 * _layers * _hidden * _seq_len * 2  # KV always FP16
-        _kv_per_req_gb = _kv_per_req_bytes / 1e9
+        # KV cache per request — mlsysim.physics.calc_kv_cache_size
+        _head_dim = LLAMA2_70B.hidden_dim // LLAMA2_70B.heads if (_params_b, _layers, _hidden) == (70, 80, 8192) else _hidden // 128
+        _n_heads = _hidden // _head_dim
+        _kv_per_req_gb = calc_kv_cache_size(
+            _layers, _n_heads, _head_dim, _seq_len, 1, bytes_per_elem=2,
+        ).m_as("GB")
 
         _max_concurrent = math.floor(_available_gb / _kv_per_req_gb) if _kv_per_req_gb > 0 else 0
         _oom = _max_concurrent < 1
+
+        _prec_map = {2: "fp16", 1: "int8", 0.5: "int4"}
+        _serve_model = LLAMA2_70B if (_params_b, _layers, _hidden) == (70, 80, 8192) else None
+        if _serve_model is not None:
+            _decode = Engine.solve(
+                _serve_model, H100, batch_size=1,
+                precision=_prec_map.get(_bytes_per_elem, "fp16"), efficiency=0.5,
+            )
+            _decode_lat_ms = _decode.latency.m_as("ms")
+            _decode_mem_gb = _decode.memory_footprint.m_as("GB")
+            _decode_bn = _decode.bottleneck
+        else:
+            _decode_lat_ms = _decode_mem_gb = None
+            _decode_bn = "n/a"
 
         # ── Stacked memory chart ──────────────────────────────────────────────
         _n_requests = list(range(0, min(_max_concurrent + 3, 20)))
@@ -682,6 +687,7 @@ def _(
             <div>Weights = {_params_b}B &times; {_bytes_per_elem} bytes = <strong>{_weight_gb:.1f} GB</strong></div>
             <div>Available HBM = {_total_hbm_gb:.0f} - {_weight_gb:.1f} = <strong>{_available_gb:.1f} GB</strong></div>
             <div>Max concurrent = floor({_available_gb:.1f} / {_kv_per_req_gb:.1f}) = <strong style="color:{_conc_color};">{_max_concurrent}</strong></div>
+            {"<div>Engine.solve decode = " + f"{_decode_lat_ms:.2f} ms/token, footprint {_decode_mem_gb:.1f} GB ({_decode_bn})</div>" if _decode_lat_ms is not None else ""}
         </div>
         """))
 
@@ -1086,8 +1092,12 @@ def _(
         _weight_gb = 70 * 1e9 * _bytes_per_elem / 1e9
         _available_gb = max(0, _total_hbm - _weight_gb)
 
-        # KV cache per request at 32K context (70B: 80 layers, 8192 hidden)
-        _kv_per_req_gb = 2 * 80 * 8192 * 32768 * 2 / 1e9
+        # KV cache per request at 32K context (70B from registry)
+        _kv_per_req_gb = calc_kv_cache_size(
+            LLAMA2_70B.layers, LLAMA2_70B.heads,
+            LLAMA2_70B.hidden_dim // LLAMA2_70B.heads,
+            32768, 1, bytes_per_elem=2,
+        ).m_as("GB")
         _max_batch = math.floor(_available_gb / _kv_per_req_gb) if _kv_per_req_gb > 0 else 0
 
         # Per-replica throughput
@@ -1361,7 +1371,6 @@ def _(
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER_HUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1370,7 +1379,6 @@ def _(
 def _(mo, DecisionLog):
     decision_input, decision_ui = DecisionLog()
     return (decision_input, decision_ui)
-
 
 @app.cell(hide_code=True)
 def _(COLORS, partA_prediction, partB_prediction, partC_prediction, partD_prediction,
@@ -1411,7 +1419,6 @@ def _(COLORS, partA_prediction, partB_prediction, partC_prediction, partD_predic
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

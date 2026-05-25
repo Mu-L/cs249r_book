@@ -33,6 +33,7 @@ from cli.commands.render import RenderCommand
 from cli.commands.newsletter import NewsletterCommand
 from cli.commands.headings import HeadingsCommand
 from cli.commands.layout import LayoutCommand
+from cli.commands.audit import AuditCommand
 
 console = Console()
 
@@ -70,6 +71,7 @@ class MLSysBookCLI:
         self.newsletter_command = NewsletterCommand(self.config_manager, verbose=verbose)
         self.headings_command = HeadingsCommand(self.config_manager, self.chapter_discovery)
         self.layout_command = LayoutCommand(self.config_manager, self.chapter_discovery)
+        self.audit_command = AuditCommand(self.config_manager, self.chapter_discovery)
 
     def show_banner(self):
         """Display the CLI banner."""
@@ -130,7 +132,9 @@ class MLSysBookCLI:
         quality_table.add_row("check <group> [--scope ...]", "Run validation checks", "./binder check refs")
         quality_table.add_row("check all", "Run all validation checks", "./binder check all --vol1")
         quality_table.add_row("check spelling", "Spell check prose and TikZ", "./binder check spelling")
-        quality_table.add_row("check sources", "Validate source citations", "./binder check sources")
+        quality_table.add_row("check pdf --vol1|--vol2", "Verify built PDF cross-refs", "./binder check pdf --vol1")
+        quality_table.add_row("check registry", "Registry migration gates", "./binder check registry")
+        quality_table.add_row("audit chapter-pdf|html", "Per-chapter build audit ledger", "./binder audit chapter-pdf --vol1 training")
         quality_table.add_row("fix <topic> <action>", "Fix/manage content", "./binder fix headers add")
         quality_table.add_row("format <target>", "Auto-format content", "./binder format tables")
         quality_table.add_row("info stats [--by-chapter]", "Book statistics (words, figs, ...)", "./binder info stats --vol1")
@@ -262,7 +266,8 @@ class MLSysBookCLI:
             console.print("[dim]  ./binder build html --all[/dim]")
             console.print("[dim]  ./binder build epub --vol1[/dim]")
             console.print("[dim]  ./binder build epub --vol1 --skip-hygiene    # bypass pre-render hygiene check[/dim]")
-            console.print("[dim]  ./binder build epub --vol1 --skip-validate   # bypass post-render smoke + epubcheck[/dim]")
+            console.print("[dim]  ./binder build epub --vol1 --skip-validate   # bypass post-render validation[/dim]")
+            console.print("[dim]  ./binder build pdf --vol1                  # runs pdftotext cross-ref scan after render[/dim]")
             return True
 
         self.config_manager.show_symlink_status()
@@ -381,6 +386,10 @@ class MLSysBookCLI:
     def handle_about_command(self, args):
         """Handle about command."""
         return self.maintenance_command.show_about()
+
+    def handle_audit_command(self, args):
+        """Handle audit command group (chapter-level build audits)."""
+        return self.audit_command.run(args)
 
     def handle_check_command(self, args):
         """Handle check (validation) command group."""
@@ -507,6 +516,7 @@ class MLSysBookCLI:
             "list": self.handle_list_command,
             "status": self.handle_status_command,
             "doctor": self.handle_doctor_command,
+            "audit": self.handle_audit_command,
             "check": self.handle_check_command,
             "fix": self.handle_fix_command,
             "format": self.handle_format_command,

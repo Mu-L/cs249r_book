@@ -21,7 +21,7 @@ def main():
     res_poland = solver.solve(
         fleet=fleet, 
         duration_days=30, 
-        datacenter=mlsysim.Infra.Grids.Poland,
+        datacenter=mlsysim.Infrastructure.Grids.Poland,
         mfu=0.45
     )
     
@@ -29,7 +29,7 @@ def main():
     res_quebec = solver.solve(
         fleet=fleet, 
         duration_days=30, 
-        datacenter=mlsysim.Infra.Grids.Quebec,
+        datacenter=mlsysim.Infrastructure.Grids.Quebec,
         mfu=0.45
     )
 

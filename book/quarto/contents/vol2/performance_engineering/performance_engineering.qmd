@@ -50,6 +50,8 @@ Model compression reduces the size of what we compute. Performance engineering r
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: chapter-start
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ CHAPTER START
@@ -62,10 +64,8 @@ Model compression reduces the size of what we compute. Performance engineering r
 # │ Imports: mlsysim.registry, mlsysim.constants, mlsysim.book
 # │ Exports: (none)
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import *
-from mlsysim.fmt import fmt, fmt_sci, check
-from mlsysim.core.formulas import calc_bottleneck, model_memory
-
+from mlsysim.fmt import fmt_int, fmt, fmt_sci, check
+from mlsysim.physics import calc_bottleneck, model_memory
 ```
 
 Those objectives connect directly to fleet design: scheduling decides where a request runs, while performance engineering decides how efficiently the chosen accelerator executes it.
@@ -176,8 +176,10 @@ The efficiency frontier establishes what we are optimizing toward. The physics o
 [^fn-hbm-perf]: **HBM (High Bandwidth Memory)**: Achieves its bandwidth by vertically stacking DRAM dies connected through thousands of through-silicon vias (TSVs), a 3D packaging technique first commercialized by SK Hynix in 2013. Despite the "high bandwidth" label, HBM's 3.35 TB/s on the H100 is still 200--600$\times$ slower than on-chip SRAM access, making the memory hierarchy gap the central constraint of every optimization technique in this chapter. \index{HBM!memory hierarchy}
 
 ```{python}
-#| label: memory-wall-scenario
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: memory-wall-scenario
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ MEMORY WALL HARDWARE SPECS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -187,34 +189,31 @@ The efficiency frontier establishes what we are optimizing toward. The physics o
 # │ Show: ~1,979 TFLOP/s FP8; ~3.35 TB/s BW; ~1280x energy ratio.
 # │ How: pulling constants from mlsysim.core.constants.
 # │
-# │ Imports: mlsysim.core.constants (H100_FLOPS_FP8_TENSOR, H100_MEM_BW,
-# │          H100_MEM_CAPACITY, H100_TDP, ENERGY_DRAM_ACCESS_PJ, ENERGY_SRAM_L1_PJ,
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.H100.compute.precision_flops["fp8"], Hardware.Cloud.H100.memory.bandwidth,
+# │          Hardware.Cloud.H100.memory.capacity, Hardware.Cloud.H100.tdp, ENERGY_DRAM_ACCESS_PJ, ENERGY_SRAM_L1_PJ,
 # │          TFLOPs, TB, GiB, second, flop, byte, watt)
 # │ Exports: MemoryWallScenario.h100_fp8_str, MemoryWallScenario.h100_hbm_bw_str,
 # │          MemoryWallScenario.h100_ridge_fp8_str, MemoryWallScenario.energy_ratio_str,
 # │          MemoryWallScenario.h100_mem_str, MemoryWallScenario.h100_tdp_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    H100_FLOPS_FP8_TENSOR, H100_MEM_BW, H100_MEM_CAPACITY, H100_TDP,
-    ENERGY_DRAM_ACCESS_PJ, ENERGY_SRAM_L1_PJ,
-    TFLOPs, TB, GiB, second, flop, byte, watt
-)
 from mlsysim.fmt import fmt
 
 class MemoryWallScenario:
     """H100 specs for memory wall discussion."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    flops_fp8 = H100_FLOPS_FP8_TENSOR
-    bw = H100_MEM_BW
-    mem = H100_MEM_CAPACITY
-    tdp = H100_TDP
+    flops_fp8 = Hardware.Cloud.H100.compute.precision_flops["fp8"]
+    bw = Hardware.Cloud.H100.memory.bandwidth
+    mem = Hardware.Cloud.H100.memory.capacity
+    tdp = Hardware.Cloud.H100.tdp
     energy_dram = ENERGY_DRAM_ACCESS_PJ
     energy_sram = ENERGY_SRAM_L1_PJ
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     ridge_fp8 = (flops_fp8 / bw).m_as(flop/byte)
     energy_ratio = energy_dram/energy_sram
+    register_total_mb = 33
+    l2_cache_mb = 50
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
@@ -223,10 +222,12 @@ class MemoryWallScenario:
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     h100_fp8_str = fmt(flops_fp8.m_as(TFLOPs/second), precision=0, commas=False)
     h100_hbm_bw_str = fmt(bw.m_as(TB/second), precision=2, commas=False)
-    h100_ridge_fp8_str = fmt(ridge_fp8, precision=0, commas=False)
+    h100_ridge_fp8_str = fmt(ridge_fp8, precision=1, commas=False)
     energy_ratio_str = fmt(energy_ratio.m_as(''), precision=0, commas=False)
     h100_mem_str = fmt(mem.m_as(GiB), precision=0, commas=False)
     h100_tdp_str = fmt(tdp.m_as(watt), precision=0, commas=False)
+    register_total_mb_str = fmt(register_total_mb, precision=0, commas=False)
+    l2_cache_mb_str = fmt(l2_cache_mb, precision=0, commas=False)
 ```
 
 An NVIDIA H100 delivers `{python} MemoryWallScenario.h100_fp8_str` TFLOP/s of FP8 compute but only `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s of memory bandwidth. If every byte loaded from memory does fewer than `{python} MemoryWallScenario.h100_ridge_fp8_str` arithmetic operations, the compute units sit idle, starved for data. This gap between compute capability and memory delivery rate is the memory wall, and it defines the landscape within which all performance engineering operates.
@@ -255,9 +256,9 @@ The performance engineering challenge reduces to a data placement problem: keep 
 
 The GPU memory hierarchy parallels a scholar researching in a library:
 
-*   **Registers (33 MB)** are *working memory*: instant access, but capacity is small enough to hold only a few values at once.
+*   **Registers (`{python} MemoryWallScenario.register_total_mb_str` MB)** are *working memory*: instant access, but capacity is small enough to hold only a few values at once.
 *   **Shared Memory (SRAM)**\index{SRAM} is a *desk*: very fast to reach, but capacity fits only a few open references.
-*   **L2 Cache (50 MB)** is a *book cart* beside the desk: a small access cost, holding a moderate working set.
+*   **L2 Cache (`{python} MemoryWallScenario.l2_cache_mb_str` MB)** is a *book cart* beside the desk: a small access cost, holding a moderate working set.
 *   **HBM (`{python} MemoryWallScenario.h100_mem_str` GB)** is the *library basement*: holds everything that could be needed, but each round trip costs hundreds of nanoseconds.
 
 Performance engineering is the art of minimizing trips to the basement.
@@ -323,6 +324,8 @@ $$
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: roofline-ridge-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ROOFLINE RIDGE POINT COMPARISON
@@ -345,39 +348,32 @@ class RooflineRidgeCalc:
     """Ridge point comparison across A100/H100 FP16/FP8."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    # Already computed in setup cell
+    from mlsysim import Hardware
+    h_a100 = Hardware.Cloud.A100
+    h_h100 = Hardware.Cloud.H100
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    from mlsysim.core.constants import (
-        A100_FLOPS_FP16_TENSOR, A100_MEM_BW,
-        H100_FLOPS_FP16_TENSOR, H100_FLOPS_FP8_TENSOR, H100_MEM_BW,
-        TFLOPs, TB, second, flop, byte
-    )
-    a100_f16 = A100_FLOPS_FP16_TENSOR
-    a100_bw = A100_MEM_BW
-    h100_f16 = H100_FLOPS_FP16_TENSOR
-    h100_f8 = H100_FLOPS_FP8_TENSOR
-    h100_bw = H100_MEM_BW
-
-    a100_ridge_val = (a100_f16 / a100_bw).m_as(flop/byte)
-    h100_ridge_fp16_val = (h100_f16 / h100_bw).m_as(flop/byte)
-    h100_ridge_fp8_val = (h100_f8 / h100_bw).m_as(flop/byte)
+    a100_ridge_val = h_a100.ridge_point("fp16").m_as("flop/byte")
+    h100_ridge_fp16_val = h_h100.ridge_point("fp16").m_as("flop/byte")
+    h100_ridge_fp8_val = h_h100.ridge_point("fp8").m_as("flop/byte")
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(h100_ridge_fp16_val > a100_ridge_val,
           "H100 FP16 ridge should exceed A100 FP16 ridge")
     check(h100_ridge_fp8_val > h100_ridge_fp16_val,
           "H100 FP8 ridge should exceed H100 FP16 ridge")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    a100_ridge_str = fmt(a100_ridge_val, precision=0, commas=False)
-    h100_fp16_ridge_str = fmt(h100_ridge_fp16_val, precision=0, commas=False)
-    h100_fp8_ridge_str = fmt(h100_ridge_fp8_val, precision=0, commas=False)
+    from mlsysim.fmt import fmt
+    a100_ridge_str = fmt(a100_ridge_val, precision=1, commas=False)
+    h100_fp16_ridge_str = fmt(h100_ridge_fp16_val, precision=1, commas=False)
+    h100_fp8_ridge_str = fmt(h100_ridge_fp8_val, precision=1, commas=False)
 
-    a100_fp16_str = fmt(a100_f16.m_as(TFLOPs/second), precision=0, commas=False)
-    a100_hbm_bw_str = fmt(a100_bw.m_as(TB/second), precision=0, commas=False)
-    h100_fp8_str = fmt(h100_f8.m_as(TFLOPs/second), precision=0, commas=False)
-    h100_hbm_bw_str = fmt(h100_bw.m_as(TB/second), precision=2, commas=False)
+    a100_fp16_str = fmt(h_a100.peak_flops.m_as(TFLOPs/second), precision=0, commas=False)
+    a100_hbm_bw_str = fmt(h_a100.memory_bw.m_as(TB/second), precision=1, commas=False)
+    h100_fp8_str = fmt(h_h100.compute.precision_flops["fp8"].m_as(TFLOPs/second), precision=0, commas=False)
+    h100_hbm_bw_str = fmt(h_h100.memory_bw.m_as(TB/second), precision=2, commas=False)
 ```
 
 Any operation performing fewer than `{python} RooflineRidgeCalc.h100_fp16_ridge_str` floating-point operations per byte loaded is memory-bound on the H100 at FP16. At FP8 precision, where compute doubles to `{python} RooflineRidgeCalc.h100_fp8_str` TFLOP/s while bandwidth remains `{python} RooflineRidgeCalc.h100_hbm_bw_str` TB/s, the ridge point rises to approximately `{python} RooflineRidgeCalc.h100_fp8_ridge_str` FLOP/byte. The A100, with `{python} RooflineRidgeCalc.a100_fp16_str` TFLOP/s and `{python} RooflineRidgeCalc.a100_hbm_bw_str` TB/s, has a lower ridge point of approximately `{python} RooflineRidgeCalc.a100_ridge_str` FLOP/byte at FP16. Each hardware generation increases compute faster than bandwidth, pushing the ridge point higher and making more workloads memory-bound.
@@ -388,6 +384,8 @@ Any operation performing fewer than `{python} RooflineRidgeCalc.h100_fp16_ridge_
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ SHIFTING ROOFLINE (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -398,7 +396,8 @@ Any operation performing fewer than `{python} RooflineRidgeCalc.h100_fp16_ridge_
 # │ Show: Log-log; four rooflines; ridge points; example ops.
 # │ How: Peak TFLOP/s, HBM BW; ridge = TFLOP/s/BW; viz.setup_plot().
 # │
-# │ Imports: numpy (np), matplotlib.pyplot (plt), mlsysim.core.viz (viz)
+# │ Imports: numpy (np), matplotlib.pyplot (plt), mlsysim.core.viz (viz),
+# │          mlsysim.core.constants (GPU FP16 FLOP/s and HBM bandwidth)
 # │ Exports: (figure only, no prose variables)
 # └─────────────────────────────────────────────────────────────────────────────
 # ┌── 1. CANVAS ────────────────────────────────────────────────────────────────
@@ -413,14 +412,13 @@ fig, ax, COLORS, plt = viz.setup_plot(figsize=(9, 6))
 
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
 gpus = [
-    ("V100", 125, 0.900, COLORS["VioletLine"]),
-    ("A100", 312, 2.039, COLORS["BlueLine"]),
-    ("H100", 989, 3.350, COLORS["GreenLine"]),
-    ("B200", 2250, 8.000, COLORS["OrangeLine"]),
+    ("V100", Hardware.Cloud.V100.compute.peak_flops.m_as(TFLOPs/second), Hardware.Cloud.V100.memory.bandwidth.m_as(TB/second), COLORS["VioletLine"]),
+    ("A100", Hardware.Cloud.A100.compute.peak_flops.m_as(TFLOPs/second), Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second), COLORS["BlueLine"]),
+    ("H100", Hardware.Cloud.H100.compute.peak_flops.m_as(TFLOPs/second), Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second), COLORS["GreenLine"]),
+    ("B200", Hardware.Cloud.B200.compute.peak_flops.m_as(TFLOPs/second), Hardware.Cloud.B200.memory.bandwidth.m_as(TB/second), COLORS["OrangeLine"]),
 ]
 
 ai_range = np.logspace(0, 4, 500)  # 1 to 10000 FLOP/byte
-
 
 # ┌── 3. RENDER ────────────────────────────────────────────────────────────────
 label_pos = {
@@ -489,7 +487,6 @@ ax.text(105, 600, "Ridge point shifted\n~2x in 7 years",
         bbox=dict(boxstyle="round,pad=0.5",
        facecolor="#fadadd", edgecolor="crimson", alpha=0.8))
 
-
 ax.set_xscale("log")
 ax.set_yscale("log")
 ax.set_xlabel("Arithmetic Intensity (FLOP/byte)")
@@ -521,6 +518,8 @@ ML operations span three orders of magnitude in arithmetic intensity, and the po
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: workload-intensity-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ WORKLOAD ARITHMETIC INTENSITY
@@ -541,7 +540,6 @@ ML operations span three orders of magnitude in arithmetic intensity, and the po
 # │          WorkloadIntensityCalc.elem_intensity_str,
 # │          WorkloadIntensityCalc.decode_intensity_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import BYTES_FP16, byte
 from mlsysim.fmt import fmt, check
 
 class WorkloadIntensityCalc:
@@ -580,7 +578,7 @@ class WorkloadIntensityCalc:
     check(decode_intensity_val < 5, f"Decode should be memory-bound, got {decode_intensity_val:.1f}")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    gemm_intensity_str = fmt(gemm_intensity, precision=0, commas=False)
+    gemm_intensity_str = fmt(gemm_intensity, precision=1, commas=False)
     elem_intensity_str = fmt(elem_intensity, precision=1, commas=False)
     decode_intensity_str = fmt(decode_intensity_val, precision=1, commas=False)
 ```
@@ -643,18 +641,20 @@ Disaggregated serving addresses this mismatch by running prefill and decode on s
 The performance characteristics of each phase determine which optimization techniques apply. FlashAttention provides the largest speedup during prefill, where the quadratic attention computation dominates. KV cache quantization and speculative decoding apply exclusively to the decode phase. Precision engineering (FP8/INT4 weights) benefits both phases, but through different mechanisms: prefill benefits from doubled compute throughput (FP8 Tensor Cores), while decode benefits from doubled effective bandwidth (half the bytes per weight read).
 
 ```{python}
-#| label: roofline-diagnostic
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: roofline-diagnostic
 from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import H100_MEM_BW, TB, second
 
 class RooflineDiagnostic:
     """Roofline analysis for 70B LLM decode on 8× H100."""
 
     # ┌── 1. LOAD ──────────────────────────────────────────
-    params_per_gpu_B = 70 / 8  # 70B model, TP across 8 GPUs -> 8.75B per shard
-    bytes_fp16 = 2
-    h100_bw_tbs = H100_MEM_BW.m_as(TB/second)  # H100 HBM3 bandwidth (TB/s)
+    tensor_parallel_degree = 8
+    params_per_gpu_B = Models.Language.Llama2_70B.parameters.m_as(Bparam) / tensor_parallel_degree
+    bytes_fp16 = BYTES_FP16.m_as(byte)
+    h100_bw_tbs = Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second)  # H100 HBM3 bandwidth (TB/s)
 
     # ┌── 2. EXECUTE ───────────────────────────────────────
     flops_B = 2 * params_per_gpu_B                         # 17.5 (x10^9 FLOP)
@@ -671,16 +671,16 @@ class RooflineDiagnostic:
     # ┌── 4. OUTPUT ────────────────────────────────────────
     flops_B_str = fmt(flops_B, precision=1, commas=False)
     weight_gb_str = fmt(weight_gb, precision=1, commas=False)
-    ai_str = fmt(arith_intensity, precision=1, commas=False)
+    ai_str = fmt(arith_intensity, precision=0, commas=False)
     decode_ms_str = fmt(decode_time_ms, precision=1, commas=False)
-    tps_str = fmt(tokens_per_sec, precision=0, commas=False)
+    tps_str = fmt(tokens_per_sec, precision=1, commas=False)
 ```
 
 A quick decode calculation shows why the memory wall dominates even when the accelerator has abundant unused FLOP/s.
 
 ::: {#nbk-performance-engineering-roofline-diagnostic .callout-notebook title="The Roofline diagnostic"}
 
-**Problem**: A 70B parameter LLM is deployed on 8$\times$ H100 GPUs with tensor parallelism. At batch size 1, each GPU holds approximately 8.75B parameters in FP16 (17.5 GB of weights). Each decode step reads its weight shard to produce one token. What is the achieved arithmetic intensity, and what is the theoretical maximum token generation rate?
+**Problem**: A 70B parameter LLM is deployed on 8$\times$ H100 GPUs with tensor parallelism. At batch size 1, each GPU holds approximately 8.75B parameters in FP16 (`{python} RooflineDiagnostic.weight_gb_str` GB of weights). Each decode step reads its weight shard to produce one token. What is the achieved arithmetic intensity, and what is the theoretical maximum token generation rate?
 
 **Math**:
 
@@ -731,8 +731,10 @@ Each unfused kernel must also materialize its output in HBM. Consider a sequence
 3. **LayerNorm kernel**\index{LayerNorm!kernel}: Read $Z_2$ from HBM, compute $\text{LayerNorm}(Z_2)$, write $Y$ to HBM.
 
 ```{python}
-#| label: fusion-traffic-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: fusion-traffic-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FUSION INTERMEDIATE TRAFFIC (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -745,12 +747,11 @@ Each unfused kernel must also materialize its output in HBM. Consider a sequence
 # │ How: Compute tensor bytes from hidden width, batch size, and FP16 element size; each intermediate is written
 # │      once and read once before the next kernel consumes it.
 # │
-# │ Imports: mlsysim.core.constants (MB, GB, byte), mlsysim.fmt (check)
+# │ Imports: mlsysim.core.constants (BYTES_FP16, MB, GB, byte), mlsysim.fmt (check)
 # │ Exports: FusionTrafficCalc.tensor_mb_str, FusionTrafficCalc.materialized_mb_str,
 # │          FusionTrafficCalc.traffic_mb_str, FusionTrafficCalc.traffic_gb_str,
 # │          FusionTrafficCalc.num_layers_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import MB, GB, byte
 from mlsysim.fmt import check, fmt
 
 class FusionTrafficCalc:
@@ -759,7 +760,7 @@ class FusionTrafficCalc:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     hidden_dim = 4096
     batch_size = 2048
-    bytes_fp16 = 2
+    bytes_fp16 = BYTES_FP16.m_as(byte)
     intermediates = 2
     num_layers = 80
 
@@ -776,9 +777,9 @@ class FusionTrafficCalc:
     check(60 < traffic_mb < 70, f"Expected ~64 MB traffic, got {traffic_mb:.1f} MB")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    tensor_mb_str = fmt(tensor_mb, precision=0, commas=False)
-    materialized_mb_str = fmt((materialized_bytes * byte).m_as(MB), precision=0, commas=False)
-    traffic_mb_str = fmt(traffic_mb, precision=0, commas=False)
+    tensor_mb_str = fmt(tensor_mb, precision=1, commas=False)
+    materialized_mb_str = fmt((materialized_bytes * byte).m_as(MB), precision=1, commas=False)
+    traffic_mb_str = fmt(traffic_mb, precision=1, commas=False)
     traffic_gb_str = fmt((traffic_bytes_all_layers * byte).m_as(GB), precision=1, commas=False)
     num_layers_str = fmt(num_layers, precision=0, commas=False)
 ```
@@ -830,8 +831,10 @@ The combination of operator fusion (reducing the number of kernels) and CUDA Gra
 Standard self-attention computes $\text{Softmax}(QK^T / \sqrt{d_k})V$, where $Q$, $K$, and $V$ are matrices of shape $[\text{sequence length}{\times}\text{head dimension}]$. The na\"ive implementation materializes the full $S{\times}S$ attention matrix $A = QK^T$ in HBM, where $S$ is the sequence length. For $S = 8192$ and FP16 precision, this matrix alone consumes $8192 \times 8192 \times 2 \approx 134$ MB per attention head. At 32 heads, the materialized attention matrices require approximately 4.3 GB per layer, dominating memory traffic for the entire forward pass.
 
 ```{python}
-#| label: flash-attention-savings-refactor
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: flash-attention-savings-refactor
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FLASHATTENTION MATERIALIZED-STATE SAVINGS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -850,7 +853,6 @@ Standard self-attention computes $\text{Softmax}(QK^T / \sqrt{d_k})V$, where $Q$
 # │          naive_head_traffic_mb_str, flash_head_traffic_mb_str,
 # │          flash_savings_factor_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import BYTES_FP16, MB, byte
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -858,15 +860,16 @@ class FlashAttentionSavings:
     """Materialized-state analysis for tiled attention vs naive."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    from mlsysim import Models
+    m = Models.Language.Llama2_70B # Representative transformer
     seq_len = 8192
-    head_dim = 128
-    num_heads = 32
+    head_dim = m.hidden_dim // m.heads
+    num_heads = m.heads
     bytes_per_elem = BYTES_FP16.m_as(byte)
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Step 1: Naive attention materialized state per head:
     # Read Q, K, V once; write/read score and probability matrices; write output once.
-    # Step 2: Quadratic intermediates dominate for long sequences.
     naive_attn_bytes_per_head = (
         4 * seq_len * seq_len * bytes_per_elem
         + 4 * seq_len * head_dim * bytes_per_elem
@@ -875,7 +878,6 @@ class FlashAttentionSavings:
 
     # FlashAttention persistent HBM-visible tensors per head:
     # Read Q, K, V once and write output once.
-    # Step 3: No sequence-by-sequence materialization
     flash_attn_bytes_per_head = (3 + 1) * seq_len * head_dim * bytes_per_elem
     flash_attn_bytes_total = flash_attn_bytes_per_head * num_heads
 
@@ -883,19 +885,21 @@ class FlashAttentionSavings:
     savings_ratio = naive_attn_bytes_per_head/flash_attn_bytes_per_head
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(savings_ratio > 10,
           f"FlashAttention should save >10x materialized state, got {savings_ratio:.1f}x")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    naive_mb_str = fmt((naive_attn_bytes_total * byte).m_as(MB), precision=0, commas=False)
-    flash_mb_str = fmt((flash_attn_bytes_total * byte).m_as(MB), precision=0, commas=False)
+    from mlsysim.fmt import fmt
+    naive_mb_str = fmt((naive_attn_bytes_total * byte).m_as(MB), precision=1, commas=False)
+    flash_mb_str = fmt((flash_attn_bytes_total * byte).m_as(MB), precision=1, commas=False)
     savings_str = fmt(savings_ratio, precision=0, commas=False)
 
     head_n_str = fmt(seq_len, precision=0, commas=False)
     head_d_str = fmt(head_dim, precision=0, commas=False)
-    head_bytes_str = fmt((seq_len * head_dim * bytes_per_elem * byte).m_as(MB), precision=0, commas=False)
-    naive_head_traffic_mb_str = fmt((naive_attn_bytes_per_head * byte).m_as(MB), precision=0, commas=False)
-    flash_head_traffic_mb_str = fmt((flash_attn_bytes_per_head * byte).m_as(MB), precision=0, commas=False)
+    head_bytes_str = fmt((seq_len * head_dim * bytes_per_elem * byte).m_as(MB), precision=1, commas=False)
+    naive_head_traffic_mb_str = fmt((naive_attn_bytes_per_head * byte).m_as(MB), precision=1, commas=False)
+    flash_head_traffic_mb_str = fmt((flash_attn_bytes_per_head * byte).m_as(MB), precision=1, commas=False)
     flash_savings_factor_str = fmt(savings_ratio, precision=0, commas=False)
 ```
 
@@ -957,6 +961,8 @@ Verify your understanding of memory-aware attention:
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FLASHATTENTION MEMORY SAVINGS (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -967,24 +973,22 @@ Verify your understanding of memory-aware attention:
 # │ Show: Two curves on log scale; shaded savings region.
 # │ How: S_vals = logspace(512, 131072); bytes = 2*S^2 vs 2*S*...; matplotlib.
 # │
-# │ Imports: numpy (np), matplotlib.pyplot (plt), mlsysim.core.constants (byte, GB)
+# │ Imports: numpy (np), matplotlib.pyplot (plt), mlsysim.core.constants (BYTES_FP16, byte, GB)
 # │ Exports: (figure only, no prose variables)
 # └─────────────────────────────────────────────────────────────────────────────
 # ┌── 1. CANVAS ────────────────────────────────────────────────────────────────
 # │ Plot standard attention (S²) vs FlashAttention (S) memory vs seq len;
 import numpy as np
 import matplotlib.pyplot as plt
-from mlsysim.core.constants import byte, GB
 from mlsysim.fmt import check
 
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.figure(figsize=(10, 6))
 
-
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
 S_vals = np.logspace(np.log2(512), np.log2(131072), num=200, base=2.0)
 
-bytes_per_element_fp16 = 2
+bytes_per_element_fp16 = BYTES_FP16.m_as(byte)
 num_heads = 32
 batch_size = 1
 
@@ -1025,7 +1029,7 @@ plt.text(69000, plt.ylim()[0]*1.5, ' Long context (65K)', rotation=90,
     )
 
 def annotate_ratio(n_val):
-    ratio = n_val / 2
+    ratio = n_val * bytes_per_element_fp16 / 4
     mem_val = (n_val**2 * bytes_per_element_fp16 * num_heads * byte).m_as(GB)
     plt.annotate(f'{int(ratio):,}x Savings',
                  xy=(n_val, mem_val),
@@ -1125,6 +1129,8 @@ The choice depends on the operational regime. For memory-bound inference (small 
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: kv-cache-size
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ KV CACHE MEMORY PER REQUEST (LEGO)
@@ -1137,81 +1143,103 @@ The choice depends on the operational regime. For memory-bound inference (small 
 # │       sharded INT8 (~0.17 GB/GPU), and max batch FP16 vs INT8.
 # │ How: Compute KV cache bytes from layers, KV heads, head width, sequence length, and element size.
 # │
-# │ Imports: mlsysim.fmt (check), mlsysim.core.constants (byte, GB)
+# │ Imports: mlsysim.fmt (check), mlsysim.core.constants (Llama/H100/precision constants),
+# │          mlsysim.physics (calc_kv_cache_size, model_memory),
+# │          mlsysim.models.registry (Models)
 # │ Exports: kv_fp16_gb_str, max_batch_fp16_str, max_batch_int8_str,
 # │          batch_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import byte, GB
-from mlsysim.fmt import fmt, MarkdownStr
+from mlsysim.physics import calc_kv_cache_size, model_memory
+from mlsysim.models.registry import Models
+from mlsysim.fmt import fmt_int,  fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class KVCacheAnalysis:
     """KV cache sizing and max batch capacity."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    num_layers = 80
-    num_kv_heads = 8       # GQA: 8 KV heads for 70B Llama
-    head_dim = 128
+    from mlsysim import Models, Hardware
+    from mlsysim.physics import calc_kv_cache_size, model_memory
+
+    model = Models.Language.Llama2_70B
     seq_len = 4096
-    bytes_fp16 = 2
-    bytes_int8 = 1
 
     # Capacity per GPU (H100 80 GB)
-    gpu_total_gb = 80
-    weight_fp16_shard_gb = 35 # 140 / 4 GPUs
-    weight_int4_shard_gb = 8.75
+    tensor_parallel_degree = 4
+    gpu_total_gb = Hardware.Cloud.H100.memory_capacity.m_as(GiB)
+    int4_bits = 4
+    fp16_bits = 16
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # Step 1: Base size in GB per request
-    kv_cache_bytes = 2 * num_layers * num_kv_heads * head_dim * seq_len * bytes_fp16
-    kv_fp16_gb_val = (kv_cache_bytes * byte).m_as(GB)
+    # Base size in GB per request (full model)
+    kv_cache_qty_f16 = calc_kv_cache_size(
+        model.layers, model.kv_heads, model.hidden_dim // model.heads,
+        seq_len, 1, bytes_per_elem=BYTES_FP16
+    )
+    kv_fp16_gb_val = kv_cache_qty_f16.m_as(GB)
+
+    kv_cache_qty_i8 = calc_kv_cache_size(
+        model.layers, model.kv_heads, model.hidden_dim // model.heads,
+        seq_len, 1, bytes_per_elem=BYTES_INT8
+    )
+    kv_int8_gb_val = kv_cache_qty_i8.m_as(GB)
+
+    # Shard weights (4-way TP)
+    weight_fp16_shard_gb = model_memory(model.parameters, BYTES_FP16, GB) / tensor_parallel_degree
+    weight_int4_shard_gb = model_memory(model.parameters, BYTES_INT4, GB) / tensor_parallel_degree
 
     # Max batch calculations
-    # Step 2: FP16 case: 45 GB available for KV
     avail_fp16_gb = gpu_total_gb - weight_fp16_shard_gb
-    max_batch_fp16_val = int(avail_fp16_gb / (kv_fp16_gb_val / 4))
+    max_batch_fp16_val = int(avail_fp16_gb / (kv_fp16_gb_val / tensor_parallel_degree))
 
-    # Step 6: INT8 case
     avail_int8_gb = gpu_total_gb - weight_int4_shard_gb
-    kv_int8_per_gpu = (kv_fp16_gb_val / 2) / 4
-    max_batch_int8_val = int(avail_int8_gb/kv_int8_per_gpu)
+    kv_int8_per_gpu = kv_int8_gb_val / tensor_parallel_degree
+    max_batch_int8_val = int(avail_int8_gb / kv_int8_per_gpu)
 
-    batch_ratio = max_batch_int8_val/max_batch_fp16_val
+    batch_ratio = max_batch_int8_val / max_batch_fp16_val
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import fmt_int,  check
     check(kv_fp16_gb_val > 0.1, f"KV cache size too low, got {kv_fp16_gb_val:.2f}")
     check(max_batch_int8_val > max_batch_fp16_val, "INT8 should increase batch size")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    from mlsysim.fmt import fmt_int,  fmt
     kv_fp16_gb_str = fmt(kv_fp16_gb_val, precision=2, commas=False)
-    kv_fp16_per_gpu_gb_str = fmt(kv_fp16_gb_val/4, precision=4, commas=False)
-    kv_int8_total_gb_str = fmt(kv_fp16_gb_val/2, precision=3, commas=False)
-    kv_int8_per_gpu_gb_str = fmt(kv_fp16_gb_val/2/4, precision=4, commas=False)
+    kv_fp16_per_gpu_gb_str = fmt(kv_fp16_gb_val/tensor_parallel_degree, precision=4, commas=False)
+    kv_int8_total_gb_str = fmt(kv_int8_gb_val, precision=3, commas=False)
+    kv_int8_per_gpu_gb_str = fmt(kv_int8_per_gpu, precision=4, commas=False)
     max_batch_fp16_str = fmt(max_batch_fp16_val, precision=0, commas=False)
     max_batch_int8_str = fmt(max_batch_int8_val, precision=0, commas=False)
     batch_ratio_str = fmt(batch_ratio, precision=1, commas=False)
-    avail_fp16_gb_str = fmt(int(avail_fp16_gb), precision=0, commas=False)
+    avail_fp16_gb_str = fmt_int(avail_fp16_gb, commas=False)
     weight_int4_gb_str = fmt(weight_int4_shard_gb, precision=2, commas=False)
     avail_int8_gb_str = fmt(avail_int8_gb, precision=2, commas=False)
+    weight_fp16_shard_gb_str = fmt(weight_fp16_shard_gb, precision=0, commas=False)
+    weight_fp16_total_gb_str = fmt(weight_fp16_shard_gb * tensor_parallel_degree, precision=0, commas=False)
+    tensor_parallel_degree_str = fmt(tensor_parallel_degree, precision=0, commas=False)
+    gpu_total_gb_str = fmt(gpu_total_gb, precision=0, commas=False)
+    int4_scale_num_str = fmt(int4_bits, precision=0, commas=False)
+    int4_scale_den_str = fmt(fp16_bits, precision=0, commas=False)
 ```
 
 A capacity calculation makes the serving impact of precision choices concrete.
 
 ::: {#nbk-performance-engineering-precision-dividend .callout-notebook title="The precision dividend"}
 
-**Problem**: A 70B parameter model is served on 4$\times$ H100 GPUs. The model weights in FP16 consume 140 GB (35 GB per GPU). KV cache at FP16 consumes `{python} KVCacheAnalysis.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
+**Problem**: A 70B parameter model is served on `{python} KVCacheAnalysis.tensor_parallel_degree_str`$\times$ H100 GPUs. The model weights in FP16 consume `{python} KVCacheAnalysis.weight_fp16_total_gb_str` GB (`{python} KVCacheAnalysis.weight_fp16_shard_gb_str` GB per GPU). KV cache at FP16 consumes `{python} KVCacheAnalysis.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
 
 **Before optimization** (all FP16):
 
-- Weights: 35 GB/GPU
-- Available for KV cache: $80 - 35 =$ `{python} KVCacheAnalysis.avail_fp16_gb_str` GB/GPU
+- Weights: `{python} KVCacheAnalysis.weight_fp16_shard_gb_str` GB/GPU
+- Available for KV cache: `{python} KVCacheAnalysis.gpu_total_gb_str` - `{python} KVCacheAnalysis.weight_fp16_shard_gb_str` = `{python} KVCacheAnalysis.avail_fp16_gb_str` GB/GPU
 - KV cache per request: `{python} KVCacheAnalysis.kv_fp16_gb_str` GB total, or approximately `{python} KVCacheAnalysis.kv_fp16_per_gpu_gb_str` GB/GPU
 - Maximum batch size: approximately `{python} KVCacheAnalysis.max_batch_fp16_str` requests
 
 **After optimization** (INT4 weights, INT8 KV cache):
 
-- Weights: 35 GB $\times$ (4/16) = `{python} KVCacheAnalysis.weight_int4_gb_str` GB/GPU (INT4)
-- Available for KV cache: $80 -$ `{python} KVCacheAnalysis.weight_int4_gb_str` $=$ `{python} KVCacheAnalysis.avail_int8_gb_str` GB/GPU
+- Weights: `{python} KVCacheAnalysis.weight_fp16_shard_gb_str` GB $\times$ (`{python} KVCacheAnalysis.int4_scale_num_str`/`{python} KVCacheAnalysis.int4_scale_den_str`) = `{python} KVCacheAnalysis.weight_int4_gb_str` GB/GPU (INT4)
+- Available for KV cache: `{python} KVCacheAnalysis.gpu_total_gb_str` - `{python} KVCacheAnalysis.weight_int4_gb_str` $=$ `{python} KVCacheAnalysis.avail_int8_gb_str` GB/GPU
 - KV cache per request (INT8): approximately `{python} KVCacheAnalysis.kv_int8_total_gb_str` GB total, or `{python} KVCacheAnalysis.kv_int8_per_gpu_gb_str` GB/GPU
 - Maximum batch size: approximately `{python} KVCacheAnalysis.max_batch_int8_str` requests
 
@@ -1379,9 +1407,11 @@ The real power of Triton emerges when fusing multiple operations. A Triton kerne
 Triton's adoption has accelerated rapidly since its integration into PyTorch's TorchInductor backend. When `torch.compile` identifies a fusion opportunity that requires a custom kernel, TorchInductor automatically generates Triton code for the fused operation. This means that many of the fusion benefits described in this section are available to users through a single `torch.compile` call, without writing any Triton code directly. For advanced use cases where the compiler's heuristics are insufficient, hand-written Triton kernels provide a middle ground between the accessibility of PyTorch and the performance of hand-tuned CUDA.
 
 ```{python}
-#| label: compilation-dividend
 #| echo: false
-from mlsysim.fmt import fmt, check
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: compilation-dividend
+from mlsysim.fmt import fmt_int,  fmt, check
 
 class CompilationDividend:
     """torch.compile speedup analysis for 13B model."""
@@ -1415,28 +1445,34 @@ class CompilationDividend:
     elem_ms_str = fmt(elem_ms, precision=2, commas=False)
     launch_ms_str = fmt(launch_ms, precision=2, commas=False)
     new_time_str = fmt(new_time_ms, precision=2, commas=False)
-    new_tps_str = fmt(round(new_tps), precision=0, commas=False)
+    new_tps_str = fmt_int(new_tps, commas=False)
     speedup_str = fmt(speedup, precision=2, commas=False)
-    gemm_share_str = fmt(round(gemm_share_post), precision=0, commas=False)
+    gemm_share_str = fmt_int(gemm_share_post, commas=False)
+    base_tps_str = fmt_int(base_tps, commas=False)
+    elementwise_share_pct_str = fmt_int(round(elementwise_share * 100), commas=False)
+    launch_share_pct_str = fmt_int(round(launch_share * 100), commas=False)
+    fusion_reduction_pct_str = fmt_int(round(fusion_reduction * 100), commas=False)
+    launch_reduction_pct_str = fmt_int(round(launch_reduction * 100), commas=False)
+    addressable_share_pct_str = fmt_int(round((elementwise_share + launch_share) * 100), commas=False)
 ```
 
 A simple profile breakdown shows how compiler optimizations convert overhead into useful throughput.
 
 ::: {#nbk-performance-engineering-compilation-dividend .callout-notebook title="The compilation dividend"}
 
-**Problem**: A 13B parameter model is deployed for inference. Without compilation, the PyTorch eager mode processes 120 tokens/second on a single H100. The Nsight Systems trace reveals that 35 percent of step time is spent in element-wise kernels (LayerNorm, GELU, residual additions) and 15 percent is kernel launch overhead. Applying `torch.compile` with the `max-autotune` backend, estimate the new throughput.
+**Problem**: A 13B parameter model is deployed for inference. Without compilation, the PyTorch eager mode processes `{python} CompilationDividend.base_tps_str` tokens/second on a single H100. The Nsight Systems trace reveals that `{python} CompilationDividend.elementwise_share_pct_str` percent of step time is spent in element-wise kernels (LayerNorm, GELU, residual additions) and `{python} CompilationDividend.launch_share_pct_str` percent is kernel launch overhead. Applying `torch.compile` with the `max-autotune` backend, estimate the new throughput.
 
 **Math**:
 
 Step 1: Identify the addressable overhead.
-Element-wise kernels (35 percent) and launch overhead (15 percent) total 50 percent of execution time. torch.compile fuses element-wise operations (reducing their time by approximately 70 percent due to eliminated HBM round-trips) and reduces kernel launches (eliminating most launch overhead).
+Element-wise kernels (`{python} CompilationDividend.elementwise_share_pct_str` percent) and launch overhead (`{python} CompilationDividend.launch_share_pct_str` percent) total `{python} CompilationDividend.addressable_share_pct_str` percent of execution time. torch.compile fuses element-wise operations (reducing their time by approximately `{python} CompilationDividend.fusion_reduction_pct_str` percent due to eliminated HBM round-trips) and reduces kernel launches (eliminating most launch overhead).
 
 Step 2: Estimate postcompilation time.
 Original time per token: $1/120 =$ `{python} CompilationDividend.tpt_str` ms.
 
 - GEMM time (unchanged): `{python} CompilationDividend.tpt_str` $\times 0.50 =$ `{python} CompilationDividend.gemm_ms_str` ms
-- Element-wise time (70 percent reduction): `{python} CompilationDividend.tpt_str` $\times 0.35 \times 0.30 =$ `{python} CompilationDividend.elem_ms_str` ms
-- Launch overhead (80 percent reduction): `{python} CompilationDividend.tpt_str` $\times 0.15 \times 0.20 =$ `{python} CompilationDividend.launch_ms_str` ms
+- Element-wise time (`{python} CompilationDividend.fusion_reduction_pct_str` percent reduction): `{python} CompilationDividend.tpt_str` $\times 0.35 \times 0.30 =$ `{python} CompilationDividend.elem_ms_str` ms
+- Launch overhead (`{python} CompilationDividend.launch_reduction_pct_str` percent reduction): `{python} CompilationDividend.tpt_str` $\times 0.15 \times 0.20 =$ `{python} CompilationDividend.launch_ms_str` ms
 
 New time per token: `{python} CompilationDividend.gemm_ms_str` $+$ `{python} CompilationDividend.elem_ms_str` $+$ `{python} CompilationDividend.launch_ms_str` $=$ `{python} CompilationDividend.new_time_str` ms, yielding approximately `{python} CompilationDividend.new_tps_str` tokens/second.
 
@@ -1450,54 +1486,6 @@ Graph compilation automates what manual kernel engineering achieves for individu
 
 Speculative decoding is a latency optimization that breaks the sequential bottleneck of autoregressive generation by using a smaller draft model to predict multiple tokens, which are then verified in parallel by the target model. The performance-engineering relevance is that speculative decoding raises the effective arithmetic intensity of the decode phase: a single forward pass of the target model now processes $k$ candidate tokens for the same weight-streaming cost as one token, shifting the operating point from deeply memory-bound toward the ridge point on the roofline. The speedup is bounded by the draft model's acceptance rate and breaks down when the draft model is too cheap (low acceptance) or too expensive (compute-bound verification). It interacts with batching: at large batch sizes the decode phase is already closer to compute-bound, so the marginal benefit of speculation shrinks. The full algorithm, speedup analysis, and SLA-driven deployment patterns are in @sec-inference-scale-speculative-decoding-c438.
 
-```{python}
-#| echo: false
-#| label: moe-economics
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ MOE VS DENSE ECONOMICS
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: @sec-performance-engineering-moe MoE economics prose
-# │
-# │ Goal: Quantify compute and bandwidth savings from MoE vs dense for a
-# │       1T-parameter dense model vs a 370B total / 37B active MoE model,
-# │       showing MoE decouples capacity from inference cost.
-# │ Show: ~2 TB vs ~74 GB memory bandwidth per decode step → >5x reduction
-# │ Exports: dense_mem_str, moe_mem_str, compute_ratio_str, bw_ratio_str
-# └─────────────────────────────────────────────────────────────────────────────
-
-from mlsysim.fmt import fmt, check
-
-# ┌── LEGO ───────────────────────────────────────────────
-class MoEEconomics:
-    """MoE vs dense model memory and compute economics."""
-
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    dense_params_b = 1000          # 1T dense model parameters (billions → bytes below)
-    moe_total_params_b = 370       # MoE total parameters (billions)
-    moe_active_params_b = 37       # MoE active parameters per token (10% sparsity)
-    bytes_fp16 = 2                 # FP16: 2 bytes per parameter
-    experts_per_layer = 8
-    active_experts = 1             # top-1 routing
-
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    dense_mem_fp16 = dense_params_b * bytes_fp16          # 2000 GB (2 TB)
-    moe_mem_fp16 = moe_total_params_b * bytes_fp16        # 740 GB total
-    dense_decode_bytes = dense_params_b * bytes_fp16      # ~2 TB bandwidth per decode
-    compute_ratio = dense_params_b/moe_active_params_b  # ~27x compute reduction
-    moe_decode_bytes = moe_active_params_b * bytes_fp16   # 74 GB
-    bw_ratio = dense_decode_bytes/moe_decode_bytes
-
-    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    check(compute_ratio > 5, f"MoE should give >5x compute reduction, got {compute_ratio:.1f}x")
-    check(bw_ratio > 5, f"MoE should give >5x BW reduction, got {bw_ratio:.1f}x")
-
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    dense_mem_str = fmt(dense_mem_fp16, precision=0, commas=False)
-    moe_mem_str = fmt(moe_mem_fp16, precision=0, commas=False)
-    compute_ratio_str = fmt(compute_ratio, precision=0, commas=False)
-    bw_ratio_str = fmt(bw_ratio, precision=0, commas=False)
-```
-
 ## Mixture of Experts {#sec-performance-engineering-moe}
 
 A 1-trillion parameter dense model delivers superior reasoning capabilities, but its latency and compute costs are prohibitive for most serving budgets. The **Mixture of Experts (MoE)** architecture resolves this tension by training a massive model but activating only a small, relevant fraction of it for any given token. By routing inputs to specialized sub-networks, MoE breaks the iron link between model size and inference cost.
@@ -1510,7 +1498,9 @@ A standard MoE transformer layer replaces the feed-forward network (FFN) with mu
 
 ```{python}
 #| echo: false
-#| label: nvlink-h100-bw
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: nvlink-h_h100-bw
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ H100 NVLINK BANDWIDTH (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1518,18 +1508,17 @@ A standard MoE transformer layer replaces the feed-forward network (FFN) with mu
 # │
 # │ Goal: Provide H100 NVLink 4.0 bandwidth for the AllReduce data-volume example.
 # │ Show: ~900 GB/s NVLink bandwidth.
-# │ How: pulling NVLINK_H100_BW from mlsysim.core.constants.
+# │ How: pulling Hardware.Cloud.H100.nvlink.bandwidth from mlsysim.core.constants.
 # │
-# │ Imports: mlsysim.core.constants (NVLINK_H100_BW, GB, second)
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.H100.nvlink.bandwidth, GB, second)
 # │ Exports: NvlinkH100.bw_gbps_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import NVLINK_H100_BW, GB, second
 
 class NvlinkH100:
     """H100 NVLink 4.0 bandwidth reference."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    bw = NVLINK_H100_BW
+    bw = Hardware.Cloud.H100.nvlink.bandwidth
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     bw_gbps = bw.m_as(GB/second)
@@ -1552,6 +1541,8 @@ The potential benefit of communication-computation overlap depends on the relati
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: overlap-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ COMMUNICATION-COMPUTATION OVERLAP ANALYSIS
@@ -1566,13 +1557,14 @@ The potential benefit of communication-computation overlap depends on the relati
 # │ How: AllReduce time = 2*(N-1)/N * gradient_bytes/nvlink_bw; backward time =
 # │       backward_flops / (h100_tflops * MFU); overlap removes min(back, AR).
 # │
-# │ Imports: mlsysim.core.constants (NVLINK_H100_BW, H100_FLOPS_FP16_TENSOR,
-# │          GB, second, flop), mlsysim.fmt (check)
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.H100.nvlink.bandwidth, Hardware.Cloud.H100.compute.peak_flops,
+# │          BYTES_FP16, GB, second, flop), mlsysim.physics
+# │          (calc_ring_allreduce_time), mlsysim.fmt (check)
 # │ Exports: gradient_gb_str, allreduce_ms_str, backward_ms_str, forward_ms_str,
 # │          step_no_overlap_ms_str, step_overlap_ms_str, overlap_speedup_str,
 # │          overlap_status_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import NVLINK_H100_BW, H100_FLOPS_FP16_TENSOR, byte, GB, second, flop
+from mlsysim.physics import calc_ring_allreduce_time
 from mlsysim.fmt import fmt, MarkdownStr, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -1580,34 +1572,41 @@ class OverlapCalc:
     """Communication-computation overlap speedup for 7B model on 8 H100s."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    model_params = 7e9           # 7B parameter model
-    bytes_per_param_fp16 = 2     # FP16 gradients
+    from mlsysim import Models, Hardware
+    from mlsysim.physics import calc_ring_allreduce_time
+
+    m = Models.Language.Llama3_8B # 7-8B scale
+    h = Hardware.Cloud.H100
     num_gpus = 8
-    nvlink_bw = NVLINK_H100_BW.m_as(byte/second)  # H100 NVLink: 900 GB/s bidirectional
-    ring_allreduce_factor = 2 * (num_gpus - 1) / num_gpus
+    nvlink_bw = h.memory_bw
 
     # Backward pass compute: ~2 * forward FLOPs (gradient computation)
     # Forward FLOPs ≈ 2 * P * tokens_per_gpu, where tokens_per_gpu = S * B_per_gpu
-    # Simplified: backward ≈ 4 * P * tokens_per_gpu
     tokens_per_gpu = 2048        # sequence length * per-GPU batch
-    forward_flops = 2 * model_params * tokens_per_gpu
+    forward_flops = 2 * m.parameters.m_as(param) * tokens_per_gpu * ureg.flop
     backward_flops = 2 * forward_flops  # backward is ~2x forward
-    h100_fp16_tflops = H100_FLOPS_FP16_TENSOR.m_as(flop/second)  # Tensor core TFLOP/s
-    mfu = 0.40                   # Realistic MFU
+    mfu = (Literature.Training.MfuLow + Literature.Training.MfuHigh) / 2
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    # Step 1: Gradient size (FP16)
+    gradient_qty = m.parameters.m_as(param) * 2 * ureg.byte
 
-    # Step 1: Gradient size
-    gradient_bytes = model_params * bytes_per_param_fp16
-
-    # Step 2: AllReduce time (ring): 2*(N-1)/N * gradient_bytes/bandwidth
-    allreduce_time_s = ring_allreduce_factor * gradient_bytes/nvlink_bw
+    # Step 2: AllReduce time (ring)
+    t_comm = calc_ring_allreduce_time(
+        gradient_qty,
+        num_gpus,
+        nvlink_bw,
+        0 * ureg.second,
+    )
+    allreduce_time_s = t_comm.m_as("second")
+    ring_allreduce_factor = 2 * (num_gpus - 1) / num_gpus
 
     # Step 3: Backward pass compute time
-    backward_time_s = backward_flops / (h100_fp16_tflops * mfu)
+    peak_flops = h.compute.precision_flops.get('fp16', h.compute.peak_flops)
+    backward_time_s = (backward_flops / (peak_flops * mfu)).m_as("second")
 
-    # Step 4: Forward pass compute time (roughly half of backward)
-    forward_time_s = forward_flops / (h100_fp16_tflops * mfu)
+    # Step 4: Forward pass compute time
+    forward_time_s = (forward_flops / (peak_flops * mfu)).m_as("second")
 
     # Step time without overlap
     step_no_overlap = forward_time_s + backward_time_s + allreduce_time_s
@@ -1622,22 +1621,24 @@ class OverlapCalc:
     can_overlap = backward_time_s > allreduce_time_s
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    check(overlap_speedup > 1.0,
-          f"Overlap should provide speedup, got {overlap_speedup:.2f}x")
+    from mlsysim.fmt import check
+    check(overlap_speedup > 1.0, f"Overlap should provide speedup, got {overlap_speedup:.2f}x")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    gradient_gb_str = fmt((gradient_bytes * byte).m_as(GB), precision=0, commas=False)
+    from mlsysim.fmt import fmt, MarkdownStr
+    gradient_gb_str = fmt(gradient_qty.m_as(GB), precision=1, commas=False)
     ring_allreduce_factor_str = fmt(ring_allreduce_factor, precision=2, commas=False)
     allreduce_ms_str = fmt(allreduce_time_s * 1000, precision=1, commas=False)
     backward_ms_str = fmt(backward_time_s * 1000, precision=1, commas=False)
     step_no_overlap_ms_str = fmt(step_no_overlap * 1000, precision=1, commas=False)
     step_overlap_ms_str = fmt(step_with_overlap * 1000, precision=1, commas=False)
     overlap_speedup_str = fmt(overlap_speedup, precision=2, commas=False)
-    # Renamed from overlap_status → overlap_status_str for canonical suffix.
     overlap_status_str = MarkdownStr("fully hidden" if can_overlap else "partially hidden")
+    num_gpus_str = fmt(num_gpus, precision=0, commas=False)
+    nvlink_bw_gbs_str = fmt(nvlink_bw.m_as(GB/second), precision=0, commas=False)
 ```
 
-Consider a 7B parameter model trained on 8 H100 GPUs within a single node connected by NVLink at 900 GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers $2 \times (N-1)/N =$ `{python} OverlapCalc.ring_allreduce_factor_str` times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
+Consider a 7B parameter model trained on `{python} OverlapCalc.num_gpus_str` H100 GPUs within a single node connected by NVLink at `{python} OverlapCalc.nvlink_bw_gbs_str` GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers $2 \times (N-1)/N =$ `{python} OverlapCalc.ring_allreduce_factor_str` times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
 
 Without overlap, the training step requires `{python} OverlapCalc.step_no_overlap_ms_str` ms (forward + backward + AllReduce). With overlap, the AllReduce is `{python} OverlapCalc.overlap_status_str` behind the backward pass, reducing the step time to `{python} OverlapCalc.step_overlap_ms_str` ms, a `{python} OverlapCalc.overlap_speedup_str`$\times$ improvement. This example illustrates a critical property: overlap is most effective when backward compute time exceeds AllReduce time. As @fig-overlap-budget shows, as cluster scale increases from 8 to 1024 GPUs, overlap efficiency degrades from ~90 percent to ~18 percent because communication overhead eventually exceeds the computation budget. For smaller models or slower interconnects (for example, PCIe at 64 GB/s instead of NVLink at 900 GB/s), the AllReduce would exceed the backward pass, and no amount of overlap can fully hide the communication.
 
@@ -1645,6 +1646,8 @@ Without overlap, the training step requires `{python} OverlapCalc.step_no_overla
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ OVERLAP BUDGET (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1664,7 +1667,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 plt.style.use('seaborn-v0_8-whitegrid')
-
 
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
 gpus = np.array([8, 16, 32, 64, 128, 256, 512, 1024])
@@ -1691,7 +1693,6 @@ fig, ax1 = plt.subplots(figsize=(10, 6))
 c_pure = '#1f77b4'
 c_overlap = '#2ca02c'
 c_exposed = '#d62728'
-
 
 # ┌── 3. RENDER ────────────────────────────────────────────────────────────────
 p1 = ax1.bar(x, comp_overlapped, label='Overlapped Communication', color=c_overlap, alpha=0.8, edgecolor='white')
@@ -1817,7 +1818,51 @@ The roofline model from @sec-performance-engineering-roofline becomes a diagnost
 
 A kernel that falls far below both the compute ceiling and the bandwidth ceiling has an implementation problem: launch overhead, poor memory access patterns, or low occupancy. A kernel that reaches the bandwidth ceiling but falls below the compute ceiling is memory-bound, and further optimization requires reducing memory traffic (fusion, precision) rather than improving compute efficiency. A kernel at the compute ceiling is compute-bound and can only be improved by algorithmic changes (reducing FLOPs) or faster hardware.
 
-Consider a concrete example: a LayerNorm kernel profiled on an H100 reports 15 TFLOP/s of achieved compute and 2.8 TB/s of achieved memory bandwidth. Its arithmetic intensity is $15 \text{ TFLOP/s} / 2.8 \text{ TB/s} \approx 5.4$ FLOP/byte. The H100's ridge point is approximately `{python} RooflineRidgeCalc.h100_fp16_ridge_str` FLOP/byte at FP16. Since 5.4 is far below `{python} RooflineRidgeCalc.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved 2.8 TB/s (84 percent of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield little gain; performance can only be improved materially by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Roofline diagnosis — LayerNorm profiling example.
+# │ Exports: RooflineProfilingRecap.h100_fp16_ridge_str
+from mlsysim import *
+from mlsysim.core.constants import *
+class RooflineProfilingRecap:
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    h100_fp16_ridge_str = fmt(Hardware.Cloud.H100.ridge_point("fp16").m_as("flop/byte"), precision=1, commas=False)
+```
+
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Roofline diagnosis — LayerNorm profiling example.
+# │ Exports: MemoryWallProfilingRecap.h100_hbm_bw_str
+from mlsysim import *
+from mlsysim.core.constants import *
+class MemoryWallProfilingRecap:
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    h100_hbm_bw_str = fmt(Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second), precision=2, commas=False)
+```
+
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Roofline diagnosis — LayerNorm profiling example.
+# │ Exports: LayerNormRoofline.achieved_tflops_str, achieved_tbs_str, arithmetic_intensity_str
+from mlsysim import *
+from mlsysim.core.constants import *
+class LayerNormRoofline:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    achieved_tflops = 15
+    achieved_tbs = 2.8
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    arithmetic_intensity = achieved_tflops / achieved_tbs
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    achieved_tflops_str = fmt(achieved_tflops, precision=0, commas=False)
+    achieved_tbs_str = fmt(achieved_tbs, precision=1, commas=False)
+    arithmetic_intensity_str = fmt(arithmetic_intensity, precision=1, commas=False)
+```
+Consider a concrete example: a LayerNorm kernel profiled on an H100 reports `{python} LayerNormRoofline.achieved_tflops_str` TFLOP/s of achieved compute and `{python} LayerNormRoofline.achieved_tbs_str` TB/s of achieved memory bandwidth. Its arithmetic intensity is `{python} LayerNormRoofline.achieved_tflops_str` TFLOP/s / `{python} LayerNormRoofline.achieved_tbs_str` TB/s $\approx$ `{python} LayerNormRoofline.arithmetic_intensity_str` FLOP/byte. The H100's ridge point is approximately `{python} RooflineProfilingRecap.h100_fp16_ridge_str` FLOP/byte at FP16. Since `{python} LayerNormRoofline.arithmetic_intensity_str` is far below `{python} RooflineProfilingRecap.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved `{python} LayerNormRoofline.achieved_tbs_str` TB/s (84 percent of the H100's `{python} MemoryWallProfilingRecap.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield little gain; performance can only be improved materially by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
 
 ### PyTorch profiler workflow {#sec-performance-engineering-pytorch-profiler}
 
@@ -1918,25 +1963,67 @@ CPU-bound data loading causes GPU utilization to drop periodically to zero while
 
 A full decode trace shows how several of these smaller bottlenecks can combine into the dominant loss.
 
+```{python}
+#| echo: false
+from mlsysim.fmt import fmt, fmt_int
+#| label: profiler-detective-calc
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: Profiler-detective decode bottleneck scenario for callout below.
+# │ Exports: ProfilerDetective.*_str
+class ProfilerDetective:
+    observed_tps = 45
+    ceiling_tps = 96
+    decode_traffic_gb = 35
+    hidden_performance_pct = 53
+    gemm_bandwidth_tbs = 2.8
+    gemm_efficiency_pct = 84
+    gemm_time_share_pct = 42
+    attn_share_pct = 28
+    layernorm_share_pct = 12
+    softmax_share_pct = 8
+    launch_gap_pct = 10
+    kv_cache_bandwidth_tbs = 1.9
+    kernels_per_layer = 120
+    fused_kernels_per_layer = 30
+    non_gemm_share_pct = 100 - gemm_time_share_pct
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    observed_tps_str = fmt_int(observed_tps, commas=False)
+    ceiling_tps_str = fmt_int(ceiling_tps, commas=False)
+    decode_traffic_gb_str = fmt(decode_traffic_gb, precision=0, commas=False)
+    hidden_performance_pct_str = fmt(hidden_performance_pct, precision=0, commas=False)
+    gemm_bandwidth_tbs_str = fmt(gemm_bandwidth_tbs, precision=1, commas=False)
+    gemm_efficiency_pct_str = fmt(gemm_efficiency_pct, precision=0, commas=False)
+    gemm_time_share_pct_str = fmt(gemm_time_share_pct, precision=0, commas=False)
+    attn_share_pct_str = fmt(attn_share_pct, precision=0, commas=False)
+    layernorm_share_pct_str = fmt(layernorm_share_pct, precision=0, commas=False)
+    softmax_share_pct_str = fmt(softmax_share_pct, precision=0, commas=False)
+    launch_gap_pct_str = fmt(launch_gap_pct, precision=0, commas=False)
+    kv_cache_bandwidth_tbs_str = fmt(kv_cache_bandwidth_tbs, precision=1, commas=False)
+    kernels_per_layer_str = fmt_int(kernels_per_layer, commas=False)
+    fused_kernels_per_layer_str = fmt_int(fused_kernels_per_layer, commas=False)
+    non_gemm_share_pct_str = fmt(non_gemm_share_pct, precision=0, commas=False)
+```
+
 ::: {#nbk-performance-engineering-profiler-detective .callout-notebook title="The profiler detective"}
 
-**Problem**: A 7B parameter LLM runs on a single H100 and shows 45 tokens/second during autoregressive generation at batch size 1. The pure FP16 weight-read roofline is higher, but after budgeting roughly 35 GB of total per-token traffic for weights, KV-cache reads, sampling, synchronization, and launch overhead, the bandwidth-limited full-decode ceiling is approximately 96 tokens/second. Where is the remaining 53 percent of realizable decode-step performance hiding?
+**Problem**: A 7B parameter LLM runs on a single H100 and shows `{python} ProfilerDetective.observed_tps_str` tokens/second during autoregressive generation at batch size 1. The pure FP16 weight-read roofline is higher, but after budgeting roughly `{python} ProfilerDetective.decode_traffic_gb_str` GB of total per-token traffic for weights, KV-cache reads, sampling, synchronization, and launch overhead, the bandwidth-limited full-decode ceiling is approximately `{python} ProfilerDetective.ceiling_tps_str` tokens/second. Where is the remaining `{python} ProfilerDetective.hidden_performance_pct_str` percent of realizable decode-step performance hiding?
 
 **Investigation**:
 
-Step 1: Kernel-level analysis. Run Nsight Compute on the dominant GEMM kernel. Result: achieves 2.8 TB/s effective bandwidth out of the H100's `{python} MemoryWallScenario.h100_hbm_bw_str` TB/s peak. Efficiency: 84 percent. This kernel is performing well.
+Step 1: Kernel-level analysis. Run Nsight Compute on the dominant GEMM kernel. Result: achieves `{python} ProfilerDetective.gemm_bandwidth_tbs_str` TB/s effective bandwidth out of the H100's `{python} MemoryWallProfilingRecap.h100_hbm_bw_str` TB/s peak. Efficiency: `{python} ProfilerDetective.gemm_efficiency_pct_str` percent. This kernel is performing well.
 
-Step 2: Trace-level analysis. Run Nsight Systems on a full decode step. Result: 42 percent of step time is spent in GEMM kernels. The remaining 58 percent is split between:
+Step 2: Trace-level analysis. Run Nsight Systems on a full decode step. Result: `{python} ProfilerDetective.gemm_time_share_pct_str` percent of step time is spent in GEMM kernels. The remaining `{python} ProfilerDetective.non_gemm_share_pct_str` percent is split between:
 
-- Attention kernels (including KV cache reads): 28 percent
-- Layer normalization and activation kernels: 12 percent
-- Softmax and top-$k$ sampling: 8 percent
-- Kernel launch gaps: 10 percent
+- Attention kernels (including KV cache reads): `{python} ProfilerDetective.attn_share_pct_str` percent
+- Layer normalization and activation kernels: `{python} ProfilerDetective.layernorm_share_pct_str` percent
+- Softmax and top-$k$ sampling: `{python} ProfilerDetective.softmax_share_pct_str` percent
+- Kernel launch gaps: `{python} ProfilerDetective.launch_gap_pct_str` percent
 
 Step 3: Identify optimization targets.
 
-- The KV cache attention kernel achieves only 1.9 TB/s bandwidth because of irregular memory access patterns. Fix: Implement KV cache quantization (INT8) with better memory layout.
-- Kernel launch gaps (10 percent of time) come from 120+ individual kernel launches per layer. Fix: Apply `torch.compile` to fuse element-wise operations, reducing to ~30 kernels per layer.
+- The KV cache attention kernel achieves only `{python} ProfilerDetective.kv_cache_bandwidth_tbs_str` TB/s bandwidth because of irregular memory access patterns. Fix: Implement KV cache quantization (INT8) with better memory layout.
+- Kernel launch gaps (`{python} ProfilerDetective.launch_gap_pct_str` percent of time) come from `{python} ProfilerDetective.kernels_per_layer_str`+ individual kernel launches per layer. Fix: Apply `torch.compile` to fuse element-wise operations, reducing to ~`{python} ProfilerDetective.fused_kernels_per_layer_str` kernels per layer.
 - Layer normalization and activation kernels are unfused. Fix: Fused LayerNorm-GELU kernel via Triton.
 
 **Systems insight**: The dominant GEMM is near-optimal, but secondary operations and launch overhead consume over half the execution time. Systematic profiling reveals that the bottleneck is not where intuition suggests (the largest kernel) but in the accumulated overhead of many small operations.
@@ -1982,8 +2069,10 @@ While Hardware Utilization reports how often GPUs are busy, it fails to distingu
 :::
 
 ```{python}
-#| label: fleet-efficiency-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: fleet-efficiency-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FLEET EFFICIENCY ANALYSIS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1993,20 +2082,20 @@ While Hardware Utilization reports how often GPUs are busy, it fails to distingu
 # │ Show: How the "Scaling Tax" reduces MFU from a 65% local peak to 48% fleet avg.
 # │ How: Compute useful training FLOPs and divide by peak cluster FLOPs over wall time.
 # │
-# │ Imports: mlsysim.core.constants (BILLION, TRILLION, H100_FLOPS_FP16_TENSOR, LLAMA2_70B_PARAMS)
+# │ Imports: mlsysim.core.constants (TRILLION, Hardware.Cloud.H100.compute.peak_flops, Models.Language.Llama2_70B.parameters),
+# │          mlsysim.physics (calc_transformer_training_flops)
 # │ Exports: fleet_params_b_str, fleet_nodes_str, fleet_t_step_ms_str,
 # │          fleet_local_mfu_str, fleet_global_mfu_str, fleet_scaling_tax_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import BILLION, TRILLION, H100_FLOPS_FP16_TENSOR, LLAMA2_70B_PARAMS, second, ms, TFLOPs, param
-from mlsysim.fmt import fmt, check, MarkdownStr
+from mlsysim.physics import calc_transformer_training_flops
+from mlsysim.fmt import fmt_int,  fmt, check, MarkdownStr
 
 class FleetEfficiencyCalc:
     """Calculates Fleet MFU and identifies the Scaling Tax."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    p_params = LLAMA2_70B_PARAMS.m_as(param)
     n_gpus = 128
-    r_peak_per_gpu = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second) * TRILLION
+    r_peak_per_gpu = Hardware.Cloud.H100.compute.peak_flops.m_as(TFLOPs/second) * TRILLION
     local_tokens_per_step = 2204
     fleet_tokens_per_step = 35446
 
@@ -2016,8 +2105,12 @@ class FleetEfficiencyCalc:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Step 1: Useful FLOPs per step from parameters and tokens processed
-    local_flops_per_step = 6 * p_params * local_tokens_per_step
-    fleet_flops_per_step = 6 * p_params * fleet_tokens_per_step
+    local_flops_per_step = calc_transformer_training_flops(
+        Models.Language.Llama2_70B.parameters, local_tokens_per_step
+    ).m_as(flop)
+    fleet_flops_per_step = calc_transformer_training_flops(
+        Models.Language.Llama2_70B.parameters, fleet_tokens_per_step
+    ).m_as(flop)
 
     # Step 2: MFU is useful FLOPs divided by peak cluster FLOPs over wall time
     local_mfu = local_flops_per_step / (8 * r_peak_per_gpu * (t_local_step_ms * ms).m_as(second))
@@ -2032,9 +2125,9 @@ class FleetEfficiencyCalc:
     fleet_params_b_str = MarkdownStr("70B")
     fleet_nodes_str = fmt(n_gpus, precision=0, commas=False)
     fleet_t_step_ms_str = fmt(t_fleet_step_ms, precision=0, commas=False)
-    fleet_local_mfu_str = fmt(local_mfu*100, precision=1, commas=False)
-    fleet_global_mfu_str = fmt(global_mfu*100, precision=1, commas=False)
-    fleet_scaling_tax_str = fmt(scaling_tax, precision=0, commas=False)
+    fleet_local_mfu_str = fmt_int(round(local_mfu * 100), commas=False)
+    fleet_global_mfu_str = fmt_int(round(global_mfu * 100), commas=False)
+    fleet_scaling_tax_str = fmt(scaling_tax, precision=1, commas=False)
 ```
 
 With MFU defined as useful work rather than raw busyness, the next calculation shows how distributed overhead turns a strong single-node number into a weaker fleet-wide result.
@@ -2044,7 +2137,7 @@ With MFU defined as useful work rather than raw busyness, the next calculation s
 **Problem**: A `{python} FleetEfficiencyCalc.fleet_params_b_str` parameter model achieves `{python} FleetEfficiencyCalc.fleet_local_mfu_str` percent MFU on a single 8-GPU node. When training scales to `{python} FleetEfficiencyCalc.fleet_nodes_str` H100 GPUs, how much MFU does inter-node communication overhead consume?
 
 *   **Local node baseline**\index{Model FLOPs Utilization!local node baseline}: A single 8-GPU node achieves **`{python} FleetEfficiencyCalc.fleet_local_mfu_str` percent MFU**.
-*   **Fleet performance**\index{Model FLOPs Utilization!fleet performance}: At 128 GPUs, the step time increases to **`{python} FleetEfficiencyCalc.fleet_t_step_ms_str` ms**, dropping MFU to **`{python} FleetEfficiencyCalc.fleet_global_mfu_str` percent**.
+*   **Fleet performance**\index{Model FLOPs Utilization!fleet performance}: At `{python} FleetEfficiencyCalc.fleet_nodes_str` GPUs, the step time increases to **`{python} FleetEfficiencyCalc.fleet_t_step_ms_str` ms**, dropping MFU to **`{python} FleetEfficiencyCalc.fleet_global_mfu_str` percent**.
 
 **Systems insight**: The **`{python} FleetEfficiencyCalc.fleet_scaling_tax_str` percent scaling tax** represents the cost of inter-node communication (InfiniBand latency) and synchronization barriers. In a healthy fleet, this tax should remain stable; a sudden increase in the scaling tax signals a **Scaling Regression**\index{Scaling!regression}—typically caused by a misaligned parallelization strategy or a "gray failure" in the network fabric.
 
@@ -2272,15 +2365,46 @@ Recognizing these pitfalls saves teams from wasting months optimizing the wrong 
 
 ## Summary {#sec-performance-engineering-summary}
 
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Chapter summary — roofline and FlashAttention recap.
+# │ Exports: RooflineSummaryRecap.h100_fp16_ridge_str
+from mlsysim import *
+from mlsysim.core.constants import *
+class RooflineSummaryRecap:
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    h100_fp16_ridge_str = fmt(Hardware.Cloud.H100.ridge_point("fp16").m_as("flop/byte"), precision=1, commas=False)
+```
 Performance engineering transforms a model that should be efficient into one that is, by attacking the fundamental bottleneck of modern ML systems: the memory wall. @fig-optimization-hierarchy illustrates the profiling hierarchy, providing four levels of diagnostic granularity from application-level global metrics down to hardware counters.
 
 ::: {#fig-optimization-hierarchy fig-env="figure" fig-pos="htb" fig-cap="**The Profiling Hierarchy**: Four levels of profiling granularity. Start at Level 4 (Application Profiling) for global symptoms, and drill down through Framework and Kernel profiling to find the root cause at Level 1 (Hardware Counters)." fig-alt="Pyramid diagram showing four levels of profiling: Hardware Counters at the base, Kernel Profiling, Framework Profiling, and Application Profiling at the top, with an arrow indicating drill-down from top to bottom."}
 ![](images/svg/profiling-hierarchy.svg)
 :::
 
-The Roofline Model provides the diagnostic framework, classifying operations as compute-bound or memory-bound based on their arithmetic intensity relative to the hardware's ridge point. For the NVIDIA H100, this ridge point is approximately `{python} RooflineRidgeCalc.h100_fp16_ridge_str` FLOP/byte at FP16, meaning most transformer operations fall in the memory-bound regime.
+The Roofline Model provides the diagnostic framework, classifying operations as compute-bound or memory-bound based on their arithmetic intensity relative to the hardware's ridge point. For the NVIDIA H100, this ridge point is approximately `{python} RooflineSummaryRecap.h100_fp16_ridge_str` FLOP/byte at FP16, meaning most transformer operations fall in the memory-bound regime.
 
-Operator fusion eliminates redundant HBM round-trips by combining sequences of operations into single kernels. FlashAttention is the canonical example, avoiding the quadratic attention intermediates that dominate long sequences through tiling and online softmax. In the 8K example above, this is a `{python} FlashAttentionSavings.savings_str`$\times$ reduction in materialized attention state. Ring Attention extends this principle across GPUs for extreme sequence lengths.
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Chapter summary — FlashAttention recap.
+# │ Exports: FlashAttentionSummaryRecap.savings_str
+class FlashAttentionSummaryRecap:
+    from mlsysim import Models
+    m = Models.Language.Llama2_70B
+    seq_len = 8192
+    head_dim = m.hidden_dim // m.heads
+    bytes_per_elem = BYTES_FP16.m_as(byte)
+    naive_attn_bytes_per_head = (
+        4 * seq_len * seq_len * bytes_per_elem
+        + 4 * seq_len * head_dim * bytes_per_elem
+    )
+    flash_attn_bytes_per_head = (3 + 1) * seq_len * head_dim * bytes_per_elem
+    savings_ratio = naive_attn_bytes_per_head / flash_attn_bytes_per_head
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    savings_str = fmt(savings_ratio, precision=0, commas=False)
+```
+Operator fusion eliminates redundant HBM round-trips by combining sequences of operations into single kernels. FlashAttention is the canonical example, avoiding the quadratic attention intermediates that dominate long sequences through tiling and online softmax. In the 8K example above, this is a `{python} FlashAttentionSummaryRecap.savings_str`$\times$ reduction in materialized attention state. Ring Attention extends this principle across GPUs for extreme sequence lengths.
 
 Precision engineering reduces bytes per transaction. FP8 formats (E4M3 for weights, E5M2 for gradients) double effective bandwidth on H100 hardware. Block-wise quantization (LLM.int8(), GPTQ, AWQ) handles the outlier features that defeat uniform quantization. KV cache compression to INT4 or INT8 directly increases serving batch size.
 

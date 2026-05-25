@@ -18,175 +18,6 @@ This appendix is designed as a reference. Start with the diagnostic summary tabl
 
 When training throughput is low, check MFU, communication fraction, and goodput ratio, then map each to its Computation, Communication, or Coordination axis. When scaling efficiency drops below expectations, use the Fleet Law decomposition to identify which term grew. When cost is exploding, use the C$^3$ scorecard to ensure that effort targets the dominant term, not a nonbottleneck.
 
-```{python}
-#| label: appendix-c3-setup
-#| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ C³ TAXONOMY—MASTER COMPUTATION
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: PERSISTENT—All values used throughout the C³ Taxonomy appendix:
-# │          @tbl-c3-dam-mapping, @tbl-c3-diagnostic-summary, @tbl-c3-traffic-light,
-# │          @tbl-c3-bottleneck-actions, three case studies, scorecard, and exercises.
-# │
-# │ Goal: Provide all C³ diagnostic constants—case study parameters, effective
-# │       FLOP/s decomposition, and threshold strings—for the fleet-scale
-# │       bottleneck classification reference appendix.
-# │ Show: See individual section prose for formatted values. This cell provides
-# │       the physics; string attributes are display-ready.
-# │ How: calc_effective_flops() with MFU, scaling efficiency, and goodput ratio;
-# │      all results as raw floats extracted via .m_as() or .magnitude where unitless.
-# │
-# │ Imports: mlsysim.core.constants (H100_FLOPS_FP16_TENSOR, MFU_*, SCALING_EFF_*, OVERHEAD_*, …)
-# │          mlsysim.formulas (calc_effective_flops)
-# │          mlsysim.book (fmt, check, fmt_math)
-# │ Exports: C3 = C3Taxonomy (accessed as C3.attribute in downstream cells)
-# └─────────────────────────────────────────────────────────────────────────────
-
-import math
-from mlsysim.core.constants import (
-    H100_FLOPS_FP16_TENSOR, TFLOPs, second, GB,
-    MFU_TRAINING_LOW, MFU_TRAINING_HIGH, MFU_INFERENCE_BATCH1,
-    SCALING_EFF_32GPU, SCALING_EFF_256GPU, SCALING_EFF_1024GPU, SCALING_EFF_8192GPU,
-    OVERHEAD_PIPELINE_BUBBLE, OVERHEAD_CHECKPOINT,
-    OVERHEAD_FAILURE_RECOVERY, OVERHEAD_MAINTENANCE,
-    GPU_MTTF_HOURS, GPUS_PER_HOST,
-    INFINIBAND_NDR_BW_GBS, NVLINK_H100_BW
-)
-from mlsysim.fmt import MarkdownStr, fmt_percent, fmt, check, fmt_math
-from mlsysim.core.formulas import calc_effective_flops
-
-class C3Taxonomy:
-    """Namespace for C³ diagnostic examples."""
-
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-
-    # Case 1: Underutilized Fleet (Computation bottleneck)
-    case1_n_gpus = 4096
-    case1_mfu = 0.15
-    case1_scaling_eff = 0.30
-    case1_target_mfu = MFU_TRAINING_HIGH
-
-    # Case 2: Communication Wall
-    case2_baseline_gpus = 64
-    case2_n_gpus = 512
-    case2_mfu = 0.45
-    case2_comm_fraction = 0.55
-    case2_observed_speedup = 4
-
-    # Case 3: Coordination Tax
-    case3_n_gpus = 10_000
-    case3_mfu = 0.40
-    case3_comm_fraction = 0.15
-    case3_goodput_ratio = 0.60
-    case3_oh_failure_pct = OVERHEAD_FAILURE_RECOVERY * 100
-    case3_oh_pipeline_pct = OVERHEAD_PIPELINE_BUBBLE * 100
-    case3_oh_checkpoint_pct = OVERHEAD_CHECKPOINT * 100
-    case3_oh_maintenance_pct = OVERHEAD_MAINTENANCE * 100
-    case3_oh_scheduler_pct = 0.17
-
-    # Effective FLOP/s calculation: 100K GPU cluster
-    h100_tflops = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second)
-    n_gpus_eff = 100_000
-    peak_pflops = n_gpus_eff * h100_tflops / 1000  # PFLOPs
-    goodput_all = 1.0 - (OVERHEAD_PIPELINE_BUBBLE +
-                         OVERHEAD_CHECKPOINT +
-                         OVERHEAD_FAILURE_RECOVERY +
-                         OVERHEAD_MAINTENANCE +
-                         case3_oh_scheduler_pct)
-    effective_pflops = calc_effective_flops(
-        peak_pflops, MFU_TRAINING_HIGH, SCALING_EFF_8192GPU, goodput_all
-    ).magnitude  # extract float; calc_effective_flops returns Quantity since formulas.py upgrade
-    c3_tax = peak_pflops/effective_pflops
-    eff_fraction = effective_pflops/peak_pflops
-
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-
-    # Case 1 derived values
-    case1_throughput_ratio = case1_mfu/MFU_TRAINING_HIGH
-    case1_wasted_pct = (1 - case1_mfu) * 100
-
-    # Case 2 derived values
-    case2_compute_fraction = 1 - case2_comm_fraction
-    case2_speedup_if_fixed = 1 / case2_compute_fraction  # Amdahl-like
-    case2_ideal_speedup = case2_n_gpus / case2_baseline_gpus
-    case2_scaling_efficiency = case2_observed_speedup / case2_ideal_speedup
-
-    # Case 3 derived values
-    case3_coord_fraction = 1 - case3_goodput_ratio
-    case3_compute_fraction = case3_goodput_ratio - case3_comm_fraction
-    case3_failure_interval_hours = GPU_MTTF_HOURS / case3_n_gpus
-
-    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    check(case1_mfu < MFU_TRAINING_LOW, "Case 1 MFU must be below training low")
-    check(case2_comm_fraction > 0.5, "Case 2 must be communication-dominated")
-    check(case2_ideal_speedup == 8, f"Case 2 expected speedup changed: {case2_ideal_speedup}")
-    check(abs(case2_scaling_efficiency - 0.5) < 1e-9, "Case 2 scaling efficiency should be 50%")
-    check(case3_goodput_ratio < 0.7, "Case 3 goodput must show coordination tax")
-    check(abs(case3_failure_interval_hours - 5) < 1e-9, "Case 3 failure cadence should be 5 hours")
-    check(eff_fraction < 0.15, "100K GPU effective fraction must be <15%")
-    check(c3_tax > 5, "C³ tax must show significant overhead")
-
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-
-    # Case 1
-    case1_n_gpus_str = fmt(case1_n_gpus, precision=0)
-    case1_mfu_pct_str = fmt_percent(case1_mfu, precision=0, commas=False)
-    case1_scaling_eff_pct_str = fmt_percent(case1_scaling_eff, precision=0, commas=False)
-    case1_target_mfu_pct_str = fmt_percent(MFU_TRAINING_HIGH, precision=0, commas=False)
-    case1_throughput_ratio_str = fmt(case1_throughput_ratio, precision=2, commas=False)
-    case1_target_gain_str = fmt(case1_target_mfu/case1_mfu, precision=1, commas=False)
-    case1_wasted_pct_str = fmt(case1_wasted_pct, precision=0, commas=False)
-
-    # Case 2
-    case2_baseline_gpus_str = fmt(case2_baseline_gpus, precision=0, commas=False)
-    case2_n_gpus_str = fmt(case2_n_gpus, precision=0)
-    case2_observed_speedup_str = fmt(case2_observed_speedup, precision=0, commas=False)
-    case2_ideal_speedup_str = fmt(case2_ideal_speedup, precision=0, commas=False)
-    case2_scaling_efficiency_pct_str = fmt_percent(case2_scaling_efficiency, precision=0, commas=False)
-    case2_mfu_pct_str = fmt_percent(case2_mfu, precision=0, commas=False)
-    case2_comm_pct_str = fmt_percent(case2_comm_fraction, precision=0, commas=False)
-    case2_compute_pct_str = fmt_percent(case2_compute_fraction, precision=0, commas=False)
-    case2_speedup_str = fmt(case2_speedup_if_fixed, precision=1, commas=False)
-    gpus_per_host_str = fmt(GPUS_PER_HOST, precision=0, commas=False)
-
-    # Case 3
-    case3_n_gpus_str = fmt(case3_n_gpus, precision=0)
-    case3_failure_interval_hours_str = fmt(case3_failure_interval_hours, precision=0, commas=False)
-    case3_mfu_pct_str = fmt_percent(case3_mfu, precision=0, commas=False)
-    case3_comm_pct_str = fmt_percent(case3_comm_fraction, precision=0, commas=False)
-    case3_goodput_pct_str = fmt_percent(case3_goodput_ratio, precision=0, commas=False)
-    case3_coord_pct_str = fmt_percent(case3_coord_fraction, precision=0, commas=False)
-
-    # Effective FLOP/s
-    peak_pflops_str = fmt(peak_pflops, precision=0)
-    effective_pflops_str = fmt(effective_pflops, precision=0)
-    eff_fraction_pct_str = fmt_percent(eff_fraction, precision=1, commas=False)
-    c3_tax_str = fmt(c3_tax, precision=1, commas=False)
-    mfu_pct_str = fmt_percent(MFU_TRAINING_HIGH, precision=0, commas=False)
-    scaling_pct_str = fmt_percent(SCALING_EFF_8192GPU, precision=0, commas=False)
-    goodput_pct_str = fmt_percent(goodput_all, precision=0, commas=False)
-
-    # Overhead constants
-    oh_pipeline_str = fmt_percent(OVERHEAD_PIPELINE_BUBBLE, precision=0, commas=False)
-    oh_checkpoint_str = fmt_percent(OVERHEAD_CHECKPOINT, precision=0, commas=False)
-    oh_failure_str = fmt_percent(OVERHEAD_FAILURE_RECOVERY, precision=0, commas=False)
-    oh_maintenance_str = fmt_percent(OVERHEAD_MAINTENANCE, precision=0, commas=False)
-    case3_oh_scheduler_pct_str = fmt_percent(case3_oh_scheduler_pct, precision=0, commas=False)
-
-    # Scaling efficiency constants
-    eff_32_str = fmt_percent(SCALING_EFF_32GPU, precision=0, commas=False)
-    eff_256_str = fmt_percent(SCALING_EFF_256GPU, precision=0, commas=False)
-    eff_1024_str = fmt_percent(SCALING_EFF_1024GPU, precision=0, commas=False)
-    eff_8192_str = fmt_percent(SCALING_EFF_8192GPU, precision=0, commas=False)
-
-    # MFU constants
-    mfu_low_str = fmt_percent(MFU_TRAINING_LOW, precision=0, commas=False)
-    mfu_high_str = fmt_percent(MFU_TRAINING_HIGH, precision=0, commas=False)
-
-# ┌── EXPORTS (Bridge to Text) ─────────────────────────────────────────────────
-C3 = C3Taxonomy
-```
-
 The **C$^3$ Taxonomy** is the diagnostic framework for fleet-scale ML systems engineering. Where the Single-Machine Foundations (@sec-dam-taxonomy) diagnose bottlenecks within a single node---data starvation, algorithmic overhead, or hardware saturation---the C$^3$ taxonomy diagnoses bottlenecks across the distributed fleet. Most fleet-scale performance problems can be diagnosed by identifying the dominant axis: Computation (are the accelerators doing useful math?), Communication (is the network moving data fast enough?), or Coordination (is the system spending too much time on synchronization, failure recovery, and scheduling?). Many production bottlenecks sit at intersections between these axes.
 
 ## From D·A·M to C$^3$ {#sec-c3-taxonomy-from-dam}
@@ -265,6 +96,22 @@ This intersection captures the idle compute caused by coordination overhead. Pip
 
 Engineering at this intersection focuses on minimizing idle time: increasing microbatches to shrink the pipeline bubble fraction, using asynchronous checkpointing to overlap writes with compute, and reducing the blast radius of failures so that recomputation is bounded. @sec-distributed-training-systems covers pipeline scheduling; @sec-fault-tolerance-reliability covers recovery strategies.
 
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-traffic-light
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: ## Rules of Thumb — C³ traffic light table
+# │ Exports: C3TrafficLight.mfu_low_str, C3TrafficLight.mfu_high_str
+from mlsysim.fmt import fmt, fmt_percent
+
+class C3TrafficLight:
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────
+    mfu_low_str = fmt_percent(Literature.Training.MfuLow, precision=0, commas=False)
+    mfu_high_str = fmt_percent(Literature.Training.MfuHigh, precision=0, commas=False)
+```
+
 ## Rules of Thumb {#sec-c3-taxonomy-rules-of-thumb}
 
 In the middle of a production incident, fast heuristics narrow the search space before a profiler is needed. These thresholds provide that first line of defense.
@@ -273,11 +120,11 @@ In the middle of a production incident, fast heuristics narrow the search space 
 
 @tbl-c3-traffic-light provides threshold-based triage for each C$^3$ axis.
 
-| **C$^3$ Axis**    | **Green (Healthy)**                        | **Yellow (Investigate)**                                          | **Red (Bottleneck)**                      |
-|:------------------|:-------------------------------------------|:------------------------------------------------------------------|:------------------------------------------|
-| **Computation**   | MFU $>$ `{python} C3.mfu_high_str` percent | MFU `{python} C3.mfu_low_str`--`{python} C3.mfu_high_str` percent | MFU $<$ `{python} C3.mfu_low_str` percent |
-| **Communication** | Comm fraction $<$ 20 percent               | Comm fraction 20--40 percent                                      | Comm fraction $>$ 40 percent              |
-| **Coordination**  | Goodput ratio $>$ 90 percent               | Goodput ratio 75--90 percent                                      | Goodput ratio $<$ 75 percent              |
+| **C$^3$ Axis**    | **Green (Healthy)**                                    | **Yellow (Investigate)**                                                                  | **Red (Bottleneck)**                                  |
+|:------------------|:-------------------------------------------------------|:------------------------------------------------------------------------------------------|:------------------------------------------------------|
+| **Computation**   | MFU $>$ `{python} C3TrafficLight.mfu_high_str` percent | MFU `{python} C3TrafficLight.mfu_low_str`--`{python} C3TrafficLight.mfu_high_str` percent | MFU $<$ `{python} C3TrafficLight.mfu_low_str` percent |
+| **Communication** | Comm fraction $<$ 20 percent                           | Comm fraction 20--40 percent                                                              | Comm fraction $>$ 40 percent                          |
+| **Coordination**  | Goodput ratio $>$ 90 percent                           | Goodput ratio 75--90 percent                                                              | Goodput ratio $<$ 75 percent                          |
 
 : **C$^3$ Traffic Light**: Quick triage thresholds for fleet-scale diagnosis. Green means the axis is healthy; yellow means it deserves investigation; red means it is the likely bottleneck. These thresholds assume well-optimized large-model training on current-generation hardware. {#tbl-c3-traffic-light}
 
@@ -293,6 +140,71 @@ Once the bottleneck axis is identified, @tbl-c3-bottleneck-actions shows which o
 
 : **What Works vs. What Is Wasted at Fleet Scale**: Optimizing a nondominant C$^3$ axis yields limited improvement and often worsens cost efficiency. A communication-bound fleet will gain little from faster GPUs until AllReduce and other communication bottlenecks are addressed. {#tbl-c3-bottleneck-actions}
 
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-case-studies
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: ## C³ Case Studies — three diagnostic scenarios
+from mlsysim.fmt import fmt, fmt_percent, check
+
+class C3CaseStudies:
+    case1_n_gpus = 4096
+    case1_mfu = 0.15
+    case1_target_mfu = Literature.Training.MfuHigh
+    case2_baseline_gpus = 64
+    case2_n_gpus = 512
+    case2_mfu = Literature.Training.MfuHigh * 0.9
+    case2_comm_fraction = 0.55
+    case2_observed_speedup = 4
+    case3_n_gpus = Systems.Clusters.Training_10K.total_accelerators
+    case3_mfu = (Literature.Training.MfuLow + Literature.Training.MfuHigh) / 2
+    case3_comm_fraction = 0.15
+    case3_goodput_ratio = 0.60
+    case3_oh_scheduler_pct = 0.17
+
+    case1_throughput_ratio = case1_mfu / Literature.Training.MfuHigh
+    case1_wasted_pct = (1 - case1_mfu) * 100
+    case2_compute_fraction = 1 - case2_comm_fraction
+    case2_speedup_if_fixed = 1 / case2_compute_fraction
+    case2_ideal_speedup = case2_n_gpus / case2_baseline_gpus
+    case2_scaling_efficiency = case2_observed_speedup / case2_ideal_speedup
+    case3_coord_fraction = 1 - case3_goodput_ratio
+    case3_failure_interval_hours = Systems.Reliability.Gpu.mttf_hours / case3_n_gpus
+
+    check(case2_ideal_speedup == 8, "Case 2 expected speedup changed")
+    check(abs(case3_failure_interval_hours - 5) < 1e-9, "Case 3 failure cadence should be 5 hours")
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────
+    case1_n_gpus_str = fmt(case1_n_gpus, precision=0)
+    case1_mfu_pct_str = fmt_percent(case1_mfu, precision=0, commas=False)
+    case1_target_mfu_pct_str = fmt_percent(Literature.Training.MfuHigh, precision=0, commas=False)
+    case1_target_gain_str = fmt(Literature.Training.MfuHigh / case1_mfu, precision=1, commas=False)
+    case1_wasted_pct_str = fmt(case1_wasted_pct, precision=0, commas=False)
+    case2_baseline_gpus_str = fmt(case2_baseline_gpus, precision=0, commas=False)
+    case2_n_gpus_str = fmt(case2_n_gpus, precision=0)
+    case2_observed_speedup_str = fmt(case2_observed_speedup, precision=0, commas=False)
+    case2_ideal_speedup_str = fmt(case2_ideal_speedup, precision=0, commas=False)
+    case2_scaling_efficiency_pct_str = fmt_percent(case2_scaling_efficiency, precision=0, commas=False)
+    case2_mfu_pct_str = fmt_percent(case2_mfu, precision=0, commas=False)
+    case2_comm_pct_str = fmt_percent(case2_comm_fraction, precision=0, commas=False)
+    case2_compute_pct_str = fmt_percent(case2_compute_fraction, precision=0, commas=False)
+    case2_speedup_str = fmt(case2_speedup_if_fixed, precision=1, commas=False)
+    gpus_per_host_str = fmt(Systems.Nodes.DGX_H100.accelerators_per_node, precision=0, commas=False)
+    case3_n_gpus_str = fmt(case3_n_gpus, precision=0)
+    case3_failure_interval_hours_str = fmt(case3_failure_interval_hours, precision=0, commas=False)
+    case3_mfu_pct_str = fmt_percent(case3_mfu, precision=0, commas=False)
+    case3_comm_pct_str = fmt_percent(case3_comm_fraction, precision=0, commas=False)
+    case3_goodput_pct_str = fmt_percent(case3_goodput_ratio, precision=0, commas=False)
+    case3_coord_pct_str = fmt_percent(case3_coord_fraction, precision=0, commas=False)
+    case3_oh_scheduler_pct_str = fmt_percent(case3_oh_scheduler_pct, precision=0, commas=False)
+    oh_pipeline_str = fmt_percent(Literature.Overheads.PipelineBubble, precision=0, commas=False)
+    oh_checkpoint_str = fmt_percent(Literature.Overheads.Checkpoint, precision=0, commas=False)
+    oh_failure_str = fmt_percent(Literature.Overheads.FailureRecovery, precision=0, commas=False)
+    oh_maintenance_str = fmt_percent(Literature.Overheads.Maintenance, precision=0, commas=False)
+```
+
 ## C$^3$ Case Studies {#sec-c3-taxonomy-case-studies}
 
 Theoretical constraints manifest as confusing symptoms in production. These scenarios illustrate how to apply the C$^3$ taxonomy to fleet-scale performance problems.
@@ -303,27 +215,27 @@ Each case isolates one dominant axis before showing which optimization levers fo
 
 #### Symptom {.unnumbered}
 
-You provision `{python} C3.case1_n_gpus_str` H100 GPUs for a large language model training run. The training loop runs without errors, but the PyTorch Profiler shows MFU of only `{python} C3.case1_mfu_pct_str` percent. The network profiler shows communication accounts for less than 10 percent of step time. The cluster is running but barely working.
+You provision `{python} C3CaseStudies.case1_n_gpus_str` H100 GPUs for a large language model training run. The training loop runs without errors, but the PyTorch Profiler shows MFU of only `{python} C3CaseStudies.case1_mfu_pct_str` percent. The network profiler shows communication accounts for less than 10 percent of step time. The cluster is running but barely working.
 
 #### Diagnosis {.unnumbered}
 
-The **Computation** axis is the bottleneck. With `{python} C3.case1_mfu_pct_str` percent MFU, `{python} C3.case1_wasted_pct_str` percent of the fleet's arithmetic capacity sits idle on every step. This is not a communication or coordination problem---the network is fast enough and the system is stable. The system is not feeding work to the GPUs efficiently.
+The **Computation** axis is the bottleneck. With `{python} C3CaseStudies.case1_mfu_pct_str` percent MFU, `{python} C3CaseStudies.case1_wasted_pct_str` percent of the fleet's arithmetic capacity sits idle on every step. This is not a communication or coordination problem---the network is fast enough and the system is stable. The system is not feeding work to the GPUs efficiently.
 
 #### The fix {.unnumbered}
 
-This is a per-GPU efficiency problem that happens to be multiplied across `{python} C3.case1_n_gpus_str` accelerators. Target the Computation axis:
+This is a per-GPU efficiency problem that happens to be multiplied across `{python} C3CaseStudies.case1_n_gpus_str` accelerators. Target the Computation axis:
 
 - **Mixed precision**: Ensure BF16/FP8 Tensor Cores are engaged. A common culprit is FP32 fallback in normalization layers or loss computation.
 - **Operator fusion**: Use `torch.compile` or similar just-in-time (JIT) compilation to fuse element-wise operations and reduce kernel launch overhead.
 - **Batch size tuning**: If per-GPU batch size is too small, the matrix multiplications have insufficient arithmetic intensity to saturate the Tensor Cores.
 
-Raising MFU from `{python} C3.case1_mfu_pct_str` percent to `{python} C3.case1_target_mfu_pct_str` percent on the same hardware delivers `{python} C3.case1_target_mfu_pct_str`/`{python} C3.case1_mfu_pct_str` = `{python} C3.case1_target_gain_str`$\times$ more useful work---the equivalent of tripling the fleet without buying a single GPU.
+Raising MFU from `{python} C3CaseStudies.case1_mfu_pct_str` percent to `{python} C3CaseStudies.case1_target_mfu_pct_str` percent on the same hardware delivers `{python} C3CaseStudies.case1_target_mfu_pct_str`/`{python} C3CaseStudies.case1_mfu_pct_str` = `{python} C3CaseStudies.case1_target_gain_str`$\times$ more useful work---the equivalent of tripling the fleet without buying a single GPU.
 
 ### Case 2: The communication wall (Communication) {#sec-c3-taxonomy-case-2}
 
 #### Symptom {.unnumbered}
 
-A `{python} C3.case2_n_gpus_str`-GPU data-parallel training run achieves `{python} C3.case2_mfu_pct_str` percent MFU on each individual GPU---good per-device efficiency. Yet scaling from `{python} C3.case2_baseline_gpus_str` to `{python} C3.case2_n_gpus_str` GPUs yields only `{python} C3.case2_observed_speedup_str`$\times$ speedup instead of the expected `{python} C3.case2_ideal_speedup_str`$\times$, or `{python} C3.case2_scaling_efficiency_pct_str` percent scaling efficiency. NCCL profiling reveals that AllReduce consumes `{python} C3.case2_comm_pct_str` percent of every training step.
+A `{python} C3CaseStudies.case2_n_gpus_str`-GPU data-parallel training run achieves `{python} C3CaseStudies.case2_mfu_pct_str` percent MFU on each individual GPU---good per-device efficiency. Yet scaling from `{python} C3CaseStudies.case2_baseline_gpus_str` to `{python} C3CaseStudies.case2_n_gpus_str` GPUs yields only `{python} C3CaseStudies.case2_observed_speedup_str`$\times$ speedup instead of the expected `{python} C3CaseStudies.case2_ideal_speedup_str`$\times$, or `{python} C3CaseStudies.case2_scaling_efficiency_pct_str` percent scaling efficiency. NCCL profiling reveals that AllReduce consumes `{python} C3CaseStudies.case2_comm_pct_str` percent of every training step.
 
 #### Diagnosis {.unnumbered}
 
@@ -335,26 +247,26 @@ Target the Communication axis without touching the per-GPU computation:
 
 - **Compute-communication overlap**: Launch AllReduce during the backward pass rather than waiting until it completes. Modern frameworks (FSDP, DeepSpeed) support this natively.
 - **Gradient compression**: Apply TopK sparsification or quantization to reduce the bytes crossing the network by 10--100$\times$.
-- **Hierarchical collectives**: Use intra-node NVLink for the first reduction stage, then inter-node InfiniBand only for cross-node aggregation, reducing cross-node traffic by `{python} C3.gpus_per_host_str`$\times$.
+- **Hierarchical collectives**: Use intra-node NVLink for the first reduction stage, then inter-node InfiniBand only for cross-node aggregation, reducing cross-node traffic by `{python} C3CaseStudies.gpus_per_host_str`$\times$.
 
-If communication were eliminated entirely, throughput would increase by `{python} C3.case2_speedup_str`$\times$ (Amdahl's Law applied to the `{python} C3.case2_compute_pct_str` percent compute fraction). Realistically, reducing communication from `{python} C3.case2_comm_pct_str` percent to 20 percent of step time would recover most of the lost scaling.
+If communication were eliminated entirely, throughput would increase by `{python} C3CaseStudies.case2_speedup_str`$\times$ (Amdahl's Law applied to the `{python} C3CaseStudies.case2_compute_pct_str` percent compute fraction). Realistically, reducing communication from `{python} C3CaseStudies.case2_comm_pct_str` percent to 20 percent of step time would recover most of the lost scaling.
 
 ### Case 3: The coordination tax (Coordination) {#sec-c3-taxonomy-case-3}
 
 #### Symptom {.unnumbered}
 
-A `{python} C3.case3_n_gpus_str`-GPU training run shows `{python} C3.case3_mfu_pct_str` percent MFU per device and communication accounts for only `{python} C3.case3_comm_pct_str` percent of step time---both healthy. The job's **goodput ratio** (useful training steps/wall-clock time), however, is only `{python} C3.case3_goodput_pct_str` percent. The remaining `{python} C3.case3_coord_pct_str` percent of wall time is consumed by checkpoint writes, failure recovery restarts, pipeline bubble idle time, `{python} C3.case3_oh_scheduler_pct_str` percent scheduler preemptions, and maintenance windows.
+A `{python} C3CaseStudies.case3_n_gpus_str`-GPU training run shows `{python} C3CaseStudies.case3_mfu_pct_str` percent MFU per device and communication accounts for only `{python} C3CaseStudies.case3_comm_pct_str` percent of step time---both healthy. The job's **goodput ratio** (useful training steps/wall-clock time), however, is only `{python} C3CaseStudies.case3_goodput_pct_str` percent. The remaining `{python} C3CaseStudies.case3_coord_pct_str` percent of wall time is consumed by checkpoint writes, failure recovery restarts, pipeline bubble idle time, `{python} C3CaseStudies.case3_oh_scheduler_pct_str` percent scheduler preemptions, and maintenance windows.
 
 #### Diagnosis {.unnumbered}
 
-The **Coordination** axis dominates. Per-GPU computation and inter-node communication are both efficient, but `{python} C3.case3_coord_pct_str` percent of wall time is consumed by nonproductive overhead: `{python} C3.oh_failure_str` percent failure recovery (at `{python} C3.case3_n_gpus_str` GPUs, GPU failures occur about every `{python} C3.case3_failure_interval_hours_str` hours), `{python} C3.oh_pipeline_str` percent pipeline bubbles, `{python} C3.oh_checkpoint_str` percent checkpoint writes, and `{python} C3.oh_maintenance_str` percent maintenance windows. Neither faster GPUs nor faster networks will help---coordination, not computation or communication, consumes the time.
+The **Coordination** axis dominates. Per-GPU computation and inter-node communication are both efficient, but `{python} C3CaseStudies.case3_coord_pct_str` percent of wall time is consumed by nonproductive overhead: `{python} C3CaseStudies.oh_failure_str` percent failure recovery (at `{python} C3CaseStudies.case3_n_gpus_str` GPUs, GPU failures occur about every `{python} C3CaseStudies.case3_failure_interval_hours_str` hours), `{python} C3CaseStudies.oh_pipeline_str` percent pipeline bubbles, `{python} C3CaseStudies.oh_checkpoint_str` percent checkpoint writes, and `{python} C3CaseStudies.oh_maintenance_str` percent maintenance windows. Neither faster GPUs nor faster networks will help---coordination, not computation or communication, consumes the time.
 
 #### The fix {.unnumbered}
 
 Target the Coordination axis:
 
-- **Asynchronous checkpointing**: Overlap checkpoint writes with the next training step, reducing visible checkpoint overhead from `{python} C3.oh_checkpoint_str` percent to near zero.
-- **Elastic training**: When a node fails, shrink the job and continue rather than halting all `{python} C3.case3_n_gpus_str` GPUs for recovery. This converts the `{python} C3.oh_failure_str` percent failure recovery cost into a smaller throughput reduction.
+- **Asynchronous checkpointing**: Overlap checkpoint writes with the next training step, reducing visible checkpoint overhead from `{python} C3CaseStudies.oh_checkpoint_str` percent to near zero.
+- **Elastic training**: When a node fails, shrink the job and continue rather than halting all `{python} C3CaseStudies.case3_n_gpus_str` GPUs for recovery. This converts the `{python} C3CaseStudies.oh_failure_str` percent failure recovery cost into a smaller throughput reduction.
 - **Pipeline schedule optimization**: Switch from GPipe to an interleaved 1F1B schedule to reduce bubble fraction, or increase microbatch count per pipeline flush.
 - **Faster failure detection**: Reduce heartbeat timeout from 30 seconds to 5 seconds with hardware-level health monitoring, cutting the idle time between failure occurrence and recovery initiation.
 
@@ -385,15 +297,33 @@ Engineers must measure abstract C$^3$ axes with concrete profiling tools. @tbl-c
 
 : **C$^3$ Tooling Map**: Profiling utilities for diagnosing fleet-scale bottlenecks. Start with the primary tool for quick triage; use secondary tools for deep-dive analysis. Computation tools operate per-GPU; Communication tools operate at the network layer; Coordination tools operate at the cluster/job level. {#tbl-c3-tooling}
 
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-scorecard
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: ## C³ Scorecard — efficiency rubric table
+from mlsysim.fmt import fmt_percent
+
+class C3Scorecard:
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────
+    mfu_low_str = fmt_percent(Literature.Training.MfuLow, precision=0, commas=False)
+    mfu_high_str = fmt_percent(Literature.Training.MfuHigh, precision=0, commas=False)
+    eff_256_str = fmt_percent(Literature.Scaling.Eff256Gpu, precision=0, commas=False)
+    eff_8192_str = fmt_percent(Literature.Scaling.Eff8192Gpu, precision=0, commas=False)
+    eff_1024_str = fmt_percent(Literature.Scaling.Eff1024Gpu, precision=0, commas=False)
+```
+
 ## C$^3$ Scorecard {#sec-c3-taxonomy-scorecard}
 
 The C$^3$ Scorecard grades fleet efficiency against known thresholds, extending the Single-Machine Scorecard (@sec-dam-taxonomy) to the distributed environment. @tbl-c3-scorecard defines the three metrics that characterize fleet health.
 
-| **C$^3$ Axis**    | **Metric**                                       | **Definition**                                                                                                       | **Failing Grade**                      | **Passing Grade**                      |
-|:------------------|:-------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------|:---------------------------------------|:---------------------------------------|
-| **Computation**   | **MFU**                                          | $\frac{O_{\text{step}}}{R_{\text{peak}} \times T_{\text{step}}}$                                                     | $<$ `{python} C3.mfu_low_str` percent  | $>$ `{python} C3.mfu_high_str` percent |
-| **Communication** | **Scaling Efficiency** ($\eta_{\text{scaling}}$) | $\frac{T_1}{N \times T_N}$                                                                                           | $<$ `{python} C3.eff_8192_str` percent | $>$ `{python} C3.eff_256_str` percent  |
-| **Coordination**  | **Goodput Ratio**                                | $\frac{T_{\text{useful}}}{T_{\text{wall}}}$ or $\frac{\text{useful steps/sec}}{\text{ideal or allocated steps/sec}}$ | $<$ 75 percent                         | $>$ 90 percent                         |
+| **C$^3$ Axis**    | **Metric**                                       | **Definition**                                                                                                       | **Failing Grade**                               | **Passing Grade**                               |
+|:------------------|:-------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------|:------------------------------------------------|:------------------------------------------------|
+| **Computation**   | **MFU**                                          | $\frac{O_{\text{step}}}{R_{\text{peak}} \times T_{\text{step}}}$                                                     | $<$ `{python} C3Scorecard.mfu_low_str` percent  | $>$ `{python} C3Scorecard.mfu_high_str` percent |
+| **Communication** | **Scaling Efficiency** ($\eta_{\text{scaling}}$) | $\frac{T_1}{N \times T_N}$                                                                                           | $<$ `{python} C3Scorecard.eff_8192_str` percent | $>$ `{python} C3Scorecard.eff_256_str` percent  |
+| **Coordination**  | **Goodput Ratio**                                | $\frac{T_{\text{useful}}}{T_{\text{wall}}}$ or $\frac{\text{useful steps/sec}}{\text{ideal or allocated steps/sec}}$ | $<$ 75 percent                                  | $>$ 90 percent                                  |
 
 : **The C$^3$ Efficiency Rubric**: Use these three numbers to characterize fleet health. A fleet that passes all three thresholds has exhausted its easy optimizations; further gains require architectural changes, hardware upgrades, or larger problem sizes to improve the scaling regime. {#tbl-c3-scorecard}
 
@@ -408,29 +338,46 @@ The gap between scaling-law predictions and observed training outcomes is, in la
 ### The effective FLOP/s concept {#sec-c3-taxonomy-effective-flops}
 
 ```{python}
-#| label: appendix-c3-effective-flops
 #| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ C³ EFFECTIVE FLOP/s—100K-GPU CALLOUT
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: @sec-c3-taxonomy-effective-flops—"The C³ Tax on a 100,000-GPU Cluster"
-# │
-# │ Goal: Alias C3Taxonomy strings and build display math for the effective FLOP/s
-# │       callout (vol1 pattern: no {python} inside $...$ or $$...$$).
-# │ Show: effective_eq_math display equation; peak_str, eff_str, c3_tax_str in prose.
-# │ How: Alias C3 attributes; build MarkdownStr() display math from formatted values.
-# │
-# │ Imports: mlsysim.book (fmt)
-# │ Exports: EffectiveFLOPS.effective_eq_math
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-effective-flops
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: ### The effective FLOP/s concept — 100K-GPU callout
+from mlsysim.fmt import fmt, fmt_percent, MarkdownStr
+from mlsysim.physics import calc_effective_flops
 
-class EffectiveFLOPS:
-    """Display math for the Effective FLOP/s callout."""
-    _mfu_fmt     = fmt(MFU_TRAINING_HIGH, precision=2, commas=False)
-    _scaling_fmt = fmt(SCALING_EFF_8192GPU, precision=2, commas=False)
-    _goodput_fmt = fmt(C3.goodput_all, precision=2, commas=False)
+class C3EffectiveFlops:
+    h100_tflops = Hardware.Cloud.H100.compute.peak_flops.m_as(TFLOPs/second)
+    n_gpus_eff = 100_000
+    peak_pflops = n_gpus_eff * h100_tflops / 1000
+    goodput_all = 1.0 - (
+        Literature.Overheads.PipelineBubble + Literature.Overheads.Checkpoint
+        + Literature.Overheads.FailureRecovery + Literature.Overheads.Maintenance + 0.17
+    )
+    effective_pflops = calc_effective_flops(
+        peak_pflops, Literature.Training.MfuHigh, Literature.Scaling.Eff8192Gpu, goodput_all
+    ).magnitude
+    c3_tax = peak_pflops / effective_pflops
+    eff_fraction = effective_pflops / peak_pflops
 
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────
+    peak_pflops_str = fmt(peak_pflops, precision=0)
+    effective_pflops_str = fmt(effective_pflops, precision=1)
+    eff_fraction_pct_str = fmt_percent(eff_fraction, precision=1, commas=False)
+    c3_tax_str = fmt(c3_tax, precision=1, commas=False)
+    mfu_pct_str = fmt_percent(Literature.Training.MfuHigh, precision=0, commas=False)
+    scaling_pct_str = fmt_percent(Literature.Scaling.Eff8192Gpu, precision=0, commas=False)
+    goodput_pct_str = fmt_percent(goodput_all, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus_eff, precision=0)
+    scaling_ref_gpus_str = fmt(8_192, precision=0)
+
+    _mfu_fmt = fmt(Literature.Training.MfuHigh, precision=2, commas=False)
+    _scaling_fmt = fmt(Literature.Scaling.Eff8192Gpu, precision=2, commas=False)
+    _goodput_fmt = fmt(goodput_all, precision=2, commas=False)
     effective_eq_math = MarkdownStr(
-        f"$$\\text{{Effective}} = {C3.peak_pflops_str} \\times {_mfu_fmt} \\times {_scaling_fmt} \\times {_goodput_fmt} \\approx {C3.effective_pflops_str} \\text{{ PFLOP/s}}$$"
+        f"$$\\text{{Effective}} = {peak_pflops_str} \\times {_mfu_fmt} \\times {_scaling_fmt} \\times {_goodput_fmt} "
+        f"\\approx {effective_pflops_str} \\text{{ PFLOP/s}}$$"
     )
 ```
 
@@ -444,15 +391,48 @@ A concrete estimate makes the multiplicative loss visible at fleet scale.
 
 ::: {#psp-appendix-c3-tax-100000-gpu-cluster .callout-perspective title="The C³ tax on a 100,000-GPU cluster"}
 
-Consider a 100,000-GPU H100 cluster with `{python} C3.peak_pflops_str` PFLOP/s of peak aggregate throughput. After the three C$^3$ losses:
+Consider a `{python} C3EffectiveFlops.n_gpus_str`-GPU H100 cluster with `{python} C3EffectiveFlops.peak_pflops_str` PFLOP/s of peak aggregate throughput. After the three C$^3$ losses:
 
-`{python} EffectiveFLOPS.effective_eq_math`
+`{python} C3EffectiveFlops.effective_eq_math`
 
-The fleet delivers `{python} C3.eff_fraction_pct_str` percent of its peak capacity as useful training work. The **C$^3$ tax**---the ratio of peak to effective---is `{python} C3.c3_tax_str`$\times$: achieving a given effective compute budget requires `{python} C3.c3_tax_str`$\times$ the raw hardware. Broken down by axis: Computation consumes a `{python} C3.mfu_pct_str` percent factor (MFU), Communication consumes a `{python} C3.scaling_pct_str` percent factor (using the 8,192-GPU scaling-efficiency reference as an illustrative proxy), and Coordination consumes a `{python} C3.goodput_pct_str` percent factor (goodput ratio after pipeline bubbles, checkpoints, failures, scheduler preemptions, and maintenance).
+The fleet delivers `{python} C3EffectiveFlops.eff_fraction_pct_str` percent of its peak capacity as useful training work. The **C$^3$ tax**---the ratio of peak to effective---is `{python} C3EffectiveFlops.c3_tax_str`$\times$: achieving a given effective compute budget requires `{python} C3EffectiveFlops.c3_tax_str`$\times$ the raw hardware. Broken down by axis: Computation consumes a `{python} C3EffectiveFlops.mfu_pct_str` percent factor (MFU), Communication consumes a `{python} C3EffectiveFlops.scaling_pct_str` percent factor (using the `{python} C3EffectiveFlops.scaling_ref_gpus_str`-GPU scaling-efficiency reference as an illustrative proxy), and Coordination consumes a `{python} C3EffectiveFlops.goodput_pct_str` percent factor (goodput ratio after pipeline bubbles, checkpoints, failures, scheduler preemptions, and maintenance).
 
 This is not a failure of engineering---it is the physics of fleet-scale computation. The C$^3$ taxonomy quantifies where the losses occur so that optimization effort targets the dominant term.
 
 :::
+
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-summary-recap
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: ## Summary — cross-section recap
+from mlsysim.fmt import fmt_percent
+from mlsysim.physics import calc_effective_flops
+
+class C3SummaryRecap:
+    case3_goodput_ratio = 0.60
+    case3_coord_fraction = 1 - case3_goodput_ratio
+    h100_tflops = Hardware.Cloud.H100.compute.peak_flops.m_as(TFLOPs/second)
+    peak_pflops = 100_000 * h100_tflops / 1000
+    goodput_all = 1.0 - (
+        Literature.Overheads.PipelineBubble + Literature.Overheads.Checkpoint
+        + Literature.Overheads.FailureRecovery + Literature.Overheads.Maintenance + 0.17
+    )
+    effective_pflops = calc_effective_flops(
+        peak_pflops, Literature.Training.MfuHigh, Literature.Scaling.Eff8192Gpu, goodput_all
+    ).magnitude
+    eff_fraction = effective_pflops / peak_pflops
+    fleet_gpu_count = 100_000
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────
+    case3_coord_pct_str = fmt_percent(case3_coord_fraction, precision=0, commas=False)
+    eff_fraction_pct_str = fmt_percent(eff_fraction, precision=1, commas=False)
+    mfu_high_str = fmt_percent(Literature.Training.MfuHigh, precision=0, commas=False)
+    eff_256_str = fmt_percent(Literature.Scaling.Eff256Gpu, precision=0, commas=False)
+    fleet_gpu_count_str = fmt(fleet_gpu_count, precision=0, commas=True)
+```
 
 ## Summary {#sec-c3-taxonomy-summary}
 
@@ -461,28 +441,52 @@ The C$^3$ taxonomy provides a systematic framework for diagnosing fleet-scale bo
 ::: {.callout-takeaways title="Where to look first at fleet scale"}
 
 * **Every fleet-scale bottleneck has a dominant C$^3$ axis**: Computation, Communication, or Coordination, with many real bottlenecks spanning intersections. Identify the dominant axis before optimizing.
-* **Measure the C$^3$ Scorecard**: Use MFU $>$ `{python} C3.mfu_high_str` percent, Scaling Efficiency $>$ `{python} C3.eff_256_str` percent, and Goodput Ratio $>$ 90 percent before investing in optimizations.
-* **The C$^3$ tax is multiplicative**: Peak FLOP/s$\times$ MFU$\times$ Scaling Efficiency$\times$ Goodput Ratio = Effective FLOP/s. At 100,000 GPUs, expect only ~`{python} C3.eff_fraction_pct_str` percent of peak.
-* **Coordination is the new axis**: On a single machine, overhead is negligible. At fleet scale, checkpoints, failures, pipeline bubbles, and scheduling consume `{python} C3.case3_coord_pct_str` percent or more of wall time.
+* **Measure the C$^3$ Scorecard**: Use MFU $>$ `{python} C3SummaryRecap.mfu_high_str` percent, Scaling Efficiency $>$ `{python} C3SummaryRecap.eff_256_str` percent, and Goodput Ratio $>$ 90 percent before investing in optimizations.
+* **The C$^3$ tax is multiplicative**: Peak FLOP/s$\times$ MFU$\times$ Scaling Efficiency$\times$ Goodput Ratio = Effective FLOP/s. At `{python} C3SummaryRecap.fleet_gpu_count_str` GPUs, expect only ~`{python} C3SummaryRecap.eff_fraction_pct_str` percent of peak.
+* **Coordination is the new axis**: On a single machine, overhead is negligible. At fleet scale, checkpoints, failures, pipeline bubbles, and scheduling consume `{python} C3SummaryRecap.case3_coord_pct_str` percent or more of wall time.
 * **Optimizing the wrong C$^3$ axis yields limited improvement**: Faster GPUs cannot fix a communication-bound fleet by themselves; faster networks cannot fix coordination overhead.
 
 :::
+
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-exercises-recap
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: ## Exercises — recap case-2 and MFU threshold strings
+from mlsysim.fmt import fmt, fmt_percent
+
+class C3ExercisesRecap:
+    case2_n_gpus = 512
+    case2_mfu = Literature.Training.MfuHigh * 0.9
+    case2_comm_fraction = 0.55
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────
+    case2_n_gpus_str = fmt(case2_n_gpus, precision=0)
+    case2_mfu_pct_str = fmt_percent(case2_mfu, precision=0, commas=False)
+    case2_comm_pct_str = fmt_percent(case2_comm_fraction, precision=0, commas=False)
+    mfu_low_str = fmt_percent(Literature.Training.MfuLow, precision=0, commas=False)
+    mfu_high_str = fmt_percent(Literature.Training.MfuHigh, precision=0, commas=False)
+    eff_1024_str = fmt_percent(Literature.Scaling.Eff1024Gpu, precision=0, commas=False)
+```
 
 ## Exercises {#sec-c3-taxonomy-exercises}
 
 ### Exercise 1: C$^3$ classification {.unnumbered}
 
-A `{python} C3.case2_n_gpus_str`-GPU training job shows `{python} C3.case2_mfu_pct_str` percent MFU per device, but NCCL logs reveal that AllReduce consumes `{python} C3.case2_comm_pct_str` percent of each training step. Which C$^3$ axis is the bottleneck? Name two specific optimizations and explain why each targets the correct axis.
+A `{python} C3ExercisesRecap.case2_n_gpus_str`-GPU training job shows `{python} C3ExercisesRecap.case2_mfu_pct_str` percent MFU per device, but NCCL logs reveal that AllReduce consumes `{python} C3ExercisesRecap.case2_comm_pct_str` percent of each training step. Which C$^3$ axis is the bottleneck? Name two specific optimizations and explain why each targets the correct axis.
 
-**Answer**: The bottleneck is **Communication** ($C_2$). Per-GPU MFU of `{python} C3.case2_mfu_pct_str` percent is healthy (above the `{python} C3.mfu_low_str` percent threshold), so Computation is not the problem. The `{python} C3.case2_comm_pct_str` percent communication fraction far exceeds the 40 percent red-line threshold. Two optimizations: (1) **Gradient compression** (for example, TopK sparsification) directly reduces the bytes crossing the network, shrinking $T_{\text{comm}}(N)$ while leaving $T_{\text{compute}}/N$ unchanged. (2) **Compute-communication overlap** launches the AllReduce during the backward pass rather than waiting until it completes, converting the sequential sum of compute and communication into the overlapped $\max(T_{\text{compute}}/N, T_{\text{comm}}(N))$ and increasing $T_{\text{overlap}}$---both target the Communication axis.
+**Answer**: The bottleneck is **Communication** ($C_2$). Per-GPU MFU of `{python} C3ExercisesRecap.case2_mfu_pct_str` percent is healthy (above the `{python} C3ExercisesRecap.mfu_low_str` percent threshold), so Computation is not the problem. The `{python} C3ExercisesRecap.case2_comm_pct_str` percent communication fraction far exceeds the 40 percent red-line threshold. Two optimizations: (1) **Gradient compression** (for example, TopK sparsification) directly reduces the bytes crossing the network, shrinking $T_{\text{comm}}(N)$ while leaving $T_{\text{compute}}/N$ unchanged. (2) **Compute-communication overlap** launches the AllReduce during the backward pass rather than waiting until it completes, converting the sequential sum of compute and communication into the overlapped $\max(T_{\text{compute}}/N, T_{\text{comm}}(N))$ and increasing $T_{\text{overlap}}$---both target the Communication axis.
 
 ### Exercise 2: Fleet law decomposition {.unnumbered}
 
 A training step on a 1,024-GPU cluster takes 200 ms. Profiling reveals: forward + backward pass = 100 ms, AllReduce = 60 ms, pipeline bubble + checkpoint = 40 ms. Calculate $f_{\text{compute}}$. Which C$^3$ axis would you optimize first, and why?
 
 ```{python}
-#| label: appendix-c3-exercise2
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-exercise2
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ C³ EXERCISE 2—FLEET LAW DECOMPOSITION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -527,8 +531,10 @@ The fleet spends exactly half its time on useful computation. Breaking down the 
 ### Exercise 3: Effective FLOP/s calculation {.unnumbered}
 
 ```{python}
-#| label: appendix-c3-exercise3
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: appendix-c3-exercise3
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ C³ EXERCISE 3—EFFECTIVE FLOP/s CALCULATION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -539,14 +545,16 @@ The fleet spends exactly half its time on useful computation. Breaking down the 
 # │ Show: effective_frac_math (display), c3_tax_math, provision_math (inline).
 # │ How: Compute effective fraction, C³ tax factor; build MarkdownStr()/fmt_math() strings.
 # │
-# │ Imports: mlsysim.core.constants (MFU_TRAINING_HIGH, SCALING_EFF_1024GPU), mlsysim.book (fmt, md, fmt_math)
+# │ Imports: mlsysim.core.constants (Literature.Training.MfuHigh, Literature.Scaling.Eff1024Gpu), mlsysim.book (fmt, md, fmt_math)
 # │ Exports: Exercise3.effective_frac_math, Exercise3.c3_tax_math, Exercise3.provision_math
 # └─────────────────────────────────────────────────────────────────────────────
+
+from mlsysim.fmt import fmt, fmt_percent, fmt_int, fmt_math, MarkdownStr
 
 class Exercise3:
     """Effective FLOP/s calculation for Exercise 3 answer."""
     # ┌── 1. LOAD ─────────────────────────────────────────
-    _eff_frac_val = MFU_TRAINING_HIGH * SCALING_EFF_1024GPU * 0.85
+    _eff_frac_val = Literature.Training.MfuHigh * Literature.Scaling.Eff1024Gpu * 0.85
     _c3_tax_val   = 1 / _eff_frac_val
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
@@ -554,15 +562,17 @@ class Exercise3:
     _c3_tax_factor_str   = fmt(_c3_tax_val, precision=1, commas=False)
     _eff_frac_3dp_str    = fmt(_eff_frac_val, precision=3, commas=False)
 
+    _mfu_high_digits = fmt_int(Literature.Training.MfuHigh * 100, commas=False)
+    _eff_1024_digits = fmt_int(Literature.Scaling.Eff1024Gpu * 100, commas=False)
     effective_frac_math = MarkdownStr(
-        f"$$\\text{{Effective fraction}} = 0.{C3.mfu_high_str} \\times 0.{C3.eff_1024_str} \\times 0.85 "
+        f"$$\\text{{Effective fraction}} = 0.{_mfu_high_digits} \\times 0.{_eff_1024_digits} \\times 0.85 "
         f"= {_eff_frac_pct_str}\\%$$"
     )
     c3_tax_math   = fmt_math(f"1 / {_eff_frac_3dp_str} \\approx {_c3_tax_factor_str} \\times")
     provision_math = fmt_math(f"{_c3_tax_factor_str} \\times 10^{{24}}")
 ```
 
-A team provisions 2,048 H100 GPUs. The cluster achieves `{python} C3.mfu_high_str` percent MFU, `{python} C3.eff_1024_str` percent scaling efficiency, and 85 percent goodput ratio. Calculate the effective FLOP/s as a fraction of peak FLOP/s. If a scaling law predicts that $10^{24}$ FLOPs of training compute will reach a target loss, how many raw peak-rate FLOPs must be provisioned to account for the C$^3$ tax?
+A team provisions 2,048 H100 GPUs. The cluster achieves `{python} C3ExercisesRecap.mfu_high_str` percent MFU, `{python} C3ExercisesRecap.eff_1024_str` percent scaling efficiency, and 85 percent goodput ratio. Calculate the effective FLOP/s as a fraction of peak FLOP/s. If a scaling law predicts that $10^{24}$ FLOPs of training compute will reach a target loss, how many raw peak-rate FLOPs must be provisioned to account for the C$^3$ tax?
 
 **Answer**: Effective fraction:
 
@@ -576,7 +586,7 @@ A colleague proposes upgrading the cluster's InfiniBand from HDR (200 Gbps) to N
 
 **Answer**: Before upgrading the network, ask:
 
-1. **"What is the current MFU?"**—*Computation ($C_1$)*. If MFU is below `{python} C3.mfu_low_str` percent, the GPUs themselves are underutilized. Faster interconnects cannot help if the GPUs are not doing useful work to begin with. Fix kernel efficiency first.
+1. **"What is the current MFU?"**—*Computation ($C_1$)*. If MFU is below `{python} C3ExercisesRecap.mfu_low_str` percent, the GPUs themselves are underutilized. Faster interconnects cannot help if the GPUs are not doing useful work to begin with. Fix kernel efficiency first.
 
 2. **"What fraction of step time is spent in AllReduce vs. noncommunication overhead?"**—*Communication ($C_2$) vs. Coordination ($C_3$)*. If AllReduce consumes $>$40 percent of step time, the network upgrade is justified. If, however, most noncompute time is checkpoint writes and failure recovery (Coordination), doubling network bandwidth will have no impact on the dominant overhead.
 

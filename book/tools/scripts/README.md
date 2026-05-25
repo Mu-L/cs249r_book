@@ -7,14 +7,14 @@ Python and shell automation used by the **Machine Learning Systems** textbook to
 From the **repository root**:
 
 ```bash
-./book/binder validate all
-./book/binder maintain repo-health
+./book/binder check all
+./book/binder fix repo-health
 ./book/binder help
 ```
 
 If your shell is already in **`book/`**, use `./binder` instead of `./book/binder`.
 
-Full command list, validation options, and setup: **[`book/docs/BINDER.md`](../../docs/BINDER.md)**.
+Command reference and pre-commit mapping: **[`book/docs/BINDER.md`](../../docs/BINDER.md)**. Implementation details: **[`book/cli/README.md`](../../cli/README.md)**.
 
 Direct `python3 book/tools/scripts/...` use is for maintenance or cases not wired into Binder yet. Prefer `./book/binder` when a subcommand exists.
 

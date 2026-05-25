@@ -29,6 +29,7 @@ class Workload(BaseModel):
     metadata: Metadata = Field(default_factory=Metadata)
     parameters: Optional[Quantity] = None
     model_size: Optional[Quantity] = None
+    embedding_entries: Optional[Quantity] = None
     inference_flops: Optional[Quantity] = None
     data_rate: Optional[Quantity] = None # e.g., TB/hour for autonomous driving
 
@@ -82,6 +83,12 @@ class TransformerWorkload(Workload):
     heads: Optional[int] = None
     kv_heads: Optional[int] = None
     training_ops: Optional[Quantity] = None
+    training_tokens: Optional[Quantity] = None
+    training_accelerators_ref: Optional[Quantity] = None
+    training_days_ref: Optional[Quantity] = None
+    training_energy_mwh: Optional[float] = None
+    training_gpu_days: Optional[float] = None
+    training_hardware_label: Optional[str] = None
     inference_flops: Optional[Quantity] = None
     
     def size_in_bytes(self, precision: Quantity = BYTES_FP16) -> Quantity:
@@ -90,7 +97,7 @@ class TransformerWorkload(Workload):
         return (param_count * bpp * ureg.byte).to(ureg.byte)
 
     def get_kv_cache_size(self, seq_len: int, batch_size: int, precision: Quantity = BYTES_FP16) -> Quantity:
-        from ..core.formulas import calc_kv_cache_size
+        from ..physics import calc_kv_cache_size
         h_dim = self.hidden_dim or 4096
         n_heads = self.heads or 32
         head_dim = h_dim // n_heads
@@ -119,7 +126,7 @@ class TransformerWorkload(Workload):
             Quantity[byte]: Total training memory per GPU
         """
         from ..core.constants import BYTES_FP32, BYTES_FP16, BYTES_INT8, BYTES_INT4
-        from ..core.formulas import calc_activation_memory
+        from ..physics import calc_activation_memory
         
         prec_map = {"fp32": BYTES_FP32, "fp16": BYTES_FP16, "int8": BYTES_INT8, "int4": BYTES_INT4}
         bpp = prec_map.get(precision, BYTES_FP16).to(ureg.byte).magnitude
@@ -169,17 +176,6 @@ class TransformerWorkload(Workload):
         )
         
         return (weight_mem + grad_mem + opt_mem + act_mem).to(ureg.GB)
-
-    @property
-    def training_gpu_days(self):
-        """
-        Backward-compatibility alias for older book chapters.
-        """
-        if self.training_ops is not None:
-            return self.training_ops
-        raise AttributeError(
-            f"{type(self).__name__!r} object has no attribute 'training_gpu_days'"
-        )
 
     def lower(self, precision: Quantity = BYTES_FP16) -> ComputationGraph:
         ops = self.inference_flops or (2 * self.parameters.to(ureg.count).magnitude * ureg.flop)

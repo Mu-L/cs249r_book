@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -18,36 +16,30 @@ async def _():
     import numpy as np
 
     # WASM bootstrap: install mlsysim from hosted wheel when running in browser
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim.core.defaults import (
-        GPU_MTTF_HOURS,
-        INFINIBAND_NDR_BW_GBS,
-        IB_NDR_LATENCY_US,
-        CHINCHILLA_TOKENS_PER_PARAM,
-    )
-    from mlsysim.core.formulas import (
+    from mlsysim import Hardware, Models, Systems, Literature
+    from mlsysim import ureg
+    from mlsysim.physics import (
         calc_ring_allreduce_time,
         calc_mtbf_cluster,
     )
-    from mlsysim.core.constants import ureg
+
+    IB_NDR_LATENCY_US = Systems.Fabrics.InfiniBand_NDR.latency.m_as("microsecond")
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    CHINCHILLA_TOKENS_PER_PARAM = Literature.Chinchilla.TokensPerParam
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    H100 = mlsysim.Hardware.Cloud.H100
-    EDGE = mlsysim.Hardware.Edge.JetsonOrinNX
+    H100 = Hardware.Cloud.H100
+    EDGE = Hardware.Edge.JetsonOrinNX
 
     H100_TFLOPS_FP16 = H100.compute.peak_flops.m_as("TFLOPs/s")
     H100_BW_GBS = H100.memory.bandwidth.m_as("GB/s")
@@ -59,8 +51,8 @@ async def _():
     EDGE_TDP_W = EDGE.tdp.m_as("W")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
-    GPT2_PARAMS = GPT2.parameters.m_as("dimensionless")
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS = GPT2.parameters.m_as("count")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -90,7 +82,6 @@ async def _():
         CHINCHILLA_TOKENS_PER_PARAM,
         ureg,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -140,7 +131,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -206,7 +196,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.callout(mo.md("""
@@ -218,8 +207,6 @@ def _(mo):
     - **Vol II Ch 1: Amdahl's Law at Scale** -- communication fraction and scaling efficiency.
     """), kind="info")
     return
-
-
 
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
@@ -1172,8 +1159,6 @@ at fleet scale, the bandwidth staircase, and the hidden cost of ownership.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1210,7 +1195,6 @@ def _(COLORS, ledger, mo, partA_prediction, partB_prediction, partC_prediction, 
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

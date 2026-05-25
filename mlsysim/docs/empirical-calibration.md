@@ -129,32 +129,32 @@ values minimize error against published benchmarks:
 ```python
 import mlsysim
 from mlsysim.core.solver import SingleNodeModel, ServingModel
-from mlsysim.core.formulas import calc_transformer_training_flops
+from mlsysim.physics import calc_transformer_training_flops
 
 # Config 1: ResNet-50 / A100 / training
 r1 = SingleNodeModel().solve(
-    mlsysim.Models.ResNet50, mlsysim.Hardware.A100,
+    mlsysim.Models.Vision.ResNet50, mlsysim.Hardware.Cloud.A100,
     batch_size=256, efficiency=0.10, is_training=True
 )
 print(f"ResNet-50 A100: {r1.throughput.m_as('1/s'):.0f} img/s")
 
 # Config 2: ResNet-50 / H100 / training
 r2 = SingleNodeModel().solve(
-    mlsysim.Models.ResNet50, mlsysim.Hardware.H100,
+    mlsysim.Models.Vision.ResNet50, mlsysim.Hardware.Cloud.H100,
     batch_size=256, efficiency=0.10, is_training=True
 )
 print(f"ResNet-50 H100: {r2.throughput.m_as('1/s'):.0f} img/s")
 
 # Config 3: Llama-3-8B / H100 / decode bs=1
 r3 = ServingModel().solve(
-    mlsysim.Models.Llama3_8B, mlsysim.Hardware.H100,
+    mlsysim.Models.Language.Llama3_8B, mlsysim.Hardware.Cloud.H100,
     seq_len=2048, batch_size=1, efficiency=0.50
 )
 print(f"Llama-3-8B bs=1 ITL: {r3.itl.m_as('ms'):.1f} ms")
 
 # Config 4: Llama-3-8B / H100 / decode bs=32
 r4 = ServingModel().solve(
-    mlsysim.Models.Llama3_8B, mlsysim.Hardware.H100,
+    mlsysim.Models.Language.Llama3_8B, mlsysim.Hardware.Cloud.H100,
     seq_len=2048, batch_size=32, efficiency=0.50
 )
 print(f"Llama-3-8B bs=32 ITL: {r4.itl.m_as('ms'):.1f} ms")

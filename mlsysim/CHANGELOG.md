@@ -33,6 +33,29 @@ Release body. Omit any section that has no entries for a given release.
     - @profvjreddi
 -->
 
+## Unreleased
+
+### Documentation
+
+- Align website tutorials and landing pages with canonical nested registry paths
+  (`Hardware.Cloud.*`, `Models.Language.*`, etc.).
+- Add Zoo pages for Platforms, Datasets, Literature, and Ops; document
+  `Infrastructure.Pricing` and provenance audit workflow on the public site.
+- Add CI gate `test_doc_registry_paths.py` for docs and tutorial markdown.
+- Document physics module layout, formatting helpers, and import surface in
+  `api-stability.md` and `contributing.qmd`.
+
+### Internal
+
+- Converged book-facing provenance on `Provenance` + `Sourced` (`sourced()` factory);
+  removed `TraceableConstant`. Appendix lineage and `audit_provenance` use one type.
+- Removed duplicate `GPU_UNIT_COST_*` (use `Hardware.Cloud.*.unit_cost`).
+- `Metadata` accepts only `provenance` (dropped `source` / `source_url` coalesce fields).
+- Removed `mlsysim.core.defaults`; reorganized into `Literature`, `Systems`, `Infrastructure`,
+  `Ops.Monitoring`, and `core.calibration` (solver/engine parameters only).
+- Added `Infrastructure.Pricing` (`Cloud`, `Storage`, `Labeling`, `Fleet`, `Capital`).
+  Appendix lineage audits registry paths and rejects stale `defaults.*` references.
+
 ## v0.1.2 (2026-05-17) — CLI & Website Release Polish
 
 Patch release focused on first-run usability for students, instructors, and

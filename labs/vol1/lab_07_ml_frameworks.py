@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -17,25 +16,19 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
+    from mlsysim import Hardware
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim.core.engine import Engine
 
-    H100 = mlsysim.Hardware.Cloud.H100
-    ESP32 = mlsysim.Hardware.Tiny.ESP32_S3
+    H100 = Hardware.Cloud.H100
+    ESP32 = Hardware.Tiny.ESP32_S3
 
     H100_BW_GBS = H100.memory.bandwidth.m_as("GB/s")
     H100_DISPATCH = H100.dispatch_tax.m_as("ms")
@@ -71,7 +64,6 @@ async def _():
         FRAMEWORK_RUNTIMES_MB, FRAMEWORK_LATENCY_MULT,
         LAB_CSS, apply_plotly_theme, go, math, mo, np, ledger, mlsysim,
     )
-
 
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -121,7 +113,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -193,7 +184,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -210,7 +200,6 @@ def _(mo):
       from PyTorch (1,800 MB) to TF Lite Micro (50 KB).
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
@@ -320,7 +309,6 @@ def _(mo):
         value="MCU (ESP32 512KB)", label="Deployment target:", inline=True,
     )
     return (partD_framework, partD_target)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1016,7 +1004,6 @@ Justify each choice with specific numbers from the lab.
     tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1051,7 +1038,6 @@ def _(COLORS, ledger, mo, partA_prediction, partD_prediction):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

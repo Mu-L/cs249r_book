@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 0: SETUP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -20,36 +19,31 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
+    from mlsysim import Hardware, Models
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
 
     # ── Hardware constants from registry ──────────────────────────────────
-    A100_TFLOPS = mlsysim.Hardware.Cloud.A100.compute.peak_flops.m_as("TFLOPs/s")
-    A100_BW     = mlsysim.Hardware.Cloud.A100.memory.bandwidth.m_as("GB/s")
-    A100_RAM    = mlsysim.Hardware.Cloud.A100.memory.capacity.m_as("GB")
+    A100_TFLOPS = Hardware.Cloud.A100.compute.peak_flops.m_as("TFLOPs/s")
+    A100_BW     = Hardware.Cloud.A100.memory.bandwidth.m_as("GB/s")
+    A100_RAM    = Hardware.Cloud.A100.memory.capacity.m_as("GB")
 
-    JETSON_TFLOPS = mlsysim.Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
-    JETSON_BW     = mlsysim.Hardware.Edge.JetsonOrinNX.memory.bandwidth.m_as("GB/s")
-    JETSON_RAM    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
+    JETSON_TFLOPS = Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
+    JETSON_BW     = Hardware.Edge.JetsonOrinNX.memory.bandwidth.m_as("GB/s")
+    JETSON_RAM    = Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
 
     # ── Model constants from registry ─────────────────────────────────────
-    RESNET50_PARAMS = mlsysim.Models.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS  = mlsysim.Models.ResNet50.inference_flops.m_as("flop")
-    MOBILENET_PARAMS = mlsysim.Models.MobileNetV2.parameters.m_as("count")
-    MOBILENET_FLOPS  = mlsysim.Models.MobileNetV2.inference_flops.m_as("flop")
+    RESNET50_PARAMS = Models.Vision.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS  = Models.Vision.ResNet50.inference_flops.m_as("flop")
+    MOBILENET_PARAMS = Models.Vision.MobileNetV2.parameters.m_as("count")
+    MOBILENET_FLOPS  = Models.Vision.MobileNetV2.inference_flops.m_as("flop")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -61,7 +55,6 @@ async def _():
         RESNET50_FLOPS, RESNET50_PARAMS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 1: HEADER
@@ -113,7 +106,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 2: BRIEFING
@@ -180,7 +172,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 3: READING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -201,7 +192,6 @@ def _(mo):
     - **Chapter 8: Training** -- training loop fundamentals and batch processing.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 4: TABS (Parts A-D + Synthesis)
@@ -330,7 +320,6 @@ def _(mo):
         label="Model size (B parameters)",
     )
     return (partD_params_b,)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1159,7 +1148,6 @@ The optimal ratio is $D/N \\approx 20$ -- most teams over-allocate to model size
     _tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 5: LEDGER HUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1191,7 +1179,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

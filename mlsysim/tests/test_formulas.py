@@ -1,5 +1,5 @@
 """
-Unit tests for mlsysim.core.formulas — known-answer tests for every formula.
+Unit tests for mlsysim.physics — known-answer tests for every formula.
 
 Each test uses hand-computed expected values and pytest.approx for
 floating-point comparisons.
@@ -9,7 +9,7 @@ import math
 import pytest
 import pint
 
-from mlsysim.core.formulas import (
+from mlsysim.physics import (
     _ensure_unit,
     calc_network_latency_ms,
     dTime,
@@ -37,7 +37,6 @@ from mlsysim.core.formulas import (
 )
 from mlsysim.core.constants import ureg, Q_, MB, GB
 
-
 # ======================================================================
 # _ensure_unit
 # ======================================================================
@@ -64,7 +63,6 @@ class TestEnsureUnit:
         with pytest.raises(TypeError):
             _ensure_unit("hello", ureg.meter, "test")
 
-
 # ======================================================================
 # calc_network_latency_ms
 # ======================================================================
@@ -82,7 +80,6 @@ class TestNetworkLatency:
         result = calc_network_latency_ms(0)
         assert result == pytest.approx(0.0)
 
-
 # ======================================================================
 # dTime
 # ======================================================================
@@ -99,7 +96,6 @@ class TestDTime:
         # 1e18 / (8 * 312e12 * 0.5) = 1e18 / 1.248e15 ≈ 801.28 s
         assert result.units == ureg.second
         assert result.magnitude == pytest.approx(1e18 / (8 * 312e12 * 0.5), rel=1e-4)
-
 
 # ======================================================================
 # calc_amdahls_speedup
@@ -122,7 +118,6 @@ class TestAmdahlsSpeedup:
         # p=0.0 => speedup = 1.0 regardless of s
         result = calc_amdahls_speedup(0.0, 1000)
         assert result == pytest.approx(1.0)
-
 
 # ======================================================================
 # calc_bottleneck
@@ -149,7 +144,6 @@ class TestBottleneck:
         result = calc_bottleneck(ops, model_bytes, device_flops, device_bw)
         assert result["bottleneck"] == "Memory"
 
-
 # ======================================================================
 # model_memory
 # ======================================================================
@@ -173,7 +167,6 @@ class TestModelMemory:
         result = model_memory(175e9, 2, GB)
         assert result == pytest.approx(350.0, rel=1e-3)
 
-
 # ======================================================================
 # calc_ring_allreduce_time
 # ======================================================================
@@ -194,7 +187,6 @@ class TestRingAllreduce:
         result = calc_ring_allreduce_time(M, N, beta, alpha)
         expected = 2 * 7 / 8 * (1e9 / 50e9) + 2 * 7 * 500e-9
         assert result.m_as(ureg.second) == pytest.approx(expected, rel=1e-4)
-
 
 # ======================================================================
 # calc_tree_allreduce_time
@@ -227,7 +219,6 @@ class TestTreeAllreduce:
         tree = calc_tree_allreduce_time(M, N, beta, alpha)
         assert tree > ring
 
-
 # ======================================================================
 # calc_all_to_all_time
 # ======================================================================
@@ -251,7 +242,6 @@ class TestAllToAll:
         with pytest.raises(ValueError, match="n_gpus"):
             calc_all_to_all_time(Q_("1e9 byte"), 0, Q_("50e9 byte/s"), Q_("500 ns"))
 
-
 # ======================================================================
 # calc_transformer_training_flops
 # ======================================================================
@@ -265,7 +255,6 @@ class TestTransformerTrainingFlops:
         D = Q_("300e9 count")
         result = calc_transformer_training_flops(P, D)
         assert result.m_as(ureg.flop) == pytest.approx(3.15e23, rel=1e-3)
-
 
 # ======================================================================
 # calc_activation_memory
@@ -292,7 +281,6 @@ class TestActivationMemory:
         single = calc_activation_memory(1, 1024, 1, 768, strategy="selective")
         twelve = calc_activation_memory(12, 1024, 1, 768, strategy="selective")
         assert twelve.m_as(ureg.byte) == pytest.approx(12 * single.m_as(ureg.byte), rel=1e-6)
-
 
 # ======================================================================
 # calc_hierarchical_allreduce_time
@@ -326,7 +314,6 @@ class TestHierarchicalAllreduce:
         # and inter-node sends the full message. Should be slower.
         assert result.m_as(ureg.second) < slow_result.m_as(ureg.second)
 
-
 # ======================================================================
 # calc_young_daly_interval
 # ======================================================================
@@ -342,7 +329,6 @@ class TestYoungDalyInterval:
         result = calc_young_daly_interval(delta, mtbf)
         expected = math.sqrt(2 * 60 * 50000 * 3600)
         assert result.m_as(ureg.second) == pytest.approx(expected, rel=1e-4)
-
 
 # ======================================================================
 # calc_mtbf_cluster
@@ -360,7 +346,6 @@ class TestMTBFCluster:
         # With correlation_factor=0.5 => 25 hours
         result = calc_mtbf_cluster(50000, 1000, correlation_factor=0.5)
         assert result.m_as(ureg.hour) == pytest.approx(25.0, rel=1e-6)
-
 
 # ======================================================================
 # calc_pipeline_bubble
@@ -384,7 +369,6 @@ class TestPipelineBubble:
         bubble_64 = calc_pipeline_bubble(4, 64)
         assert bubble_64 < bubble_8
 
-
 # ======================================================================
 # calc_kv_cache_size
 # ======================================================================
@@ -400,7 +384,6 @@ class TestKVCacheSize:
         )
         expected = 2 * 32 * 32 * 128 * 2048 * 1 * 2
         assert result.m_as(ureg.byte) == pytest.approx(expected, rel=1e-6)
-
 
 # ======================================================================
 # calc_paged_kv_cache_size
@@ -427,7 +410,6 @@ class TestPagedKVCacheSize:
             seq_len=2050, batch_size=1, page_size_tokens=16,
         )
         assert frag == pytest.approx(14 / 2064, rel=1e-4)
-
 
 # ======================================================================
 # calc_queue_latency_mmc
@@ -460,7 +442,6 @@ class TestQueueLatencyMMC:
         assert 0 < rho < 1
         assert p99.m_as(ureg.second) >= 0
 
-
 # ======================================================================
 # calc_failure_probability
 # ======================================================================
@@ -483,7 +464,6 @@ class TestFailureProbability:
         with pytest.raises(TypeError):
             calc_failure_probability(mtbf=Q_("100 hour"), job_duration=100)
 
-
 # ======================================================================
 # calc_effective_flops
 # ======================================================================
@@ -496,7 +476,6 @@ class TestEffectiveFlops:
         result = calc_effective_flops(peak, mfu=0.5, scaling_eff=0.9, goodput_ratio=0.95)
         expected = 1e15 * 0.5 * 0.9 * 0.95
         assert result.m_as(ureg.flop / ureg.second) == pytest.approx(expected, rel=1e-6)
-
 
 # ======================================================================
 # calc_availability_stacked
@@ -513,7 +492,6 @@ class TestAvailabilityStacked:
     def test_single_replica(self):
         result = calc_availability_stacked(0.99, 1)
         assert result == pytest.approx(0.99)
-
 
 # ======================================================================
 # calc_monthly_egress_cost
@@ -542,7 +520,6 @@ class TestMonthlyEgressCost:
         cost_10x = calc_monthly_egress_cost(10e6, 0.09)
         assert cost_10x == pytest.approx(cost_1x * 10, rel=1e-6)
 
-
 # ======================================================================
 # calc_fleet_tco
 # ======================================================================
@@ -568,7 +545,6 @@ class TestFleetTCO:
         cost_1 = calc_fleet_tco(1000, 500, 1, 3, 0.10)
         cost_100 = calc_fleet_tco(1000, 500, 100, 3, 0.10)
         assert cost_100 == pytest.approx(cost_1 * 100, rel=1e-6)
-
 
 # ======================================================================
 # calc_mtbf_node

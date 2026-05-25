@@ -1,7 +1,7 @@
 """
 Native reference check: validate .bib entries against academic DBs (hallucinator).
 
-Used by `binder validate references`. Requires: pip install hallucinator bibtexparser
+Used by `binder check references --scope hallucinator`. Requires: pip install hallucinator bibtexparser
 (or install optional extra: pip install -e ".[reference-check]").
 
 Optional env: OPENALEX_KEY, S2_API_KEY. Note: Semantic Scholar allows 1 request/sec;

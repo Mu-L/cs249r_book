@@ -8,29 +8,27 @@ __version__ = "0.1.2"
 from . import core
 from . import hardware
 from . import models
+from . import datasets
+from . import platforms
 from . import infra
 from . import systems
 from . import sim
-from . import fmt
-from . import show
+from . import physics
 
-from .core.scenarios import Scenarios, Applications, Archetypes
+# AUTHORITATIVE API ENTRY POINTS
+from .core.engine import Engine
+from .core.scenarios import Scenario, Scenarios, Applications
+from .hardware.registry import Hardware
+from .models.registry import Models
+from .platforms.registry import Platforms
+from .datasets.registry import Datasets
+from .systems.registry import Systems
+from .infra.registry import Infrastructure
+from .literature.registry import Literature
+from .ops import Ops, Monitoring
+from .core import calibration
 
-# backward compatibility
-from .core import constants
-from .systems.registry import Tiers
-
-# Export primary API objects for convenience
-from .hardware.types import HardwareNode
-from .models.types import Workload, TransformerWorkload, SparseTransformerWorkload, CNNWorkload
-from .systems.types import Fleet, Node, NetworkFabric, DeploymentTier
-from .core.evaluation import SystemEvaluator, SystemEvaluation
-from .core.scenarios import Scenario
-from .core.config import SimulationConfig, load_config
-from .core.engine import PerformanceProfile, Engine
-
-# Solver classes — available as mlsysim.SingleNodeModel etc. for backward compat,
-# but also accessible via the mlsysim.core.solver module directly.
+# AUTHORITATIVE SOLVERS
 from .core.solver import (
     SingleNodeModel,
     DistributedModel,
@@ -40,77 +38,30 @@ from .core.solver import (
     ServingModel,
     TrainingMemoryModel,
     ServingCapacityModel,
-    MoERoutingModel,
-    ContinuousBatchingModel,
-    WeightStreamingModel,
-    TailLatencyModel,
-    CheckpointModel,
     DataModel,
-    ScalingModel,
-    OrchestrationModel,
-    CompressionModel,
-    EfficiencyModel,
-    TransformationModel,
-    TopologyModel,
-    InferenceScalingModel,
-    SensitivitySolver,
-    SynthesisSolver,
-    ResponsibleEngineeringModel,
-    ParallelismOptimizer,
-    BatchingOptimizer,
     PlacementOptimizer,
 )
 
-# Export Registries
-from .hardware.registry import Hardware
-from .models.registry import Models
-from .infra.registry import Infra
-from .systems.registry import Systems
+# AUTHORITATIVE MEASUREMENT (units + physics-only constants)
+from .core.constants import *  # noqa: F401,F403
 
-# Export unit registry for custom workload definitions
-from .core.constants import ureg, Q_
+# AUTHORITATIVE PHYSICS FORMULAS
+from .physics import *  # noqa: F401,F403
+
+# AUTHORITATIVE FORMATTING
+from .fmt import fmt, fmt_int, check, MarkdownStr
 
 
 def plot_evaluation_scorecard(*args, **kwargs):
-    """Render a system evaluation scorecard.
-
-    Matplotlib is imported lazily so importing ``mlsysim`` remains safe in
-    headless environments such as CI, notebooks running in browser sandboxes,
-    and macOS shells without a GUI session.
-    """
+    """Render a system evaluation scorecard."""
     from .viz.plots import plot_evaluation_scorecard as _plot_evaluation_scorecard
-
     return _plot_evaluation_scorecard(*args, **kwargs)
 
 
 def plot_roofline(*args, **kwargs):
-    """Render a Roofline plot, importing matplotlib only when needed."""
+    """Render a Roofline plot."""
     from .viz.plots import plot_roofline as _plot_roofline
-
     return _plot_roofline(*args, **kwargs)
 
-__all__ = [
-    # Core API (the 5-line happy path)
-    "Engine", "Hardware", "Models", "Scenarios", "ureg", "Q_",
-    # Types (for type annotations and custom workloads)
-    "HardwareNode", "Workload", "TransformerWorkload", "SparseTransformerWorkload", "CNNWorkload",
-    "Fleet", "Node", "NetworkFabric", "PerformanceProfile",
-    # Evaluation
-    "SystemEvaluator", "SystemEvaluation", "SimulationConfig", "load_config",
-    "Scenario", "Applications", "Archetypes",
-    # Registries
-    "Systems", "Tiers", "Infra", "constants",
-    # Solvers
-    "SingleNodeModel", "DistributedModel", "ReliabilityModel", "SustainabilityModel",
-    "EconomicsModel", "ServingModel", "TrainingMemoryModel", "ServingCapacityModel",
-    "MoERoutingModel", "ContinuousBatchingModel", "WeightStreamingModel",
-    "TailLatencyModel", "CheckpointModel", "DataModel", "ScalingModel",
-    "OrchestrationModel", "CompressionModel", "EfficiencyModel", "TransformationModel",
-    "TopologyModel", "InferenceScalingModel", "SensitivitySolver", "SynthesisSolver",
-    "ResponsibleEngineeringModel", "ParallelismOptimizer", "BatchingOptimizer",
-    "PlacementOptimizer",
-    # Submodules (for advanced use)
-    "core", "hardware", "models", "infra", "systems", "sim", "fmt", "show",
-    # Visualization
-    "plot_evaluation_scorecard", "plot_roofline",
-]
+
+__all__ = sorted(name for name in globals() if not name.startswith("_"))

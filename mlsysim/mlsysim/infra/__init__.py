@@ -1,1 +1,1 @@
-from .registry import Infra, Grids
+from .registry import Infrastructure, Grids, Datacenters, Racks

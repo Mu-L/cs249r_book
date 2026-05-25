@@ -35,12 +35,12 @@
     <tr>
       <td align="center"><b>Layer A</b></td>
       <td><b>Workload Representation</b><br><code>mlsysim.models</code></td>
-      <td>FLOPs, parameters, and intensity.<br><i>e.g., Llama3_70B, ResNet50</i></td>
+      <td>FLOPs, parameters, and intensity.<br><i>e.g., <code>Models.Language.Llama3_70B</code>, <code>Models.Vision.ResNet50</code></i></td>
     </tr>
     <tr>
       <td align="center"><b>Layer B</b></td>
       <td><b>Hardware Registry</b><br><code>mlsysim.hardware</code></td>
-      <td>Concrete specs for real-world silicon.<br><i>e.g., H100, TPUv5p, Jetson</i></td>
+      <td>Concrete specs for real-world silicon.<br><i>e.g., <code>Hardware.Cloud.H100</code>, Jetson, ESP32</i></td>
     </tr>
     <tr>
       <td align="center"><b>Layer C</b></td>

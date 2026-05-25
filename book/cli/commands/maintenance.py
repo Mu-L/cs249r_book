@@ -337,14 +337,14 @@ class MaintenanceCommand:
 
         if ns.topic == "glossary":
             if ns.action not in (None, "paths"):
-                console.print("[red]❌ Supported action: maintain glossary paths[/red]")
+                console.print("[red]❌ Supported action: fix glossary paths[/red]")
                 return False
             volume = "vol1" if ns.vol1 and not ns.vol2 else "vol2" if ns.vol2 and not ns.vol1 else None
             return self._maintain_glossary_paths(volume=volume)
 
         if ns.topic == "images":
             if ns.action not in (None, "compress"):
-                console.print("[red]❌ Supported action: maintain images compress[/red]")
+                console.print("[red]❌ Supported action: fix images compress[/red]")
                 return False
             files = list(ns.file)
             if ns.all:
@@ -360,7 +360,7 @@ class MaintenanceCommand:
 
         if ns.topic == "repo-health":
             if ns.action not in (None, "check"):
-                console.print("[red]❌ Supported action: maintain repo-health [check][/red]")
+                console.print("[red]❌ Supported action: fix repo-health [check][/red]")
                 return False
             return self._maintain_repo_health(min_size_mb=ns.min_size_mb, json_output=ns.json)
 

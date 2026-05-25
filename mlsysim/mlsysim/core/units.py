@@ -11,7 +11,7 @@ __all__ = [
     # Dimensionless scalars
     "QUADRILLION", "TRILLION", "BILLION", "MILLION", "THOUSAND", "HUNDRED",
     # Base units
-    "byte", "second", "joule", "watt", "kilowatt", "milliwatt", "meter", "hour", "day", "count",
+    "byte", "bit", "second", "joule", "watt", "kilowatt", "milliwatt", "meter", "hour", "day", "count",
     # Data scale units
     "KB", "MB", "GB", "TB", "PB", "KiB", "MiB", "GiB", "TiB",
     # Precision sizes
@@ -51,6 +51,7 @@ HUNDRED = 100
 
 # --- Units ---
 byte = ureg.byte
+bit = ureg.bit
 second = ureg.second
 joule = ureg.joule
 watt = ureg.watt

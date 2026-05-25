@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -17,28 +15,22 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim import Engine, Models, Hardware
+    from mlsysim import Engine, Hardware, Models
 
     H100_TFLOPS = Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
     H100_RAM    = Hardware.Cloud.H100.memory.capacity.m_as("GB")
     ESP32_RAM_KB = Hardware.Tiny.ESP32_S3.memory.sram_capacity.m_as("KiB")
 
-    RESNET50_PARAMS = Models.ResNet50.parameters.m_as("count")
+    RESNET50_PARAMS = Models.Vision.ResNet50.parameters.m_as("count")
     RESNET50_SIZE_MB = RESNET50_PARAMS * 2 / (1024 * 1024)
 
     ledger = DesignLedger()
@@ -53,7 +45,6 @@ async def _():
         RESNET50_PARAMS, RESNET50_SIZE_MB,
         ledger,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -102,7 +93,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -167,8 +157,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -183,7 +171,6 @@ def _(mo):
     - **The Effort Distribution section (Ch. 3)** -- Effort distribution in production ML projects.
     """), kind="info")
     return
-
 
 # ─── WIDGET CELLS (one per part) ─────────────────────────────────────────
 # Each cell defines and RETURNS every widget it owns so marimo's dataflow
@@ -205,7 +192,6 @@ def _(mo):
     )
     return (partA_prediction,)
 
-
 @app.cell(hide_code=True)
 def _(mo):
     partA_stage = mo.ui.slider(
@@ -213,7 +199,6 @@ def _(mo):
         label="Discovery stage (1=Problem Definition, 6=Monitoring)",
     )
     return (partA_stage,)
-
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -229,7 +214,6 @@ def _(mo):
     )
     return (partB_prediction,)
 
-
 @app.cell(hide_code=True)
 def _(mo):
     partB_cycle_a = mo.ui.slider(
@@ -241,7 +225,6 @@ def _(mo):
         label="Team B cycle time (hours)",
     )
     return (partB_cycle_a, partB_cycle_b)
-
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -256,7 +239,6 @@ def _(mo):
               "(architecture, training, hyperparameters)?",
     )
     return (partC_prediction,)
-
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -274,7 +256,6 @@ def _(mo):
     }
     return (partC_sliders,)
 
-
 @app.cell(hide_code=True)
 def _(mo):
     partD_prediction = mo.ui.radio(
@@ -289,7 +270,6 @@ def _(mo):
     )
     return (partD_prediction,)
 
-
 @app.cell(hide_code=True)
 def _(mo):
     partD_months = mo.ui.slider(
@@ -297,7 +277,6 @@ def _(mo):
         label="Months since production launch",
     )
     return (partD_months,)
-
 
 # ─── TABS COMPOSITION ────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1032,8 +1011,6 @@ in the first 24 months of production deployment.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1070,7 +1047,6 @@ def _(COLORS, ledger, mo, partA_prediction, partB_prediction, partC_prediction, 
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

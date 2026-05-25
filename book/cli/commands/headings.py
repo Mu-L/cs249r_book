@@ -21,7 +21,7 @@ script. Invoked from:
     - ``./book/binder headings {check,dry-run,apply}`` (CLI)
     - ``validate.py:_run_heading_case`` (imports ``find_violations``
       and emits ``ValidationIssue`` objects for the rich check table)
-    - ``.pre-commit-config.yaml`` → ``./book/binder headings check``
+    - Pre-commit: ``./book/binder check headers`` (includes ``ids`` + ``case`` scopes)
 """
 
 from __future__ import annotations

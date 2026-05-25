@@ -27,7 +27,6 @@ app = marimo.App(width="full")
 # Design Ledger: chapter="v2_11"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: SETUP + OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -41,23 +40,17 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -111,7 +104,6 @@ async def _():
         SIGMA_3_FPR, SIGMA_4_FPR, HUMAN_CAPACITY,
     )
 
-
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -161,7 +153,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -224,7 +215,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -238,7 +228,6 @@ def _(mo):
     - **Fleet-Scale Monitoring** &mdash; False alarm rates and hierarchical aggregation.
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
@@ -266,7 +255,6 @@ def _(mo):
     )
     return (pA_models, pA_platform, pA_pred)
 
-
 # ─── CELL 5: Part B prediction + Part B controls ─────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -282,7 +270,6 @@ def _(mo):
     pB_rev = mo.ui.slider(start=0.10, stop=2.00, value=0.50, step=0.10, label="Revenue per click ($)")
     pB_detect = mo.ui.slider(start=1, stop=48, value=24, step=1, label="Detection time (hours)")
     return (pB_ctr_drop, pB_detect, pB_pred, pB_qps, pB_rev)
-
 
 # ─── CELL 6: Part C prediction + Part C controls ─────────────────────────────
 @app.cell(hide_code=True)
@@ -306,7 +293,6 @@ def _(mo):
     )
     return (pC_models, pC_platform_cost, pC_pred)
 
-
 # ─── CELL 7: Part D prediction + Part D controls ─────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -327,7 +313,6 @@ def _(mo):
     pD_canary_pct = mo.ui.slider(start=1, stop=50, value=1, step=1, label="Canary percentage (%)")
     return (pD_canary_pct, pD_pred, pD_req_rate)
 
-
 # ─── CELL 8: Part E controls + Synthesis decision log ────────────────────────
 @app.cell(hide_code=True)
 def _(DecisionLog, mo):
@@ -347,7 +332,6 @@ def _(DecisionLog, mo):
                     "fleet-scale ML operations is..."
     )
     return (pE_hier, pE_metrics, pE_models, pE_sigma)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
@@ -1211,7 +1195,6 @@ the ~50/day human processing capacity.
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1238,7 +1221,6 @@ def _(COLORS, ledger, mo):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

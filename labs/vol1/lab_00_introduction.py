@@ -27,7 +27,6 @@ app = marimo.App(width="full")
 # Design Ledger: initialized with deployment context at completion.
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -40,16 +39,11 @@ async def _():
     from pathlib import Path
 
     # WASM bootstrap: install mlsysim from hosted wheel when running in browser
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
@@ -60,7 +54,6 @@ async def _():
     if getattr(ledger, "is_wasm", False):
         _ = await ledger.load_async()
     return COLORS, DecisionLog, LAB_CSS, ledger, mo
-
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────────
 @app.cell
@@ -105,7 +98,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ──────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -175,7 +167,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: CONCEPT CHECKS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -234,7 +225,6 @@ def _(mo):
     ])
     return
 
-
 # ─── CHECK 1 ───────────────────────────────────────────────────────────────────
 
 @app.cell
@@ -252,7 +242,6 @@ def _(mo):
     domain for diagnosing and fixing this?""",
     )
     return (check1,)
-
 
 @app.cell
 def _(check1, mo):
@@ -304,7 +293,6 @@ def _(check1, mo):
         ),
     ])
     return
-
 
 # ─── CONCEPT 2: PHYSICAL CONSTRAINTS PARTITION DEPLOYMENT ─────────────────────
 
@@ -380,7 +368,6 @@ def _(check1, mo):
     ])
     return
 
-
 # ─── CHECK 2 (multi-select) ────────────────────────────────────────────────────
 
 # Pattern C: widget definitions are ungated so they are always defined at
@@ -414,7 +401,6 @@ def _(mo):
     )
     return (edge_deploy, faster_gpu, model_size, move_server, quantization)
 
-
 @app.cell
 def _(
     check1,
@@ -440,7 +426,6 @@ def _(
         edge_deploy
     ])
     return
-
 
 @app.cell
 def _(
@@ -555,7 +540,6 @@ def _(
 
     mo.vstack(_items)
     return
-
 
 # ─── CONCEPT 3: THE DEPLOYMENT REGIMES ────────────────────────────────────────
 
@@ -678,7 +662,6 @@ def _(check1, check2empty, mo):
     ])
     return
 
-
 # ─── CHECK 3 (constraint reasoning) ───────────────────────────────────────────
 
 @app.cell
@@ -704,7 +687,6 @@ def _(check1, check2empty, mo):
         check3,
     ])
     return (check3,)
-
 
 @app.cell
 def _(check1, check2empty, check3, mo):
@@ -748,7 +730,6 @@ def _(check1, check2empty, check3, mo):
     ])
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: INTERFACE ORIENTATION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -775,7 +756,6 @@ def _(check1, check2empty, check3, mo):
         """),
     ])
     return
-
 
 @app.cell
 def _(
@@ -1005,7 +985,6 @@ def _(
     ])
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1036,7 +1015,6 @@ def _(check1, check2empty, check3, mo):
     ])
     return
 
-
 @app.cell
 def _(check1, check2empty, check3, mo):
     mo.stop(check1.value is None or check2empty() or check3.value is None)
@@ -1052,14 +1030,12 @@ def _(check1, check2empty, check3, mo):
     )
     return (context_selector,)
 
-
 # ─── CONTEXT REVEAL + STAKEHOLDER MESSAGE + LEDGER INIT ───────────────────────
 
 @app.cell(hide_code=True)
 def _(DecisionLog):
     decision_input, decision_ui = DecisionLog()
     return (decision_ui,)
-
 
 @app.cell
 def _(
@@ -1267,7 +1243,6 @@ def _(
     ])
     return
 
-
 # ─── CELL 20: SYNTHESIS ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -1358,7 +1333,6 @@ def _(COLORS, mo):
     ])
     return
 
-
 # ─── CELL 21: LEDGER_HUD ───────────────────────────────────────────────────────
 @app.cell
 def _(COLORS, ledger, mo):
@@ -1411,7 +1385,6 @@ def _(edge_deploy, faster_gpu, model_size, move_server, quantization):
         return check2values
 
     return check2empty, check2value_list
-
 
 if __name__ == "__main__":
     app.run()

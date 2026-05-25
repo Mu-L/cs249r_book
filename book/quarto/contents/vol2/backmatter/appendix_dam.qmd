@@ -20,11 +20,9 @@ When training is slow on a single GPU, check utilization, data wait time, and MF
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 #| label: appendix-dam-setup
-from mlsysim.core.constants import (
-    H100_FLOPS_FP16_TENSOR, H100_MEM_BW, TFLOPs, TB, second, flop, GB, byte,
-    BILLION, MILLION, THOUSAND, MS_PER_SEC, BYTES_FP16,
-)
 from mlsysim.fmt import MarkdownStr, fmt, fmt_frac, fmt_math, sci_latex, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -36,17 +34,21 @@ class DAMTaxonomy:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    from mlsysim import Models, Hardware
+    from mlsysim.physics import calc_transformer_decode_flops
+
+    m = Models.Language.Llama2_7B
+    h = Hardware.Cloud.H100
+
     # Exercise 1: Starving GPU
     ex1_gpu_util_pct = 25
     ex1_disk_sat_pct = 100
 
-    # Exercise 2: Iron Law (7B Model Inference)
-    ex2_params = 7 * BILLION
+    # Exercise 2: Iron Law
+    ex2_params = m.parameters
     ex2_latency_s = 0.050
-    ex2_bytes_per_param = BYTES_FP16.m_as(byte)  # FP16
-    ex2_flops_per_param = 2 # Fwd pass
-    h100_fp16_tflops_peak = H100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second)
-    h100_hbm_tb_s = H100_MEM_BW.m_as(TB/second)
+    h100_fp16_tflops_peak = h.peak_flops.m_as(TFLOPs/second)
+    h100_hbm_tb_s = h.memory_bw.m_as(TB/second)
 
     # Exercise 3: Scaling Law
     ex3_loss_start = 0.45
@@ -60,22 +62,23 @@ class DAMTaxonomy:
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     # Step 1: Exercise 2 logic
-    ex2_flops_per_pass = (ex2_params * ex2_flops_per_param * flop).m_as(TFLOPs)
+    ex2_flops_per_pass = calc_transformer_decode_flops(ex2_params).m_as(TFLOPs)
     ex2_achieved_tflops = ex2_flops_per_pass/ex2_latency_s
     ex2_util = (ex2_achieved_tflops/h100_fp16_tflops_peak) * 100
-    ex2_model_size_gb = (ex2_params * ex2_bytes_per_param * byte).m_as(GB)
+    ex2_model_size_gb = (ex2_params * 2 * ureg.byte).m_as(GB)
     h100_ridge_flop_per_byte = h100_fp16_tflops_peak / h100_hbm_tb_s
 
     # Step 2: Exercise 3 logic
     ex3_imp_pct = (ex3_loss_start - ex3_loss_end) / ex3_loss_start * 100
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    from mlsysim.fmt import check
     check(ex2_util < 10, f"Batch-1 utilization ({ex2_util:.1f}%) unexpectedly high.")
     check(290 < h100_ridge_flop_per_byte < 300, f"H100 ridge point changed: {h100_ridge_flop_per_byte:.1f}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    h100_ridge_str = fmt(h100_ridge_flop_per_byte, precision=0, commas=False)
-
+    from mlsysim.fmt import fmt
+    h100_ridge_str = fmt(h100_ridge_flop_per_byte, precision=1, commas=False)
 ```
 
 With that usage pattern in mind, the appendix focuses on the following diagnostic habits:

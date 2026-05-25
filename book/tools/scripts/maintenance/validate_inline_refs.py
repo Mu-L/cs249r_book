@@ -37,7 +37,7 @@ from pathlib import Path
 
 DEPRECATION_MSG = (
     "DEPRECATION: use Binder instead of direct script invocation:\n"
-    "  ./book/binder validate inline-refs [--path <file-or-dir>] [--check-patterns] [--check-lego]"
+    "  ./book/binder check refs --scope inline [--path <file-or-dir>] [--check-patterns] [--check-lego]"
 )
 
 BOOK_ROOT = Path(__file__).resolve().parent.parent  # book/quarto/

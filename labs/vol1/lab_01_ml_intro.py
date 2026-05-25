@@ -3,11 +3,9 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 0: SETUP ────────────────────────────────────────────────────────
 @app.cell
@@ -19,23 +17,17 @@ async def _():
     import numpy as np
 
     # WASM bootstrap: install mlsysim from hosted wheel when running in browser
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    import mlsysim
-    from mlsysim import Engine, Models, Hardware
+    from mlsysim import Engine, Hardware, Models
 
     # ── Hardware constants from registry ──────────────────────────────────
     H100 = Hardware.Cloud.H100
@@ -75,8 +67,8 @@ async def _():
     HIMAX_TDP_W   = HIMAX.tdp.m_as("W")
 
     # ── Model constants ────────────────────────────────────────────────────
-    RESNET50_PARAMS  = Models.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS   = Models.ResNet50.inference_flops.m_as("flop")
+    RESNET50_PARAMS  = Models.Vision.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS   = Models.Vision.ResNet50.inference_flops.m_as("flop")
     RESNET50_SIZE_MB = RESNET50_PARAMS * 2 / (1024 * 1024)  # FP16
 
     ledger = DesignLedger()
@@ -95,7 +87,6 @@ async def _():
         RESNET50_PARAMS, RESNET50_FLOPS, RESNET50_SIZE_MB,
         ledger,
     )
-
 
 # ─── CELL 1: HEADER ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -150,7 +141,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ─────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -223,7 +213,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ──────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -239,11 +228,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: TABS CELL ────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -649,7 +636,7 @@ Algorithm capacity metrics complete the picture.
 
         # Use the Engine API — the same Roofline solver students will use for all 14 labs
         _profile = Engine.solve(
-            Models.ResNet50, Hardware.Cloud.H100,
+            Models.Vision.ResNet50, Hardware.Cloud.H100,
             batch_size=_batch, precision="fp16", efficiency=_eta,
         )
         _t_data_ms = _profile.latency_memory.m_as("ms")
@@ -758,7 +745,7 @@ AI = {_ai:.1f} FLOPs/Byte  {'<<' if _ai < _ridge_point else '>>'} Ridge Point ~{
         _data_times = []
         _comp_times = []
         for _b in _batches:
-            _p = Engine.solve(Models.ResNet50, Hardware.Cloud.H100, batch_size=_b, precision="fp16", efficiency=_eta)
+            _p = Engine.solve(Models.Vision.ResNet50, Hardware.Cloud.H100, batch_size=_b, precision="fp16", efficiency=_eta)
             _data_times.append(_p.latency_memory.m_as("ms"))
             _comp_times.append(_p.latency_compute.m_as("ms"))
 
@@ -786,7 +773,7 @@ AI = {_ai:.1f} FLOPs/Byte  {'<<' if _ai < _ridge_point else '>>'} Ridge Point ~{
 
         # Prediction reveal — use Engine at batch=1 for reference values
         _pred = partB_prediction.value
-        _ref = Engine.solve(Models.ResNet50, Hardware.Cloud.H100, batch_size=1, precision="fp16", efficiency=_eta)
+        _ref = Engine.solve(Models.Vision.ResNet50, Hardware.Cloud.H100, batch_size=1, precision="fp16", efficiency=_eta)
         _t_data_ref = _ref.latency_memory.m_as("ms")
         _t_comp_ref = _ref.latency_compute.m_as("ms")
 
@@ -1363,11 +1350,9 @@ Since {RESNET50_FLOPS/(RESNET50_SIZE_MB/1024*1e9):.0f} << {_ridge_point:.0f}, th
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 5: LEDGER HUD ───────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1391,7 +1376,6 @@ def _(COLORS, ledger, mo):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

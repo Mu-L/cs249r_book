@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 0: SETUP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -20,35 +19,30 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
+    from mlsysim import Hardware
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
 
-    H100_TFLOPS = mlsysim.Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
-    H100_BW     = mlsysim.Hardware.Cloud.H100.memory.bandwidth.m_as("GB/s")
-    H100_RAM    = mlsysim.Hardware.Cloud.H100.memory.capacity.m_as("GB")
-    H100_TDP    = mlsysim.Hardware.Cloud.H100.tdp.m_as("W")
+    H100_TFLOPS = Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
+    H100_BW     = Hardware.Cloud.H100.memory.bandwidth.m_as("GB/s")
+    H100_RAM    = Hardware.Cloud.H100.memory.capacity.m_as("GB")
+    H100_TDP    = Hardware.Cloud.H100.tdp.m_as("W")
 
-    JETSON_TFLOPS = mlsysim.Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
-    JETSON_BW     = mlsysim.Hardware.Edge.JetsonOrinNX.memory.bandwidth.m_as("GB/s")
-    JETSON_RAM    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
-    JETSON_TDP    = mlsysim.Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
+    JETSON_TFLOPS = Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
+    JETSON_BW     = Hardware.Edge.JetsonOrinNX.memory.bandwidth.m_as("GB/s")
+    JETSON_RAM    = Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
+    JETSON_TDP    = Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
 
-    IPHONE_TFLOPS = mlsysim.Hardware.Mobile.iPhone15Pro.compute.peak_flops.m_as("TFLOPs/s")
-    IPHONE_BW     = mlsysim.Hardware.Mobile.iPhone15Pro.memory.bandwidth.m_as("GB/s")
-    IPHONE_TDP    = mlsysim.Hardware.Mobile.iPhone15Pro.tdp.m_as("W")
+    IPHONE_TFLOPS = Hardware.Mobile.iPhone15Pro.compute.peak_flops.m_as("TFLOPs/s")
+    IPHONE_BW     = Hardware.Mobile.iPhone15Pro.memory.bandwidth.m_as("GB/s")
+    IPHONE_TDP    = Hardware.Mobile.iPhone15Pro.tdp.m_as("W")
 
     # Ridge points: peak_flops / memory_bandwidth (FLOP/byte)
     H100_RIDGE   = H100_TFLOPS * 1e12 / (H100_BW * 1e9)
@@ -64,7 +58,6 @@ async def _():
         JETSON_BW, JETSON_RAM, JETSON_RIDGE, JETSON_TDP, JETSON_TFLOPS,
         LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 1: HEADER
@@ -115,7 +108,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 2: BRIEFING
@@ -183,7 +175,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 3: READING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -202,7 +193,6 @@ def _(mo):
     - **Chapter 2: ML Systems** -- Iron Law latency decomposition.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 4: TABS (Parts A-E + Synthesis)
@@ -301,7 +291,6 @@ def _(mo):
     pE_tile = mo.ui.slider(start=32, stop=2048, value=256, step=32, label="Tile size (elements)")
     pE_seq = mo.ui.slider(start=512, stop=16384, value=4096, step=512, label="Sequence length")
     return (pE_seq, pE_tile)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1061,7 +1050,6 @@ Speedup $\\approx M / d$, which is 2-4x at typical dimensions. Tiling keeps Q, K
     _tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 5: LEDGER HUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1094,7 +1082,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

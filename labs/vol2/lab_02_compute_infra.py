@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -17,79 +15,65 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim.core.defaults import (
-        GPU_MTTF_HOURS,
-        INFINIBAND_NDR_BW_GBS,
-        PUE_BEST_AIR,
-        DEFAULT_KWH_PRICE,
-        ANNUAL_MAINTENANCE_RATIO,
-        MFU_INFERENCE_BATCH1,
-    )
-    from mlsysim.core.constants import (
-        ureg,
-        H100_FLOPS_FP16_TENSOR,
-        H100_MEM_BW,
-        H100_MEM_CAPACITY,
-        H100_TDP,
-        A100_FLOPS_FP16_TENSOR,
-        A100_MEM_BW,
-        A100_MEM_CAPACITY,
-        B200_FLOPS_FP16_TENSOR,
-        B200_MEM_BW,
-        B200_MEM_CAPACITY,
-        V100_FLOPS_FP16_TENSOR,
-        V100_MEM_BW,
-        NVLINK_H100_BW,
-        PCIE_GEN5_BW,
-        NVME_SEQUENTIAL_BW,
-    )
+    from mlsysim import Hardware, Models, Systems, Literature, Infrastructure, Engine
+    from mlsysim import ureg, NVME_SEQUENTIAL_BW
+
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    PUE_BEST_AIR = float(Infrastructure.FacilityCooling.BestAir.pue)
+    DEFAULT_KWH_PRICE = Infrastructure.Pricing.Cloud.ElectricityPerKwh.rate.m_as("USD/kWh")
+    ANNUAL_MAINTENANCE_RATIO = float(Infrastructure.Pricing.Capital.AnnualMaintenanceRatio.rate)
+    MFU_INFERENCE_BATCH1 = Literature.Training.MfuInferenceBatch1
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    _H100_REG = mlsysim.Hardware.Cloud.H100
-    _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
+    _H100_REG = Hardware.Cloud.H100
+    _A100_REG = Hardware.Cloud.A100
+    _B200_REG = Hardware.Cloud.B200
+    _V100_REG = Hardware.Cloud.V100
+    _EDGE_REG = Hardware.Edge.JetsonOrinNX
 
     # Extract scalar values for chart use
-    H100_TFLOPS = H100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    H100_BW_GBS = H100_MEM_BW.m_as("GB/s")
-    H100_RAM_GB = H100_MEM_CAPACITY.m_as("GB")
-    H100_TDP_W = H100_TDP.m_as("W")
+    H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    H100_BW_GBS = _H100_REG.memory.bandwidth.m_as("GB/s")
+    H100_RAM_GB = _H100_REG.memory.capacity.m_as("GB")
+    H100_TDP_W = _H100_REG.tdp.m_as("W")
     H100_RIDGE = H100_TFLOPS * 1000 / H100_BW_GBS  # FLOPs/Byte
 
-    A100_TFLOPS = A100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    A100_BW_GBS = A100_MEM_BW.m_as("GB/s")
-    B200_TFLOPS = B200_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    B200_BW_GBS = B200_MEM_BW.m_as("GB/s")
-    V100_TFLOPS = V100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    V100_BW_GBS = V100_MEM_BW.m_as("GB/s")
+    A100_TFLOPS = _A100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    A100_BW_GBS = _A100_REG.memory.bandwidth.m_as("GB/s")
+    B200_TFLOPS = _B200_REG.compute.peak_flops.m_as("TFLOPs/s")
+    B200_BW_GBS = _B200_REG.memory.bandwidth.m_as("GB/s")
+    V100_TFLOPS = _V100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    V100_BW_GBS = _V100_REG.memory.bandwidth.m_as("GB/s")
 
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
     EDGE_BW_GBS = _EDGE_REG.memory.bandwidth.m_as("GB/s")
     EDGE_RAM_GB = _EDGE_REG.memory.capacity.m_as("GB")
     EDGE_TDP_W = _EDGE_REG.tdp.m_as("W")
 
-    NVLINK_GBS = NVLINK_H100_BW.m_as("GB/s")
-    PCIE_GBS = PCIE_GEN5_BW.m_as("GB/s")
+    NVLINK_GBS = _H100_REG.nvlink.bandwidth.m_as("GB/s")
+    PCIE_GBS = _H100_REG.interconnect.bandwidth.m_as("GB/s")
     IB_NDR_GBS = INFINIBAND_NDR_BW_GBS
     NVME_GBS = NVME_SEQUENTIAL_BW.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
-    GPT2_PARAMS_B = GPT2.parameters.m_as("dimensionless") / 1e9  # billions
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS_B = GPT2.parameters.m_as("count") / 1e9  # billions
+    DECODE_MODELS = {
+        7: Models.Language.Llama3_8B,
+        70: Models.Language.Llama2_70B,
+        175: Models.Language.GPT3,
+    }
+    H100 = _H100_REG
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -103,8 +87,8 @@ async def _():
         GPT2_PARAMS_B,
         NVLINK_GBS, PCIE_GBS, IB_NDR_GBS, NVME_GBS,
         PUE_BEST_AIR, DEFAULT_KWH_PRICE, ANNUAL_MAINTENANCE_RATIO,
+        Engine, H100, DECODE_MODELS, MFU_INFERENCE_BATCH1,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -153,7 +137,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -219,8 +202,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -236,7 +217,6 @@ def _(mo):
     - **Vol II Ch 2: Total Cost of Ownership** -- CapEx vs OpEx breakdown.
     """), kind="info")
     return
-
 
 @app.cell(hide_code=True)
 def _(
@@ -343,13 +323,13 @@ def _(mo):
     pE_pue = mo.ui.slider(start=1.06, stop=1.60, value=1.12, step=0.02, label="PUE")
     return (pE_n_gpus, pE_pue, pE_util)
 
-
 @app.cell(hide_code=True)
 def _(
     mo, pA_batch, pA_model, pA_pred,
     pB_hw, pB_pred, pC_pred, pC_size,
     pD_gpus, pD_model_b, pD_pred, pD_zero,
     pE_pred, pE_n_gpus, pE_pue, pE_util,
+    Engine, H100, DECODE_MODELS, MFU_INFERENCE_BATCH1,
 ):
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -406,6 +386,20 @@ def _(
         _mfu = (_t_comp_ms / _t_total) * 100 if _t_total > 0 else 0
         _ai = _batch  # AI = (2 * batch * params) / (2 bytes * params) = batch FLOPs/Byte
 
+        _decode_model = DECODE_MODELS.get(_params_b)
+        if _decode_model is not None:
+            _profile = Engine.solve(
+                _decode_model, H100, batch_size=_batch,
+                precision="fp16", efficiency=float(MFU_INFERENCE_BATCH1),
+            )
+            _engine_mem_ms = _profile.latency_memory.m_as("ms")
+            _engine_comp_ms = _profile.latency_compute.m_as("ms")
+            _engine_mfu_pct = _profile.mfu * 100
+            _engine_bn = _profile.bottleneck
+        else:
+            _engine_mem_ms = _engine_comp_ms = _engine_mfu_pct = None
+            _engine_bn = "n/a"
+
         # Waterfall chart
         _fig = go.Figure()
         _fig.add_trace(go.Bar(name="Memory (HBM load)", x=["Latency"], y=[_t_mem_ms],
@@ -455,6 +449,7 @@ Weight load  = {_weight_gb:.0f} GB / {H100_BW_GBS:,.0f} GB/s = {_t_mem_ms:.2f} m
 Compute      = 2 * {_params:.0e} * {_batch} / {H100_TFLOPS:.0f} TFLOPS = {_t_comp_ms:.4f} ms
 GPU idle     = {_t_mem_ms:.2f} / {_t_total:.2f} = {_idle_pct:.1f}%
 AI           = {_ai:.0f} FLOPs/Byte  (ridge = {H100_RIDGE:.0f})
+Engine.solve = mem {_engine_mem_ms:.2f} ms + comp {_engine_comp_ms:.4f} ms → MFU {_engine_mfu_pct:.1f}% ({_engine_bn})
 ```
 *Source: Vol II Ch 2 -- The Memory Wall*
         """))
@@ -1083,8 +1078,6 @@ AllReduce, hierarchical communication, and gradient compression.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1119,7 +1112,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

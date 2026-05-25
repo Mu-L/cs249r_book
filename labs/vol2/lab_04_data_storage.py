@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -17,42 +15,34 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim.core.defaults import GPU_MTTF_HOURS
-    from mlsysim.core.formulas import calc_young_daly_interval, calc_mtbf_cluster
-    from mlsysim.core.constants import (
-        ureg,
-        H100_FLOPS_FP16_TENSOR,
-        A100_FLOPS_FP16_TENSOR,
-        B200_FLOPS_FP16_TENSOR,
-        V100_FLOPS_FP16_TENSOR,
-        NVME_SEQUENTIAL_BW,
-    )
+    from mlsysim import Hardware, Models, Systems
+    from mlsysim import ureg, NVME_SEQUENTIAL_BW
+    from mlsysim.physics import calc_young_daly_interval, calc_mtbf_cluster
+
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    _H100_REG = mlsysim.Hardware.Cloud.H100
-    _T4_REG = mlsysim.Hardware.Cloud.T4
-    _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
+    _H100_REG = Hardware.Cloud.H100
+    _A100_REG = Hardware.Cloud.A100
+    _B200_REG = Hardware.Cloud.B200
+    _V100_REG = Hardware.Cloud.V100
+    _T4_REG = Hardware.Cloud.T4
+    _EDGE_REG = Hardware.Edge.JetsonOrinNX
 
     # Scalar extraction
-    H100_TFLOPS = H100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    A100_TFLOPS = A100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    B200_TFLOPS = B200_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    V100_TFLOPS = V100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
+    H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    A100_TFLOPS = _A100_REG.compute.peak_flops.m_as("TFLOPs/s")
+    B200_TFLOPS = _B200_REG.compute.peak_flops.m_as("TFLOPs/s")
+    V100_TFLOPS = _V100_REG.compute.peak_flops.m_as("TFLOPs/s")
     NVME_GBS = NVME_SEQUENTIAL_BW.m_as("GB/s")
 
     H100_RAM_GB = _H100_REG.memory.capacity.m_as("GB")
@@ -61,8 +51,8 @@ async def _():
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
-    GPT2_PARAMS_B = GPT2.parameters.m_as("dimensionless") / 1e9  # billions
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS_B = GPT2.parameters.m_as("count") / 1e9  # billions
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -72,10 +62,8 @@ async def _():
         H100_TFLOPS, A100_TFLOPS, B200_TFLOPS, V100_TFLOPS, NVME_GBS,
         H100_RAM_GB, T4_RAM_GB, EDGE_RAM_GB, EDGE_TFLOPS,
         GPT2_PARAMS_B,
-        GPU_MTTF_HOURS,
         calc_young_daly_interval, calc_mtbf_cluster,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -124,7 +112,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -189,8 +176,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -206,12 +191,10 @@ def _(mo):
     """), kind="info")
     return
 
-
 @app.cell(hide_code=True)
 def _(
     COLORS, apply_plotly_theme, go, math, mo, np, ureg,
     H100_TFLOPS, A100_TFLOPS, B200_TFLOPS, V100_TFLOPS, NVME_GBS,
-    GPU_MTTF_HOURS,
     calc_young_daly_interval, calc_mtbf_cluster,
 ):
     # ═════════════════════════════════════════════════════════════════════════
@@ -302,7 +285,6 @@ def _(mo):
     pE_write = mo.ui.slider(start=30, stop=300, value=120, step=10, label="Checkpoint write time (s)")
     pE_interval = mo.ui.slider(start=1, stop=120, value=30, step=1, label="Checkpoint interval (min)")
     return (pE_interval, pE_mtbf, pE_write)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1026,8 +1008,6 @@ and 3D parallelism maps strategies to the bandwidth hierarchy.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1062,7 +1042,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

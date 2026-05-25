@@ -1,198 +1,269 @@
-from .types import TransformerWorkload, CNNWorkload, Workload, SSMWorkload, DiffusionWorkload
+from .types import TransformerWorkload, CNNWorkload, Workload, SSMWorkload, DiffusionWorkload, SparseTransformerWorkload
 from ..core.registry import Registry
-from ..core.constants import (
-    ureg,
-    # Language model constants
-    GPT2_PARAMS, GPT2_LAYERS, GPT2_HIDDEN_DIM, GPT2_HEADS,
-    GPT3_PARAMS, GPT3_LAYERS, GPT3_HIDDEN_DIM, GPT3_HEADS, GPT3_TRAINING_OPS,
-    GPT4_EST_PARAMS, GPT4_LAYERS, GPT4_HIDDEN_DIM, GPT4_HEADS,
-    BERT_BASE_PARAMS, BERT_BASE_LAYERS, BERT_BASE_HIDDEN_DIM, BERT_BASE_HEADS, BERT_BASE_FLOPs,
-    BERT_LARGE_PARAMS, BERT_LARGE_LAYERS, BERT_LARGE_HIDDEN_DIM, BERT_LARGE_HEADS, BERT_LARGE_FLOPs,
-    LLAMA2_70B_PARAMS, LLAMA2_70B_LAYERS, LLAMA2_70B_HIDDEN_DIM, LLAMA2_70B_HEADS,
-    LLAMA3_8B_PARAMS, LLAMA3_8B_LAYERS, LLAMA3_8B_HIDDEN_DIM, LLAMA3_8B_HEADS, LLAMA3_8B_KV_HEADS,
-    LLAMA3_70B_PARAMS, LLAMA3_70B_LAYERS, LLAMA3_70B_HIDDEN_DIM, LLAMA3_70B_HEADS, LLAMA3_70B_KV_HEADS,
-    # Vision model constants
-    RESNET50_PARAMS, RESNET50_FLOPs,
-    MOBILENETV2_PARAMS, MOBILENETV2_FLOPs,
-    ALEXNET_PARAMS, ALEXNET_FLOPs,
-    YOLOV8_NANO_PARAMS, YOLOV8_NANO_FLOPs, YOLOV8_NANO_LAYERS,
-    # Tiny model constants
-    KWS_DSCNN_PARAMS, KWS_DSCNN_FLOPs,
-    WAKEVISION_PARAMS, WAKEVISION_FLOPs,
-    ANOMALY_MODEL_PARAMS,
-    # Recommendation constants
-    DLRM_MODEL_SIZE_FP32,
-    # SSM constants
-    MAMBA_130M_PARAMS, MAMBA_130M_LAYERS, MAMBA_130M_HIDDEN_DIM, MAMBA_130M_STATE_SIZE,
-    MAMBA_2_8B_PARAMS, MAMBA_2_8B_LAYERS, MAMBA_2_8B_HIDDEN_DIM, MAMBA_2_8B_STATE_SIZE,
-    # Diffusion constants
-    STABLE_DIFFUSION_V1_5_PARAMS, STABLE_DIFFUSION_V1_5_RESOLUTION,
-    STABLE_DIFFUSION_V1_5_STEPS, STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP,
-)
+from ..core.constants import (flop, param, ureg, count, day)
+from ..core.types import Metadata
+from ..core.provenance import Provenance, ProvenanceKind
+from ..core import provenance_catalog as pc
 
 class LanguageModels(Registry):
     GPT2 = TransformerWorkload(
         name="GPT-2 (1.5B)",
         architecture="Transformer",
-        parameters=GPT2_PARAMS,
-        layers=GPT2_LAYERS,
-        hidden_dim=GPT2_HIDDEN_DIM,
-        heads=GPT2_HEADS,
-        inference_flops=2 * GPT2_PARAMS.magnitude * ureg.flop
+        parameters=1.5e9 * param,
+        layers=48,
+        hidden_dim=1600,
+        heads=25,
+        inference_flops=2 * 1.5e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.RADFOR_GPT2),
     )
     GPT3 = TransformerWorkload(
         name="GPT-3 (175B)",
         architecture="Transformer",
-        parameters=GPT3_PARAMS,
-        layers=GPT3_LAYERS,
-        hidden_dim=GPT3_HIDDEN_DIM,
-        heads=GPT3_HEADS,
-        training_ops=GPT3_TRAINING_OPS,
-        inference_flops=2 * GPT3_PARAMS.magnitude * ureg.flop
+        parameters=175e9 * param,
+        layers=96,
+        hidden_dim=12288,
+        heads=96,
+        training_ops=3.14e23 * flop,
+        training_tokens=300e9 * count,
+        training_accelerators_ref=1024 * count,
+        training_days_ref=25 * day,
+        training_energy_mwh=1287,
+        inference_flops=2 * 175e9 * ureg.flop,
+        metadata=Metadata(
+            provenance=Provenance(
+                id="prov:gpt3-brown-2020",
+                kind=ProvenanceKind.LITERATURE,
+                ref="Brown et al. (2020), Language Models are Few-Shot Learners",
+                verified="2025-03-06",
+            ),
+        ),
     )
     GPT4 = TransformerWorkload(
         name="GPT-4",
         architecture="Transformer",
-        parameters=GPT4_EST_PARAMS,
-        layers=GPT4_LAYERS,
-        hidden_dim=GPT4_HIDDEN_DIM,
-        heads=GPT4_HEADS,
-        inference_flops=2 * GPT4_EST_PARAMS.magnitude * ureg.flop
+        parameters=1.76e12 * param,
+        layers=120,
+        hidden_dim=16384,
+        heads=128,
+        training_accelerators_ref=25_000 * count,
+        training_days_ref=90 * day,
+        training_gpu_days=2.5e6,
+        training_hardware_label="A100-class",
+        inference_flops=2 * 1.76e12 * ureg.flop,
+        metadata=Metadata(
+            provenance=Provenance(
+                id="prov:gpt4-semianalysis-estimate",
+                kind=ProvenanceKind.ESTIMATE,
+                ref="SemiAnalysis (2023) public MoE estimate; OpenAI (2023) technical report (no parameter count)",
+                url="https://www.semianalysis.com/p/gpt-4-architecture-infrastructure",
+                verified="2025-03-06",
+                notes="1.76T parameters and 2.5M GPU-days are third-party estimates, not OpenAI disclosures.",
+            ),
+            description="1.76T parameters and 2.5M GPU-days are third-party estimates, not OpenAI disclosures.",
+        ),
     )
     BERT_Base = TransformerWorkload(
         name="BERT-Base",
         architecture="Transformer",
-        parameters=BERT_BASE_PARAMS,
-        layers=BERT_BASE_LAYERS,
-        hidden_dim=BERT_BASE_HIDDEN_DIM,
-        heads=BERT_BASE_HEADS,
-        inference_flops=BERT_BASE_FLOPs
+        parameters=110e6 * param,
+        layers=12,
+        hidden_dim=768,
+        heads=12,
+        inference_flops=22e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.DEVLIN_BERT),
     )
     BERT_Large = TransformerWorkload(
         name="BERT-Large",
         architecture="Transformer",
-        parameters=BERT_LARGE_PARAMS,
-        layers=BERT_LARGE_LAYERS,
-        hidden_dim=BERT_LARGE_HIDDEN_DIM,
-        heads=BERT_LARGE_HEADS,
-        inference_flops=BERT_LARGE_FLOPs
+        parameters=340e6 * param,
+        layers=24,
+        hidden_dim=1024,
+        heads=16,
+        inference_flops=72e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.DEVLIN_BERT),
+    )
+    Llama2_7B = TransformerWorkload(
+        name="Llama-2-7B",
+        architecture="Transformer",
+        parameters=7e9 * param,
+        layers=32,
+        hidden_dim=4096,
+        heads=32,
+        training_tokens=2e12 * count,
+        inference_flops=2 * 7e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama2_70B = TransformerWorkload(
         name="Llama-2-70B",
         architecture="Transformer",
-        parameters=LLAMA2_70B_PARAMS,
-        layers=LLAMA2_70B_LAYERS,
-        hidden_dim=LLAMA2_70B_HIDDEN_DIM,
-        heads=LLAMA2_70B_HEADS,
-        inference_flops=2 * LLAMA2_70B_PARAMS.magnitude * ureg.flop
+        parameters=70e9 * param,
+        layers=80,
+        hidden_dim=8192,
+        heads=64,
+        kv_heads=8,
+        training_tokens=2e12 * count,
+        inference_flops=2 * 70e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama3_8B = TransformerWorkload(
         name="Llama-3.1-8B",
         architecture="Transformer",
-        parameters=LLAMA3_8B_PARAMS,
-        layers=LLAMA3_8B_LAYERS,
-        hidden_dim=LLAMA3_8B_HIDDEN_DIM,
-        heads=LLAMA3_8B_HEADS,
-        kv_heads=LLAMA3_8B_KV_HEADS,
-        inference_flops=2 * LLAMA3_8B_PARAMS.magnitude * ureg.flop
+        parameters=8.03e9 * param,
+        layers=32,
+        hidden_dim=4096,
+        heads=32,
+        kv_heads=8,
+        inference_flops=2 * 8.03e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama3_70B = TransformerWorkload(
         name="Llama-3.1-70B",
         architecture="Transformer",
-        parameters=LLAMA3_70B_PARAMS,
-        layers=LLAMA3_70B_LAYERS,
-        hidden_dim=LLAMA3_70B_HIDDEN_DIM,
-        heads=LLAMA3_70B_HEADS,
-        kv_heads=LLAMA3_70B_KV_HEADS,
-        inference_flops=2 * LLAMA3_70B_PARAMS.magnitude * ureg.flop
+        parameters=70.6e9 * param,
+        layers=80,
+        hidden_dim=8192,
+        heads=64,
+        kv_heads=8,
+        inference_flops=2 * 70.6e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
+    )
+    Llama3_405B = TransformerWorkload(
+        name="Llama-3.1-405B",
+        architecture="Transformer",
+        parameters=405e9 * param,
+        layers=126,
+        hidden_dim=16384,
+        heads=128,
+        kv_heads=8,
+        inference_flops=2 * 405e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
+    )
+    DeepSeek_V3 = SparseTransformerWorkload(
+        name="DeepSeek-V3",
+        architecture="MoE Transformer",
+        parameters=671e9 * param,
+        active_parameters=37e9 * param,
+        layers=61,
+        hidden_dim=7168,
+        heads=56,
+        experts=256,
+        active_experts_per_token=8,
+        inference_flops=2 * 37e9 * ureg.flop,
+        metadata=Metadata(
+            provenance=Provenance(
+                id="prov:deepseek-v3-2024",
+                kind=ProvenanceKind.LITERATURE,
+                ref="DeepSeek-AI (2025), Insights Into DeepSeek-V3",
+                verified="2025-03-06",
+            ),
+        ),
     )
 
 class VisionModels(Registry):
+    ResNet18 = CNNWorkload(
+        name="ResNet-18",
+        architecture="CNN",
+        parameters=11.7e6 * param,
+        inference_flops=1.8e9 * ureg.flop,
+        layers=18,
+        metadata=Metadata(provenance=pc.HE_RESNET),
+    )
     ResNet50 = CNNWorkload(
         name="ResNet-50",
         architecture="CNN",
-        parameters=RESNET50_PARAMS,
-        inference_flops=RESNET50_FLOPs,
-        layers=50
+        parameters=25.6e6 * param,
+        inference_flops=4.1e9 * ureg.flop,
+        layers=50,
+        metadata=Metadata(provenance=pc.HE_RESNET),
     )
     MobileNetV2 = CNNWorkload(
         name="MobileNetV2",
         architecture="CNN",
-        parameters=MOBILENETV2_PARAMS,
-        inference_flops=MOBILENETV2_FLOPs,
-        layers=54
+        parameters=3.5e6 * param,
+        inference_flops=0.3e9 * ureg.flop,
+        layers=54,
+        metadata=Metadata(provenance=pc.SANDLER_MOBILENETV2),
     )
     YOLOv8_Nano = CNNWorkload(
         name="YOLOv8-Nano",
         architecture="CNN",
-        parameters=YOLOV8_NANO_PARAMS,
-        inference_flops=YOLOV8_NANO_FLOPs,
-        layers=YOLOV8_NANO_LAYERS
+        parameters=3.2e6 * param,
+        inference_flops=8.7e9 * ureg.flop,
+        layers=225,
+        metadata=Metadata(provenance=pc.YOLOV8),
     )
     AlexNet = CNNWorkload(
         name="AlexNet",
         architecture="CNN",
-        parameters=ALEXNET_PARAMS,
-        inference_flops=ALEXNET_FLOPs,
-        layers=8
+        parameters=60e6 * param,
+        inference_flops=1.5e9 * ureg.flop,
+        layers=8,
+        metadata=Metadata(provenance=pc.Krizhevsky_ALEXNET),
     )
-
 
 class TinyModels(Registry):
     DS_CNN = CNNWorkload(
         name="DS-CNN (KWS)",
         architecture="CNN",
-        parameters=KWS_DSCNN_PARAMS,
-        inference_flops=KWS_DSCNN_FLOPs
+        parameters=200e3 * param,
+        inference_flops=20e6 * ureg.flop,
+        metadata=Metadata(provenance=pc.MLPERF_TINY_KWS),
     )
     WakeVision = CNNWorkload(
         name="Wake Vision (Doorbell)",
         architecture="CNN",
-        parameters=WAKEVISION_PARAMS,
-        inference_flops=WAKEVISION_FLOPs
+        parameters=0.25e6 * param,
+        inference_flops=25e6 * ureg.flop,
+        metadata=Metadata(provenance=pc.WAKE_VISION),
     )
     AnomalyDetector = Workload(
         name="Anomaly Detector",
         architecture="MLP",
-        parameters=ANOMALY_MODEL_PARAMS,
-        inference_flops=2 * ANOMALY_MODEL_PARAMS.magnitude * ureg.flop
+        parameters=270e3 * param,
+        inference_flops=2 * 270e3 * ureg.flop,
+        metadata=Metadata(provenance=pc.BOOK_ANOMALY_MLP),
     )
 
 class RecommendationModels(Registry):
     DLRM = Workload(
         name="DLRM",
         architecture="DLRM",
-        model_size=DLRM_MODEL_SIZE_FP32
+        model_size=100 * ureg.GB,
+        embedding_entries=25e9 * count,
+        metadata=Metadata(provenance=pc.NAUMOV_DLRM),
     )
 
 class StateSpaceModels(Registry):
     Mamba_130M = SSMWorkload(
         name="Mamba-130M",
         architecture="SSM",
-        parameters=MAMBA_130M_PARAMS,
-        layers=MAMBA_130M_LAYERS,
-        hidden_dim=MAMBA_130M_HIDDEN_DIM,
-        state_size=MAMBA_130M_STATE_SIZE,
-        inference_flops=2 * MAMBA_130M_PARAMS.magnitude * ureg.flop
+        parameters=130e6 * param,
+        layers=24,
+        hidden_dim=768,
+        state_size=16,
+        inference_flops=2 * 130e6 * ureg.flop,
+        metadata=Metadata(provenance=pc.GU_GUARDRAILS_MAMBA),
     )
     Mamba_2_8B = SSMWorkload(
         name="Mamba-2.8B",
         architecture="SSM",
-        parameters=MAMBA_2_8B_PARAMS,
-        layers=MAMBA_2_8B_LAYERS,
-        hidden_dim=MAMBA_2_8B_HIDDEN_DIM,
-        state_size=MAMBA_2_8B_STATE_SIZE,
-        inference_flops=2 * MAMBA_2_8B_PARAMS.magnitude * ureg.flop
+        parameters=2.8e9 * param,
+        layers=64,
+        hidden_dim=2560,
+        state_size=16,
+        inference_flops=2 * 2.8e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.GU_GUARDRAILS_MAMBA),
     )
 
 class GenerativeVisionModels(Registry):
     StableDiffusion_v1_5 = DiffusionWorkload(
         name="Stable Diffusion v1.5",
         architecture="Diffusion/U-Net",
-        parameters=STABLE_DIFFUSION_V1_5_PARAMS,
-        resolution=STABLE_DIFFUSION_V1_5_RESOLUTION,
-        denoising_steps=STABLE_DIFFUSION_V1_5_STEPS,
-        inference_flops=STABLE_DIFFUSION_V1_5_FLOPs_PER_STEP
+        parameters=860e6 * param,
+        resolution=512,
+        denoising_steps=50,
+        inference_flops=20e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.ROMBACH_STABLE_DIFFUSION),
     )
 
 class Models(Registry):
@@ -202,17 +273,3 @@ class Models(Registry):
     Recommendation = RecommendationModels
     StateSpace = StateSpaceModels
     GenerativeVision = GenerativeVisionModels
-
-    GPT2 = LanguageModels.GPT2
-    GPT3 = LanguageModels.GPT3
-    GPT4 = LanguageModels.GPT4
-    Llama2_70B = LanguageModels.Llama2_70B
-    Llama3_8B = LanguageModels.Llama3_8B
-    Llama3_70B = LanguageModels.Llama3_70B
-    ResNet50 = VisionModels.ResNet50
-    MobileNetV2 = VisionModels.MobileNetV2
-    WakeVision = TinyModels.WakeVision
-    DLRM = RecommendationModels.DLRM
-    AlexNet = VisionModels.AlexNet
-    Mamba_2_8B = StateSpaceModels.Mamba_2_8B
-    StableDiffusion_v1_5 = GenerativeVisionModels.StableDiffusion_v1_5

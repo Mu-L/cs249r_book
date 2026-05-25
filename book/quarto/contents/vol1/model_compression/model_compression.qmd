@@ -48,110 +48,81 @@ Bridging that gap requires a systematic discipline of *compression*: trading cap
 
 :::
 
+## Optimization Framework {#sec-model-compression-optimization-framework-9e21}
+
 ```{python}
-#| label: compression-model-scale
 #| echo: false
-from mlsysim.core.constants import (
-    GPT3_PARAMS, SMARTPHONE_RAM_GB, MCU_RAM_KIB,
-    BYTES_FP16, BYTES_INT8, BYTES_FP32,
-    ENERGY_DRAM_ACCESS_PJ, ENERGY_DRAM_PJ_PER_BYTE,
-    ENERGY_FLOP_FP32_PJ, ENERGY_OP_INT8_PJ,
-    ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ,
-    Bparam, GB, MB, KB, TINY_MEM_KIB, byte, ureg
-)
-from mlsysim.fmt import fmt, check, MarkdownStr
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: LLM scale vs smartphone and MCU memory for deployment-gap prose.
+# │ Exports: CompressionDeploymentScale.{llm_7b,llm_7b_mem,llm_175b,llm_175b_mem,smartphone_ram,mcu_ram}_str
+from mlsysim import Models, Platforms
+from mlsysim.core.constants import *
+from mlsysim.fmt import fmt, fmt_int, check
 
-class CompressionSetup:
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    llm_7b_params = 7
-    int8_energy_reduction = 20                       # empirical INT8-vs-FP32 ratio
+class CompressionDeploymentScale:
+    llm_7b_params = Models.Language.Llama2_7B.parameters.m_as(Bparam)
     bytes_fp16 = BYTES_FP16.m_as(byte)
-    bytes_int8 = BYTES_INT8.m_as(byte)
-    bytes_fp32 = BYTES_FP32.m_as(byte)
 
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     llm_7b_mem_fp16_gb = llm_7b_params * bytes_fp16
-    llm_175b_params = GPT3_PARAMS.m_as(Bparam)
+    llm_175b_params = Models.Language.GPT3.parameters.m_as(Bparam)
     llm_175b_mem_fp16_gb = llm_175b_params * bytes_fp16
-    llm_175b_mem_int8_gb = llm_175b_params * bytes_int8
-    llm_175b_fp16_int8_reduction = llm_175b_mem_fp16_gb / llm_175b_mem_int8_gb
+    smartphone_ram_gb = Platforms.Mobile.ram.m_as(GB)
+    mcu_ram_kb = Platforms.Tiny.ram.m_as(KB)
 
-    # Device memory
-    smartphone_ram_gb = SMARTPHONE_RAM_GB.m_as(GB)
-    mcu_ram_kb = MCU_RAM_KIB.m_as(KB)
-
-    # Energy from constants (Horowitz 2014, 45nm process)
-    energy_dram = ENERGY_DRAM_ACCESS_PJ.m_as(ureg.picojoule)
-    energy_dram_per_byte = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/ureg.byte)
-    energy_dram_read_bytes = energy_dram / energy_dram_per_byte
-    energy_dram_read_bits = energy_dram_read_bytes * 8
-    energy_flop_fp32 = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.count)
-    energy_op_int8 = ENERGY_OP_INT8_PJ.m_as(ureg.picojoule/ureg.count)
-    energy_add_fp32 = ENERGY_ADD_FP32_PJ.m_as(ureg.picojoule)
-    energy_add_int8 = ENERGY_ADD_INT8_PJ.m_as(ureg.picojoule)
-    energy_float_add_ratio = energy_add_fp32 / energy_add_int8
-    energy_dram_read_ratio = energy_dram / energy_add_int8
-    energy_int8_mac = energy_op_int8 + energy_add_int8
-    dram_read_vs_int8_mac = energy_dram / energy_int8_mac
-    mobilenet_int8_mem = 3.5 * MB
-    mobilenet_int8_tiny_ratio = mobilenet_int8_mem.m_as(byte) / TINY_MEM_KIB.m_as(byte)
-
-    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(llm_7b_mem_fp16_gb > smartphone_ram_gb,
           "7-billion-parameter model must exceed smartphone RAM to illustrate the deployment gap.")
-    check(llm_175b_fp16_int8_reduction == 2,
-          "FP16-to-INT8 weight memory should halve.")
-    check(bytes_fp32 / bytes_int8 == 4,
-          "FP32-to-INT8 memory reduction should be 4x.")
-    check(energy_dram_read_ratio > 10_000,
-          "DRAM reads should exceed INT8 add energy by more than four orders of magnitude.")
-    check(dram_read_vs_int8_mac > 1000,
-          "DRAM reads should dominate INT8 MAC energy by orders of magnitude.")
-    check(abs(energy_dram_read_bits - 32) < 1e-9,
-          "The 640 pJ DRAM access should correspond to a 32-bit read under the per-byte constant.")
-    check(6 <= mobilenet_int8_tiny_ratio <= 8,
-          "MobileNetV2 INT8 should exceed TinyML memory by about 7x.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     llm_7b_str = fmt(llm_7b_params, precision=0, commas=False)
     llm_7b_mem_str = fmt(llm_7b_mem_fp16_gb, precision=0, commas=False)
     llm_175b_str = fmt(llm_175b_params, precision=0, commas=False)
     llm_175b_mem_str = fmt(llm_175b_mem_fp16_gb, precision=0, commas=False)
-    llm_175b_mem_int8_str = fmt(llm_175b_mem_int8_gb, precision=0, commas=False)
-    llm_175b_fp16_int8_reduction_str = fmt(llm_175b_fp16_int8_reduction, precision=0, commas=False)
-    # smartphone_ram_gb and mcu_ram_kb are floats; canonical fmt would inject ".0" — escape-hatch
-    smartphone_ram_str = fmt(smartphone_ram_gb, precision=0, commas=False)
-    mcu_ram_str = fmt(mcu_ram_kb, precision=0, commas=False)
-    energy_dram_str = fmt(energy_dram, precision=0, commas=False)
-    energy_dram_read_bits_str = fmt(energy_dram_read_bits, precision=0, commas=False)
-    energy_dram_per_byte_str = fmt(energy_dram_per_byte, precision=0, commas=False)
-    energy_flop_fp32_str = fmt(energy_flop_fp32, precision=1, commas=False)
-    energy_op_int8_str = fmt(energy_op_int8, precision=1, commas=False)
-    energy_float_add_ratio_str = fmt(energy_float_add_ratio, precision=0, commas=False)
-    energy_dram_read_ratio_str = fmt(energy_dram_read_ratio, precision=0)
-    dram_read_vs_int8_mac_str = fmt(dram_read_vs_int8_mac, precision=0)
-    int8_energy_reduction_str = fmt(int8_energy_reduction, precision=0, commas=False)
-    mobilenet_int8_tiny_ratio_str = fmt(mobilenet_int8_tiny_ratio, precision=0, commas=False)
+    smartphone_ram_str = fmt_int(round(smartphone_ram_gb), commas=False)
+    mcu_ram_str = fmt(mcu_ram_kb, precision=1, commas=False)
 ```
 
-## Optimization Framework {#sec-model-compression-optimization-framework-9e21}
-
-A `{python} CompressionSetup.llm_7b_str`-billion parameter language model requires `{python} CompressionSetup.llm_7b_mem_str` GB merely to store its weights in FP16. The deployment target is a smartphone with `{python} CompressionSetup.smartphone_ram_str` GB of RAM shared across the operating system, applications, and the model. *The math does not work.* No amount of clever engineering changes this arithmetic: `{python} CompressionSetup.llm_7b_mem_str` GB *cannot* fit in `{python} CompressionSetup.smartphone_ram_str` GB. Yet users expect the model to run: responsively, offline, without draining their battery in an hour. Latency budgets in @sec-model-serving-latency-budget-ef40 capture one visible part of this deployment gap, but the broader challenge also includes memory capacity, energy, and offline execution. That gap is not a minor inconvenience but a defining challenge of model compression.
+A `{python} CompressionDeploymentScale.llm_7b_str`-billion parameter language model requires `{python} CompressionDeploymentScale.llm_7b_mem_str` GB merely to store its weights in FP16. The deployment target is a smartphone with `{python} CompressionDeploymentScale.smartphone_ram_str` GB of RAM shared across the operating system, applications, and the model. *The math does not work.* No amount of clever engineering changes this arithmetic: `{python} CompressionDeploymentScale.llm_7b_mem_str` GB *cannot* fit in `{python} CompressionDeploymentScale.smartphone_ram_str` GB. Yet users expect the model to run: responsively, offline, without draining their battery in an hour. Latency budgets in @sec-model-serving-latency-budget-ef40 capture one visible part of this deployment gap, but the broader challenge also includes memory capacity, energy, and offline execution. That gap is not a minor inconvenience but a defining challenge of model compression.
 
 Recall the silicon contract (Principle \ref{pri-silicon-contract}) (@sec-introduction-iron-law-ml-systems-c32a), the implicit agreement every model makes with its hardware about which resource it will saturate. The three candidates are compute throughput, memory bandwidth, and memory capacity. During training, this contract is negotiated upward. Researchers select larger architectures, higher numerical precision, and deeper layers because the training environment, typically a GPU cluster with hundreds of gigabytes of memory, can afford those demands. In @sec-model-training-mixedprecision-training-9218, mixed precision speeds training while maintaining the ability to learn. Here, we go further, reducing precision to INT8 and beyond for inference, where we trade the ability to update weights for massive gains in execution efficiency. Deployment reverses these priorities. The production environment is smaller, power-constrained, and latency-sensitive, yet the model was designed for an environment with none of those limitations. Model compression is the systematic process of renegotiating that contract for its new execution context, reducing memory footprint, computational cost, and energy consumption while preserving the model's ability to perform its task.
 
-The scale of this renegotiation makes model optimization an engineering discipline, not a collection of ad hoc tricks. A `{python} CompressionSetup.llm_175b_str` billion parameter model consumes over `{python} CompressionSetup.llm_175b_mem_str` GB in FP16 representation alone, yet a smartphone provides `{python} CompressionSetup.smartphone_ram_str` GB of RAM and a microcontroller offers `{python} CompressionSetup.mcu_ram_str` KB. Bridging six orders of magnitude requires systematic methods with predictable trade-offs, not trial and error. Every optimization technique removes something from the model (redundant parameters, numerical precision, or architectural complexity), and the engineer must understand exactly what is lost, what is preserved, and how these losses compose when techniques are combined.
+The scale of this renegotiation makes model optimization an engineering discipline, not a collection of ad hoc tricks. A `{python} CompressionDeploymentScale.llm_175b_str` billion parameter model consumes over `{python} CompressionDeploymentScale.llm_175b_mem_str` GB in FP16 representation alone, yet a smartphone provides `{python} CompressionDeploymentScale.smartphone_ram_str` GB of RAM and a microcontroller offers `{python} CompressionDeploymentScale.mcu_ram_str` KB. Bridging six orders of magnitude requires systematic methods with predictable trade-offs, not trial and error. Every optimization technique removes something from the model (redundant parameters, numerical precision, or architectural complexity), and the engineer must understand exactly what is lost, what is preserved, and how these losses compose when techniques are combined.
 
 \index{Operator Fusion!framework introduction}
 This chapter organizes these techniques along three complementary dimensions. *Structural optimization* removes redundancy from the model itself: pruning eliminates parameters that contribute little to output quality, knowledge distillation transfers a large model's learned behavior into a smaller architecture, and neural architecture search discovers designs that are inherently efficient. *Precision optimization* reduces the numerical bit-width of weights and activations, for example converting 32-bit floating point values to 8-bit integers (exploiting Tensor Cores discussed in @sec-hardware-acceleration-tensor-cores-771f), which shrinks memory footprint and accelerates arithmetic on hardware that supports lower-precision operations. *Hardware-level optimization* ensures that the resulting model executes efficiently on the target processor by fusing operations to reduce memory traffic and exploiting sparsity patterns that the hardware can accelerate. These dimensions are not alternatives but layers in an optimization stack. A practitioner deploying ResNet-50 to a mobile device might prune 50 percent of its filters, quantize the remaining weights to INT8, and fuse batch normalization into convolution, with each technique compounding the gains of the others.
 
 Throughout this chapter, we ground each technique in concrete systems: ResNet-50 and MobileNetV2 (our Lighthouse Models from @sec-network-architectures-lighthouse-roster-model-biographies-a763) for vision workloads, transformer-based language models for sequence tasks, and the DS-CNN, a depthwise-separable convolutional neural network (CNN), as the keyword spotter for TinyML deployment. These recurring models let us compare techniques under consistent conditions, making the trade-offs between accuracy, latency, memory, and energy tangible rather than abstract.
 
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: INT8 weight-memory reduction for iron-law definition item.
+# │ Exports: CompressionIronLawQuant.{llm_175b,llm_175b_mem,llm_175b_mem_int8,llm_175b_fp16_int8_reduction}_str
+from mlsysim import Models
+from mlsysim.fmt import fmt, check
+
+class CompressionIronLawQuant:
+    bytes_fp16 = BYTES_FP16.m_as(byte)
+    bytes_int8 = BYTES_INT8.m_as(byte)
+    llm_175b_params = Models.Language.GPT3.parameters.m_as(Bparam)
+    llm_175b_mem_fp16_gb = llm_175b_params * bytes_fp16
+    llm_175b_mem_int8_gb = llm_175b_params * bytes_int8
+    llm_175b_fp16_int8_reduction = llm_175b_mem_fp16_gb / llm_175b_mem_int8_gb
+
+    check(llm_175b_fp16_int8_reduction == 2,
+          "FP16-to-INT8 weight memory should halve.")
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    llm_175b_str = fmt(llm_175b_params, precision=0, commas=False)
+    llm_175b_mem_str = fmt(llm_175b_mem_fp16_gb, precision=0, commas=False)
+    llm_175b_mem_int8_str = fmt(llm_175b_mem_int8_gb, precision=0, commas=False)
+    llm_175b_fp16_int8_reduction_str = fmt(llm_175b_fp16_int8_reduction, precision=0, commas=False)
+```
+
 ::: {#dfn-model-compression-model-compression .callout-definition title="Model compression"}
 
 ***Model Compression***\index{Model Compression!definition} is a family of techniques that reduce a trained model's computational cost and memory footprint by eliminating redundant parameters (pruning), reducing numerical precision (quantization), or transferring learned behavior into a smaller architecture (distillation), while preserving as much predictive accuracy as possible.
 
-1.  **Significance (quantitative)**: Compression directly reduces the iron law's data-movement and compute terms. INT8 quantization of a `{python} CompressionSetup.llm_175b_str`-billion-parameter large language model (LLM) cuts weight memory from `{python} CompressionSetup.llm_175b_mem_str` GB (FP16) to `{python} CompressionSetup.llm_175b_mem_int8_str` GB, a `{python} CompressionSetup.llm_175b_fp16_int8_reduction_str`$\times$ reduction in $D_{\text{vol}}$, while Tensor Core INT8 paths can increase compute throughput when kernels and layouts use the supported low-precision path. Unstructured pruning to 50 percent sparsity theoretically halves $O$, but hardware speedup only materializes when sparsity is structured (for example, 2:4 sparse) to match accelerator capabilities.
+1.  **Significance (quantitative)**: Compression directly reduces the iron law's data-movement and compute terms. INT8 quantization of a `{python} CompressionIronLawQuant.llm_175b_str`-billion-parameter large language model (LLM) cuts weight memory from `{python} CompressionIronLawQuant.llm_175b_mem_str` GB (FP16) to `{python} CompressionIronLawQuant.llm_175b_mem_int8_str` GB, a `{python} CompressionIronLawQuant.llm_175b_fp16_int8_reduction_str`$\times$ reduction in $D_{\text{vol}}$, while Tensor Core INT8 paths can increase compute throughput when kernels and layouts use the supported low-precision path. Unstructured pruning to 50 percent sparsity theoretically halves $O$, but hardware speedup only materializes when sparsity is structured (for example, 2:4 sparse) to match accelerator capabilities.
 2.  **Distinction (durable)**: Unlike posttraining compression methods such as pruning and quantization, neural architecture search discovers efficient architectures from scratch by exploring a design space. This chapter treats NAS as a related structural optimization technique: it changes the representation before training rather than compressing a finished model post hoc.
 3.  **Common pitfall**: A frequent misconception is that compression techniques compose without interference. In practice, applying quantization after pruning can amplify quantization error in near-zero weight regions that pruning left behind, causing accuracy degradation that neither technique produces alone.
 
@@ -188,9 +159,10 @@ Model optimization is not a *single technique* but a *framework* with three comp
 :::
 
 ```{python}
-#| label: nas-search-cost-calc
 #| echo: false
-from mlsysim.core.constants import HOURS_PER_DAY
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: nas-search-cost-calc
 from mlsysim.fmt import fmt, check
 
 class NASCostCalc:
@@ -229,29 +201,72 @@ To understand *why* numerics matter so deeply, move from the algorithm to silico
 
 \index{Iron Law!quantization impact}
 
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: Horowitz energy hierarchy for quantization physics callout.
+# │ Exports: QuantizationEnergyPhysics.{energy_dram,energy_dram_per_byte,energy_flop_fp32,energy_op_int8,energy_float_add_ratio,energy_dram_read_bits,energy_dram_read_ratio,int8_energy_reduction}_str
+from mlsysim.fmt import fmt, check
+
+class QuantizationEnergyPhysics:
+    int8_energy_reduction = 20
+    bytes_fp32 = BYTES_FP32.m_as(byte)
+    bytes_int8 = BYTES_INT8.m_as(byte)
+
+    energy_dram = ENERGY_DRAM_ACCESS_PJ.m_as(ureg.picojoule)
+    energy_dram_per_byte = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/ureg.byte)
+    energy_dram_read_bytes = energy_dram / energy_dram_per_byte
+    energy_dram_read_bits = energy_dram_read_bytes * 8
+    energy_flop_fp32 = ENERGY_FLOP_FP32_PJ.m_as(ureg.picojoule/ureg.count)
+    energy_op_int8 = ENERGY_OP_INT8_PJ.m_as(ureg.picojoule/ureg.count)
+    energy_add_fp32 = ENERGY_ADD_FP32_PJ.m_as(ureg.picojoule)
+    energy_add_int8 = ENERGY_ADD_INT8_PJ.m_as(ureg.picojoule)
+    energy_float_add_ratio = energy_add_fp32 / energy_add_int8
+    energy_dram_read_ratio = energy_dram / energy_add_int8
+
+    check(bytes_fp32 / bytes_int8 == 4,
+          "FP32-to-INT8 memory reduction should be 4x.")
+    check(energy_dram_read_ratio > 10_000,
+          "DRAM reads should exceed INT8 add energy by more than four orders of magnitude.")
+    check(abs(energy_dram_read_bits - 32) < 1e-9,
+          "The 640 pJ DRAM access should correspond to a 32-bit read under the per-byte constant.")
+
+    energy_dram_str = fmt(energy_dram, precision=0, commas=False)
+    energy_dram_read_bits_str = fmt(energy_dram_read_bits, precision=0, commas=False)
+    energy_dram_per_byte_str = fmt(energy_dram_per_byte, precision=0, commas=False)
+    energy_flop_fp32_str = fmt(energy_flop_fp32, precision=1, commas=False)
+    energy_op_int8_str = fmt(energy_op_int8, precision=1, commas=False)
+    energy_float_add_ratio_str = fmt(energy_float_add_ratio, precision=0, commas=False)
+    energy_dram_read_ratio_str = fmt(energy_dram_read_ratio, precision=1)
+    int8_energy_reduction_str = fmt(int8_energy_reduction, precision=0, commas=False)
+    mem_reduction_ratio_str = fmt(bytes_fp32 / bytes_int8, precision=0, commas=False)
+    baseline_battery_hours_str = fmt(1, precision=0, commas=False)
+    int8_battery_hours_str = fmt(int8_energy_reduction, precision=0, commas=False)
+```
+
 ::: {#nbk-model-compression-physics-quantization .callout-notebook title="The physics of quantization"}
 
 The energy-movement invariant $(E_{\text{move}} \gg E_{\text{compute}})$ means that in the physics of silicon, **bits represent energy** (see @tbl-energy-ratios-ref for the energy gap between arithmetic and data movement, and @sec-machine-foundations-numerical-representations-c889 for numerical format trade-offs).
 
 According to the iron law $(T = \frac{D_{\text{vol}}}{\text{BW}} + \frac{O}{R_{\text{peak}} \cdot \eta_{\text{hw}}} + L_{\text{lat}})$, which decomposes execution time into data volume moved, operations performed, and fixed latency, reducing the bit-width of a weight has a roughly proportional effect on efficiency:
 
-1.  **Memory movement $(D_{\text{vol}} \times E_{\text{move}})$**: Fetching a 32-bit float from DRAM costs ≈ **`{python} CompressionSetup.energy_dram_str` pJ**. Fetching an 8-bit integer costs ≈ **`{python} CompressionSetup.energy_dram_per_byte_str` pJ**.
-2.  **Compute work $(O \times E_{\text{compute}})$**: A 32-bit FLOP costs ≈ **`{python} CompressionSetup.energy_flop_fp32_str` pJ**. An INT8 operation costs ≈ **`{python} CompressionSetup.energy_op_int8_str` pJ**.
+1.  **Memory movement $(D_{\text{vol}} \times E_{\text{move}})$**: Fetching a 32-bit float from DRAM costs ≈ **`{python} QuantizationEnergyPhysics.energy_dram_str` pJ**. Fetching an 8-bit integer costs ≈ **`{python} QuantizationEnergyPhysics.energy_dram_per_byte_str` pJ**.
+2.  **Compute work $(O \times E_{\text{compute}})$**: A 32-bit FLOP costs ≈ **`{python} QuantizationEnergyPhysics.energy_flop_fp32_str` pJ**. An INT8 operation costs ≈ **`{python} QuantizationEnergyPhysics.energy_op_int8_str` pJ**.
 
 @tbl-model-compression-energy-hierarchy normalizes these costs against an 8-bit integer add to expose the four-order-of-magnitude gap between arithmetic and DRAM access:
 
 ```{=latex}
 \vspace{-9pt}
 ```
-| **Operation**   |                                             **Bit-Width** |                                                **Relative Energy** |
-|:----------------|----------------------------------------------------------:|-------------------------------------------------------------------:|
-| **Integer Add** |                                                     8-bit |                                                          1$\times$ |
-| **Float Add**   |                                                    32-bit |     `{python} CompressionSetup.energy_float_add_ratio_str`$\times$ |
-| **DRAM Read**   | `{python} CompressionSetup.energy_dram_read_bits_str`-bit | **`{python} CompressionSetup.energy_dram_read_ratio_str`$\times$** |
+| **Operation**   |                                                      **Bit-Width** |                                                         **Relative Energy** |
+|:----------------|-------------------------------------------------------------------:|----------------------------------------------------------------------------:|
+| **Integer Add** |                                                              8-bit |                                                                   1$\times$ |
+| **Float Add**   |                                                             32-bit |     `{python} QuantizationEnergyPhysics.energy_float_add_ratio_str`$\times$ |
+| **DRAM Read**   | `{python} QuantizationEnergyPhysics.energy_dram_read_bits_str`-bit | **`{python} QuantizationEnergyPhysics.energy_dram_read_ratio_str`$\times$** |
 
-: **The Energy Hierarchy**: Relative energy cost of representative arithmetic and memory operations, normalized to an 8-bit integer add. A 32-bit float add costs `{python} CompressionSetup.energy_float_add_ratio_str`$\times$ more than its 8-bit integer counterpart, but a single `{python} CompressionSetup.energy_dram_read_bits_str`-bit DRAM read costs `{python} CompressionSetup.energy_dram_read_ratio_str`$\times$ more—more than four orders of magnitude above on-chip compute. This gap is why bit-width reductions that shrink data movement dominate the energy budget of inference far more than the arithmetic savings alone would suggest. {#tbl-model-compression-energy-hierarchy}
+: **The Energy Hierarchy**: Relative energy cost of representative arithmetic and memory operations, normalized to an 8-bit integer add. A 32-bit float add costs `{python} QuantizationEnergyPhysics.energy_float_add_ratio_str`$\times$ more than its 8-bit integer counterpart, but a single `{python} QuantizationEnergyPhysics.energy_dram_read_bits_str`-bit DRAM read costs `{python} QuantizationEnergyPhysics.energy_dram_read_ratio_str`$\times$ more—more than four orders of magnitude above on-chip compute. This gap is why bit-width reductions that shrink data movement dominate the energy budget of inference far more than the arithmetic savings alone would suggest. {#tbl-model-compression-energy-hierarchy}
 
-For inference workloads, moving from FP32 to INT8 saves 4$\times$ memory and can reduce the energy per inference by up to `{python} CompressionSetup.int8_energy_reduction_str`$\times$ on hardware with dedicated INT8 units, depending on the compute-to-memory ratio of the workload. The practical impact: a battery lasting one hour or 20 hours.
+For inference workloads, moving from FP32 to INT8 saves `{python} QuantizationEnergyPhysics.mem_reduction_ratio_str`$\times$ memory and can reduce the energy per inference by up to `{python} QuantizationEnergyPhysics.int8_energy_reduction_str`$\times$ on hardware with dedicated INT8 units, depending on the compute-to-memory ratio of the workload. The practical impact: a battery lasting `{python} QuantizationEnergyPhysics.baseline_battery_hours_str` hour or `{python} QuantizationEnergyPhysics.int8_battery_hours_str` hours.
 
 These same physics apply at data center scale: distributed training systems use reduced precision to cut gradient communication overhead, a topic covered in @sec-model-training-mixedprecision-training-9218. For a deeper treatment of how silicon architectures exploit these energy differences, see @sec-hardware-acceleration.
 
@@ -263,6 +278,8 @@ These energy savings explain why neural networks tolerate aggressive quantizatio
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ THE QUANTIZATION FREE LUNCH (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -326,8 +343,10 @@ plt.close()
 These physics-level savings translate directly into deployment capabilities. A model that cannot fit on a device at full precision may run comfortably, and faster, when quantized. A concrete LLM scenario shows how reduced precision turns capacity pressure into bandwidth relief.
 
 ```{python}
-#| label: quant-speedup-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: quant-speedup-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ QUANTIZATION SPEEDUP CALCULATION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -343,8 +362,8 @@ These physics-level savings translate directly into deployment capabilities. A m
 # │          fp16_latency_str, fp16_toks_str, int4_size_str, int4_latency_str,
 # │          int4_toks_str, speedup_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import BYTES_FP16, BYTES_INT4, byte, MS_PER_SEC
+from mlsysim import Models
+from mlsysim.fmt import fmt_int,  fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class QuantizationSpeedup:
@@ -354,12 +373,12 @@ class QuantizationSpeedup:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    params_b = 7
+    params_b = Models.Language.Llama2_7B.parameters.m_as(Bparam)
     bytes_fp16 = BYTES_FP16.m_as(byte)
     bytes_int4 = BYTES_INT4.m_as(byte)
 
     device_ram_gb = 16
-    mem_bw_gbs = 50.0
+    mem_bw_gbs = SYSTEM_MEMORY_BW.m_as(GB / second)
     kv_cache_gb = 1.0
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
@@ -386,21 +405,21 @@ class QuantizationSpeedup:
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     params_b_str = fmt(params_b, precision=0, commas=False)
-    bytes_fp16_str = fmt(int(bytes_fp16), precision=0, commas=False)
+    bytes_fp16_str = fmt_int(bytes_fp16, commas=False)
     bytes_int4_str = fmt(bytes_int4, precision=1, commas=False)
     device_ram_gb_str = fmt(device_ram_gb, precision=0, commas=False)
-    mem_bw_gbs_str = fmt(int(mem_bw_gbs), precision=0, commas=False)
-    kv_cache_gb_str = fmt(int(kv_cache_gb), precision=0, commas=False)
+    mem_bw_gbs_str = fmt_int(mem_bw_gbs, commas=False)
+    kv_cache_gb_str = fmt_int(kv_cache_gb, commas=False)
 
-    fp16_size_str = fmt(int(fp16_size_gb), precision=0, commas=False)
-    fp16_total_str = fmt(int(fp16_total_gb), precision=0, commas=False)
-    fp16_latency_str = fmt(int(fp16_latency_ms), precision=0, commas=False)
+    fp16_size_str = fmt_int(fp16_size_gb, commas=False)
+    fp16_total_str = fmt_int(fp16_total_gb, commas=False)
+    fp16_latency_str = fmt_int(fp16_latency_ms, commas=False)
     fp16_toks_str = fmt(fp16_toks, precision=1, commas=False)
 
     int4_size_str = fmt(int4_size_gb, precision=1, commas=False)
-    int4_latency_str = fmt(int(int4_latency_ms), precision=0, commas=False)
-    int4_toks_str = fmt(int(int4_toks), precision=0, commas=False)
-    speedup_str = fmt(int(speedup), precision=0, commas=False)
+    int4_latency_str = fmt_int(int4_latency_ms, commas=False)
+    int4_toks_str = fmt_int(int4_toks, commas=False)
+    speedup_str = fmt_int(speedup, commas=False)
 ```
 
 The result is a bandwidth-driven speedup: fewer bits moved per token means more tokens/s.
@@ -479,14 +498,11 @@ The same memory pressure that shaped AlexNet's architecture appears in everyday 
 
 :::
 
-@tbl-model-vs-device quantifies this mismatch using the Lighthouse models from @sec-network-architectures-lighthouse-roster-model-biographies-a763. The gap between model requirements and device capabilities explains *why* compression is not optional for resource-constrained deployment: without it, the models simply cannot run.
-
-\index{Environmental Impact!model compression benefits}
-As @tbl-model-vs-device makes concrete, even aggressively optimized models like MobileNetV2 at INT8 precision exceed TinyML device memory by about `{python} CompressionSetup.mobilenet_int8_tiny_ratio_str`$\times$. Optimization also contributes to sustainable and accessible AI deployment. Reducing a model's energy footprint is important as AI workloads scale, helping mitigate the environmental impact of large-scale ML training and inference [@patterson2021carbon]. At the same time, optimized models can expand the reach of machine learning, supporting applications in low-resource environments, from rural healthcare to autonomous systems operating in the field.
-
 ```{python}
-#| label: model-device-comparison
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: model-device-comparison
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ MODEL-DEVICE MEMORY COMPARISON
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -497,17 +513,15 @@ As @tbl-model-vs-device makes concrete, even aggressively optimized models like 
 # │ How: List VRAM and RAM constraints for standard hardware tiers.
 # │
 # │ Imports: mlsysim.core.constants (GB, MB, KB, byte,
-# │          CLOUD_MEM_GIB, MOBILE_MEM_GIB, TINY_MEM_KIB, DLRM_MODEL_SIZE_FP32)
+# │          Platforms.Cloud.ram, Platforms.Mobile.ram, Platforms.Tiny.ram, Models.Recommendation.DLRM.model_size)
 # │ Exports: dlrm_str, gpt2_str, resnet_str, mobilenet_str, mobilenet_int8_str,
 # │          dscnn_str, cloud_cap_str, mobile_cap_str, tiny_cap_str,
 # │          dlrm_mobile_str, dlrm_tiny_str, gpt2_mobile_str, gpt2_tiny_str,
 # │          resnet_tiny_str, mobilenet_tiny_str, mobilenet_int8_tiny_str,
 # │          mobilenet_int8_tiny_ratio_str, dscnn_tiny_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (GB, MB, KB, byte,
-                             CLOUD_MEM_GIB, MOBILE_MEM_GIB, TINY_MEM_KIB,
-                             DLRM_MODEL_SIZE_FP32)
-from mlsysim.fmt import MarkdownStr
+from mlsysim import Models, Platforms
+from mlsysim.fmt import fmt, fmt_int, MarkdownStr
 
 def _get_ratio(model_mem, device_mem):
     """Return 'ok' if model fits, else 'no (Nx)' with how many times it overflows."""
@@ -521,16 +535,16 @@ class ModelDeviceComparison:
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     # Device capacities
-    cloud_mem = CLOUD_MEM_GIB
-    mobile_mem = MOBILE_MEM_GIB
-    tiny_mem = TINY_MEM_KIB
+    cloud_mem = Platforms.Cloud.ram
+    mobile_mem = Platforms.Mobile.ram
+    tiny_mem = Platforms.Tiny.ram
 
     # Model sizes (decimal — match the underlying byte-count math)
-    dlrm_mem = DLRM_MODEL_SIZE_FP32
-    gpt2_mem = 6 * GB                # 1.5 billion params × 4 bytes = 6 GB
+    dlrm_mem = Models.Recommendation.DLRM.model_size
+    gpt2_mem = Models.Language.GPT2.size_in_bytes(BYTES_FP32)
     resnet_mem = 100 * MB            # ~25M params × 4 bytes
-    mobilenet_mem = 14 * MB
-    mobilenet_int8_mem = 3.5 * MB
+    mobilenet_mem = Models.Vision.MobileNetV2.size_in_bytes(BYTES_FP32)
+    mobilenet_int8_mem = Models.Vision.MobileNetV2.size_in_bytes(BYTES_INT8)
     dscnn_mem = 500 * KB
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -556,18 +570,23 @@ class ModelDeviceComparison:
     mobilenet_str = fmt(mobilenet_mem.m_as(MB), precision=0, commas=False, suffix=" MB")
     mobilenet_int8_str = fmt(mobilenet_int8_mem.m_as(MB), precision=1, commas=False, suffix=" MB")
     dscnn_str = fmt(dscnn_mem.m_as(KB), precision=0, commas=False, suffix=" KB")
-    cloud_cap_str = fmt(cloud_mem.m_as(GB), precision=0, commas=False, prefix="~", suffix=" GB")
-    mobile_cap_str = fmt(mobile_mem.m_as(GB), precision=0, commas=False, prefix="~", suffix=" GB")
-    tiny_cap_str = fmt(tiny_mem.m_as(KB), precision=0, commas=False, prefix="~", suffix=" KB")
+    cloud_cap_str = fmt_int(round(cloud_mem.m_as(GB)), commas=False, prefix="~", suffix=" GB")
+    mobile_cap_str = fmt_int(round(mobile_mem.m_as(GB)), commas=False, prefix="~", suffix=" GB")
+    tiny_cap_str = fmt(tiny_mem.m_as(KB), precision=1, commas=False, prefix="~", suffix=" KB")
     dlrm_mobile_str = dlrm_mobile
     dlrm_tiny_str = dlrm_tiny
     gpt2_tiny_str = gpt2_tiny
     resnet_tiny_str = resnet_tiny
     mobilenet_tiny_str = mobilenet_tiny
     mobilenet_int8_tiny_str = mobilenet_int8_tiny
-    mobilenet_int8_tiny_ratio_str = fmt(mobilenet_int8_tiny_ratio, precision=0, commas=False)
+    mobilenet_int8_tiny_ratio_str = fmt(mobilenet_int8_tiny_ratio, precision=1, commas=False)
     dscnn_tiny_str = MarkdownStr("ok")
 ```
+
+@tbl-model-vs-device quantifies this mismatch using the Lighthouse models from @sec-network-architectures-lighthouse-roster-model-biographies-a763. The gap between model requirements and device capabilities explains *why* compression is not optional for resource-constrained deployment: without it, the models simply cannot run.
+
+\index{Environmental Impact!model compression benefits}
+As @tbl-model-vs-device makes concrete, even aggressively optimized models like MobileNetV2 at INT8 precision exceed TinyML device memory by about `{python} ModelDeviceComparison.mobilenet_int8_tiny_ratio_str`$\times$. Optimization also contributes to sustainable and accessible AI deployment. Reducing a model's energy footprint is important as AI workloads scale, helping mitigate the environmental impact of large-scale ML training and inference [@patterson2021carbon]. At the same time, optimized models can expand the reach of machine learning, supporting applications in low-resource environments, from rural healthcare to autonomous systems operating in the field.
 
 | **Model**              |               **Memory** **(Runtime)**              |              **Storage** **(Weights)**              | **Cloud** **(`{python} ModelDeviceComparison.cloud_cap_str`)** | **Mobile** **(`{python} ModelDeviceComparison.mobile_cap_str`)** | **TinyML** **(`{python} ModelDeviceComparison.tiny_cap_str`)** |
 |:-----------------------|:---------------------------------------------------:|:---------------------------------------------------:|:--------------------------------------------------------------:|:----------------------------------------------------------------:|:--------------------------------------------------------------:|
@@ -654,8 +673,10 @@ These three techniques address the challenge through complementary approaches. P
 ### Pruning {#sec-model-compression-pruning-d1cb}
 
 ```{python}
-#| label: mobilenet-pruning-stats
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: mobilenet-pruning-stats
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ MOBILENET PRUNING STATISTICS
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -689,7 +710,7 @@ class MobileNetCompressionAnchor:
 
     # ┌── 4. OUTPUT (Formatting) ───────────────────────────────────────────
     # Custom "%" and " MB" suffixes → MarkdownStr per recipe Rule 1 escape-hatch
-    pruning_pct_str = fmt(pruning_pct, precision=0, commas=False, suffix="%")
+    pruning_pct_str = fmt(pruning_pct, precision=1, commas=False, suffix="%")
     original_size_str = fmt(original_size_mb, precision=0, commas=False, suffix=" MB")
     pruned_size_str = fmt(pruned_size_mb, precision=0, commas=False, suffix=" MB")
 ```
@@ -2079,8 +2100,10 @@ TensorFlow takes a different approach through the TensorFlow Model Optimization 
 
 \index{BERT!compression techniques}
 ```{python}
-#| label: pruning-practice-anchor
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: pruning-practice-anchor
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ PRUNING PRACTICE ANCHOR
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -2111,7 +2134,7 @@ class PruningPracticeAnchor:
     check(80 <= pruning_pct <= 90, "MobileNet pruning anchor should be near 85%.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    pruning_pct_str = f"{fmt(pruning_pct, precision=0, commas=False)}%"
+    pruning_pct_str = f"{fmt(pruning_pct, precision=1, commas=False)}%"
     original_size_str = fmt(original_size_mb, precision=0, commas=False, suffix=" MB")
     pruned_size_str = fmt(pruned_size_mb, precision=0, commas=False, suffix=" MB")
 ```
@@ -2333,8 +2356,10 @@ Pruning and distillation both reduce the number of parameters a model carries, b
 Rather than eliminating parameters through pruning or transferring knowledge through distillation, structured approximation methods decompose large weight matrices and tensors into lower-dimensional components. These techniques exploit the mathematical structure of neural network parameters: high-dimensional representations often admit compact, low-rank approximations. Low-rank factorization and tensor decomposition offer complementary strategies for achieving this compression.
 
 ```{python}
-#| label: lowrank-bandwidth-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: lowrank-bandwidth-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ LOW-RANK BANDWIDTH CALCULATION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -2349,7 +2374,6 @@ Rather than eliminating parameters through pruning or transferring knowledge thr
 # │          mat_dim_str, rank_k_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import byte, MB
 
 # ┌── LEGO ───────────────────────────────────────────────
 class LowRankFactorization:
@@ -2380,7 +2404,7 @@ class LowRankFactorization:
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     mat_dim_str = fmt(mat_dim, precision=0, commas=False)
     rank_k_str = fmt(rank_k, precision=0, commas=False)
-    full_mb_str = fmt(full_mb, precision=0, commas=False)
+    full_mb_str = fmt(full_mb, precision=1, commas=False)
     factored_mb_str = fmt(factored_mb, precision=1, commas=False)
     data_reduction_str = fmt(data_reduction, precision=0, commas=False)
 ```
@@ -2966,8 +2990,10 @@ Test your understanding of the structural optimization techniques covered so far
 \index{Model Compression!precision optimization}
 
 ```{python}
-#| label: quantization-memory-anchor
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: quantization-memory-anchor
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ QUANTIZATION MEMORY ANCHOR
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -2981,6 +3007,7 @@ Test your understanding of the structural optimization techniques covered so far
 # │ Exports: QuantizationMemoryAnchor.llm_7b_str, .llm_7b_mem_str,
 # │          .smartphone_ram_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -2988,9 +3015,9 @@ class QuantizationMemoryAnchor:
     """Local 7-billion-parameter FP16 memory anchor for quantization motivation."""
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    llm_7b_params_b = 7
+    llm_7b_params_b = Models.Language.Llama2_7B.parameters.m_as(Bparam)
     bytes_fp16 = 2
-    smartphone_ram_gb = 8
+    smartphone_ram_gb = Platforms.Mobile.ram.m_as(GB)
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     llm_7b_mem_fp16_gb = llm_7b_params_b * bytes_fp16
@@ -3032,8 +3059,10 @@ The accuracy cost of reduced precision varies by model and technique. CNNs typic
 Efficient numerical representations reduce storage requirements, computation latency, and power usage, benefiting mobile AI, embedded systems, and cloud inference alike. Precision levels can be tuned to specific hardware capabilities, maximizing throughput on AI accelerators such as GPUs, TPUs, NPUs, and edge AI chips.
 
 ```{python}
-#| label: compression-energy-costs
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: compression-energy-costs
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ENERGY COSTS BY PRECISION FORMAT
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -3049,10 +3078,6 @@ Efficient numerical representations reduce storage requirements, computation lat
 # │ Exports: EnergyCosts.energy_add_fp32_str, .energy_add_fp16_str,
 # │          .energy_add_int32_str, .energy_add_int8_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    ENERGY_ADD_FP32_PJ, ENERGY_ADD_FP16_PJ,
-    ENERGY_ADD_INT32_PJ, ENERGY_ADD_INT8_PJ, ureg
-)
 
 class EnergyCosts:
     """Energy per addition operation across numerical precisions (Horowitz 2014)."""
@@ -3083,64 +3108,6 @@ class EnergyCosts:
 \index{DRAM!energy cost of access}
 Beyond computational and memory benefits, the energy costs associated with different numerical precisions reinforce the case for reduced precision. @fig-quantized-energy gives representative operation-level energy costs for integer arithmetic and SRAM reads: a 32-bit integer addition costs `{python} EnergyCosts.energy_add_int32_str` pJ, while an 8-bit integer addition is just `{python} EnergyCosts.energy_add_int8_str` pJ. Floating-point arithmetic follows the same direction: a 32-bit floating-point addition consumes approximately `{python} EnergyCosts.energy_add_fp32_str` pJ, whereas a 16-bit floating-point addition requires `{python} EnergyCosts.energy_add_fp16_str` pJ. These savings compound across large-scale models operating over billions of operations, supporting both cost reduction and sustainability goals.
 
-```{python}
-#| label: energy-dividend-calc
-#| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ ENERGY DIVIDEND CALCULATION
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: "The Energy Dividend" section
-# │
-# │ Goal: Contrast bit-reduction vs energy-reduction in quantization.
-# │ Show: That INT8 is ~30× more energy-efficient than FP32 for addition.
-# │ How: Calculate the ratio of energy per operation using Horowitz (2014) numbers.
-# │
-# │ Imports: mlsysim.core.constants (ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ)
-# │ Exports: EnergyDividend.energy_add_fp32_str, .energy_add_int8_str, .energy_dividend_str
-# └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ,
-    ENERGY_DRAM_ACCESS_PJ, ENERGY_DRAM_PJ_PER_BYTE, ENERGY_OP_INT8_PJ, ureg
-)
-from mlsysim.fmt import fmt, check
-
-# ┌── LEGO ───────────────────────────────────────────────
-class EnergyDividend:
-    """
-    Namespace for Energy Dividend calculation.
-    Scenario: Comparing energy per operation for accumulator units.
-    """
-
-    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    # Horowitz (2014) / Sze (2020) values
-    e_add_fp32 = ENERGY_ADD_FP32_PJ.m_as('pJ')
-    e_add_int8 = ENERGY_ADD_INT8_PJ.m_as('pJ')
-    e_dram = ENERGY_DRAM_ACCESS_PJ.m_as(ureg.picojoule)
-    e_dram_per_byte = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/ureg.byte)
-    dram_read_bits = (e_dram / e_dram_per_byte) * 8
-    e_int8_mac = ENERGY_OP_INT8_PJ.m_as(ureg.picojoule/ureg.count) + e_add_int8
-
-    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # Step 1: Dividend = FP32_Energy/INT8_Energy
-    dividend = e_add_fp32 / e_add_int8
-    dram_read_vs_int8_mac = e_dram / e_int8_mac
-
-    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(dividend >= 25, f"INT8 should be ~30x more efficient than FP32. Ratio: {dividend:.1f}")
-    check(dram_read_vs_int8_mac > 1000,
-          "A DRAM read should dominate INT8 MAC energy by orders of magnitude.")
-    check(abs(dram_read_bits - 32) < 1e-9,
-          "The 640 pJ DRAM access should correspond to a 32-bit read under the per-byte constant.")
-
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    energy_add_fp32_str = fmt(e_add_fp32, precision=2, commas=False)
-    energy_add_int8_str = fmt(e_add_int8, precision=2, commas=False)
-    energy_dividend_str = fmt(int(dividend), precision=0, commas=False)
-    energy_dram_str = fmt(e_dram, precision=0, commas=False)
-    dram_read_bits_str = fmt(dram_read_bits, precision=0, commas=False)
-    dram_read_vs_int8_mac_str = fmt(dram_read_vs_int8_mac, precision=0)
-```
-
 ::: {#fig-quantized-energy fig-env="figure" fig-pos="htb" fig-cap="**Energy per Operation by Precision**: Bar chart comparing energy in picojoules for representative integer arithmetic operations (INT8 add: 0.03 pJ; INT32 multiply: 3.10 pJ) and SRAM memory accesses (5 to 50 pJ by cache size). Lower precision yields order-of-magnitude energy savings, while memory accesses can dominate arithmetic costs. Energy figures from [@horowitz2014]." fig-alt="Bar chart comparing energy consumption in picojoules for integer arithmetic operations and memory accesses. INT8 add uses 0.03 pJ, INT32 multiply uses 3.10 pJ, and SRAM reads range from 5 to 50 pJ depending on cache size."}
 
 ```{.tikz}
@@ -3162,7 +3129,7 @@ class EnergyDividend:
     ytick={0,10,...,50},
     tick label style={/pgf/number format/assume math mode=true},
     yticklabel style={font=\footnotesize\usefont{T1}{phv}{m}{n},
-    /pgf/number format/.cd, fixed, fixed zerofill, precision=0},
+    /pgf/number format/.cd, fixed, fixed zerofill, precision=1},
     xticklabel style={font=\fontsize{7pt}{7}\selectfont\usefont{T1}{phv}{m}{n},rotate=25,anchor=north east},
     ylabel style={font=\footnotesize\usefont{T1}{phv}{m}{n}},
     enlarge x limits=0.1,
@@ -3237,6 +3204,41 @@ class EnergyDividend:
 ```
 
 :::
+
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: energy-dividend-calc
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: Contrast bit-reduction vs energy-reduction in quantization.
+# │ Exports: EnergyDividend.{energy_add_fp32,energy_add_int8,energy_dividend,energy_dram,dram_read_bits,dram_read_vs_int8_mac}_str
+from mlsysim.fmt import fmt_int, fmt, check
+
+class EnergyDividend:
+    e_add_fp32 = ENERGY_ADD_FP32_PJ.m_as('pJ')
+    e_add_int8 = ENERGY_ADD_INT8_PJ.m_as('pJ')
+    e_dram = ENERGY_DRAM_ACCESS_PJ.m_as(ureg.picojoule)
+    e_dram_per_byte = ENERGY_DRAM_PJ_PER_BYTE.m_as(ureg.picojoule/ureg.byte)
+    dram_read_bits = (e_dram / e_dram_per_byte) * 8
+    e_int8_mac = ENERGY_OP_INT8_PJ.m_as(ureg.picojoule/ureg.count) + e_add_int8
+
+    dividend = e_add_fp32 / e_add_int8
+    dram_read_vs_int8_mac = e_dram / e_int8_mac
+
+    check(dividend >= 25, f"INT8 should be ~30x more efficient than FP32. Ratio: {dividend:.1f}")
+    check(dram_read_vs_int8_mac > 1000,
+          "A DRAM read should dominate INT8 MAC energy by orders of magnitude.")
+    check(abs(dram_read_bits - 32) < 1e-9,
+          "The 640 pJ DRAM access should correspond to a 32-bit read under the per-byte constant.")
+
+    energy_add_fp32_str = fmt(e_add_fp32, precision=2, commas=False)
+    energy_add_int8_str = fmt(e_add_int8, precision=2, commas=False)
+    energy_dividend_str = fmt_int(dividend, commas=False)
+    energy_dram_str = fmt(e_dram, precision=0, commas=False)
+    dram_read_bits_str = fmt(dram_read_bits, precision=0, commas=False)
+    dram_read_vs_int8_mac_str = fmt(dram_read_vs_int8_mac, precision=1)
+```
 
 ### The energy dividend: INT8 vs. FP32 reality {#sec-model-compression-energy-dividend}
 
@@ -3371,8 +3373,10 @@ The practical payoff of quantization becomes concrete in @fig-quantization_impac
 To make these gains concrete, consider the quantization savings when deploying a modern large language model at reduced precision.
 
 ```{python}
-#| label: quant-savings-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: quant-savings-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ QUANTIZATION SAVINGS CALCULATION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -3386,8 +3390,8 @@ To make these gains concrete, consider the quantization savings when deploying a
 # │ Exports: llm_params_b_str, fp16_bytes_str, int4_bytes_str,
 # │          fp16_size_gb_str, int4_size_gb_str, compression_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import BYTES_FP16, BYTES_INT4, byte, GB
+from mlsysim import Models
+from mlsysim.fmt import fmt_int,  fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class QuantizationSavings:
@@ -3397,7 +3401,9 @@ class QuantizationSavings:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    params_b = 8
+    params_b = round(Models.Language.Llama3_8B.parameters.m_as(Bparam))
+    gpu_mem_fp16_gb = 24
+    gpu_mem_int4_gb = 8
     bytes_fp16 = BYTES_FP16.m_as(byte)
     bytes_int4 = BYTES_INT4.m_as(byte)
 
@@ -3409,16 +3415,17 @@ class QuantizationSavings:
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(ratio == 4.0, f"FP16/INT4 ratio should be exactly 4.0, got {ratio}")
-    from mlsysim.core.constants import BYTES_FP32, BYTES_INT8, ureg
     check(BYTES_FP32.m_as(ureg.byte) / BYTES_INT8.m_as(ureg.byte) == 4.0, "Narrative Violation: INT8 compression ratio is no longer exactly 4x! Got ratio.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     llm_params_b_str = fmt(params_b, precision=0, commas=False)
-    fp16_bytes_str = fmt(int(bytes_fp16), precision=0, commas=False)
+    fp16_bytes_str = fmt_int(bytes_fp16, commas=False)
     int4_bytes_str = fmt(bytes_int4, precision=1, commas=False)
-    fp16_size_gb_str = fmt(int(fp16_size_gb), precision=0, commas=False)
-    int4_size_gb_str = fmt(int(int4_size_gb), precision=0, commas=False)
-    compression_ratio_str = fmt(int(ratio), precision=0, commas=False)
+    fp16_size_gb_str = fmt_int(fp16_size_gb, commas=False)
+    int4_size_gb_str = fmt_int(int4_size_gb, commas=False)
+    compression_ratio_str = fmt_int(ratio, commas=False)
+    gpu_mem_fp16_gb_str = fmt(gpu_mem_fp16_gb, precision=0, commas=False)
+    gpu_mem_int4_gb_str = fmt(gpu_mem_int4_gb, precision=0, commas=False)
 ```
 
 ::: {#nbk-model-compression-quantization-savings .callout-notebook title="Quantization savings"}
@@ -3428,12 +3435,12 @@ class QuantizationSavings:
 **FP16 (Half Precision)**
 
 - **Size**: `{python} QuantizationSavings.llm_params_b_str` $\times 10^9 \times$ `{python} QuantizationSavings.fp16_bytes_str` bytes (16-bit) = `{python} QuantizationSavings.fp16_size_gb_str` GB
-- **Hardware Req**: Requires 24 GB GPU (for example, A10G, 3090, 4090).
+- **Hardware Req**: Requires `{python} QuantizationSavings.gpu_mem_fp16_gb_str` GB GPU (for example, A10G, 3090, 4090).
 
 **INT4 (4-bit Quantization)**
 
 - **Size**: `{python} QuantizationSavings.llm_params_b_str` $\times 10^9 \times$ `{python} QuantizationSavings.int4_bytes_str` bytes (INT4) = `{python} QuantizationSavings.int4_size_gb_str` GB
-- **Hardware Req**: Fits comfortably on 8 GB GPU (for example, T4, consumer laptops).
+- **Hardware Req**: Fits comfortably on `{python} QuantizationSavings.gpu_mem_int4_gb_str` GB GPU (for example, T4, consumer laptops).
 
 **Impact**: `{python} QuantizationSavings.compression_ratio_str`$\times$ compression allows deployment on commodity hardware instead of requiring a larger accelerator primarily for weight storage.
 
@@ -3442,8 +3449,10 @@ class QuantizationSavings:
 Beyond storage savings, quantization also accelerates computation through hardware parallelism. The speedup emerges from how modern processors pack more operations into the same hardware resources when working with smaller data types. A register-packing estimate makes that effect concrete.
 
 ```{python}
-#| label: simd-throughput-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: simd-throughput-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ SIMD THROUGHPUT CALCULATION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -3459,7 +3468,6 @@ Beyond storage savings, quantization also accelerates computation through hardwa
 # │          simd_register_bits_str, simd_fp32_bits_str, simd_int8_bits_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import SIMD_REGISTER_BITS, FP32_BITS, INT8_BITS
 
 # ┌── LEGO ───────────────────────────────────────────────
 class SIMDThroughput:
@@ -3628,8 +3636,10 @@ accuracy};
 To appreciate how precision loss manifests in practice, examine the representative quantization error distribution in @fig-quantization-error-dist: the bell-shaped curve centered near zero shows that most values quantize with minimal error, but the tails reveal outlier errors that can accumulate and influence model accuracy. Understanding this noise is essential, but practitioners ultimately care about end-to-end speedup, and the magnitude of the quantization speedup depends on whether a workload is compute bound or memory bound.
 
 ```{python}
-#| label: compression-a100-int8-speedup
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: compression-a100-int8-speedup
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ A100 INT8 SPEEDUP CONSTANTS
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -3641,23 +3651,19 @@ To appreciate how precision loss manifests in practice, examine the representati
 # │ Show:    FP16 TFLOP/s vs INT8 TOPS and the resulting speedup factor.
 # │ How:     Read A100 specs from mlsysim.core.constants; compute ratio.
 # │
-# │ Imports: mlsysim.core.constants (A100_FLOPS_FP16_TENSOR, A100_TOPS_INT8,
-# │          A100_MEM_BW, TFLOPs, TB, second)
+# │ Imports: mlsysim.core.constants (Hardware.Cloud.A100.compute.peak_flops, Hardware.Cloud.A100.compute.precision_flops["int8"],
+# │          Hardware.Cloud.A100.memory.bandwidth, TFLOPs, TB, second)
 # │ Exports: A100Int8Speedup.a100_tflops_fp16_str, .a100_tops_int8_str,
 # │          .a100_int8_speedup_str, .bandwidth_bound_speedup_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    A100_FLOPS_FP16_TENSOR, A100_TOPS_INT8, A100_MEM_BW,
-    TOPS, TFLOPs, TB, second
-)
 from mlsysim.fmt import fmt, check
 
 class A100Int8Speedup:
     """A100 Tensor Core throughput: FP16 vs INT8."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    a100_tflops_fp16 = A100_FLOPS_FP16_TENSOR.m_as(TFLOPs/second)
-    a100_tops_int8 = A100_TOPS_INT8.m_as(TOPS)
+    a100_tflops_fp16 = Hardware.Cloud.A100.compute.peak_flops.m_as(TFLOPs/second)
+    a100_tops_int8 = Hardware.Cloud.A100.compute.precision_flops["int8"].m_as(TOPS)
     bandwidth_bound_speedup = 2            # FP16 -> INT8 memory-traffic-dominated case
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
@@ -3783,7 +3789,21 @@ node [midway,above=5mm] {\textbf{16 bits}};
 
 :::
 
-INT8\index{INT8!efficiency gains}\index{Quantization!INT8 (8-bit integer)} precision offers more aggressive efficiency improvements for inference workloads. Many quantized models use INT8 for inference, reducing storage by 4$\times$ while accelerating computation by 4--8$\times$ on optimized hardware. INT8 is widely used in mobile and embedded AI, where energy constraints are significant. As the quantization savings calculation demonstrated earlier, this 4$\times$ reduction in model size enables a `{python} QuantizationSavings.llm_params_b_str` billion parameter model to fit on a single consumer GPU rather than requiring data center hardware.
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: Recap Llama-3 parameter count for distant INT8 prose reuse.
+# │ Exports: QuantizationSavingsRecap.llm_params_b_str
+from mlsysim import Models
+from mlsysim.core.constants import Bparam
+from mlsysim.fmt import fmt
+
+class QuantizationSavingsRecap:
+    params_b = round(Models.Language.Llama3_8B.parameters.m_as(Bparam))
+    llm_params_b_str = fmt(params_b, precision=0, commas=False)
+```
+
+INT8\index{INT8!efficiency gains}\index{Quantization!INT8 (8-bit integer)} precision offers more aggressive efficiency improvements for inference workloads. Many quantized models use INT8 for inference, reducing storage by 4$\times$ while accelerating computation by 4--8$\times$ on optimized hardware. INT8 is widely used in mobile and embedded AI, where energy constraints are significant. As the quantization savings calculation demonstrated earlier, this 4$\times$ reduction in model size enables a `{python} QuantizationSavingsRecap.llm_params_b_str` billion parameter model to fit on a single consumer GPU rather than requiring data center hardware.
 
 Binary and ternary networks\index{Quantization!binary networks}\index{Quantization!ternary networks} represent the extreme end of quantization, where weights and activations are constrained to one-bit (binary) or two-bit (ternary) values. This results in massive storage and energy savings, but model accuracy often degrades significantly unless specialized architectures are used. Our keyword-spotting lighthouse lives precisely in this regime, where extreme compression is required just to fit the device budget.
 
@@ -3796,8 +3816,10 @@ For KWS, INT8 quantization is often just the starting point. To fit complex acou
 :::
 
 ```{python}
-#| label: compression-energy-ratio
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: compression-energy-ratio
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ INT8 VS FP32 MAC ENERGY RATIO
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -3812,10 +3834,6 @@ For KWS, INT8 quantization is often just the starting point. To fit complex acou
 # │          ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ)
 # │ Exports: EnergyRatio.int8_fp32_energy_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import (
-    ENERGY_FLOP_FP32_PJ, ENERGY_OP_INT8_PJ,
-    ENERGY_ADD_FP32_PJ, ENERGY_ADD_INT8_PJ, ureg
-)
 from mlsysim.fmt import fmt, check
 
 class EnergyRatio:
@@ -3837,7 +3855,7 @@ class EnergyRatio:
           "FP32 MAC must cost more energy than INT8 MAC.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    int8_fp32_energy_ratio_str = fmt(int8_fp32_energy_ratio, precision=1, commas=False)
+    int8_fp32_energy_ratio_str = fmt(int8_fp32_energy_ratio, precision=0, commas=False)
 ```
 
 ### Energy efficiency and sustainability {#sec-model-compression-energy-efficiency-sustainability-7150}
@@ -4334,8 +4352,10 @@ LineD/.style={dashed,black,line width=0.75pt},
 Compare the two mapping diagrams side by side in @fig-calibration-ranges. Symmetric calibration (left) maps $[-1, 1]$ to $[-127, 127]$ with zero preserved, making it simpler to implement and well suited for zero-centered weight distributions. Asymmetric calibration (right) uses different ranges ($\alpha = -0.5$, $\beta = 1.5$), better using the quantized range for skewed distributions at the cost of additional complexity. Most frameworks (TensorRT, PyTorch) support both modes. The conceptual difference is clear from the diagrams, but the actual computation of scale and zero-point parameters requires a concrete formula. A worked example makes those parameters explicit.
 
 ```{python}
-#| label: quantization-math-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: quantization-math-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ QUANTIZATION MATH: SCALE AND ZERO-POINT
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -4349,7 +4369,7 @@ Compare the two mapping diagrams side by side in @fig-calibration-ranges. Symmet
 # │ Exports: alpha_str, beta_str, range_str, steps_str, scale_str,
 # │          zero_point_str, x_val_str, x_q_str, x_recon_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt_int,  fmt, check
 
 class QuantizationMathCalc:
     """Derive affine quantization parameters: scale and zero-point for [-1.0, 3.0] → UINT8."""
@@ -4381,15 +4401,15 @@ class QuantizationMathCalc:
     check(abs(x_recon - x_val) < scale, "Reconstruction error must be less than one step size.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    alpha_str = fmt(alpha, precision=1, commas=False)           # "-1.0"
-    beta_str = fmt(beta, precision=1, commas=False)             # "3.0"
-    range_str = fmt(beta - alpha, precision=1, commas=False)    # "4.0"
+    alpha_str = fmt(alpha, precision=0, commas=False)           # "-1.0"
+    beta_str = fmt(beta, precision=0, commas=False)             # "3.0"
+    range_str = fmt(beta - alpha, precision=0, commas=False)    # "4.0"
     steps_str = fmt(int_steps, precision=0, commas=False)       # "255"
     scale_str = fmt(scale, precision=4, commas=False)           # "0.0157"
-    zero_point_str = fmt(int(zero_point), precision=0, commas=False)  # "64"
-    x_val_str = fmt(x_val, precision=1, commas=False)           # "0.0"
-    x_q_str = fmt(int(x_q), precision=0, commas=False)          # "64"
-    x_recon_str = fmt(x_recon, precision=2, commas=False)       # "0.00"
+    zero_point_str = fmt_int(zero_point, commas=False)  # "64"
+    x_val_str = fmt(x_val, precision=0, commas=False)           # "0.0"
+    x_q_str = fmt_int(x_q, commas=False)          # "64"
+    x_recon_str = fmt(x_recon, precision=0, commas=False)       # "0.00"
 ```
 
 ::: {#nbk-model-compression-scale-zero-point .callout-notebook title="Calculating scale and zero-point"}
@@ -4704,7 +4724,7 @@ Box/.style={inner xsep=2pt,
 \draw[line width=0.5pt] (-0.1,-1.4)--(0,-1.4)node[right]{–1};
 %
 \draw[red, line width=1.0pt](-2.9,0.1)to[out=0,in=180](2.9,1.3);
-\draw[green!90!red!90, , line width=1.0pt](0,0)--++(190:3);
+\draw[green!90!red!90, line width=1.0pt](0,0)--++(190:3);
 \draw[VioletLine,line width=1.0pt](0,0)--++(45:3);
 \end{scope}
 %%
@@ -4994,8 +5014,10 @@ Test your understanding of quantization before moving to architectural efficienc
 :::
 
 ```{python}
-#| label: theory-practice-speedup-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: theory-practice-speedup-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ THEORY VS. PRACTICE COMPRESSION SPEEDUP
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -5142,142 +5164,6 @@ Feature reuse, activation checkpointing, and parameter reduction form key compon
 
 Beyond reducing what data must be stored, substantial efficiency gains emerge from optimizing how operations access memory. The next technique addresses this by combining multiple operations to reduce memory traffic.
 
-```{python}
-#| label: compression-v100-specs
-#| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ V100 HARDWARE SPECS FOR FUSION ANALYSIS
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: FusionCalc cell (uses v100_bw_gbs for timing) and prose at
-# │          @sec-model-compression-architectural-efficiency-8dd3 ("On a V100
-# │          GPU with ...").
-# │
-# │ Goal:    Provide V100 bandwidth and compute specs for fusion benchmarks.
-# │ Show:    V100 HBM bandwidth (GB/s) and FP32 compute (TFLOP/s).
-# │ How:     Read V100 specs from mlsysim.core.constants.
-# │
-# │ Imports: mlsysim.core.constants (V100_MEM_BW, V100_FLOPS_FP32, GB, TFLOPs, second)
-# │ Exports: V100Specs.v100_bw_gbs, .v100_bw_gbs_str,
-# │          .v100_tflops_fp32_str
-# └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import V100_MEM_BW, V100_FLOPS_FP32, GB, TFLOPs, second
-from mlsysim.fmt import fmt
-
-class V100Specs:
-    """V100 bandwidth and compute specs for operator fusion analysis."""
-
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    v100_bw_gbs = V100_MEM_BW.m_as(GB/second)
-    v100_tflops_fp32 = V100_FLOPS_FP32.m_as(TFLOPs/second)
-
-    # ┌── 2. EXECUTE—(values are direct from constants) ─────────────────
-
-    # ┌── 3. GUARD—(no derived quantities to guard) ─────────────────────
-
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    v100_bw_gbs_str = fmt(v100_bw_gbs, precision=0, commas=False)
-    v100_tflops_fp32_str = fmt(v100_tflops_fp32, precision=1, commas=False)
-```
-
-```{python}
-#| label: fusion-calc
-#| echo: false
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ OPERATOR FUSION CALCULATIONS
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: Operator Fusion section—Conv-BN-ReLU, GEMM, bandwidth analysis
-# │
-# │ Goal: Quantify the latency and bandwidth benefits of operator fusion.
-# │ Show: The 3× reduction in kernel launches and memory traffic for standard layers.
-# │ How: Model memory elimination and launch overhead for ResNet-50.
-# │
-# │ Imports: mlsysim.book (fmt)
-# │ Exports: gemm_intermediate_mb_str,
-# │          feat_map_kb_str, weights_mb_str, bn_params_kb_str,
-# │          unfused_conv_mb_str, unfused_bn_mb_str, unfused_relu_mb_str,
-# │          total_unfused_mb_str, total_fused_mb_str,
-# │          bandwidth_reduction_pct_str, kernels_unfused_str,
-# │          kernels_fused_str, saved_latency_ms_str
-# └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
-from mlsysim.core.constants import THOUSAND, MILLION
-
-class FusionCalc:
-    """Quantify latency and bandwidth benefits of Conv-BN-ReLU operator fusion on ResNet-50."""
-
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    # Conv-BN-ReLU layer geometry
-    conv_channels = 256
-    conv_spatial = 28
-    bytes_per_element = 4                                        # FP32
-
-    # GEMM geometry
-    gemm_hidden = 768
-    gemm_seq = 512
-
-    # ResNet-50 layer memory baseline
-    weights_mb = 2.4
-    bn_params_mb = 0.002
-
-    # Kernel launch overhead
-    kernels_unfused = 159
-    kernels_fused = 53
-    latency_per_kernel_us = 10
-
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # Step 1: Feature map size (SI MB)
-    feat_map_mb = conv_channels * conv_spatial * conv_spatial * bytes_per_element/MILLION
-
-    # Step 2: Conv-BN-ReLU intermediate traffic eliminated (2 intermediate maps × read+write)
-    conv_bn_relu_eliminated_traffic_mb = (
-        4 * conv_channels * conv_spatial * conv_spatial * bytes_per_element / MILLION
-    )
-
-    # Step 3: GEMM intermediate
-    gemm_intermediate_mb = gemm_hidden * gemm_seq * bytes_per_element / MILLION
-
-    # Step 4: Unfused bandwidth: Conv (feat*2 + weights) + BN (feat*2 + bn) + ReLU (feat*2)
-    unfused_conv_mb = feat_map_mb * 2 + weights_mb
-    unfused_bn_mb = feat_map_mb * 2 + bn_params_mb
-    unfused_relu_mb = feat_map_mb * 2
-    total_unfused_mb = unfused_conv_mb + unfused_bn_mb + unfused_relu_mb
-
-    # Step 5: Fused bandwidth: read input + weights once, write output once
-    total_fused_mb = feat_map_mb * 2 + weights_mb
-    bandwidth_reduction_pct = (1 - total_fused_mb/total_unfused_mb) * 100
-
-    # Step 6: Kernel launch savings
-    saved_latency_us = (kernels_unfused - kernels_fused) * latency_per_kernel_us
-    saved_latency_ms = saved_latency_us / THOUSAND   # μs → ms
-
-    # Step 7: V100 timing (memory-bound): MB / (GB/s) * THOUSAND = µs
-    unfused_time_us = total_unfused_mb/V100Specs.v100_bw_gbs * THOUSAND
-    fused_time_us = total_fused_mb/V100Specs.v100_bw_gbs * THOUSAND
-    fusion_speedup = unfused_time_us/fused_time_us
-
-    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    check(bandwidth_reduction_pct > 40, "Fusion should reduce bandwidth by more than 40%.")
-    check(fusion_speedup > 1, "Fused execution must be faster than unfused.")
-
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    gemm_intermediate_mb_str = fmt(gemm_intermediate_mb, precision=1, commas=False)
-    feat_map_kb_str = fmt(feat_map_mb * THOUSAND, precision=0, commas=False)   # MB → KB
-    weights_mb_str = fmt(weights_mb, precision=1, commas=False)
-    bn_params_kb_str = fmt(bn_params_mb * THOUSAND, precision=0, commas=False)  # MB → KB (was wrongly using KIB_TO_BYTES = 1024)
-    unfused_conv_mb_str = fmt(unfused_conv_mb, precision=1, commas=False)
-    unfused_bn_mb_str = fmt(unfused_bn_mb, precision=1, commas=False)
-    unfused_relu_mb_str = fmt(unfused_relu_mb, precision=1, commas=False)
-    total_unfused_mb_str = fmt(total_unfused_mb, precision=1, commas=False)
-    total_fused_mb_str = fmt(total_fused_mb, precision=1, commas=False)
-    bandwidth_reduction_pct_str = fmt(bandwidth_reduction_pct, precision=0, commas=False)
-    kernels_unfused_str = fmt(kernels_unfused, precision=0, commas=False)
-    kernels_fused_str = fmt(kernels_fused, precision=0, commas=False)
-    saved_latency_ms_str = fmt(saved_latency_ms, precision=0, commas=False)
-    unfused_time_us_str = fmt(unfused_time_us, precision=0, commas=False)
-    fused_time_us_str = fmt(fused_time_us, precision=1, commas=False)
-    fusion_speedup_str = fmt(fusion_speedup, precision=2, commas=False)
-```
-
 #### Operator fusion {#sec-model-compression-operator-fusion-ac1d}
 
 \index{Operator Fusion!GEMM fusion}
@@ -5333,8 +5219,10 @@ def conv_bn_relu_fused(input, weight, gamma, beta, mean, var):
 :::
 
 ```{python}
-#| label: conv-fusion-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: conv-fusion-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ CONV-BN-RELU FUSION TRANSFER REDUCTION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -5352,20 +5240,22 @@ from mlsysim.fmt import fmt, check, fmt_math
 class ConvFusionCalc:
     """Demonstrate 3x memory traffic reduction from Conv-BN-ReLU fusion (6 transfers → 2)."""
 
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    unfused_transfers = 6                                        # read/write for Conv, BN, ReLU
-    fused_transfers = 2                                          # read input, write output
+    unfused_transfers = 6
+    fused_transfers = 2
+    conv_channels = 256
+    conv_spatial = 28
+    bytes_per_element = 4
 
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     transfer_reduction = unfused_transfers/fused_transfers
+    eliminated_traffic_mb = (
+        4 * conv_channels * conv_spatial * conv_spatial * bytes_per_element / MILLION
+    )
 
-    # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(transfer_reduction == 3, "Conv-BN-ReLU fusion must yield exactly 3x transfer reduction.")
 
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     transfer_reduction_str = fmt(transfer_reduction, precision=0, commas=False)
     conv_bn_relu_mem_math = fmt_math(
-        f"4 \\times 256 \\times 28 \\times 28 \\times 4 \\text{{ bytes}} \\approx \\text{{{FusionCalc.conv_bn_relu_eliminated_traffic_mb:.1f} MB}}"
+        f"4 \\times 256 \\times 28 \\times 28 \\times 4 \\text{{ bytes}} \\approx \\text{{{eliminated_traffic_mb:.1f} MB}}"
     )
 ```
 
@@ -5376,7 +5266,79 @@ The same principle extends beyond CNNs. General matrix multiply (GEMM) bias-acti
 
 [^fn-flashattention-fusion]: **FlashAttention**\index{FlashAttention!operator fusion}: Demonstrates fusion's power for memory bound attention by tiling computation to SRAM, yielding 2--4$\times$ speedup and enabling 64K context windows by reducing memory traffic from $\mathcal{O}(S^2)$ to $\mathcal{O}(S)$. This exemplifies how operator fusion transforms memory-bound bottlenecks into compute-bound operations—the arithmetic is identical, but the memory access pattern changes from quadratic to linear, making long-context inference feasible on hardware that could not otherwise hold the full attention matrix. \index{FlashAttention!memory traffic reduction}
 
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: fusion-calc
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: Conv-BN-ReLU bandwidth and kernel-launch savings for fusion prose.
+# │ Exports: FusionCalc.{feat_map_kb,weights_mb,bn_params_kb,unfused_conv_mb,unfused_bn_mb,unfused_relu_mb,total_unfused_mb,total_fused_mb,bandwidth_reduction_pct,unfused_time_us,fused_time_us,fusion_speedup,kernels_unfused,kernels_fused,saved_latency_ms}_str
+from mlsysim.fmt import fmt, fmt_int, check
+
+class FusionCalc:
+    conv_channels = 256
+    conv_spatial = 28
+    bytes_per_element = 4
+    weights_mb = 2.4
+    bn_params_mb = 0.002
+    kernels_unfused = 159
+    kernels_fused = 53
+    latency_per_kernel_us = 10
+    v100_bw_gbs = Hardware.Cloud.V100.memory.bandwidth.m_as(GB/second)
+
+    feat_map_mb = conv_channels * conv_spatial * conv_spatial * bytes_per_element/MILLION
+    unfused_conv_mb = feat_map_mb * 2 + weights_mb
+    unfused_bn_mb = feat_map_mb * 2 + bn_params_mb
+    unfused_relu_mb = feat_map_mb * 2
+    total_unfused_mb = unfused_conv_mb + unfused_bn_mb + unfused_relu_mb
+    total_fused_mb = feat_map_mb * 2 + weights_mb
+    bandwidth_reduction_pct = (1 - total_fused_mb/total_unfused_mb) * 100
+    saved_latency_ms = (kernels_unfused - kernels_fused) * latency_per_kernel_us / THOUSAND
+    unfused_time_us = total_unfused_mb/v100_bw_gbs * THOUSAND
+    fused_time_us = total_fused_mb/v100_bw_gbs * THOUSAND
+    fusion_speedup = unfused_time_us/fused_time_us
+
+    check(bandwidth_reduction_pct > 40, "Fusion should reduce bandwidth by more than 40%.")
+    check(fusion_speedup > 1, "Fused execution must be faster than unfused.")
+
+    feat_map_kb_str = fmt(feat_map_mb * THOUSAND, precision=1, commas=False)
+    weights_mb_str = fmt(weights_mb, precision=1, commas=False)
+    bn_params_kb_str = fmt(bn_params_mb * THOUSAND, precision=0, commas=False)
+    unfused_conv_mb_str = fmt_int(round(unfused_conv_mb), commas=False)
+    unfused_bn_mb_str = fmt(unfused_bn_mb, precision=1, commas=False)
+    unfused_relu_mb_str = fmt(unfused_relu_mb, precision=1, commas=False)
+    total_unfused_mb_str = fmt(total_unfused_mb, precision=1, commas=False)
+    total_fused_mb_str = fmt_int(round(total_fused_mb), commas=False)
+    bandwidth_reduction_pct_str = fmt(bandwidth_reduction_pct, precision=1, commas=False)
+    kernels_unfused_str = fmt(kernels_unfused, precision=0, commas=False)
+    kernels_fused_str = fmt(kernels_fused, precision=0, commas=False)
+    saved_latency_ms_str = fmt(saved_latency_ms, precision=1, commas=False)
+    unfused_time_us_str = fmt_int(round(unfused_time_us), commas=False)
+    fused_time_us_str = fmt(fused_time_us, precision=1, commas=False)
+    fusion_speedup_str = fmt(fusion_speedup, precision=2, commas=False)
+```
+
 Memory bandwidth analysis quantifies these fusion benefits concretely. Consider a Conv-BN-ReLU sequence operating on a $28{\times}28{\times}256$ feature map (`{python} FusionCalc.feat_map_kb_str` KB). Without fusion, each operation performs its own memory round-trip: Conv reads input (`{python} FusionCalc.feat_map_kb_str` KB) plus weights (`{python} FusionCalc.weights_mb_str` MB) and writes output (`{python} FusionCalc.feat_map_kb_str` KB), totaling `{python} FusionCalc.unfused_conv_mb_str` MB. BN then reads that output, adds its parameters (`{python} FusionCalc.bn_params_kb_str` KB), and writes again, for `{python} FusionCalc.unfused_bn_mb_str` MB. ReLU repeats the pattern for another `{python} FusionCalc.unfused_relu_mb_str` MB. The total unfused memory traffic is `{python} FusionCalc.total_unfused_mb_str` MB. With fusion, the entire sequence reads input and weights once and writes the final output once, requiring only `{python} FusionCalc.total_fused_mb_str` MB—a `{python} FusionCalc.bandwidth_reduction_pct_str` percent bandwidth reduction.
+
+```{python}
+#| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: compression-v100-specs
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Goal: V100 bandwidth and compute specs for fusion timing prose.
+# │ Exports: V100Specs.{v100_bw_gbs,v100_tflops_fp32}_str
+from mlsysim.fmt import fmt
+
+class V100Specs:
+    v100_bw_gbs = Hardware.Cloud.V100.memory.bandwidth.m_as(GB/second)
+    v100_tflops_fp32 = Hardware.Cloud.V100.compute.precision_flops["fp32"].m_as(TFLOPs/second)
+
+    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    v100_bw_gbs_str = fmt(v100_bw_gbs, precision=0, commas=False)
+    v100_tflops_fp32_str = fmt(v100_tflops_fp32, precision=1, commas=False)
+```
 
 On a V100 GPU with `{python} V100Specs.v100_bw_gbs_str` GB/s HBM bandwidth and `{python} V100Specs.v100_tflops_fp32_str` TFLOP/s FP32 compute, the unfused sequence takes approximately `{python} FusionCalc.unfused_time_us_str` microseconds (memory bound), while the fused version takes approximately `{python} FusionCalc.fused_time_us_str` microseconds (`{python} FusionCalc.fusion_speedup_str`$\times$ speedup). The speedup comes entirely from reducing memory traffic, as the compute remains identical.
 
@@ -7310,8 +7272,10 @@ Modern machine learning models exhibit heterogeneous resource consumption: speci
 Effective profiling begins with establishing baseline measurements across relevant performance dimensions. Memory consumption, both static (model parameters and buffers) and dynamic allocation during inference, determines whether a model fits on the target device at all. Computational bottlenecks, measured in both FLOPs and actual wall-clock execution time, reveal which layers dominate the inference budget. For battery-powered and edge deployments, power consumption profiles determine operational feasibility: a model that drains a phone battery in an hour is unusable regardless of its accuracy. End-to-end latency measurements identify which operations contribute most to inference delay, often revealing that memory-bound operations like layer normalization consume disproportionate wall-clock time relative to their FLOP count.
 
 ```{python}
-#| label: amdahl-compression-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: amdahl-compression-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ AMDAHL CEILING FOR MODEL COMPRESSION
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -7366,8 +7330,10 @@ Optimization requires rigorous measurement frameworks that go beyond simple accu
 The measurement framework should establish clear baselines before applying any optimizations. Accuracy baselines must go beyond top-line classification accuracy to include calibration, fairness across demographic groups, and robustness to input variations. Efficiency baselines capture computational cost (FLOPs, memory bandwidth), execution time across hardware platforms, peak memory consumption, and energy consumption profiles.
 
 ```{python}
-#| label: resnet50-int8-measurement-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: resnet50-int8-measurement-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ RESNET-50 INT8 QUANTIZATION MEASUREMENT METRICS
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -7391,18 +7357,18 @@ The measurement framework should establish clear baselines before applying any o
 # │          .cpu_speedup_str, .top1_drop_str, .latency_speedup_str,
 # │          .size_reduction_str, .energy_improvement_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt_int,  fmt, check
 
+# ┌── LEGO ───────────────────────────────────────────────
 class ResNet50Int8Metrics:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    from mlsysim import Models, Hardware, Engine
+    m = Models.Vision.ResNet50
+    h = Hardware.Cloud.V100
+
+    # Accuracy benchmarks (empirical historical values)
     fp32_top1 = 76.1
     int8_top1 = 75.8
-    fp32_latency_ms = 4.2
-    int8_latency_ms = 1.3
-    fp32_size_mb = 98
-    int8_size_mb = 25
-    fp32_energy_j = 0.31
-    int8_energy_j = 0.08
     per_class_min_drop = 0.1
     per_class_max_drop = 1.2
     calibration_error_fp32 = 2.1
@@ -7410,6 +7376,17 @@ class ResNet50Int8Metrics:
     cpu_speedup = 1.8
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    # Use Engine to solve for both precisions
+    p_fp32 = Engine.solve(m, h, batch_size=1, precision="fp32")
+    p_int8 = Engine.solve(m, h, batch_size=1, precision="int8")
+
+    fp32_latency_ms = p_fp32.latency.m_as("ms")
+    int8_latency_ms = p_int8.latency.m_as("ms")
+    fp32_size_mb = p_fp32.memory_footprint.m_as("MB")
+    int8_size_mb = p_int8.memory_footprint.m_as("MB")
+    fp32_energy_j = p_fp32.energy.m_as("J")
+    int8_energy_j = p_int8.energy.m_as("J")
+
     top1_drop = fp32_top1 - int8_top1
     latency_speedup = fp32_latency_ms / int8_latency_ms
     size_reduction = fp32_size_mb / int8_size_mb
@@ -7417,16 +7394,16 @@ class ResNet50Int8Metrics:
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(0 < top1_drop < 1, "INT8 accuracy drop should be sub-point.")
-    check(latency_speedup > cpu_speedup, "GPU speedup should exceed CPU speedup.")
+    check(latency_speedup > 1.0, "INT8 should provide speedup over FP32.")
     check(size_reduction > 3, "INT8 size reduction should be close to 4x.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     fp32_top1_str = fmt(fp32_top1, precision=1, commas=False)
     int8_top1_str = fmt(int8_top1, precision=1, commas=False)
-    fp32_latency_ms_str = fmt(fp32_latency_ms, precision=1, commas=False)
+    fp32_latency_ms_str = fmt_int(round(fp32_latency_ms), commas=False)
     int8_latency_ms_str = fmt(int8_latency_ms, precision=1, commas=False)
-    fp32_size_mb_str = fmt(fp32_size_mb, precision=0, commas=False)
-    int8_size_mb_str = fmt(int8_size_mb, precision=0, commas=False)
+    fp32_size_mb_str = fmt(fp32_size_mb, precision=1, commas=False)
+    int8_size_mb_str = fmt(int8_size_mb, precision=1, commas=False)
     fp32_energy_j_str = fmt(fp32_energy_j, precision=2, commas=False)
     int8_energy_j_str = fmt(int8_energy_j, precision=2, commas=False)
     per_class_min_drop_str = fmt(per_class_min_drop, precision=1, commas=False)
@@ -7436,7 +7413,7 @@ class ResNet50Int8Metrics:
     cpu_speedup_str = fmt(cpu_speedup, precision=1, commas=False)
     top1_drop_str = fmt(top1_drop, precision=1, commas=False)
     latency_speedup_str = fmt(latency_speedup, precision=1, commas=False)
-    size_reduction_str = fmt(size_reduction, precision=1, commas=False)
+    size_reduction_str = fmt(size_reduction, precision=0, commas=False)
     energy_improvement_str = fmt(energy_improvement, precision=1, commas=False)
 ```
 
@@ -7581,7 +7558,6 @@ Quantization error histograms reveal whether quantization errors are Gaussian or
 \definecolor{cGray4}{RGB}{145,145,145}
 \definecolor{cGray5}{RGB}{180,180,180}
 
-
 \definecolor{khaki}{RGB}{208,192,160}
 \definecolor{khaki1}{RGB}{208,208,176}
 \definecolor{olive1}{RGB}{160,176,96}
@@ -7626,7 +7602,6 @@ Quantization error histograms reveal whether quantization errors are Gaussian or
   \fill[#2] (0,0) rectangle (\T,0.25*\T);
   \fill[#2] (0,0.75*\T) rectangle (\T,1*\T);
 }
-
 
 \newcommand{\HalfV}[2]{%
   \fill[#1] (0,0) rectangle (0.5*\T,\T);
@@ -7949,7 +7924,6 @@ Sparsity heat maps show sparsity distribution across layers (@fig-sparse-heat-ma
 \definecolor{leg4}{RGB}{40,80,120}
 \definecolor{leg5}{RGB}{8,38,70}
 
-
 %====================================================
 % GEOMETRY
 %====================================================
@@ -8129,8 +8103,10 @@ The most instructive lessons in model compression often come not from what works
 The numerical claims that follow (specific BERT GLUE retention rates, ResNet-50 accuracy under INT8/INT4, distillation gaps between in-training and post-hoc setups) are characteristic of the magnitudes reported across the BERT, ResNet-50, and quantization-aware-training literature rather than reproductions of a single paper. Treat them as calibrated order-of-magnitude landmarks: precise values depend on architecture variant, calibration set, and target hardware, and the engineering decisions that follow survive small shifts in the exact numbers.
 
 ```{python}
-#| label: fp-setup
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: fp-setup
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FALLACIES & PITFALLS CONSTANTS
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -8146,7 +8122,7 @@ The numerical claims that follow (specific BERT GLUE retention rates, ResNet-50 
 # │          resnet_int8_acc_str, resnet_binary_acc_str, dequant_overhead_str,
 # │          expected_speedup_str, actual_speedup_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check, MarkdownStr
+from mlsysim.fmt import fmt_int,  fmt, check, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class FallaciesAnalysis:
@@ -8175,7 +8151,7 @@ class FallaciesAnalysis:
     check(actual_combined_pct < combined_expected * 100, "Real-world speedup must be less than theoretical.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    int8_size_reduction_str = fmt(int(quant_speedup), precision=0, commas=False)
+    int8_size_reduction_str = fmt_int(quant_speedup, commas=False)
     expected_speedup_str = fmt(combined_expected, precision=0, commas=False)
     actual_speedup_str = fmt(actual_combined_pct, precision=0, commas=False)
     dequant_overhead_str = fmt(overhead_pct, precision=0, commas=False)

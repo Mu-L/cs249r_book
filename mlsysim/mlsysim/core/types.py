@@ -1,6 +1,7 @@
 from typing import Any, Annotated, Optional
 from pydantic import AfterValidator, PlainSerializer, BaseModel
 from .constants import Q_
+from .provenance import Provenance
 
 def validate_quantity(v: Any) -> Q_:
     if isinstance(v, Q_):
@@ -23,8 +24,16 @@ Quantity = Annotated[
 ]
 
 class Metadata(BaseModel):
-    """Provenance information for vetted constants."""
-    source_url: Optional[str] = None
+    """Provenance for registry entries (hardware, models, fabrics)."""
+
+    provenance: Optional[Provenance] = None
     description: Optional[str] = None
-    last_verified: Optional[str] = None # YYYY-MM-DD
+    last_verified: Optional[str] = None  # YYYY-MM-DD
     version: Optional[str] = None
+
+    @property
+    def source_label(self) -> Optional[str]:
+        """Human-readable source label from provenance."""
+        if self.provenance is not None:
+            return self.provenance.ref
+        return None

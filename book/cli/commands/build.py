@@ -249,6 +249,45 @@ class BuildCommand:
 
         return overall_ok
 
+    def _postflight_pdf_validation(self, volume: str, skip: bool = False) -> bool:
+        """Scan the built volume PDF for unresolved refs and render leaks.
+
+        Returns True if validation passed (or was skipped), False on findings
+        the caller should surface via a non-zero exit code.
+
+        Called from ``./binder build pdf --vol1|--vol2`` on success. Quarto
+        can exit 0 while leaving ``?@sec-foo`` literals or ``Figure ??`` in
+        the PDF — this closes that loop without a separate manual check.
+
+        Opt-out: ``--skip-validate`` on the build command.
+        """
+        if skip:
+            console.print("[yellow]⚠ Skipping post-build PDF validation (--skip-validate)[/yellow]")
+            return True
+
+        volume_name = "Volume I" if volume == "vol1" else "Volume II"
+        console.print(f"[cyan]🔍 Post-build PDF validation ({volume_name})[/cyan]")
+
+        from cli.commands._pdf_checks import format_checklist, verify_volume_pdf
+
+        quarto_dir = self.config_manager.book_dir
+        result = verify_volume_pdf(quarto_dir, volume)
+        console.print(format_checklist(result))
+
+        if not result.ok:
+            console.print()
+            console.print(
+                "[red]Build artifact written but PDF validation failed.[/red] "
+                "Inspect the issues above, fix the source QMD, and rebuild — or use "
+                "[cyan]--skip-validate[/cyan] if you need the artifact as-is."
+            )
+            return False
+
+        console.print(
+            f"  [green]✓ pdf[/green] [dim]({result.pdf_path.name}: no unresolved refs or render errors in text)[/dim]"
+        )
+        return True
+
     def _open_output(self, output_dir: Path, format_type: str) -> None:
         """Open the build output using the system's default application.
 
@@ -287,9 +326,8 @@ class BuildCommand:
             skip_hygiene: For EPUB builds, skip the pre-render hygiene
                 check. Opt-in escape hatch for when a build must proceed
                 despite source-level invariants (rare).
-            skip_validate: For EPUB builds, skip the post-render smoke +
-                epubcheck validation. Use when iterating on a known-broken
-                build or when Java / epubcheck is unavailable locally.
+            skip_validate: For EPUB/PDF builds, skip post-render validation
+                (epubcheck/smoke for EPUB; pdftotext cross-ref scan for PDF).
 
         Returns:
             True if build and post-build validation succeeded, False otherwise
@@ -385,7 +423,8 @@ class BuildCommand:
             chapter_names: List of chapter names to build
             format_type: Format to build ('html', 'pdf', 'epub')
             skip_hygiene: EPUB-only; skip the pre-render hygiene check.
-            skip_validate: EPUB-only; skip the post-render validation.
+            skip_validate: Skip post-render validation (EPUB smoke/epubcheck;
+                PDF unresolved-ref scan).
 
         Returns:
             True if build and post-build validation succeeded, False otherwise
@@ -493,7 +532,8 @@ class BuildCommand:
             format_type: Format to build ('html', 'pdf', 'epub')
             volume: Volume config to use ('vol1' or 'vol2')
             skip_hygiene: EPUB-only; skip the pre-render hygiene check.
-            skip_validate: EPUB-only; skip the post-render validation.
+            skip_validate: Skip post-render validation (EPUB smoke/epubcheck;
+                PDF unresolved-ref scan).
 
         Returns:
             True if build and post-build validation succeeded, False otherwise
@@ -627,7 +667,8 @@ class BuildCommand:
             volume: Volume to build ('vol1' or 'vol2')
             format_type: Format to build ('html', 'pdf', 'epub')
             skip_hygiene: EPUB-only; skip the pre-render hygiene check.
-            skip_validate: EPUB-only; skip the post-render validation.
+            skip_validate: Skip post-render validation (EPUB smoke/epubcheck;
+                PDF unresolved-ref scan).
 
         Returns:
             True if build and post-build validation succeeded, False otherwise
@@ -694,6 +735,9 @@ class BuildCommand:
             self._open_output(output_dir, format_type)
             if format_type == "epub":
                 if not self._postflight_epub_validation(skip=skip_validate):
+                    return False
+            elif format_type == "pdf":
+                if not self._postflight_pdf_validation(volume, skip=skip_validate):
                     return False
         else:
             console.print(f"[red]❌ {volume_name} {format_type.upper()} build failed[/red]")

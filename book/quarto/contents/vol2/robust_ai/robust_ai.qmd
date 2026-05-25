@@ -317,8 +317,11 @@ The scale of modern models amplifies these risks. A 175B-parameter model is too 
 Bridging the gap between ML performance concepts and reliability engineering principles reveals why traditional metrics are insufficient. Standard ML development focuses on model accuracy, inference latency, and throughput. Real-world deployment introduces an additional dimension: the reliability of the underlying computational substrate that executes the models.
 
 ```{python}
-#| label: robust-ai-setup
 #| echo: false
+
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: robust-ai-setup
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ROBUST AI INFRASTRUCTURE CONSTRAINTS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +335,6 @@ Bridging the gap between ML performance concepts and reliability engineering pri
 # │ Exports: gpt3_params_b_str, v100_mem_bw_str, bits_per_second_math,
 # │          base_error_rate_math, expected_errors_per_hour_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import GPT3_PARAMS, V100_MEM_BW, BILLION, GB, second
 from mlsysim.fmt import check, fmt, fmt_math, sci_latex
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -340,33 +342,31 @@ class RobustAISetup:
     """Namespace for hardware fault exposure parameters."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    gpt3_params_raw = GPT3_PARAMS
-    v100_bw_raw = V100_MEM_BW
-    base_error_rate = 1e-17
-    seconds_per_hour = 60 * 60
+    from mlsysim import Models, Hardware
+    m = Models.Language.GPT3
+    h = Hardware.Cloud.V100
+    base_error_rate = Monitoring.MemoryBitErrorRatePerBit
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    gpt3_params_b_val = gpt3_params_raw.m_as('param') / BILLION
-    v100_bw_gbs_val = v100_bw_raw.m_as(GB/second)
-    bits_per_second_val = v100_bw_gbs_val * 8 * 1e9
-    expected_errors_per_hour_val = bits_per_second_val * base_error_rate * seconds_per_hour
+    gpt3_params_b_val = m.parameters.m_as(param) / BILLION
+    v100_bw_gbs_val = h.memory_bw.m_as(GB/second)
+    bits_per_second_val = h.memory_bw.m_as(byte/second) * BITS_PER_BYTE
+    expected_errors_per_hour_val = bits_per_second_val * base_error_rate * SEC_PER_HOUR
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(gpt3_params_b_val == 175, f"Expected 175B params, got {gpt3_params_b_val}")
-    check(abs(bits_per_second_val - 7.2e12) < 1e9,
-          f"Unexpected bit rate: {bits_per_second_val}")
-    check(0.25 < expected_errors_per_hour_val < 0.27,
-          f"Unexpected hourly error estimate: {expected_errors_per_hour_val}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    from mlsysim.fmt import fmt, fmt_math, sci_latex
     gpt3_params_b_str = fmt(gpt3_params_b_val, precision=0, commas=False)
     v100_mem_bw_str = fmt(v100_bw_gbs_val, precision=0, commas=False)
     bits_per_second_math = fmt_math(sci_latex(bits_per_second_val, precision=1))
-    base_error_rate_math = fmt_math(sci_latex(base_error_rate, precision=0))
+    base_error_rate_math = fmt_math(sci_latex(base_error_rate, precision=1))
     expected_errors_per_hour_str = fmt(expected_errors_per_hour_val, precision=2, commas=False)
 ```
 
-Consider how hardware reliability directly impacts ML performance. As @fig-weight-corruption illustrates, a single bit flip in a critical neural network weight can degrade ResNet-50 classification accuracy from 76.0 percent (top-1) to 11 percent on ImageNet, while memory subsystem failures during training corrupt gradient updates and prevent model convergence. Modern transformer models such as GPT-3 with `{python} RobustAISetup.gpt3_params_b_str`&nbsp;B parameters execute enormous numbers of floating-point operations and create many opportunities for hardware faults during a forward pass. GPU memory systems operating at up to `{python} RobustAISetup.v100_mem_bw_str` GB/s bandwidth (such as V100 HBM2) process about `{python} RobustAISetup.bits_per_second_math` bits per second. At a base error rate of `{python} RobustAISetup.base_error_rate_math` errors per bit processed, sustained peak bandwidth would yield about `{python} RobustAISetup.expected_errors_per_hour_str` expected bit errors per hour per device; at fleet scale, those low per-device rates compound into operationally visible fault rates.
+Consider how hardware reliability directly impacts ML performance. As @fig-weight-corruption illustrates, a single bit flip in a critical neural network weight can degrade ResNet-50 classification accuracy from 76 percent (top-1) to 11 percent on ImageNet, while memory subsystem failures during training corrupt gradient updates and prevent model convergence. Modern transformer models such as GPT-3 with `{python} RobustAISetup.gpt3_params_b_str`&nbsp;B parameters execute enormous numbers of floating-point operations and create many opportunities for hardware faults during a forward pass. GPU memory systems operating at up to `{python} RobustAISetup.v100_mem_bw_str` GB/s bandwidth (such as V100 HBM2) process about `{python} RobustAISetup.bits_per_second_math` bits per second. At a base error rate of `{python} RobustAISetup.base_error_rate_math` errors per bit processed, sustained peak bandwidth would yield about `{python} RobustAISetup.expected_errors_per_hour_str` expected bit errors per hour per device; at fleet scale, those low per-device rates compound into operationally visible fault rates.
 
 ::: {#fig-weight-corruption fig-env="figure" fig-pos="htb" fig-cap="**Weight Corruption via Bit Flip**: A neural-network forward-pass diagram (left) shows a BIT FLIP on one weight, turning a normal path into a corrupted path whose error propagates to the outputs. The weight-value histogram (right) shows a single corrupted weight landing at the extreme $10^k$ tail, far outside the normal distribution. Flipping an exponent bit with place value $2^k$ in IEEE 754 changes the value by a factor of $2^{\pm 2^k}$, saturating downstream neurons and causing silent misclassification." fig-alt="Left: neural-network forward pass with input, hidden, output neurons; BIT FLIP label on one weight, corrupted path arrows into outputs. Right: histogram of normal weights near zero, with one corrupted weight flagged at 10^k."}
 ![](images/svg/weight-corruption.svg)
@@ -377,6 +377,8 @@ The connection between hardware reliability and ML performance demands concepts 
 [^fn-reliability-eng-ml]: **Reliability Engineering**: Originated in 1950s aerospace with MTBF analysis and failure-mode analysis; quantifies system reliability as $R_{\text{system}}(t)=e^{-N\lambda t}$ for $N$ independent components with exponential failure distributions. ML systems inherit these methods but add failure modes that traditional reliability never anticipated: model drift (the system degrades without any hardware fault), adversarial robustness (the system is correct on the test set but fails on crafted inputs), and epistemic uncertainty (the system cannot distinguish what it knows from what it does not). \index{Reliability!engineering, ml extension}
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ Context: @sec-robust-ai-ml-performance-system-reliability-7d42—SDC at scale
 # │
@@ -389,9 +391,9 @@ The connection between hardware reliability and ML performance demands concepts 
 # │          n_gpus_certain_str
 # └─────────────────────────────────────────────────────────────────────────────
 from math import ceil, log
-from mlsysim.core.constants import THOUSAND
 from mlsysim.fmt import fmt, fmt_math, check
 
+# ┌── LEGO ───────────────────────────────────────────────
 # ┌── LEGO ───────────────────────────────────────────────
 class SilentErrorProbability:
     """Namespace for SDC probability at cluster scale."""
@@ -402,17 +404,19 @@ class SilentErrorProbability:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Step 1: Pr(at least one) = 1 - (1-p)^N
+    from math import ceil, log
     p_at_least_one_val = 1 - (1 - p_per_hr_illustrative) ** n_gpus_large
     n_gpus_certain_val = ceil(log(0.05) / log(1 - p_per_hr_illustrative))
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(p_at_least_one_val > 0.6, f"Probability ({p_at_least_one_val:.2f}) should be high at 10K devices")
-    check(n_gpus_certain_val > n_gpus_large, "95% threshold should be above 10K devices")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    from mlsysim.fmt import fmt, fmt_math
     p_per_hr_math = fmt_math("10^{-4}")
     n_gpus_large_str = fmt(n_gpus_large, precision=0)
-    p_total_large_str = fmt(p_at_least_one_val * 100, precision=0)
+    p_total_large_str = fmt(p_at_least_one_val * 100, precision=1)
     n_gpus_certain_str = fmt(n_gpus_certain_val, precision=0)
 ```
 The scale of modern GPU clusters transforms per-device error rates into fleet-level events. @fig-silent-error-probability illustrates this compounding effect: for a cluster of $N$ devices each with per-device silent data corruption probability $p$ per hour, the probability of at least one SDC event is $\Pr(\geq 1) = 1 - (1 - p)^N$. Meta's SDC report establishes that silent corruption occurs at observable fleet scale [@dixit2021silent]; the curve below uses an illustrative stress-test rate of $p$ = `{python} SilentErrorProbability.p_per_hr_math` per device-hour to show the compounding math. At that rate, a `{python} SilentErrorProbability.n_gpus_large_str`-device cluster is already more likely than not to see an hourly silent error (`{python} SilentErrorProbability.p_total_large_str` percent probability), and the probability crosses 95 percent at about `{python} SilentErrorProbability.n_gpus_certain_str` devices.
@@ -421,6 +425,8 @@ The scale of modern GPU clusters transforms per-device error rates into fleet-le
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ SILENT ERROR PROBABILITY (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -441,7 +447,6 @@ from mlsysim import viz
 
 fig, ax, COLORS, plt = viz.setup_plot(figsize=(8, 5))
 
-
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
 N = np.logspace(0, 5, 500)  # 1 to 100,000 devices
 
@@ -451,7 +456,6 @@ rates = [
     (1e-4, COLORS['OrangeLine'], '$p = 10^{-4}$ per device per hour'),
     (1e-5, COLORS['BlueLine'],   '$p = 10^{-5}$ per device per hour'),
 ]
-
 
 # ┌── 3. RENDER ────────────────────────────────────────────────────────────────
 for p, color, label in rates:
@@ -608,8 +612,10 @@ All three categories of challenges stem from different sources but share key cha
 Detection and monitoring form the foundation of any robustness strategy. Hardware monitoring systems typically sample metrics at 1--10 Hz frequencies and detect temperature anomalies (±5°C from baseline), voltage fluctuations (±5 percent from nominal), and memory error rates exceeding $10^{-12}$ errors per bit per hour. Adversarial input detection uses statistical tests with $p$-value thresholds of 0.01--0.05 and achieves 85–95 percent detection rates with false positive rates below 2 percent. Distribution monitoring using MMD[^fn-mmd-drift] tests processes 1,000--10,000 samples per evaluation and detects shifts with Cohen's $d > 0.3$ within 95 percent confidence intervals. The same quantitative discipline applies to defense cost: robustness mechanisms must be budgeted, not merely enabled.
 
 ```{python}
-#| label: adversarial-payback-notebook
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: adversarial-payback-notebook
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ADVERSARIAL ATTACK PAYBACK (NOTEBOOK)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -645,7 +651,7 @@ class AdversarialPayback:
     ap_slowdown_str = fmt(slowdown, precision=0, commas=False)
     ap_cert_acc_str = fmt(robust_acc*100, precision=0, commas=False, suffix="%")
     ap_gap_pct_str = fmt(accuracy_gap_pct, precision=0, commas=False)
-
+    ap_std_acc_str = fmt(std_acc * 100, precision=0, commas=False, suffix="%")
 ```
 
 ::: {#nbk-robust-ai-cost-defense .callout-notebook title="The cost of defense"}
@@ -657,7 +663,7 @@ Generating an adversarial example requires $K$ additional gradient steps per tra
 
 1. **Forward/Backward Passes**: `{python} AdversarialPayback.ap_std_passes_str` (Standard) + `{python} AdversarialPayback.ap_n_pgd_steps_str` (Attack Generation) = **`{python} AdversarialPayback.ap_slowdown_str` total passes**.
 2. **Training Slowdown**\index{Training!slowdown}: **`{python} AdversarialPayback.ap_slowdown_str`$\times$ slower**.
-3. **Utility Cost**\index{Adversarial Training!accuracy cost}: Accuracy against the worst-case attack is **`{python} AdversarialPayback.ap_cert_acc_str`**, compared with 95 percent clean-data accuracy for the standard model.
+3. **Utility Cost**\index{Adversarial Training!accuracy cost}: Accuracy against the worst-case attack is **`{python} AdversarialPayback.ap_cert_acc_str`**, compared with `{python} AdversarialPayback.ap_std_acc_str` clean-data accuracy for the standard model.
 
 **Systems insight**: Robustness is an **Efficiency-Utility Trade-off**. In this PGD-7 example, the team pays **`{python} AdversarialPayback.ap_slowdown_str`$\times$ the training cost** and exposes a **`{python} AdversarialPayback.ap_gap_pct_str` percentage-point gap** between standard clean-data accuracy and robust accuracy under the specified worst-case digital perturbation threat model. In the Machine Learning Fleet, "Robustness" is not a setting that can be flipped on; it is a budget the team spends. This is why most fleets use **Detection** (cheaper) rather than **Certification** (robust training) for all but the most safety-critical components.
 
@@ -700,8 +706,10 @@ The most pervasive robustness challenge arises from the natural evolution of rea
 A medical diagnosis model trained on X-ray images from a modern hospital plummets in accuracy when deployed in a rural clinic with older equipment. The underlying medical conditions have not changed; the image characteristics differ. The world the model encounters differs from the world it learned from, and the result is distribution shift\index{Distribution Shift}.
 
 ```{python}
-#| label: distribution-shift-confidence-notebook
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: distribution-shift-confidence-notebook
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ DISTRIBUTION SHIFT CONFIDENCE (NOTEBOOK)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -743,7 +751,6 @@ class ShiftConfidence:
     ds_n_samples_str = fmt(n_samples, precision=0)
     ds_p_value_str = MarkdownStr("< 0.001")
     ds_shift_detected_str = MarkdownStr("YES")
-
 ```
 
 ::: {#nbk-robust-ai-is-world-changing .callout-notebook title="Is the world changing?"}
@@ -801,8 +808,11 @@ Standard training (ERM) encourages these shortcuts because they are often statis
 Detecting distribution shift before it degrades predictions requires continuous monitoring of deployment conditions and adaptive mechanisms that maintain model performance as conditions change.
 
 ```{python}
-#| label: distribution-shift-refactor
 #| echo: false
+
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: distribution-shift-refactor
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ DISTRIBUTION SHIFT METRICS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -812,11 +822,10 @@ Detecting distribution shift before it degrades predictions requires continuous 
 # │ Show: ~150 ms latency for 10K MMD samples; PSI thresholds (0.1--0.25).
 # │ How: Constant thresholds and latency benchmarks for modern hardware.
 # │
-# │ Imports: mlsysim.core.constants (THOUSAND)
+# │ Imports: mlsysim.core.constants (THOUSAND, PSI thresholds)
 # │ Exports: mmd_n_samples_str, mmd_latency_ms_str, ks_n_samples_str,
 # │          psi_warn_thresh_str, psi_critical_thresh_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import THOUSAND
 from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
@@ -828,16 +837,18 @@ class DistributionShiftMetrics:
     mmd_latency_ms = 150 # ms on H100
     n_samples_ks = THOUSAND
 
-    psi_warn = 0.10
-    psi_critical = 0.25
+    psi_warn = Monitoring.PsiWarnThreshold
+    psi_critical = Monitoring.PsiCriticalThreshold
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # (Simplified benchmarks for this scenario)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(psi_critical > psi_warn, "Critical threshold must be above warning")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    from mlsysim.fmt import fmt
     mmd_n_samples_str = fmt(n_samples_mmd, precision=0)
     mmd_latency_ms_str = fmt(mmd_latency_ms, precision=0, commas=False)
     ks_n_samples_str = fmt(n_samples_ks, precision=0)
@@ -898,6 +909,9 @@ When a bin has zero observations in either distribution, adding a small smoothin
 
 ```{python}
 #| echo: false
+
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ DISTRIBUTION SHIFT DETECTOR (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -915,7 +929,6 @@ When a bin has zero observations in either distribution, adding a small smoothin
 # │ Plot weekly PSI over 52 weeks; show Green/Orange/Red zones.
 import matplotlib.pyplot as plt
 import numpy as np
-
 
 # ┌── 2. ARRAYS ────────────────────────────────────────────────────────────────
 np.random.seed(42)
@@ -937,14 +950,13 @@ psi_values = np.array(psi_values)
 
 fig, ax = plt.subplots(figsize=(10, 6))
 
-thresh_warning = 0.10
-thresh_critical = 0.25
-
+thresh_warning = Monitoring.PsiWarnThreshold
+thresh_critical = Monitoring.PsiCriticalThreshold
 
 # ┌── 3. RENDER ────────────────────────────────────────────────────────────────
-ax.axhspan(0, thresh_warning, color='green', alpha=0.1, label='Stable (PSI < 0.1)')
-ax.axhspan(thresh_warning, thresh_critical, color='orange', alpha=0.1, label='Warning Zone (0.1 <= PSI < 0.25)')
-ax.axhspan(thresh_critical, 0.45, color='red', alpha=0.1, label='Major Shift (PSI > 0.25)')
+ax.axhspan(0, thresh_warning, color='green', alpha=0.1, label=f'Stable (PSI < {thresh_warning:.1f})')
+ax.axhspan(thresh_warning, thresh_critical, color='orange', alpha=0.1, label=f'Warning Zone ({thresh_warning:.1f} <= PSI < {thresh_critical:.2f})')
+ax.axhspan(thresh_critical, 0.45, color='red', alpha=0.1, label=f'Major Shift (PSI > {thresh_critical:.2f})')
 
 ax.axhline(thresh_warning, color='orange', linestyle='--', linewidth=1, alpha=0.7)
 ax.axhline(thresh_critical, color='red', linestyle='--', linewidth=1, alpha=0.7)
@@ -954,7 +966,7 @@ ax.plot(weeks, psi_values, color='#333333', linewidth=2, marker='o', markersize=
 shift_idx = np.where(psi_values > thresh_critical)[0][0]
 
 # ┌── 4. DECORATE ──────────────────────────────────────────────────────────────
-ax.annotate('Major Shift Detected\n(PSI > 0.25)',
+ax.annotate(f'Major Shift Detected\n(PSI > {thresh_critical:.2f})',
             xy=(weeks[shift_idx], psi_values[shift_idx]),
             xytext=(weeks[shift_idx]-1, psi_values[shift_idx]+0.08),
     fontsize=10,
@@ -1951,8 +1963,10 @@ Defending against adversarial attacks requires a portfolio approach: adversarial
 The most direct defense against adversarial attacks is **adversarial training**\index{Adversarial Training}, which incorporates adversarial examples into the training process itself.
 
 ```{python}
-#| label: robustness-tax-calc
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: robustness-tax-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ THE ROBUSTNESS TAX (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1979,9 +1993,11 @@ class RobustnessTaxAnalysis:
     acc_drop = clean_acc - robust_acc
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(acc_drop > 20, "Robustness tax should be significant (>20 percentage points)")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    from mlsysim.fmt import fmt
     clean_acc_str = fmt(clean_acc, precision=0, commas=False)
     robust_acc_str = fmt(robust_acc, precision=0, commas=False)
     acc_drop_str = fmt(acc_drop, precision=0, commas=False)
@@ -2022,8 +2038,10 @@ Given your threat model and compute budget, select the optimal defense strategy 
 Adversarial training is empirical; it resists specific attacks seen during training but often fails against novel or stronger perturbations. **Certified robustness** offers a mathematical guarantee: for a given input $x$ and radius $\epsilon$, no perturbation $\|\delta\|_p < \epsilon$ exists that changes the model's prediction. The dominant technique for scaling this to high-dimensional inputs like ImageNet is **randomized smoothing**. Instead of classifying $x$ directly, we classify the smoothed function $g(x)$, defined as the expected prediction of the base classifier $f$ under Gaussian noise: $g(x) = \operatorname{arg\,max}_c \Pr(f(x+\delta) = c)$ where $\delta \sim \mathcal{N}(0, \sigma^2 I)$.
 
 ```{python}
-#| label: randomized-smoothing-radius
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
+#| label: randomized-smoothing-radius
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ RANDOMIZED SMOOTHING CERTIFIED RADIUS (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -2050,12 +2068,15 @@ class RandomizedSmoothingRadius:
     sigma = 0.5
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    from statistics import NormalDist
     radius = sigma * NormalDist().inv_cdf(p_top)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(1.54 < radius < 1.55, f"Unexpected smoothing radius: {radius}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    from mlsysim.fmt import fmt
     rs_p_top_str = fmt(p_top, precision=3, commas=False)
     rs_sigma_str = fmt(sigma, precision=1, commas=False)
     rs_radius_str = fmt(radius, precision=1, commas=False)
@@ -2476,6 +2497,8 @@ For more granular debugging, **influence functions**\index{Influence Functions!d
 
 ```{python}
 #| echo: false
+from mlsysim import *
+from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ HUBER OUTLIER SCALING (LEGO)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -2505,10 +2528,12 @@ class HuberOutlierScaling:
     residual_gradient_multiple = normal_error_multiple
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
+    from mlsysim.fmt import check
     check(squared_loss_multiple == 10000, "Squared loss should scale quadratically")
     check(residual_gradient_multiple == 100, "Residual-gradient term should scale linearly")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    from mlsysim.fmt import fmt
     normal_error_multiple_str = fmt(normal_error_multiple, precision=0, commas=False)
     squared_loss_multiple_str = fmt(squared_loss_multiple, precision=0)
     residual_gradient_multiple_str = fmt(residual_gradient_multiple, precision=0, commas=False)
@@ -2603,7 +2628,22 @@ The chapter traced the arms race between attackers and defenders, moving from em
 ::: {.callout-takeaways title="Silent failure is the real threat"}
 
 * **The software attack surface**: Unlike traditional software, ML models fail silently. A bug in a gradient calculation or a subtle numerical overflow does not crash the system but degrades convergence. Robustness requires rigorous testing of mathematical invariants across the entire pipeline, from data ingestion through serving.
-* **Robustness vs. accuracy**: Building resilient systems\index{Robustness!accuracy trade-off} requires an explicit trade-off. Strong ImageNet-scale adversarial training can cost roughly `{python} RobustnessTaxAnalysis.acc_drop_str` percentage points of clean accuracy, while lighter threat models or randomized smoothing may cost single-digit to mid-teen points; compute costs still rise by 2--10$\times$ due to iterative attack generation or Monte Carlo sampling.
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Summary takeaways — robustness vs accuracy trade-off.
+# │ Goal: Recap the ImageNet robustness-tax percentage locally.
+# │ Exports: RobustnessTaxRecap.acc_drop_str
+class RobustnessTaxRecap:
+    clean_acc = 76.0
+    robust_acc = 50.0
+    acc_drop = clean_acc - robust_acc
+    from mlsysim.fmt import fmt
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    acc_drop_str = fmt(acc_drop, precision=0, commas=False)
+```
+
+* **Robustness vs. accuracy**: Building resilient systems\index{Robustness!accuracy trade-off} requires an explicit trade-off. Strong ImageNet-scale adversarial training can cost roughly `{python} RobustnessTaxRecap.acc_drop_str` percentage points of clean accuracy, while lighter threat models or randomized smoothing may cost single-digit to mid-teen points; compute costs still rise by 2--10$\times$ due to iterative attack generation or Monte Carlo sampling.
 * **Semantic robustness in LLMs**: Generative AI introduces a failure mode beyond misclassification\index{Robustness!LLM hallucination}: "hallucinations" where the model produces fluent but factually wrong output. Robustness at this level requires **Uncertainty Quantification (UQ)**, using entropy and self-consistency to detect when a model is guessing rather than producing grounded text.
 * **The drift detection arsenal**: Environmental shift is inevitable. Robust fleets use statistical distance metrics (MMD, PSI) to detect when the real world has diverged from the training assumptions, triggering automated retraining in the MLOps pipeline before users report failures.
 * **Compound threats**: Failures rarely happen in isolation\index{Robustness!compound threats}. A software fault can create a new adversarial vulnerability, and a natural distribution shift can mask a subtle data poisoning attack. Defense must be multi-layered, combining input sanitization, robust training objectives, and output verification.

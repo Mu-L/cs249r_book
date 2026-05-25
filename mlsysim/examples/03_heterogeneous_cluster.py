@@ -15,7 +15,7 @@ model = Models.Language.Llama3_8B
 # 2. Define the Cluster
 node = Node(
     name="H100 Node",
-    accelerator=Hardware.H100,
+    accelerator=Hardware.Cloud.H100,
     accelerators_per_node=8,
     intra_node_bw=Q_("900 GB/s")  # NVLink 4.0
 )

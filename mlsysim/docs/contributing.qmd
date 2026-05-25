@@ -41,7 +41,7 @@ The fastest way to contribute: open an issue on GitHub.
 
 **Good bug reports include:**
 
-- Which spec is wrong (e.g., "A100 peak TFLOP/s in `core/constants.py`")
+- Which spec is wrong (e.g., "A100 peak TFLOP/s in `Hardware.Cloud.A100`")
 - The correct value and your source (official datasheet URL preferred)
 - The version of MLSYSIM you are using (`python -c "import mlsysim; print(mlsysim.__version__)"`)
 
@@ -65,73 +65,82 @@ The [Hardware Acceleration](../../slides/vol1/11_hw_acceleration/) and
 the accelerator landscape and datasheet specs that feed into MLSYSIM's hardware registry.
 :::
 
-### Step 1: Define constants in `core/constants.py`
+### Step 1: Register the node in `hardware/registry.py`
 
-Every numerical spec gets a named constant with pint units. Never hardcode values in the
-registry.
-
-```python
-# In mlsysim/core/constants.py
-A100_MEM_BW            = Q_(2000, "GB/s")     # HBM2e, SXM4 form factor
-A100_FLOPS_FP16_TENSOR = Q_(312, "TFLOP/s")   # Tensor Core, sparsity OFF
-A100_FLOPS_FP32        = Q_(19.5, "TFLOP/s")  # CUDA cores
-A100_FLOPS_TF32        = Q_(156, "TFLOP/s")   # Tensor Core
-A100_TOPS_INT8         = Q_(624, "TOPS")       # Tensor Core
-A100_MEM_CAPACITY      = Q_(80, "GB")          # SXM4 variant
-A100_TDP               = Q_(400, "W")          # SXM4 variant
-```
-
-### Step 2: Register the node in `hardware/registry.py`
-
-Import your constants and add a `HardwareNode` to the appropriate category.
+Chip and board specs live in the **Silicon Zoo** — not in `core/constants.py`
+(that file is physics/units only). Define pint quantities inline in the registry entry
+(or as local `_A100_*` helpers at the top of `registry.py` if shared across variants).
 
 ```python
 # In mlsysim/hardware/registry.py
+_A100_PEAK_FP16 = Q_(312, "TFLOP/s")   # Tensor Core, sparsity OFF — SXM4 datasheet
+
 A100 = HardwareNode(
     name="NVIDIA A100",
     release_year=2020,
     compute=ComputeCore(
-        peak_flops=A100_FLOPS_FP16_TENSOR,
+        peak_flops=_A100_PEAK_FP16,
         precision_flops={
-            "fp32": A100_FLOPS_FP32,
-            "tf32": A100_FLOPS_TF32,
-            "int8": A100_TOPS_INT8,
+            "fp32": Q_(19.5, "TFLOP/s"),
+            "tf32": Q_(156, "TFLOP/s"),
+            "int8": Q_(624, "TOPS"),
         },
     ),
     memory=MemoryHierarchy(
-        capacity=A100_MEM_CAPACITY,
-        bandwidth=A100_MEM_BW,
+        capacity=Q_(80, "GB"),
+        bandwidth=Q_(2039, "GB/s"),
     ),
-    tdp=A100_TDP,
+    tdp=Q_(400, "W"),
     dispatch_tax=0.015 * ureg.ms,
     metadata={
-        "source_url": "https://...",    # REQUIRED: official datasheet
-        "last_verified": "2025-03-06",  # REQUIRED: date you checked
+        "provenance": Provenance(
+            kind=ProvenanceKind.DATASHEET,
+            ref="NVIDIA A100 datasheet",
+            url="https://...",           # REQUIRED for datasheet kind
+            verified="2025-03-06",
+        ),
     },
 )
 ```
 
-For mobile and edge devices, include `battery_capacity` when applicable (e.g.,
-`battery_capacity=15 * ureg.Wh` for a smartphone).
+Reuse shared records from `mlsysim/core/provenance_catalog.py` when several entries
+share one source. See `mlsysim/PROVENANCE.md` and run
+`python -m mlsysim.tools.audit_provenance --scope all --strict` before opening a PR.
 
-### Step 3: Add a top-level alias (optional)
+### Step 2: Verify with registry parity tests
 
-If the device is commonly referenced, add a convenience alias in the `Hardware` class at
-the bottom of `hardware/registry.py`:
+If you replace a symbol that used to live in `constants.py`, add a row to
+`mlsysim/tests/test_registry_parity.py` before deleting the flat constant.
 
-```python
-class Hardware(Registry):
-    # ...
-    MyNewChip = CloudHardware.MyNewChip  # convenient shortcut
-```
+### Step 3: Use the canonical path in book LEGO cells
+
+Chapters import `Hardware.Cloud.A100`, not `A100_FLOPS_FP16_TENSOR`. Run
+`python3 book/tools/audit/book_check_registry_sources.py` on touched QMD files.
 
 ### Provenance rules
 
+Every registry entry requires `metadata.provenance` (`Provenance` model in
+`core/provenance.py`). Use `kind` honestly: `datasheet`, `literature`, `estimate`
+(needs `notes`), `convention`, or `illustrative`.
+
 1. Link to an **official primary source** (manufacturer datasheet, not a blog post)
-2. Include a `last_verified` date -- specs change across chip revisions and firmware updates
-3. State **which variant** (e.g., SXM5 vs. PCIe, different memory configs)
+2. Set `verified` (YYYY-MM-DD) on datasheet and literature entries
+3. State **which variant** in `ref` or `notes` (e.g., SXM5 vs. PCIe)
 4. When a spec varies across SKUs, use the **most conservative published value** unless the
    variant is specified in the node name
+
+### Formatting for QMD and LEGO cells
+
+Display helpers live in `mlsysim.fmt` — keep physics in `mlsysim.physics.*`:
+
+| Helper | Use when |
+|:-------|:---------|
+| `fmt(q, precision=1)` | Human-readable quantities in prose |
+| `fmt_int(n)` | Integer counts without spurious decimals |
+| `check(q, label=...)` | Assert dimensional sanity in tutorials |
+| `MarkdownStr` | Inline QMD values that must not be LaTeX-escaped |
+
+Registry operands come from zoos; derived values from `mlsysim.physics.calc_*` or solvers.
 
 ---
 
@@ -155,12 +164,12 @@ architectural parameters (layers, heads, hidden dimensions) that define each wor
 Llama3_8B = TransformerWorkload(
     name="Llama-3.1-8B",
     architecture="Transformer",
-    parameters=LLAMA3_8B_PARAMS,      # defined in core/constants.py
+    parameters=8e9 * param,
     layers=32,
     hidden_dim=4096,
     heads=32,
-    kv_heads=8,                        # GQA: fewer KV heads than query heads
-    inference_flops=2 * LLAMA3_8B_PARAMS.magnitude * ureg.flop,
+    kv_heads=8,
+    inference_flops=2 * 8e9 * flop,
 )
 ```
 
@@ -174,9 +183,9 @@ is available from the paper, use it and note the source in a comment.
 ResNet50 = CNNWorkload(
     name="ResNet-50",
     architecture="CNN",
-    parameters=RESNET50_PARAMS,
+    parameters=25.6e6 * param,
     layers=50,
-    inference_flops=RESNET50_FLOPs,
+    inference_flops=4.1e9 * flop,
 )
 ```
 
@@ -201,7 +210,7 @@ network topologies and cluster compositions that MLSYSIM models analytically.
 # A new reference node
 DGX_B200 = Node(
     name="DGX B200",
-    accelerator=Hardware.B200,
+    accelerator=Hardware.Cloud.B200,
     accelerators_per_node=8,
     intra_node_bw=1800 * ureg.GB / ureg.second,
     nics_per_node=8,
@@ -228,10 +237,14 @@ Iceland = GridProfile(
     pue=PUE_LIQUID_COOLED,
     wue=WUE_LIQUID,
     primary_source="geothermal",
-    metadata={
-        "source_url": "https://...",
-        "last_verified": "2025-06-01",
-    },
+    metadata=Metadata(
+        provenance=Provenance(
+            kind=ProvenanceKind.INDUSTRY_REPORT,
+            ref="National Energy Authority grid mix report",
+            url="https://...",
+            verified="2025-06-01",
+        ),
+    ),
 )
 ```
 
@@ -343,7 +356,7 @@ implement.
 
 ### Solver contribution checklist
 
-1. **Place canonical equations in `core/formulas.py`** -- every solver equation must be
+1. **Place canonical equations in `mlsysim/physics/`** -- every solver equation must be
    independently callable and unit-tested
 2. **Inherit from `BaseSolver`** and implement `solve(**kwargs) -> dict`
 3. **Use pint units throughout** -- all inputs and outputs must carry physical units
@@ -353,10 +366,10 @@ implement.
 
 ### Example: extending a solver
 
-All formulas live in `core/formulas.py` so they can be tested in isolation:
+All formulas live in `mlsysim/physics/` so they can be tested in isolation:
 
 ```python
-# In mlsysim/core/formulas.py
+# In mlsysim/mlsysim/physics/
 def ring_allreduce_time(message_bytes, num_nodes, bandwidth):
     """Ring all-reduce latency: 2(N-1)/N * M/B.
 
@@ -423,33 +436,32 @@ Understanding the module layout helps you find the right file to edit.
 ```
 mlsysim/
   core/
-    constants.py    # Single source of truth for all specs (pint units)
-    formulas.py     # 40+ canonical equations (roofline, all-reduce, TCO, ...)
-    solver.py       # 6 analytical solvers (BaseSolver subclasses)
+    constants.py    # Physics, units, and cross-cutting laws only (CI allowlist)
+    calibration.py  # Solver/engine default parameters
+    literature/     # Cited appendix scalars (Literature.*)
+    ops/              # MLOps thresholds (Ops.Monitoring.*)
+    infra/pricing.py  # Cloud, storage, labeling, fleet economics
+    solver.py       # Analytical solvers (BaseSolver subclasses)
     engine.py       # Roofline engine (Engine.solve())
     scenarios.py    # Scenario bundles + 3-tier evaluation
     evaluation.py   # Feasibility / Performance / Macro scorecard
-    config.py       # YAML/JSON configuration loader
-    types.py        # Quantity type alias, Metadata
     registry.py     # Base Registry pattern
-    exceptions.py   # OOMError, SLAViolation, ThermalThrottleWarning
-  hardware/
-    types.py        # ComputeCore, MemoryHierarchy, HardwareNode
-    registry.py     # 5 categories, 18+ devices
-  models/
-    types.py        # Workload, TransformerWorkload, CNNWorkload
-    registry.py     # 4 families, 15+ models
-  systems/
-    types.py        # DeploymentTier, Node, Fleet, NetworkFabric
-    registry.py     # Tiers, Nodes, Fabrics, Clusters
-  infra/
-    types.py        # GridProfile, RackProfile, Datacenter
-    registry.py     # Grids (carbon/PUE/WUE), Racks
-  sim/              # Simulation support (Persona, SystemLedger)
-  viz/              # Visualization (roofline plots, scorecards)
-  tests/            # pytest suite
+  physics/          # Canonical calc_* implementations (roofline, all-reduce, TCO, …)
+  hardware/registry.py   # Hardware.* zoo
+  models/registry.py     # Models.* zoo
+  datasets/registry.py   # Datasets.* zoo
+  systems/registry.py    # Systems.Nodes / Fabrics / Clusters / Pods
+  infra/registry.py      # Infrastructure.* zoo
+  platforms/registry.py  # Platforms.* zoo
+  tests/            # pytest suite (includes registry migration gates)
   examples/         # Standalone scripts
   docs/             # Quarto documentation site
+```
+
+Registry migration build check (book repo):
+
+```bash
+python3 book/tools/audit/check_registry_migration_build.py
 ```
 
 ---

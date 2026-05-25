@@ -29,7 +29,6 @@ app = marimo.App(width="full")
 # Design Ledger: chapter="v2_10"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: SETUP + OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -43,30 +42,24 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware, Models
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
         _ = await ledger.load_async()
 
     # ── Hardware from registry ──────────────────────────────────────────────
-    _phone = Hardware.Edge.Generic_Phone   # iPhone 15 Pro (A17 Pro)
+    _phone = Hardware.Mobile.iPhone15Pro   # iPhone 15 Pro (A17 Pro)
     _cloud = Hardware.Cloud.H100           # Cloud tier for comparison
 
     # ── Mobile hardware constants ────────────────────────────────────────────
@@ -114,7 +107,6 @@ async def _():
         LORA_RANK, LORA_FRACTION, BIAS_FRACTION,
         IID_ROUNDS, FL_TARGET_ACC,
     )
-
 
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -165,7 +157,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -231,7 +222,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -245,7 +235,6 @@ def _(mo):
     - **Federated Learning** &mdash; FedAvg, non-IID data impact, gradient compression.
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
@@ -267,7 +256,6 @@ def _(mo):
         ),
     )
     return (pA_pred,)
-
 
 # ─── CELL 5: PART A CONTROLS + PART B WIDGETS ────────────────────────────────
 @app.cell(hide_code=True)
@@ -301,7 +289,6 @@ def _(mo):
     )
     return (pA_batch, pA_params, pA_strategy, pB_pred)
 
-
 # ─── CELL 6: PART B CONTROLS + PART C WIDGETS ────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -319,7 +306,6 @@ def _(mo):
         ),
     )
     return (pB_contexts, pC_pred)
-
 
 # ─── CELL 7: PART C CONTROLS + PART D WIDGETS ────────────────────────────────
 @app.cell(hide_code=True)
@@ -345,7 +331,6 @@ def _(mo):
     )
     return (pC_target, pD_pred)
 
-
 # ─── CELL 8: PART D CONTROLS ─────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -368,7 +353,6 @@ def _(mo):
         label="Gradient compression",
     )
     return (pD_beta, pD_compress, pD_epochs)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: ALL PARTS AS TABS (SINGLE CELL)
@@ -1243,7 +1227,6 @@ $$
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER HUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1286,7 +1269,6 @@ def _(COLORS, ledger, mo, pA_pred, pA_strategy, pB_pred, pC_pred, pC_target, pD_
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

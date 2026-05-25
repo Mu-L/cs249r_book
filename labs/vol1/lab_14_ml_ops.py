@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -17,28 +15,23 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
+    from mlsysim import Hardware
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
 
-    H100_TFLOPS_FP16 = mlsysim.Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
-    H100_TDP_W       = mlsysim.Hardware.Cloud.H100.tdp.m_as("W")
+    H100_TFLOPS_FP16 = Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
+    H100_TDP_W       = Hardware.Cloud.H100.tdp.m_as("W")
 
     # Edge tier — retraining cost contrast: lower power, longer wall-clock
-    JETSON_TFLOPS    = mlsysim.Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
-    JETSON_TDP_W     = mlsysim.Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
+    JETSON_TFLOPS    = Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
+    JETSON_TDP_W     = Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -48,7 +41,6 @@ async def _():
         JETSON_TDP_W, JETSON_TFLOPS, LAB_CSS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -94,7 +86,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -150,8 +141,6 @@ def _(COLORS, mo):
     </div>""")
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -165,7 +154,6 @@ def _(mo):
       optimization, deployment cost asymmetry, and technical debt in ML systems.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN LAB CELL
@@ -254,7 +242,6 @@ def _(mo):
     partD_base_loss = mo.ui.slider(start=1.0, stop=5.0, value=2.0, step=0.5,
                                     label="Accuracy loss per missed cycle (pp)")
     return (partD_base_loss, partD_downstream, partD_missed)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -951,8 +938,6 @@ $$
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -978,7 +963,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred):
         <span class="hud-label">STATUS</span><span class="hud-active">ACTIVE</span>
     </div>""")
     return
-
 
 if __name__ == "__main__":
     app.run()

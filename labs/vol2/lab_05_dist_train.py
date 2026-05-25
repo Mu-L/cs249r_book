@@ -38,11 +38,9 @@ app = marimo.App(width="full")
 #   GPUS_PER_NODE     = 8       Standard DGX H100 node
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 0: SETUP ─────────────────────────────────────────────────────────────
 @app.cell
@@ -54,16 +52,11 @@ async def _():
     import numpy as np
 
     # WASM bootstrap
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     # plotly must be imported AFTER micropip install, since it's installed at runtime on WASM
     from plotly.subplots import make_subplots
@@ -72,29 +65,29 @@ async def _():
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
     import mlsysim
-    from mlsysim import Hardware
-    from mlsysim.core.defaults import INFINIBAND_NDR_BW_GBS
-    from mlsysim.core.constants import (
-        A100_FLOPS_FP16_TENSOR, T4_FLOPS_FP16_TENSOR,
-    )
+    from mlsysim import Hardware, Models, Systems
+
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    GPT3 = Models.Language.GPT3
+    GPT3_PARAMS_B = GPT3.parameters.m_as("count") / 1e9
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100
     A100 = Hardware.Cloud.A100
+    T4 = Hardware.Cloud.T4
 
     # ── Hardware constants (from registry) ──────────────────────────────
     H100_TFLOPS_FP16  = H100.compute.peak_flops.m_as("TFLOPs/s")
     H100_BW_GBS       = H100.memory.bandwidth.m_as("GB/s")
     H100_RAM_GB       = H100.memory.capacity.m_as("GB")
     A100_RAM_GB       = A100.memory.capacity.m_as("GB")
-    A100_TFLOPS_FP16  = A100_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    T4_TFLOPS_FP16    = T4_FLOPS_FP16_TENSOR.m_as("TFLOPs/s")
-    # Interconnect specs (from defaults — not in per-device registry)
-    NVLINK4_BW_GBS    = 900.0     # GB/s NVLink 4 (DGX H100)
+    A100_TFLOPS_FP16  = A100.compute.peak_flops.m_as("TFLOPs/s")
+    T4_TFLOPS_FP16    = T4.compute.peak_flops.m_as("TFLOPs/s")
+    NVLINK4_BW_GBS    = H100.nvlink.bandwidth.m_as("GB/s")
     IB_NDR_BW_GBS     = INFINIBAND_NDR_BW_GBS  # 50 GB/s, alias for consistent naming
-    IB_HDR_BW_GBS     = 25.0      # GB/s InfiniBand HDR per port
-    ETH_100G_BW_GBS   = 12.5      # GB/s 100GbE
-    GPUS_PER_NODE     = 8
+    IB_HDR_BW_GBS     = Systems.Fabrics.InfiniBand_HDR.bandwidth.m_as("GB/s")
+    ETH_100G_BW_GBS   = Systems.Fabrics.Ethernet_100G.bandwidth.m_as("GB/s")
+    GPUS_PER_NODE     = Systems.Nodes.DGX_H100.accelerators_per_node
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -105,9 +98,9 @@ async def _():
         H100_TFLOPS_FP16, H100_BW_GBS, H100_RAM_GB, A100_RAM_GB,
         A100_TFLOPS_FP16, T4_TFLOPS_FP16,
         NVLINK4_BW_GBS, IB_NDR_BW_GBS, IB_HDR_BW_GBS, ETH_100G_BW_GBS,
+        GPT3_PARAMS_B,
         GPUS_PER_NODE,
     )
-
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -161,7 +154,6 @@ def _(COLORS, LAB_CSS, mo):
     """)
     _header
     return
-
 
 # ─── CELL 2: BRIEFING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -222,7 +214,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ───────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -238,11 +229,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: PART A WIDGETS ───────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -285,7 +274,6 @@ def _(mo):
     )
     return (a1_gpu_slider, a1_interconnect, a1_model_select, partA_prediction, partA_reflection)
 
-
 # ─── CELL 5: PART B WIDGETS ───────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo, partA_prediction):
@@ -299,7 +287,6 @@ def _(mo, partA_prediction):
         label="Which 3D configuration (TP x PP x DP = 256) best trains a 175B model on 256 H100s?",
     )
     return (partB_prediction,)
-
 
 # ─── CELL 6: PART C WIDGETS ───────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -322,7 +309,6 @@ def _(mo, partB_prediction):
         label="Why must TP map to NVLink, PP to InfiniBand, and DP to the remaining bandwidth?",
     )
     return (a2_microbatches, a2_pp, a2_tp, a2_zero_stage, partC_reflection)
-
 
 # ─── CELL 6b: PART D WIDGETS ─────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -364,7 +350,6 @@ def _(mo, partC_reflection,
     )
     return (d1_gpu_count, d1_hw_tier, d1_model_size, partD_prediction, partD_reflection)
 
-
 # ─── CELL 7: SYNTHESIS WIDGETS ────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(DecisionLog, mo, partD_reflection):
@@ -374,12 +359,9 @@ def _(DecisionLog, mo, partD_reflection):
     )
     return (synth_decision_input, synth_decision_ui)
 
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 8: ALL PARTS + TABS COMPOSITION ─────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1394,11 +1376,9 @@ def _(
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 9: LEDGER_HUD ─────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1464,7 +1444,6 @@ def _(COLORS, partA_prediction, partB_prediction, partA_reflection, partC_reflec
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

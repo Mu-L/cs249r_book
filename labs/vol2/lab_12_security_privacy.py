@@ -29,7 +29,6 @@ app = marimo.App(width="full")
 # Design Ledger: chapter="v2_12"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: SETUP + OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -43,23 +42,17 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -116,7 +109,6 @@ async def _():
         DEFAULT_BUDGET_EPSILON, DEFAULT_QUERY_EPSILON, DEFAULT_DAILY_QUERIES,
     )
 
-
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -166,7 +158,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ──────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -232,7 +223,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ───────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -246,7 +236,6 @@ def _(mo):
     - **Defense Selection Framework** &mdash; MIG isolation, monitoring overhead.
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
@@ -270,7 +259,6 @@ def _(mo):
     )
     return (pA_pred,)
 
-
 # ─── WIDGET CELL 2: Part A controls + Part B prediction ──────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -292,7 +280,6 @@ def _(mo):
     )
     return (pA_N, pA_epsilon, pB_pred)
 
-
 # ─── WIDGET CELL 3: Part C prediction ────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -309,7 +296,6 @@ def _(mo):
         ),
     )
     return (pC_pred,)
-
 
 # ─── WIDGET CELL 4: Part C controls + Part D prediction ─────────────────────
 @app.cell(hide_code=True)
@@ -331,7 +317,6 @@ def _(mo):
     )
     return (pC_dpsgd, pC_mig, pC_monitor, pC_output, pC_rate, pD_pred)
 
-
 # ─── WIDGET CELL 5: Part D controls ─────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -346,7 +331,6 @@ def _(mo):
         value="Basic Composition", label="Composition theorem", inline=True,
     )
     return (pD_budget, pD_comp, pD_eps_q, pD_queries)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
@@ -1140,7 +1124,6 @@ Advanced composition extends this to ~3.7 days via the $\\sqrt{T}$ scaling.
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER HUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1186,7 +1169,6 @@ def _(COLORS, ledger, mo, pA_pred, pA_epsilon, pA_N, pB_pred, pC_pred, pD_pred, 
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

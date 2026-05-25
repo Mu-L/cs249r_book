@@ -22,8 +22,8 @@ def main():
     
     # 2. Define our Experimental Regions
     experiments = [
-        {"name": "Poland (Coal-Heavy)", "grid": mlsysim.Infra.Grids.Poland},
-        {"name": "Quebec (Hydro-Clean)", "grid": mlsysim.Infra.Grids.Quebec}
+        {"name": "Poland (Coal-Heavy)", "grid": mlsysim.Infrastructure.Grids.Poland},
+        {"name": "Quebec (Hydro-Clean)", "grid": mlsysim.Infrastructure.Grids.Quebec}
     ]
     
     print(f"{'Region':<25} | {'PUE':<6} | {'Energy (MWh)':<12} | {'Carbon (Tonnes)':<12}")

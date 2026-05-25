@@ -32,6 +32,7 @@
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \usepackage{subcaption}
+\usepackage{multirow}
 \usepackage{enumitem}
 \usepackage{titlesec}
 \titlespacing*{\section}{0pt}{10pt plus 2pt minus 2pt}{4pt plus 1pt minus 1pt}
@@ -460,7 +461,7 @@ rate + bw  # -> DimensionalityError
 (rate / bw).to("flop/byte")  # -> 295 flop/byte (ridge point)
 \end{lstlisting}
 
-This design eliminates the single most common class of bugs in back-of-the-envelope systems analysis, namely silent unit conversion errors.\footnote{The most infamous unit-conversion failure is the Mars Climate Orbiter, lost in 1999 because ground software produced thrust data in pound-force seconds while the spacecraft expected newton seconds~\citep{stephenson1999mco}.} Every constant in \texttt{constants.py} carries dimensioned units through all downstream computations (e.g., \texttt{H100\_MEM\_BW = 3.35\,*\,TB/s}), preventing unit mismatches at the type level.
+This design eliminates the single most common class of bugs in back-of-the-envelope systems analysis, namely silent unit conversion errors.\footnote{The most infamous unit-conversion failure is the Mars Climate Orbiter, lost in 1999 because ground software produced thrust data in pound-force seconds while the spacecraft expected newton seconds~\citep{stephenson1999mco}.} Hardware and model specifications live in typed registries (e.g., \texttt{Hardware.Cloud.H100.memory.bandwidth = 3.35\,*\,TB/s}); universal physics and unit helpers remain in \texttt{constants.py} and \texttt{mlsysim.physics}, preventing unit mismatches at the API level.
 
 \subsubsection{Taxonomic Completeness}
 \label{sec:taxonomic}
@@ -513,9 +514,41 @@ Diffusion       & $P$, denoising steps $T$         & $T \times$ FLOPs/step \\
 
 \textbf{Layer E: Resolvers (Analysis).} Twenty-eight stateless resolvers (23 models, 2 solvers, and 3 optimizers) consume demand and supply to produce dimensioned performance metrics. The solver formalism (stateless composition, chaining semantics, and three-level evaluation) is detailed in \Cref{sec:solver-formalism}.
 
-Reproducible analysis requires reproducible inputs. \mlsysim organizes vetted specifications into four curated registries collectively called the \emph{MLSys Zoo}: the \textbf{Silicon Zoo} (hardware accelerators), the \textbf{Model Zoo} (workload architectures), the \textbf{Fleet Zoo} (cluster topologies), and the \textbf{Infrastructure Zoo} (regional grid profiles). Each entry is a fully typed object whose constants are sourced from datasheets with provenance metadata including source URLs and verification dates. For example, \texttt{Hardware.Cloud.H100} returns a \texttt{HardwareNode} with all physical quantities dimensioned via \texttt{pint}.
+Reproducible analysis requires reproducible inputs. \mlsysim organizes vetted specifications into six curated registries collectively called the \emph{MLSys Zoo}: \textbf{Hardware} (accelerators and boards), \textbf{Models} (workload architectures), \textbf{Datasets} (benchmark catalog entries), \textbf{Systems} (nodes, fabrics, and fleets), \textbf{Infrastructure} (grids and datacenters), and \textbf{Platforms} (deployment envelopes). Cited scenario anchors (PUE, MTTF, MFU bands) live in \texttt{Literature.*} and \texttt{Systems.*} registries; economics in \texttt{Infrastructure.Pricing}; solver fallbacks in \texttt{mlsysim.core.calibration}; architecture formulas (Roofline, AllReduce, Young--Daly) live in \texttt{mlsysim.physics}. Each registry entry is a fully typed object whose quantities are sourced from datasheets with provenance metadata including source URLs and verification dates. For example, \texttt{Hardware.Cloud.H100} returns a \texttt{HardwareNode} with all physical quantities dimensioned via \texttt{pint}.
 
-The Silicon Zoo spans six orders of magnitude from sub-milliwatt microcontrollers (\texttt{Hardware.Tiny.ESP32\_S3}, 512\,KiB SRAM) to wafer-scale engines (\texttt{Hardware.Cloud.CerebrasCS3}, 44\,GB on-wafer SRAM, 125\,PFLOP/s~\citep{lie2022cerebras}). Beyond NVIDIA GPUs (V100 through B200/GB200~NVL72), the registry includes AMD MI250X and MI300X, Intel Gaudi~2 and Gaudi~3, AWS Trainium~2, and Google TPU~v4 through TPU~v6 (Trillium), enabling cross-vendor design-space exploration. The \texttt{list(sort\_by=)} class method enables programmatic comparison, and users extend any zoo by instantiating new typed objects (\Cref{lst:hwnode}), ensuring custom entries participate in the same dimensionally strict pipeline as vetted ones.
+The \texttt{physics} package decomposes the framework's analytical equations into nine domain-aligned modules (\Cref{tab:physics-modules}), each owning one conceptual domain of the systems stack. A shared \texttt{\_ensure\_unit()} helper coerces raw floats into \texttt{pint} quantities at module entry points, guaranteeing dimensional correctness without burdening callers. Chapter and notebook code import from \texttt{mlsysim.physics} directly. The appendix (\Cref{tab:physics-api}) lists the complete function signatures.
+
+\begin{table}[!t]
+\centering
+\caption{\textbf{Physics Domain Modules.} Each module owns the analytical formulas for one taxonomy domain. All functions accept and return \texttt{pint} quantities.}
+\label{tab:physics-modules}
+\small
+\renewcommand{\arraystretch}{1.08}
+\begin{tabularx}{\columnwidth}{@{}l l X@{}}
+\toprule
+\textbf{Module} & \textbf{Domain} & \textbf{Key Formulas} \\
+\midrule
+\texttt{performance}    & Node        & Roofline bottleneck, Amdahl's speedup, pipeline bubble \\
+\texttt{memory}         & Node        & Model memory, activation memory, KV-cache, checkpoint size \\
+\texttt{serving}        & Node        & Erlang-C M/M/$c$ queue latency \\
+\texttt{communication}  & Fleet       & Ring/tree/hierarchical AllReduce, All-to-All \\
+\texttt{reliability}    & Fleet       & Young--Daly, cluster MTBF, failure probability \\
+\texttt{transformer}    & Algorithm   & Training/decode FLOP counts \\
+\texttt{economics}      & Operations  & Fleet TCO, egress cost \\
+\texttt{networking}     & Data        & Speed-of-light latency \\
+\texttt{statistics}     & Analysis    & PSI drift detection, sample sizing \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The \textbf{Hardware} registry spans six orders of magnitude from sub-milliwatt microcontrollers (\texttt{Hardware.Tiny.ESP32\_S3}, 512\,KiB SRAM) to wafer-scale engines (\texttt{Hardware.Cloud.CerebrasCS3}, 44\,GB on-wafer SRAM, 125\,PFLOP/s~\citep{lie2022cerebras}). Beyond NVIDIA GPUs (V100 through B200/GB200~NVL72), the registry includes AMD MI250X and MI300X, Intel Gaudi~2 and Gaudi~3, AWS Trainium~2, and Google TPU~v4 through TPU~v6 (Trillium), enabling cross-vendor design-space exploration. The \texttt{list(sort\_by=)} class method enables programmatic comparison, and users extend any zoo by instantiating new typed objects (\Cref{lst:hwnode}), ensuring custom entries participate in the same dimensionally strict pipeline as vetted ones. \Cref{fig:anatomy} shows how these components compose: panel~(a) maps the package architecture (registries, physics modules, core utilities, and invariant checks), while panel~(b) traces a concrete analysis from typed inputs through the resolver chain to the three-level \texttt{SystemEvaluation} scorecard. The full hardware catalog is in \Cref{sec:appendix-hardware}.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{figures/system-anatomy.pdf}
+\caption{\textbf{System Anatomy.} (a)~Package architecture: six registries provide typed specifications, nine physics modules supply domain-aligned formulas, and four invariant checks enforce design decisions as the codebase evolves. (b)~Analysis pipeline: a workload lowers to a hardware-agnostic intermediate representation; four input layers feed 28 stateless resolvers organized in three tiers; the output is a three-level \texttt{SystemEvaluation} scorecard (Feasibility, Performance, Macro).}
+\label{fig:anatomy}
+\end{figure*}
 
 \subsection{The Type System}
 \label{sec:types}
@@ -545,7 +578,7 @@ The complete evaluation produces a \texttt{SystemEvaluation} scorecard, a single
 \subsection{Extensibility}
 \label{sec:extensibility}
 
-The layered architecture is designed for extension at every level. New workload types (e.g., a \texttt{RetrievalAugmentedWorkload} for RAG pipelines) require only implementing the \texttt{lower()} method to produce a \texttt{ComputationGraph}; all existing resolvers then apply without modification. New hardware entries are added to the Silicon Zoo as declarative \texttt{HardwareNode} specifications (\Cref{lst:hwnode}), with no resolver changes needed. New resolvers can be introduced for emerging constraints by implementing the appropriate tier interface: a Tier 1 Model (e.g., a \texttt{PrivacyModel} for federated learning overhead), a Tier 2 Solver, or a Tier 3 Optimizer.
+The layered architecture is designed for extension at every level. New workload types (e.g., a \texttt{RetrievalAugmentedWorkload} for RAG pipelines) require only implementing the \texttt{lower()} method to produce a \texttt{ComputationGraph}; all existing resolvers then apply without modification. New hardware entries are added to the \textbf{Hardware} registry as declarative \texttt{HardwareNode} specifications (\Cref{lst:hwnode}), with no resolver changes needed. New resolvers can be introduced for emerging constraints by implementing the appropriate tier interface: a Tier 1 Model (e.g., a \texttt{PrivacyModel} for federated learning overhead), a Tier 2 Solver, or a Tier 3 Optimizer.
 
 By accepting typed inputs and returning dimensioned outputs, the type system enforces correctness at every boundary, ensuring that custom extensions compose safely with existing components. This design ensures that \mlsysim can track the rapidly evolving ML systems landscape without requiring architectural changes to the core framework.
 
@@ -982,7 +1015,7 @@ To validate the Tier 3 design-space search, we configure the \texttt{Parallelism
 
 These seven anchors span five of the six taxonomy domains (Node, Data is validated indirectly via the ResNet pipeline-bound case in \Cref{sec:usage}, Algorithm, Fleet, Operations) and cover both Roofline regimes (compute-bound and memory-bound). \Cref{tab:validation} summarizes the results.
 
-The Silicon Zoo records provenance metadata for release-facing hardware entries where primary vendor sources are available, and the registry schema reserves \texttt{metadata.source\_url} and \texttt{metadata.last\_verified} fields for this traceability. This keeps datasheet-backed constants auditable while allowing clearly marked estimates for emerging or difficult-to-source hardware.
+The \textbf{Hardware} registry records \texttt{metadata.provenance} for release-facing hardware entries where primary vendor sources are available, with optional \texttt{metadata.last\_verified} dates. This keeps datasheet-backed constants auditable while allowing clearly marked estimates for emerging or difficult-to-source hardware.
 
 \begin{table}[!t]
 \centering
@@ -1025,6 +1058,20 @@ To safeguard against model drift, the test suite includes empirical anchor tests
 \label{sec:validation-dim}
 
 Beyond numerical accuracy, dimensional strictness (\Cref{sec:dimensional}) provides a structural form of validation. Unit mismatches raise immediate errors rather than producing silently wrong results, eliminating a category of bugs that numerical validation alone cannot catch.
+
+\subsection{Design Invariant Enforcement}
+\label{sec:validation-ratchets}
+
+Dimensional strictness (\Cref{sec:dimensional}) catches unit errors at runtime. A complementary question is whether the framework's \emph{architectural} invariants hold as the codebase evolves: do all hardware specifications flow through typed registries? Does every formula carry \texttt{pint} units end-to-end? Can a contributor accidentally reintroduce a bare constant that bypasses the registry? \mlsysim answers these with four machine-checked structural invariants, each encoding a design decision that would otherwise erode through incremental changes:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item \textbf{Specification separation.} The physics-and-units module (\texttt{constants.py}) is budgeted at 220 source lines. Any symbol matching a hardware or model name pattern is rejected, enforcing the principle that device-specific values belong in typed registries, not in a monolithic constants file.
+\item \textbf{Import provenance.} A manifest of migrated symbols is checked against every import in the repository. This ensures that callers consume hardware specifications through the registry API (\texttt{Hardware.Cloud.H100.memory.bandwidth}) rather than through legacy constant names, preserving the demand--supply separation of \Cref{sec:demand-supply}.
+\item \textbf{Registry fidelity.} Thirty parametrized tests verify that registry entries exactly reproduce the values of their predecessor constants, confirming that the registry is a faithful representation of the original single-source-of-truth semantics, not a lossy abstraction.
+\item \textbf{Cross-registry consistency.} When the same physical quantity appears in multiple registries (e.g., NVLink bandwidth in both \textbf{Hardware} and \textbf{Systems}), a dedicated check verifies that the values agree. This prevents silent divergence between overlapping specification surfaces.
+\end{enumerate}
+
+These checks are additive: each new registry entry or physics module automatically participates without manual test authoring. The effect is that the six-zoo architecture described in \Cref{sec:stack} is not merely documented but \emph{enforced} — a structural guarantee that the framework's design decisions survive community contributions and long-term evolution.
 
 \begin{figure}[!t]
 \centering
@@ -1082,12 +1129,12 @@ The crossover from memory-bound to compute-bound occurs near batch 64, where the
 \end{figure}
 
 \subsubsection{I2: Iowa vs.\ Qu\'ebec Carbon}
-An instructor poses a policy question: \emph{does geography matter for carbon footprint?} Using the \texttt{DistributedModel}, they configure a 256-GPU cluster training a 70B model for 30 days. The \texttt{SustainabilityModel} then computes emissions under two grid profiles: Iowa (680~gCO$_2$/kWh, circa 2020 coal/gas grid) and Qu\'ebec (17~gCO$_2$/kWh, hydroelectric). The configuration is identical in hardware, model, and MFU, yet carbon footprint differs by $40{\times}$ (412 vs.\ 10.3 tonnes CO$_2$; 231 vs.\ 5.8\,kL water), demonstrating that grid carbon intensity is a first-order systems design variable (Wall~18). \Cref{fig:carbon} visualizes this contrast.
+An instructor poses a policy question: \emph{does geography matter for carbon footprint?} Using the \texttt{DistributedModel}, they configure a 256-GPU cluster training a 70B model for 30 days. The \texttt{SustainabilityModel} then computes emissions under two grid profiles: Iowa (680~gCO$_2$/kWh, circa 2020 coal/gas grid) and Qu\'ebec (20~gCO$_2$/kWh, hydroelectric). The configuration is identical in hardware, model, and MFU, yet carbon footprint differs by $34{\times}$, demonstrating that grid carbon intensity is a first-order systems design variable (Wall~18). \Cref{fig:carbon} visualizes this contrast.
 \afterpage{%
 \begin{figure}[!t]
 \centering
 \includegraphics[width=0.9\columnwidth]{figures/carbon-comparison.pdf}
-\caption{\textbf{Geography as a Systems Variable: Iowa vs.\ Qu\'ebec.} An identical 256-GPU cluster training a 70B model for 30 days produces $40{\times}$ more CO$_2$ in Iowa (coal/gas grid circa 2020, 680~gCO$_2$/kWh) than in Qu\'ebec (95\% hydroelectric, 17~gCO$_2$/kWh). Water usage follows the same ratio. Hardware, model, parallelism strategy, and MFU are identical; only the regional grid carbon intensity differs between the two sites.}
+\caption{\textbf{Geography as a Systems Variable: Iowa vs.\ Qu\'ebec.} An identical 256-GPU cluster training a 70B model for 30 days produces $34{\times}$ more CO$_2$ in Iowa (coal/gas grid circa 2020, 680~gCO$_2$/kWh) than in Qu\'ebec (95\% hydroelectric, 20~gCO$_2$/kWh). Hardware, model, parallelism strategy, and MFU are identical; only the regional grid carbon intensity differs between the two sites.}
 \label{fig:carbon}
 \end{figure}%
 }
@@ -1127,7 +1174,7 @@ To illustrate how \mlsysim's solvers compose across all six taxonomy domains, we
 
 \textbf{Fleet (Walls 14--16).} The \texttt{DistributedModel} models communication. With TP=\cvalint{\RthreeTPsize} (intra-node NVLink, \cvalint{\NVLinkBWGBs}\,GB/s) and DP=\cvalint{\RthreeDPsize} (inter-node IB, \cvalint{\IBBWGBs}\,GB/s per port), the DP AllReduce synchronizes $\cvalint{\LLaMAWeightsGB}\;\text{GB} / \cvalint{\RthreeTPsize} = \cval{\RthreeGradShardGB}$\,GB of gradients per TP rank across \cvalint{\RthreeDPsize} nodes. Ring AllReduce cost is $2 \times (63/64) \times \cval{\RthreeGradShardGB}\;\text{GB} / \cvalint{\IBBWGBs}\;\text{GB/s} \approx \cvalint{\RthreeARms}$\,ms. With $\eta_{\text{overlap}} = \cval{\RthreeOverlap}$, only $\pgfmathparse{1-\RthreeOverlap}\pgfmathprintnumber[fixed,precision=2]{\pgfmathresult} \times \cvalint{\RthreeARms} = \cvalint{\RthreeExposedMs}$\,ms of communication is exposed, yielding a scaling efficiency of $8.3 / (8.3 + 0.103) = 98.8\%$ at 64 nodes. The \texttt{ReliabilityModel} estimates cluster MTBF $= \cvalint{\NodeMTBFhrs}\;\text{hrs} / \cvalint{\RthreeGPUs} \approx \cval{\RthreeClusterMTBF}$\,hrs, requiring hourly checkpoints.
 
-\textbf{Operations (Walls 17--20).} The \texttt{EconomicsModel} projects a 30-day training run: CapEx (\cvalint{\RthreeGPUs} H100s at \$\cvalint{\HhCostK}K each) of \$15.4M amortized over \cvalint{\AmortYears} years yields a per-run allocation of $\$15.4\text{M} \times 30/1{,}095 \approx \$422\text{K}$, plus OpEx (power at 700W $\times$ 512 GPUs $\times$ 720\,hrs at \$0.06/kWh) of \$15.5K, for a total run TCO of $\sim$\$0.44M. The \texttt{SustainabilityModel} estimates 285\,MWh energy and 5.3 tonnes CO$_2$, $40{\times}$ less carbon than the same run in Iowa (680~gCO$_2$/kWh).
+\textbf{Operations (Walls 17--20).} The \texttt{EconomicsModel} projects a 30-day training run: CapEx (\cvalint{\RthreeGPUs} H100s at \$\cvalint{\HhCostK}K each) of \$15.4M amortized over \cvalint{\AmortYears} years yields a per-run allocation of $\$15.4\text{M} \times 30/1{,}095 \approx \$422\text{K}$, plus OpEx (power at 700W $\times$ 512 GPUs $\times$ 720\,hrs at \$0.06/kWh) of \$15.5K, for a total run TCO of $\sim$\$0.44M. The \texttt{SustainabilityModel} estimates 285\,MWh energy and 5.3 tonnes CO$_2$, $34{\times}$ less carbon than the same run in Iowa (680~gCO$_2$/kWh).
 
 \textbf{Analysis (Walls 21--22).} The \texttt{SensitivitySolver} confirms the binding constraint is compute (Wall~1), not memory or communication, with $\partial T / \partial F_{\text{peak}} = -0.91$. The \texttt{SynthesisSolver} synthesizes the minimum hardware to complete training in 14 days: 1{,}024 GPUs, doubling DP to 128.
 
@@ -1151,7 +1198,7 @@ At \cvalint{\RthreeGPUs} H100 GPUs (\cvalint{\RthreeNodes} nodes), the DP AllRed
 Vendor datasheets report peak HBM bandwidth (e.g., \cvalii{\HhBWTBs}\,TB/s for H100). In practice, sustained bandwidth under real workloads is 70--85\% of peak due to bank conflicts, address patterns, and memory controller scheduling~\citep{nvidia2023h100}. A student using peak bandwidth will underestimate LLM decode latency by 15--30\%. \mlsysim's MFU parameter ($\eta$) explicitly accounts for this gap, and the default ranges (\Cref{eq:efficiency}) guide students toward realistic estimates.
 
 \textbf{Pitfall: Ignoring geography in carbon accounting.}
-Two identical training runs produce vastly different environmental impact depending on grid carbon intensity. As demonstrated in Case~I2, the same 256-GPU cluster emits $40{\times}$ more CO$_2$ in Iowa than in Qu\'ebec. Students who omit Wall~18 (Sustainability) from their analysis miss a first-order systems design variable, one that increasingly affects both cost (carbon pricing) and regulatory compliance.
+Two identical training runs produce vastly different environmental impact depending on grid carbon intensity. As demonstrated in Case~I2, the same 256-GPU cluster emits $34{\times}$ more CO$_2$ in Iowa than in Qu\'ebec. Students who omit Wall~18 (Sustainability) from their analysis miss a first-order systems design variable, one that increasingly affects both cost (carbon pricing) and regulatory compliance.
 
 \textbf{Fallacy: Quantization always provides a linear speedup.}
 Reducing precision from FP16 to INT4 ($r_{\text{quant}} = 4{\times}$) reduces memory by $4{\times}$, but the compute speedup depends on whether the workload is memory-bound or compute-bound. For memory-bound LLM decode, the $4{\times}$ memory reduction translates to nearly $4{\times}$ throughput improvement because the bottleneck is weight reads. For compute-bound training, the same quantization provides zero throughput benefit because compute, not memory, is the ceiling. \mlsysim's Roofline analysis makes this regime-dependent behavior explicit.
@@ -1199,7 +1246,7 @@ We identify several directions for extending \mlsysim.
 
 \textbf{Broader empirical validation.} \Cref{sec:validation} validates against seven anchors spanning five domains. Future work will extend this to additional hardware generations (e.g., NVIDIA B200, TPU~v6p), inference serving under load (continuous batching with realistic request distributions), and checkpoint overhead at scale, where published data points are becoming available from reproducibility studies.
 
-\textbf{Community hardware registry.} The Silicon Zoo currently contains a curated set of hardware entries verified against manufacturer datasheets. We plan to open contributions from the community, with automated verification scripts that cross-check submitted specifications against known physical limits (e.g., memory bandwidth cannot exceed pin count $\times$ data rate).
+\textbf{Community hardware registry.} The \textbf{Hardware} registry currently contains a curated set of hardware entries verified against manufacturer datasheets. We plan to open contributions from the community, with automated verification scripts that cross-check submitted specifications against known physical limits (e.g., memory bandwidth cannot exceed pin count $\times$ data rate).
 
 \textbf{Custom degradation curves.} Future versions will allow users to supply empirically fitted accuracy-compression curves from their own quantization experiments, replacing the current heuristic polynomials with data-grounded models.
 
@@ -1219,6 +1266,196 @@ The tools gap from \Cref{sec:intro} (empirical and cycle-level methods are too s
 Sub-second evaluation and browser deployment make the same hardware-free experience previewed in \Cref{sec:intro,sec:usage} a practical curriculum primitive; the autogradable-lab and equity points are developed there and in \Cref{sec:discussion}. The broader curriculum story pairs TinyTorch~\citep{tinytorch2025} (build the framework) with \mlsysim (model the fleet); both ship with the open \emph{Machine Learning Systems} text~\citep{mlsysbook2025} at \url{https://mlsysbook.ai}.
 
 As ML systems grow in scale and complexity (trillion-parameter models, million-device fleets, multi-modal pipelines), the need for rapid analytical reasoning tools will increase correspondingly. \mlsysim provides a foundation for that reasoning. It is not a replacement for empirical measurement, but a complement that narrows the design space before committing hardware resources to validation.
+
+\appendix
+
+\section{Registry Catalog}
+\label{sec:appendix-hardware}
+
+The MLSys Zoo comprises six registries spanning the full systems stack. This appendix catalogs the three most referenced registries; the complete source for all six is available in the repository.
+
+\subsection{Hardware Registry}
+
+\Cref{tab:hw-catalog} lists all registered accelerators grouped by deployment tier. Each entry is a fully typed \texttt{HardwareNode} with \texttt{pint}-dimensioned fields. Users add custom entries by instantiating the same types (Listing~\ref{lst:hwnode}), and custom entries participate in the same dimensional pipeline as vetted ones. For example, a research team evaluating a pre-release accelerator can define a speculative entry with projected specifications and immediately sweep it against existing workloads.
+
+\begin{table*}[!t]
+\centering
+\caption{\textbf{Hardware Registry.} All registered accelerators organized by deployment tier. Peak FLOP/s is FP16 Tensor Core (or equivalent) throughput; BW is HBM (or on-die SRAM for wafer-scale/tiny) bandwidth.\footnotemark\ The last row shows a user-defined custom entry (Listing~\ref{lst:hwnode}).}
+\label{tab:hw-catalog}
+\small
+\renewcommand{\arraystretch}{1.05}
+\begin{tabularx}{\textwidth}{@{}l l r r r r l@{}}
+\toprule
+\textbf{Tier} & \textbf{Accelerator} & \textbf{Peak (TFLOP/s)} & \textbf{Mem (GB)} & \textbf{BW (TB/s)} & \textbf{TDP (W)} & \textbf{Interconnect} \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Cloud}} \\
+ & NVIDIA V100       & 125    & 32   & 0.90  & 300    & NVLink 2.0 (300 GB/s) \\
+ & NVIDIA A100       & 312    & 80   & 2.04  & 400    & NVLink 3.0 (600 GB/s) \\
+ & NVIDIA H100       & 989    & 80   & 3.35  & 700    & NVLink 4.0 (900 GB/s) \\
+ & NVIDIA H200       & 989    & 141  & 4.80  & 700    & NVLink 4.0 (900 GB/s) \\
+ & NVIDIA B200       & 2,250  & 192  & 8.00  & 1,000  & NVLink 5.0 (1,800 GB/s) \\
+ & AMD MI300X        & 1,307  & 192  & 5.30  & 750    & Infinity Fabric \\
+ & Intel Gaudi 3     & 1,835  & 128  & 3.70  & 900    & RoCE \\
+ & AWS Trainium 2    & 380    & 96   & 2.40  & 500    & NeuronLink \\
+ & Google TPU v4     & 275    & 32   & 1.20  & 200    & ICI (300 GB/s) \\
+ & Google TPU v5p    & 459    & 95   & 2.76  & 300    & ICI (1,200 GB/s) \\
+ & Google TPU v6     & 918    & 32   & 1.60  & 300    & ICI \\
+ & Cerebras CS-3$^*$ & 125,000 & 44  & 21.00 & 23,000 & MemoryX (1,200 GB/s) \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Edge}} \\
+ & NVIDIA Jetson AGX Orin & 275 & 64 & 0.20 & 60 & PCIe Gen4 \\
+ & NVIDIA Jetson Orin NX  & 25  & 16 & 0.10 & 25 & PCIe Gen4 \\
+ & Google Coral Edge TPU  & 4   & -- & --   & 2  & USB 3.0 \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Mobile}} \\
+ & Apple A17 Pro     & 35    & 8    & 0.10  & 5   & Unified memory \\
+ & Snapdragon 8 Gen 3 & 45  & 12   & 0.08  & 5   & LPDDR5X \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Tiny}} \\
+ & ESP32-S3          & 0.0005 & 0.004 & 0.0001 & 0.4 & SPI \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Custom (user-defined)}} \\
+ & \textit{Custom Accelerator} & \textit{500} & \textit{96} & \textit{4.00} & \textit{500} & \textit{---} \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+\footnotetext{$^*$CS-3 BW is on-wafer SRAM bandwidth (21\,PB/s in the registry). The weight-streaming serving case study (\Cref{sec:usage}) uses the ${\sim}$1.2\,TB/s MemoryX injection bandwidth, which is the effective off-chip bandwidth seen by the host.}
+
+\subsection{Infrastructure and Systems Registries}
+
+The Hardware registry (\Cref{tab:hw-catalog}) captures individual accelerator capabilities, but real deployments compose accelerators into nodes, connect nodes through network fabrics, and situate the resulting clusters in datacenters whose geography determines energy cost, carbon intensity, and cooling strategy. The Infrastructure and Systems registries complete this picture: Infrastructure encodes \emph{where} the fleet runs, and Systems encodes \emph{how} accelerators are assembled into distributed configurations. Together the three registries let a single resolver chain evaluate end-to-end metrics from per-device roofline through fleet-level TCO and carbon footprint.
+
+The \textbf{Infrastructure} registry encodes regional environmental context for sustainability analysis. Carbon intensity varies by more than $80\times$ across registered grid profiles (10\,gCO$_2$/kWh in Norway vs.\ 820 in Poland), making geography a first-order design variable (Case~I2, \Cref{sec:usage}). The \textbf{Systems} registry defines compute nodes, network fabrics, and fleet configurations used by the \texttt{DistributedModel} and \texttt{ReliabilityModel}. \Cref{tab:infra-systems} presents both registries.
+
+\begin{table*}[!htb]
+\centering
+\caption{\textbf{Infrastructure and Systems Registries.} \textit{Left:} Grid profiles for sustainability analysis (CI\,=\,carbon intensity in gCO$_2$/kWh; PUE\,=\,power usage effectiveness; WUE\,=\,water usage effectiveness in L/kWh). \textit{Right:} Pre-defined compute nodes, network fabrics, and fleet configurations for distributed analysis.}
+\label{tab:infra-systems}
+\small
+\renewcommand{\arraystretch}{1.08}
+\begin{minipage}[t]{0.42\textwidth}
+\centering
+\vspace{0pt}
+\textbf{Grid Profiles}\\[4pt]
+\begin{tabularx}{\textwidth}{@{}l r r r l@{}}
+\toprule
+\textbf{Profile} & \textbf{CI} & \textbf{PUE} & \textbf{WUE} & \textbf{Source} \\
+\midrule
+Qu\'ebec (Hydro)    & 20   & 1.06 & 0.0 & Hydro \\
+Norway (Hydro)      & 10   & 1.06 & 0.0 & Hydro \\
+US Average          & 429  & 1.12 & 1.8 & Mixed \\
+Iowa (Coal/Gas)     & 680  & 1.12 & 1.8 & Fossil \\
+Poland (Coal)       & 820  & 1.58 & 1.8 & Coal \\
+\bottomrule
+\end{tabularx}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.55\textwidth}
+\centering
+\vspace{0pt}
+\textbf{Nodes, Fabrics, and Fleets}\\[4pt]
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\multicolumn{2}{@{}l}{\textit{Compute Nodes}} \\
+\midrule
+DGX A100  & 8$\times$ A100, NVLink 3.0, 600\,GB/s \\
+DGX H100  & 8$\times$ H100, NVLink 4.0, 900\,GB/s \\
+DGX B200  & 8$\times$ B200, NVLink 5.0, 1,800\,GB/s \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Network Fabrics}} \\
+\midrule
+IB HDR     & 200\,Gb/s, 7\,$\mu$s latency \\
+IB NDR     & 400\,Gb/s, 5\,$\mu$s latency \\
+IB XDR     & 800\,Gb/s, 5\,$\mu$s latency \\
+400\,GbE   & 400\,Gb/s, 50\,$\mu$s latency \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Fleet Configurations}} \\
+\midrule
+Research (256 GPU)    & 32$\times$ DGX H100, 100\,GbE \\
+Production (2K GPU)   & 256$\times$ DGX H100, IB HDR fat-tree \\
+Frontier (8K GPU)     & 1,024$\times$ DGX H100, IB NDR fat-tree \\
+Mega (100K GPU)       & 12,500$\times$ DGX H100, IB NDR \\
+\bottomrule
+\end{tabularx}
+\end{minipage}
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.05}
+\caption{\textbf{Physics Module Public API.} Complete function signatures organized by domain module. Every function accepts \texttt{pint} \texttt{Quantity} arguments (or raw floats coerced via \texttt{\_ensure\_unit()}) and returns dimensioned quantities. Import from \texttt{mlsysim.physics} (one module per domain).}
+\label{tab:physics-api}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Module} & \textbf{Function} & \textbf{Signature (key parameters $\to$ return)} \\
+\midrule
+\multirow{5}{*}{\texttt{performance}} & \texttt{dTime} & (total\_ops, n\_devices, peak\_flops, $\eta$) $\to$ seconds \\
+ & \texttt{calc\_bottleneck} & (ops, model\_bytes, device\_flops, device\_bw) $\to$ \{time, regime\} \\
+ & \texttt{calc\_amdahls\_speedup} & (parallel\_frac, speedup\_factor) $\to$ overall speedup \\
+ & \texttt{calc\_pipeline\_bubble} & (n\_stages, n\_microbatches, v\_stages) $\to$ bubble fraction \\
+ & \texttt{calc\_effective\_flops} & (peak\_flops, $\eta$) $\to$ sustained FLOP/s \\
+\midrule
+\multirow{5}{*}{\texttt{memory}} & \texttt{model\_memory} & (params, bytes\_per\_param, unit) $\to$ memory \\
+ & \texttt{calc\_activation\_memory} & (batch, seq, hidden, layers, prec) $\to$ bytes \\
+ & \texttt{calc\_kv\_cache\_size} & (layers, heads, dim, seq, batch, prec) $\to$ bytes \\
+ & \texttt{calc\_paged\_kv\_cache\_size} & (same + page\_size) $\to$ bytes \\
+ & \texttt{calc\_checkpoint\_size} & (n\_params, bytes\_per\_param) $\to$ bytes \\
+\midrule
+\texttt{serving} & \texttt{calc\_queue\_latency\_mmc} & (arrival\_rate, service\_rate, n\_servers) $\to$ wait time \\
+\midrule
+\multirow{4}{*}{\texttt{communication}} & \texttt{calc\_ring\_allreduce\_time} & (msg\_bytes, n\_gpus, bw, latency) $\to$ seconds \\
+ & \texttt{calc\_tree\_allreduce\_time} & (msg\_bytes, n\_gpus, bw, latency) $\to$ seconds \\
+ & \texttt{calc\_all\_to\_all\_time} & (msg\_bytes, n\_gpus, bw, latency) $\to$ seconds \\
+ & \texttt{calc\_hierarchical\_allreduce\_time} & (msg, intra\_gpus, intra\_bw, inter\_nodes, inter\_bw, $\alpha$) $\to$ seconds \\
+\midrule
+\multirow{5}{*}{\texttt{reliability}} & \texttt{calc\_young\_daly\_interval} & (ckpt\_cost, mtbf) $\to$ optimal interval \\
+ & \texttt{calc\_mtbf\_cluster} & (component\_mtbf, n, correlation) $\to$ cluster MTBF \\
+ & \texttt{calc\_mtbf\_node} & (component\_mtbfs) $\to$ node MTBF \\
+ & \texttt{calc\_availability\_stacked} & (single\_avail, n\_replicas) $\to$ stacked availability \\
+ & \texttt{calc\_failure\_probability} & (mtbf, duration) $\to$ probability \\
+\midrule
+\multirow{2}{*}{\texttt{transformer}} & \texttt{calc\_transformer\_training\_flops} & (n\_params, n\_tokens) $\to$ total FLOPs \\
+ & \texttt{calc\_transformer\_decode\_flops} & (n\_params, n\_tokens) $\to$ decode FLOPs \\
+\midrule
+\multirow{2}{*}{\texttt{economics}} & \texttt{calc\_fleet\_tco} & (unit\_cost, power, quantity, years, kwh\_price) $\to$ TCO \\
+ & \texttt{calc\_monthly\_egress\_cost} & (bytes\_per\_sec, cost\_per\_gb) $\to$ monthly cost \\
+\midrule
+\texttt{networking} & \texttt{calc\_network\_latency\_ms} & (distance\_km) $\to$ latency \\
+\midrule
+\multirow{3}{*}{\texttt{statistics}} & \texttt{calc\_population\_stability\_index} & (expected, actual) $\to$ PSI \\
+ & \texttt{calc\_two\_proportion\_sample\_size} & (baseline, lift, $z_\alpha$, $z_\beta$) $\to$ $n$ \\
+ & \texttt{calc\_constraint\_propagation\_factor} & (from, to, base) $\to$ factor \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\vspace{8pt}
+\begingroup
+\small
+\renewcommand{\arraystretch}{1.08}
+\noindent
+\captionof{table}{\textbf{Core Type Schema.} Pydantic \texttt{BaseModel} types that compose registry entries. The hierarchy is deliberately shallow: \texttt{HardwareNode} aggregates \texttt{ComputeCore} and \texttt{MemoryHierarchy} as direct fields, not through deep inheritance. All physical fields are \texttt{pint} \texttt{Quantity} objects. Users extend any registry by instantiating these types directly (Listing~\ref{lst:hwnode}).}
+\label{tab:type-schema}
+\vspace{4pt}
+\noindent
+\begin{tabularx}{\columnwidth}{@{}l X@{}}
+\toprule
+\textbf{Type} & \textbf{Key Fields} \\
+\midrule
+\texttt{ComputeCore}       & \texttt{peak\_flops} (FLOP/s), \texttt{precision\_flops} (dict: fp8/fp16/tf32/int8 $\to$ FLOP/s) \\
+\texttt{MemoryHierarchy}   & \texttt{capacity} (bytes), \texttt{bandwidth} (bytes/s) \\
+\texttt{IOInterconnect}    & \texttt{bandwidth} (bytes/s), \texttt{latency} (seconds), \texttt{name} \\
+\texttt{HardwareNode}      & \texttt{compute}, \texttt{memory}, \texttt{interconnect}, \texttt{nvlink}, \texttt{tdp} (W), \texttt{cost} (USD) \\
+\texttt{ComputationGraph}  & \texttt{total\_ops} (FLOPs), \texttt{weight\_bytes} (bytes), \texttt{arithmetic\_intensity} (FLOP/byte) \\
+\texttt{TransformerWorkload} & \texttt{parameters}, \texttt{layers}, \texttt{hidden\_dim}, \texttt{heads}, \texttt{seq\_length} \\
+\texttt{GridProfile}       & \texttt{carbon\_intensity} (gCO$_2$/kWh), \texttt{pue}, \texttt{wue} (L/kWh) \\
+\texttt{NetworkFabric}     & \texttt{topology}, \texttt{bandwidth} (bytes/s), \texttt{latency} (s), \texttt{oversubscription} \\
+\texttt{Fleet}             & \texttt{node}, \texttt{count}, \texttt{fabric} (NetworkFabric) \\
+\texttt{SystemEvaluation}  & \texttt{feasibility}, \texttt{performance}, \texttt{macro} (three-level scorecard) \\
+\bottomrule
+\end{tabularx}
+\endgroup
 
 \bibliography{references}
 

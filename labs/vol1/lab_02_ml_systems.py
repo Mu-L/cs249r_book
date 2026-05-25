@@ -3,11 +3,9 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 0: SETUP ────────────────────────────────────────────────────────
 @app.cell
@@ -18,22 +16,16 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim import Engine, Models, Hardware
+    from mlsysim import Engine, Hardware, Models
 
     # ── Hardware constants ────────────────────────────────────────────────
     H100_TFLOPS = Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
@@ -58,11 +50,11 @@ async def _():
     ESP32_RAM_KB  = Hardware.Tiny.ESP32_S3.memory.sram_capacity.m_as("KiB")
 
     # ── Model constants ────────────────────────────────────────────────────
-    RESNET50_PARAMS = Models.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS  = Models.ResNet50.inference_flops.m_as("flop")
+    RESNET50_PARAMS = Models.Vision.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS  = Models.Vision.ResNet50.inference_flops.m_as("flop")
     RESNET50_SIZE_MB = RESNET50_PARAMS * 2 / (1024 * 1024)  # FP16
 
-    MOBILENET_FLOPS = Models.MobileNetV2.inference_flops.m_as("flop")
+    MOBILENET_FLOPS = Models.Vision.MobileNetV2.inference_flops.m_as("flop")
     DSCNN_FLOPS = Models.Tiny.DS_CNN.inference_flops.m_as("flop")
 
     # ── Physical constants ────────────────────────────────────────────────
@@ -86,7 +78,6 @@ async def _():
         SPEED_OF_LIGHT_KM_S, FIBER_FACTOR,
         ledger,
     )
-
 
 # ─── CELL 1: HEADER ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -137,7 +128,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ─────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -231,7 +221,6 @@ def _(COLORS, ledger, mo):
     ])
     return
 
-
 # ─── CELL 3: READING ──────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -247,11 +236,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 # ─── WIDGET CELLS (one per part) ─────────────────────────────────────────
 # Pattern: each cell defines and RETURNS every widget the part owns so
@@ -274,7 +261,6 @@ def _(mo):
     )
     return (partA_prediction,)
 
-
 # Each widget cell below defines AND returns every widget it owns. A previous
 # version defined partA_ai/partB_distance/partB_sla/... but only returned the
 # next part's prediction; marimo's dataflow then never flowed those widgets
@@ -288,7 +274,6 @@ def _(mo):
         label="Arithmetic Intensity (FLOPs/Byte)",
     )
     return (partA_ai,)
-
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -305,7 +290,6 @@ def _(mo):
     )
     return (partB_prediction,)
 
-
 @app.cell(hide_code=True)
 def _(mo):
     partB_distance = mo.ui.slider(
@@ -318,7 +302,6 @@ def _(mo):
         label="SLA budget:",
     )
     return (partB_distance, partB_sla)
-
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -333,7 +316,6 @@ def _(mo):
               "After 90 seconds of continuous use, what frame rate?",
     )
     return (partC_prediction,)
-
 
 @app.cell(hide_code=True)
 def _(mo):
@@ -358,7 +340,6 @@ def _(mo):
     )
     return (partC_model, partC_target)
 
-
 @app.cell(hide_code=True)
 def _(mo):
     partD_prediction = mo.ui.radio(
@@ -372,7 +353,6 @@ def _(mo):
               "Energy ratio of cloud transmission vs. local inference?",
     )
     return (partD_prediction,)
-
 
 # Part D slider and dropdown pulled out of the tabs cell (was nested inside
 # before, which left them invisible to the tabs cell's dataflow tracker
@@ -389,7 +369,6 @@ def _(mo):
         label="Wireless technology:",
     )
     return (partD_data_size, partD_wireless)
-
 
 # ─── CELL N: TABS COMPOSITION ────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1179,11 +1158,9 @@ The energy ratio is often **~1,000x**, making local inference the only viable op
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 @app.cell(hide_code=True)
 def _(COLORS, ledger, mo, partA_prediction, partB_prediction, partC_prediction, partD_prediction):
@@ -1217,7 +1194,6 @@ def _(COLORS, ledger, mo, partA_prediction, partB_prediction, partC_prediction, 
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()
