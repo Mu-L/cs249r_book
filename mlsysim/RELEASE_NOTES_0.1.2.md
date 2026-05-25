@@ -29,8 +29,8 @@ mlsysim eval Llama3_8B H100 --batch-size 32
   from mlsysim import Hardware, Models, ServingModel
 
   result = ServingModel().solve(
-      Models.Llama3_8B,
-      Hardware.H100,
+      Models.Language.Llama3_8B,
+      Hardware.Cloud.H100,
       seq_len=8192,
       prefill_chunk_tokens=512,
   )

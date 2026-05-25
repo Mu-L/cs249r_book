@@ -12,6 +12,7 @@ MLSYSIM_ROOT = REPO_ROOT / "mlsysim"
 SCAN_ROOTS = (
     MLSYSIM_ROOT / "docs",
     MLSYSIM_ROOT / "tutorial",
+    MLSYSIM_ROOT / "tutorial" / "slides",
 )
 
 SKIP_FILES = {
@@ -19,14 +20,7 @@ SKIP_FILES = {
     "provenance.qmd",  # documents removed alias patterns
 }
 
-# Flat paths removed when registry shims were deleted (CLI short names still OK in bash).
-FLAT_MODEL_RE = re.compile(
-    r"\b(?:mlsysim\.)?Models\.(ResNet50|Llama3_8B|Llama3_70B|Llama3_405B|"
-    r"GPT2|GPT3|GPT4|MobileNetV2|AlexNet|MobileNet)\b"
-)
-FLAT_HW_RE = re.compile(
-    r"\b(?:mlsysim\.)?Hardware\.(A100|H100|H200|T4|V100|B200|MI300X)\b"
-)
+SCAN_SUFFIXES = {".qmd", ".md", ".tex"}
 
 # Not exported from mlsysim.__init__ — docs must use submodule imports.
 NON_TOP_LEVEL_SYMBOLS = frozenset({
@@ -56,6 +50,18 @@ NON_TOP_LEVEL_SYMBOLS = frozenset({
     "ResponsibleEngineeringModel",
 })
 
+# Flat paths removed when registry shims were deleted (CLI short names still OK in bash).
+FLAT_MODEL_RE = re.compile(
+    r"\b(?:mlsysim\.)?Models\.(ResNet50|Llama3_8B|Llama3_70B|Llama3_405B|"
+    r"GPT2|GPT3|GPT4|MobileNetV2|AlexNet|MobileNet)\b"
+)
+FLAT_HW_RE = re.compile(
+    r"\b(?:mlsysim\.)?Hardware\.(A100|H100|H200|T4|V100|B200|MI300X)\b"
+)
+FLAT_ATTR_RE = re.compile(
+    r"\bmlsysim\.(" + "|".join(NON_TOP_LEVEL_SYMBOLS) + r")\b"
+)
+
 FROM_MLSYSIM_RE = re.compile(r"^\s*from\s+mlsysim\s+import\s+(.+)$")
 
 
@@ -79,8 +85,12 @@ def _scan_file(path: Path) -> list[str]:
     rel = path.relative_to(REPO_ROOT)
 
     for lineno, line in enumerate(text.splitlines(), start=1):
-        if FLAT_MODEL_RE.search(line) or FLAT_HW_RE.search(line):
-            hits.append(f"{rel}:{lineno}: flat registry path\n  {line.strip()}")
+        if (
+            FLAT_MODEL_RE.search(line)
+            or FLAT_HW_RE.search(line)
+            or FLAT_ATTR_RE.search(line)
+        ):
+            hits.append(f"{rel}:{lineno}: invalid mlsysim API reference\n  {line.strip()}")
 
         m = FROM_MLSYSIM_RE.match(line)
         if m:
@@ -120,7 +130,7 @@ def test_doc_registry_paths_and_imports() -> None:
         if not root.exists():
             continue
         for path in sorted(root.rglob("*")):
-            if path.suffix not in {".qmd", ".md"}:
+            if path.suffix not in SCAN_SUFFIXES:
                 continue
             if path.name in SKIP_FILES:
                 continue
