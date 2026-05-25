@@ -4,11 +4,23 @@ from ..core.constants import Q_
 from ..core.types import Quantity, Metadata
 
 class ComputeCore(BaseModel):
+    """
+    Represents the processing units of a hardware accelerator.
+    
+    Contains the theoretical peak throughput capabilities of the silicon,
+    differentiated by numerical precision.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     peak_flops: Quantity
     precision_flops: Dict[str, Quantity] = Field(default_factory=dict)
 
 class MemoryHierarchy(BaseModel):
+    """
+    Represents the memory subsystem of a hardware accelerator.
+    
+    Captures capacity and bandwidth across different levels of the memory
+    hierarchy, from primary HBM/DRAM down to on-chip SRAM or Flash storage.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     capacity: Quantity           # Primary memory (HBM for GPUs, SRAM for MCUs)
     bandwidth: Quantity          # Primary memory bandwidth
@@ -22,18 +34,37 @@ class MemoryHierarchy(BaseModel):
     l2_cache: Optional[Quantity] = None
 
 class StorageHierarchy(BaseModel):
+    """
+    Represents the persistent storage subsystem connected to the hardware.
+    
+    Crucial for analyzing checkpointing overheads and the Data Wall (data
+    ingestion rates for training).
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     capacity: Quantity
     bandwidth: Quantity
     latency: Optional[Quantity] = None
 
 class IOInterconnect(BaseModel):
+    """
+    Represents a point-to-point interconnect link.
+    
+    Used to model PCIe links (host to device) or NVLink/ICI connections
+    (device to device within a node).
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str # e.g., "PCIe Gen4 x16"
     bandwidth: Quantity
     latency: Optional[Quantity] = None
 
 class HardwareNode(BaseModel):
+    """
+    Layer B (Hardware Supply): Represents a complete hardware accelerator.
+    
+    This is the primary object that solvers evaluate against. It encapsulates
+    the compute, memory, IO, and power constraints of a single physical device 
+    (e.g., an NVIDIA H100 GPU or a Jetson Orin Nano).
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     release_year: int

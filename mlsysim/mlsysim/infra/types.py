@@ -5,6 +5,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..core.types import Metadata
 
 class GridProfile(BaseModel):
+    """
+    Layer C (Infrastructure Context): Represents a regional power grid.
+    
+    A GridProfile defines the environmental constraints of a physical location,
+    specifically its carbon intensity and energy mix. This is essential for 
+    the SustainabilityModel to calculate the exact kg CO2e footprint of a job.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     carbon_intensity_g_kwh: float
@@ -29,16 +36,25 @@ class GridProfile(BaseModel):
         return facility_energy_kwh * self.carbon_intensity_kg_kwh
 
 class CoolingProfile(BaseModel):
-    """Facility cooling tier (PUE / WUE), not a geographic grid."""
-
+    """
+    Facility cooling tier (PUE / WUE), isolated from a geographic grid.
+    
+    Used to model different cooling strategies (Air, Direct-to-Chip Liquid, 
+    Evaporative) independent of location.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     pue: float
     wue: float  # L/kWh
     metadata: Metadata = Field(default_factory=Metadata)
 
-
 class RackProfile(BaseModel):
+    """
+    Represents the physical constraints of a datacenter rack.
+    
+    Crucial for analyzing power density (kW/rack) limits, where high-density 
+    AI deployments force transitions from air to liquid cooling.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     power_kw: float
@@ -53,8 +69,13 @@ class PricePoint(BaseModel):
     rate: Any
     metadata: Metadata = Field(default_factory=Metadata)
 
-
 class Datacenter(BaseModel):
+    """
+    Represents a specific physical facility combining a Grid and Cooling tech.
+    
+    Allows overriding the regional grid's average PUE with the facility's 
+    specific highly-optimized PUE.
+    """
     name: str
     grid: GridProfile
     pue_override: Optional[float] = None

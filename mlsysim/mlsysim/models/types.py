@@ -6,7 +6,10 @@ from ..core.types import Quantity, Metadata
 class ComputationGraph(BaseModel):
     """
     Hardware-Agnostic representation of a Workload.
-    The 'Intermediate Representation' (IR) of demand.
+    
+    This is the 'Intermediate Representation' (IR) of computational demand. 
+    It strips away high-level architectural details (like "Transformer" or 
+    "CNN") and reduces the workload to pure math: Operations and Bytes.
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
@@ -23,6 +26,13 @@ class ComputationGraph(BaseModel):
         return f"ComputationGraph({self.name}, {self.total_ops:~P})"
 
 class Workload(BaseModel):
+    """
+    Layer A (Workload Demand): Base representation of an ML model or task.
+    
+    A Workload defines the computational requirements of a task without any
+    knowledge of the hardware it will run on. It must implement `lower()` 
+    to project its architectural definition down into a `ComputationGraph`.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     architecture: str
