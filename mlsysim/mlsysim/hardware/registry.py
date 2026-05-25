@@ -22,7 +22,14 @@ class CloudHardware(Registry):
         nvlink=IOInterconnect(name="NVLink 2.0", bandwidth=300 * GB / second, latency=LATENCY_NVLINK),
         tdp=300 * watt,
         unit_cost=10000 * USD,
-        dispatch_tax=0.02 * ureg.ms
+        dispatch_tax=0.02 * ureg.ms,
+        metadata={
+            "source_url": "https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf",
+            "source_type": "datasheet",
+            "bib_keys": "nvidia2017gpu",
+            "citation": "NVIDIA V100 architecture whitepaper",
+            "last_verified": "2025-03-06",
+        },
     )
 
     A100 = HardwareNode(
@@ -36,7 +43,13 @@ class CloudHardware(Registry):
         unit_cost=15000 * USD,
         embodied_carbon_kg=130.0,  # Gupta et al. 2022 estimate
         dispatch_tax=0.015 * ureg.ms,
-        metadata={"source_url": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf", "last_verified": "2025-03-06"}
+        metadata={
+            "source_url": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf",
+            "source_type": "datasheet",
+            "bib_keys": "choquette2021; NVIDIA2020",
+            "citation": "NVIDIA A100 datasheet; Choquette et al. (2021), IEEE Micro",
+            "last_verified": "2025-03-06",
+        },
     )
 
     H100 = HardwareNode(
@@ -55,7 +68,13 @@ class CloudHardware(Registry):
         unit_cost=30000 * USD,
         embodied_carbon_kg=150.0,  # Gupta et al. 2022 estimate for high-end datacenter GPU
         dispatch_tax=0.01 * ureg.ms,
-        metadata={"source_url": "https://resources.nvidia.com/en-us-tensor-core/nvidia-h100-tensor-core-gpu-datasheet", "last_verified": "2025-03-06"}
+        metadata={
+            "source_url": "https://resources.nvidia.com/en-us-tensor-core/nvidia-h100-tensor-core-gpu-datasheet",
+            "source_type": "datasheet",
+            "bib_keys": "choquette2023",
+            "citation": "NVIDIA H100 datasheet; Choquette (2023), IEEE Micro",
+            "last_verified": "2025-03-06",
+        },
     )
 
     H200 = HardwareNode(
@@ -81,7 +100,13 @@ class CloudHardware(Registry):
         tdp=1000 * watt,
         unit_cost=40000 * USD,
         dispatch_tax=0.008 * ureg.ms,
-        metadata={"source_url": "https://www.nvidia.com/en-us/data-center/blackwell/", "last_verified": "2025-03-06"}
+        metadata={
+            "source_url": "https://www.nvidia.com/en-us/data-center/blackwell/",
+            "source_type": "datasheet",
+            "bib_keys": "nvidia2024blackwell",
+            "citation": "NVIDIA Blackwell product documentation",
+            "last_verified": "2025-03-06",
+        },
     )
 
     GB200_NVL72 = HardwareNode(
@@ -112,7 +137,14 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=192 * GiB, bandwidth=5.3 * TB / second),
         tdp=750 * watt,
         unit_cost=15000 * USD,
-        dispatch_tax=0.012 * ureg.ms
+        dispatch_tax=0.012 * ureg.ms,
+        metadata={
+            "source_url": "https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html",
+            "source_type": "datasheet",
+            "bib_keys": "amd2023mi300x",
+            "citation": "AMD Instinct MI300X product documentation",
+            "last_verified": "2025-03-06",
+        },
     )
 
     MI250X = HardwareNode(
@@ -241,7 +273,14 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=16 * ureg.GiB, bandwidth=320 * GB / second),
         tdp=70 * watt,
         unit_cost=2500 * USD,
-        dispatch_tax=0.03 * ureg.ms
+        dispatch_tax=0.03 * ureg.ms,
+        metadata={
+            "source_url": "https://www.nvidia.com/en-us/data-center/tesla-t4/",
+            "source_type": "datasheet",
+            "bib_keys": "nvidia2018t4",
+            "citation": "NVIDIA Tesla T4 product documentation",
+            "last_verified": "2025-03-06",
+        },
     )
 
     Cerebras_CS3 = HardwareNode(

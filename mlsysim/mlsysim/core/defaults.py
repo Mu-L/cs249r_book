@@ -5,23 +5,24 @@ for your specific scenario. Every value cites its source.
 """
 
 from .units import USD, ureg, GB, TB, hour, count, day
-from .provenance import TraceableConstant
+from .provenance import (
+    TraceableConstant,
+    SOURCE_CONVENTION,
+    SOURCE_ILLUSTRATIVE,
+    SOURCE_INDUSTRY_REPORT,
+    SOURCE_LITERATURE,
+    fleet_mttf_hours,
+)
 
 # --- Reliability (Component MTTF) ---
-# Mean Time To Failure for datacenter-grade components.
-# Traceability: Kokolis et al. (HPCA 2025), Zu et al. (NSDI 2024), Barroso et al. (DASC 3e) — see appendix_reliability.qmd @tbl-component-fit
-GPU_MTTF_HOURS = TraceableConstant(
-    50_000,
-    name="GPU Mean Time To Failure",
-    description="Steady-state MTTF for datacenter-grade GPU in continuous operation.",
-    citation="kokolis2025reliability, zu2024tpuv4, barroso2019datacenter (MLSysBook appendix)",
-)
-NIC_MTTF_HOURS = 150_000           # Network interface card
-PSU_MTTF_HOURS = 100_000           # Power supply unit
-PCIE_SWITCH_MTTF_HOURS = 200_000   # PCIe switch/bridge
-CABLE_MTTF_HOURS = 50_000          # Optical cable / transceiver (lowered for SDC analysis)
-TOR_SWITCH_MTTF_HOURS = 300_000    # Top-of-rack switch
-HBM_MTTF_HOURS = 200_000           # HBM memory module
+# Order-of-magnitude steady-state MTTF; see appendix_reliability @tbl-component-fit.
+GPU_MTTF_HOURS = fleet_mttf_hours(50_000, component="GPU", failure_mode="die defect, thermal fatigue")
+NIC_MTTF_HOURS = fleet_mttf_hours(150_000, component="NIC", failure_mode="transceiver degradation")
+PSU_MTTF_HOURS = fleet_mttf_hours(100_000, component="PSU", failure_mode="capacitor aging")
+PCIE_SWITCH_MTTF_HOURS = fleet_mttf_hours(200_000, component="PCIe switch", failure_mode="solder joint, ESD")
+CABLE_MTTF_HOURS = fleet_mttf_hours(50_000, component="optical cable / transceiver", failure_mode="fiber bend, connector wear")
+TOR_SWITCH_MTTF_HOURS = fleet_mttf_hours(300_000, component="top-of-rack switch", failure_mode="ASIC, fan bearing")
+HBM_MTTF_HOURS = fleet_mttf_hours(200_000, component="HBM", failure_mode="bit-flip accumulation, TSV")
 
 # Silent Data Corruption (SDC) Assumptions
 P_SDC_PER_GPU_HR = 1e-6
@@ -32,11 +33,41 @@ RESCHEDULE_TIME_S = 60              # Time to allocate replacement node
 CHECKPOINT_WRITE_BW_GBS = 100       # Aggregate storage write BW for checkpoints (GB/s)
 
 # --- Cluster Scale References ---
-# Canonical cluster sizes used as worked examples throughout Volume II.
-CLUSTER_SMALL_GPUS = 256
-CLUSTER_MEDIUM_GPUS = 2_048
-CLUSTER_LARGE_GPUS = 8_192
-CLUSTER_MEGA_GPUS = 100_000
+# Editorial tier sizes for Volume II worked examples (not from a single deployment).
+CLUSTER_SMALL_GPUS = TraceableConstant(
+    256,
+    name="Small cluster GPU count",
+    description="Research-lab scale tier for fleet napkin math.",
+    citation="MLSysBook editorial convention",
+    source_type=SOURCE_CONVENTION,
+    bib_keys="kokolis2025",
+    last_verified="2025-03-06",
+)
+CLUSTER_MEDIUM_GPUS = TraceableConstant(
+    2_048,
+    name="Medium cluster GPU count",
+    description="Medium production tier.",
+    citation="MLSysBook editorial convention",
+    source_type=SOURCE_CONVENTION,
+    last_verified="2025-03-06",
+)
+CLUSTER_LARGE_GPUS = TraceableConstant(
+    8_192,
+    name="Large cluster GPU count",
+    description="Large training cluster tier; failure becomes steady state.",
+    citation="MLSysBook editorial convention",
+    source_type=SOURCE_CONVENTION,
+    bib_keys="kokolis2025",
+    last_verified="2025-03-06",
+)
+CLUSTER_MEGA_GPUS = TraceableConstant(
+    100_000,
+    name="Mega cluster GPU count",
+    description="Hyperscale fleet tier for order-of-magnitude examples.",
+    citation="MLSysBook editorial convention",
+    source_type=SOURCE_CONVENTION,
+    last_verified="2025-03-06",
+)
 
 # Fleet topology assumptions (override for non-DGX node counts).
 GPUS_PER_HOST = 8
@@ -69,21 +100,38 @@ PUE_LIQUID_COOLED = TraceableConstant(
     1.06,
     name="PUE (Liquid-Cooled)",
     description="Best-in-class liquid-cooled AI datacenter PUE.",
-    citation="Google Sustainability Report (2023)"
+    citation="Uptime Institute Global Data Center Survey 2022",
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys="davis2022uptime; thegreengrid2007pue",
+    last_verified="2025-03-06",
 )
 PUE_BEST_AIR = TraceableConstant(
     1.12,
     name="PUE (Best Air-Cooled)",
     description="Best-in-class air-cooled hyperscale datacenter PUE.",
-    citation="Google Sustainability Report (2023)"
+    citation="Uptime Institute Global Data Center Survey 2022",
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys="davis2022uptime",
+    last_verified="2025-03-06",
 )
 PUE_TYPICAL = TraceableConstant(
     1.40,
     name="PUE (Industry Average)",
     description="Industry average traditional datacenter PUE.",
-    citation="Uptime Institute (2023), Global Data Center Survey"
+    citation="Uptime Institute Global Data Center Survey 2022",
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys="davis2022uptime",
+    last_verified="2025-03-06",
 )
-PUE_LEGACY = 1.58                  # Older enterprise datacenters
+PUE_LEGACY = TraceableConstant(
+    1.58,
+    name="PUE (Legacy Air-Cooled)",
+    description="Older enterprise datacenter PUE tier.",
+    citation="Uptime Institute Global Data Center Survey 2022",
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys="davis2022uptime",
+    last_verified="2025-03-06",
+)
 PUE_STATE_OF_ART = 1.10            # Modern highly optimized datacenter benchmark
 
 # Water Usage Effectiveness (WUE) — liters per kWh
@@ -92,23 +140,79 @@ WUE_EVAPORATIVE = 1.8              # Evaporative cooling towers
 WUE_LIQUID = 0.0                   # Closed-loop liquid cooling (near zero)
 
 # Regional carbon intensity (gCO2 per kWh) — Source: IEA (2023)
+_IEA_CARBON_CITATION = "IEA World Energy Outlook 2023 (rounded gCO2/kWh)"
+_IEA_CARBON_BIB = "iea2023weo"
+_IEA_CARBON_URL = "https://www.iea.org/reports/world-energy-outlook-2023"
+_IEA_VERIFIED = "2025-03-06"
+
 CARBON_US_AVG_GCO2_KWH = TraceableConstant(
     429,
     name="Carbon Intensity (US Average)",
     description="US national average grid carbon intensity in gCO2/kWh.",
-    citation="IEA (2023), World Energy Outlook"
+    citation=_IEA_CARBON_CITATION,
+    url=_IEA_CARBON_URL,
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys=_IEA_CARBON_BIB,
+    last_verified=_IEA_VERIFIED,
 )
-CARBON_EU_AVG_GCO2_KWH = 270       # EU average grid
+CARBON_EU_AVG_GCO2_KWH = TraceableConstant(
+    270,
+    name="Carbon Intensity (EU Average)",
+    description="EU average grid carbon intensity in gCO2/kWh.",
+    citation=_IEA_CARBON_CITATION,
+    url=_IEA_CARBON_URL,
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys=_IEA_CARBON_BIB,
+    last_verified=_IEA_VERIFIED,
+)
 CARBON_QUEBEC_GCO2_KWH = TraceableConstant(
     20,
     name="Carbon Intensity (Quebec)",
     description="Quebec grid carbon intensity in gCO2/kWh (hydroelectric dominant).",
-    citation="IEA (2023), World Energy Outlook"
+    citation=_IEA_CARBON_CITATION,
+    url=_IEA_CARBON_URL,
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys=_IEA_CARBON_BIB,
+    last_verified=_IEA_VERIFIED,
 )
-CARBON_FRANCE_GCO2_KWH = 50        # France (nuclear dominant)
-CARBON_IOWA_GCO2_KWH = 680         # Iowa reference mix used in MLSys·im carbon tutorials
-CARBON_POLAND_GCO2_KWH = 820       # Poland (coal dominant)
-CARBON_NORWAY_GCO2_KWH = 10        # Norway (hydroelectric)
+CARBON_FRANCE_GCO2_KWH = TraceableConstant(
+    50,
+    name="Carbon Intensity (France)",
+    description="France grid carbon intensity in gCO2/kWh (nuclear dominant).",
+    citation=_IEA_CARBON_CITATION,
+    url=_IEA_CARBON_URL,
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys=_IEA_CARBON_BIB,
+    last_verified=_IEA_VERIFIED,
+)
+CARBON_IOWA_GCO2_KWH = TraceableConstant(
+    680,
+    name="Carbon Intensity (Iowa reference)",
+    description="High-carbon US grid mix for tutorial contrast (not IEA country average).",
+    citation="MLSysBook illustrative regional contrast",
+    source_type=SOURCE_ILLUSTRATIVE,
+    last_verified=_IEA_VERIFIED,
+)
+CARBON_POLAND_GCO2_KWH = TraceableConstant(
+    820,
+    name="Carbon Intensity (Poland)",
+    description="Poland grid carbon intensity in gCO2/kWh (coal dominant).",
+    citation=_IEA_CARBON_CITATION,
+    url=_IEA_CARBON_URL,
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys=_IEA_CARBON_BIB,
+    last_verified=_IEA_VERIFIED,
+)
+CARBON_NORWAY_GCO2_KWH = TraceableConstant(
+    10,
+    name="Carbon Intensity (Norway)",
+    description="Norway grid carbon intensity in gCO2/kWh (hydroelectric).",
+    citation=_IEA_CARBON_CITATION,
+    url=_IEA_CARBON_URL,
+    source_type=SOURCE_INDUSTRY_REPORT,
+    bib_keys=_IEA_CARBON_BIB,
+    last_verified=_IEA_VERIFIED,
+)
 
 # Power density
 RACK_POWER_TRADITIONAL_KW = 12     # Traditional datacenter rack (kW)
@@ -122,19 +226,31 @@ MFU_TRAINING_LOW = TraceableConstant(
     0.30,
     name="MFU Training (Lower Bound)",
     description="Lower bound MFU for well-optimized large-model training.",
-    citation="Chowdhery et al. (2022), PaLM; Narayanan et al. (2021), Megatron-LM"
+    citation="Chowdhery et al. (2022), PaLM; Narayanan et al. (2021), Megatron-LM",
+    source_type=SOURCE_LITERATURE,
+    bib_keys="chowdhery2022palm; narayanan2021",
+    url="https://arxiv.org/abs/2204.02311",
+    last_verified="2025-03-06",
 )
 MFU_TRAINING_HIGH = TraceableConstant(
     0.50,
     name="MFU Training (Upper Bound)",
     description="Upper bound MFU for excellent large-model training runs.",
-    citation="Chowdhery et al. (2022), PaLM"
+    citation="Chowdhery et al. (2022), PaLM",
+    source_type=SOURCE_LITERATURE,
+    bib_keys="chowdhery2022palm",
+    url="https://arxiv.org/abs/2204.02311",
+    last_verified="2025-03-06",
 )
 MFU_INFERENCE_BATCH1 = TraceableConstant(
     0.05,
     name="MFU Inference (Batch 1)",
     description="MFU for single-request inference, heavily memory-bandwidth-bound.",
-    citation="Pope et al. (2023), LLM Inference"
+    citation="Pope et al. (2023), Efficiently Scaling Transformer Inference",
+    source_type=SOURCE_LITERATURE,
+    bib_keys="pope2023efficiently",
+    url="https://proceedings.mlsys.org/paper_files/paper/2023/hash/c4be71ab8d24cdfb45e3d06dbfca2780-Abstract-mlsys2023.html",
+    last_verified="2025-03-06",
 )
 MFU_INFERENCE_BATCHED = 0.40       # Inference at large batch size
 
@@ -151,8 +267,11 @@ SCALING_EFF_1024GPU = 0.50         # Significant overhead
 SCALING_EFF_8192GPU = TraceableConstant(
     0.35,
     name="Scaling Efficiency (8192 GPUs)",
-    description="Empirical scaling efficiency at fleet-scale (8192 GPUs).",
-    citation="Empirical reference; varies by workload and network"
+    description="Illustrative scaling efficiency at 8192 GPUs for LLM training.",
+    citation="Chowdhery et al. (2022); Jiang et al. (2024), MegaScale",
+    source_type=SOURCE_LITERATURE,
+    bib_keys="chowdhery2022palm; jiang2024megascale",
+    last_verified="2025-03-06",
 )
 
 # Overhead budgets (fraction of wall time)
@@ -168,7 +287,9 @@ CHINCHILLA_TOKENS_PER_PARAM = TraceableConstant(
     name="Compute-Optimal Token Ratio",
     description="The optimal number of training tokens per model parameter (D ≈ 20P) to minimize loss for a given compute budget.",
     citation="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
-    url="https://arxiv.org/abs/2203.15556"
+    url="https://arxiv.org/abs/2203.15556",
+    bib_keys="hoffmann2022chinchilla",
+    last_verified="2025-03-06",
 )
 
 CHINCHILLA_COMPUTE_CONSTANT = TraceableConstant(
@@ -176,7 +297,9 @@ CHINCHILLA_COMPUTE_CONSTANT = TraceableConstant(
     name="Training Compute Constant (C ≈ 6PD)",
     description="The multiplier for calculating total training FLOPs. 2 FLOPs per parameter for the forward pass, and 4 FLOPs for the backward pass.",
     citation="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
-    url="https://arxiv.org/abs/2203.15556"
+    url="https://arxiv.org/abs/2203.15556",
+    bib_keys="hoffmann2022chinchilla",
+    last_verified="2025-03-06",
 )
 
 # --- Critical Batch Size (McCandlish et al. 2018) ---
