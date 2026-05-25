@@ -27,7 +27,6 @@ app = marimo.App(width="full")
 #   GPUS_PER_NODE = 8     (DGX H100)
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING (4 cells)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -70,7 +69,6 @@ async def _():
         _ = await ledger.load_async()
     return COLORS, LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np, GPUS_PER_NODE, GPU_COST_HR, DecisionLog, Hardware, H100, T4, EDGE, EDGE_TFLOPS
 
-
 # ─── CELL 1: HEADER ──────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(COLORS, LAB_CSS, mo):
@@ -107,7 +105,6 @@ def _(COLORS, LAB_CSS, mo):
     """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -168,7 +165,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ──────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -181,7 +177,6 @@ def _(mo):
     - The Scheduling Policy section -- Utilization vs fairness vs latency trade-off
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS (separate cells for Marimo dataflow)
@@ -217,7 +212,6 @@ def _(mo):
     )
     return (a1_service_min, a1_utilization, a1_workload, partA_prediction, partA_reflection)
 
-
 # ─── CELL 5: Part B prediction + controls ────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -245,7 +239,6 @@ def _(mo):
     )
     return (a2_n_teams, a2_w_fairness, a2_w_latency, a2_w_throughput, partB_prediction, partB_reflection)
 
-
 # ─── CELL 5b: Part C prediction + controls ────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -271,7 +264,6 @@ def _(mo):
         label="What is the correct preemption strategy?",
     )
     return (c1_job_gpus, c1_preempt_interval_h, c1_preemptions_day, partC_prediction, partC_reflection)
-
 
 # ─── CELL 5c: Part D prediction + controls ────────────────────────────────
 @app.cell(hide_code=True)
@@ -299,13 +291,11 @@ def _(mo):
     )
     return (d1_h100_count, d1_small_job_pct, d1_t4_count, partD_prediction, partD_reflection)
 
-
 # ─── CELL 5d: DECISION LOG WIDGET ─────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(DecisionLog, mo, partD_reflection):
     decision_input, decision_ui = DecisionLog()
     return (decision_input, decision_ui)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL (all build_part_X functions + mo.ui.tabs)
@@ -1356,7 +1346,6 @@ def _(
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER_HUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1400,7 +1389,6 @@ def _(COLORS, partA_prediction, partB_prediction, partC_prediction, partD_predic
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

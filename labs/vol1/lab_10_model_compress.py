@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 0: SETUP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -50,11 +49,11 @@ async def _():
     JETSON_BW     = mlsysim.Hardware.Edge.JetsonOrinNX.memory.bandwidth.m_as("GB/s")
     JETSON_RAM    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
 
-    RESNET50_PARAMS = mlsysim.Models.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS  = mlsysim.Models.ResNet50.inference_flops.m_as("flop")
-    MOBILENET_PARAMS = mlsysim.Models.MobileNetV2.parameters.m_as("count")
-    MOBILENET_FLOPS  = mlsysim.Models.MobileNetV2.inference_flops.m_as("flop")
-    LLAMA3_8B_PARAMS = mlsysim.Models.Llama3_8B.parameters.m_as("count")
+    RESNET50_PARAMS = mlsysim.Models.Vision.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS  = mlsysim.Models.Vision.ResNet50.inference_flops.m_as("flop")
+    MOBILENET_PARAMS = mlsysim.Models.Vision.MobileNetV2.parameters.m_as("count")
+    MOBILENET_FLOPS  = mlsysim.Models.Vision.MobileNetV2.inference_flops.m_as("flop")
+    LLAMA3_8B_PARAMS = mlsysim.Models.Language.Llama3_8B.parameters.m_as("count")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -68,7 +67,6 @@ async def _():
         RESNET50_FLOPS, RESNET50_PARAMS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 1: HEADER
@@ -120,7 +118,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 2: BRIEFING
@@ -188,7 +185,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 3: READING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -207,7 +203,6 @@ def _(mo):
     - **Chapter 5: Neural Computation** -- weight representation and memory hierarchy.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 4: TABS (Parts A-E + Synthesis)
@@ -322,7 +317,6 @@ def _(mo):
 def _(mo):
     pE_temp = mo.ui.slider(start=1.0, stop=20.0, value=4.0, step=0.5, label="Temperature")
     return (pE_temp,)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1109,7 +1103,6 @@ The $T^2$ factor compensates for gradient magnitude reduction at high temperatur
     _tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 5: LEDGER HUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1142,7 +1135,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

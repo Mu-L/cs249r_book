@@ -94,7 +94,6 @@ PHYSICS_KEEP = {
     "SIMD_REGISTER_BITS",
     "FP32_BITS",
     "INT8_BITS",
-    "ALLREDUCE_FACTOR",
     "KG_PER_METRIC_TON",
     "IMAGE_CHANNELS_RGB",
     "COLOR_DEPTH_8BIT",
@@ -136,12 +135,12 @@ HEURISTIC_PREFIXES: list[tuple[str, str, str]] = [
     ("SWITCH_", "Hardware.Networks", "tier_b"),
     ("OPTICS_", "Hardware.Networks", "tier_b"),
     ("FEC_", "Hardware.Networks", "tier_b"),
-    ("CLOUD_", "defaults.economics", "tier_d"),
-    ("STORAGE_", "defaults.economics", "tier_d"),
-    ("LABELING_", "defaults.economics", "tier_d"),
-    ("FLEET_", "defaults.economics", "tier_d"),
-    ("TPU_V4_PER_HOUR", "defaults.economics", "tier_d"),
-    ("CARBON_", "defaults.reliability", "tier_d"),
+    ("CLOUD_", "Infrastructure.Pricing", "tier_d"),
+    ("STORAGE_", "Infrastructure.Pricing", "tier_d"),
+    ("LABELING_", "Infrastructure.Pricing", "tier_d"),
+    ("FLEET_", "Infrastructure.Pricing", "tier_d"),
+    ("TPU_V4_PER_HOUR", "Infrastructure.Pricing", "tier_d"),
+    ("CARBON_", "Infrastructure.Grids", "tier_d"),
     ("LEAD_TIME_", "Infrastructure.Grids", "tier_d"),
     ("GRID_", "Infrastructure.Grids", "tier_d"),
     ("CLOUD_LATENCY", "Platforms.Cloud", "platforms"),
@@ -161,10 +160,10 @@ HEURISTIC_PREFIXES: list[tuple[str, str, str]] = [
     ("JETSON_", "Hardware.Edge", "tier_a"),
     ("MOBILE_", "Hardware.Mobile", "tier_a"),
     ("SGX_", "Hardware.Cloud", "tier_a"),
-    ("DAM_", "defaults.reliability", "tier_d"),
-    ("MEMORY_BIT_ERROR", "defaults.reliability", "tier_d"),
-    ("PSI_", "defaults.reliability", "tier_d"),
-    ("KS_TEST", "defaults.reliability", "tier_d"),
+    ("DAM_", "Ops.Monitoring", "tier_d"),
+    ("MEMORY_BIT_ERROR", "Ops.Monitoring", "tier_d"),
+    ("PSI_", "Ops.Monitoring", "tier_d"),
+    ("KS_TEST", "Ops.Monitoring", "tier_d"),
 ]
 
 SCAN_SUFFIXES = {".py", ".qmd", ".md", ".yaml", ".yml", ".tex", ".ipynb"}
@@ -178,7 +177,6 @@ SKIP_DIRS = {
     ".quarto",
 }
 
-
 @dataclass
 class SymbolRecord:
     name: str
@@ -191,7 +189,6 @@ class SymbolRecord:
     action: str = "migrate"  # migrate | keep | delete_dead | inventory_only
     notes: str = ""
 
-
 def load_map_constants() -> dict[str, str]:
     if not MAP_CONSTANTS_PATH.exists():
         return {}
@@ -200,7 +197,6 @@ def load_map_constants() -> dict[str, str]:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return dict(getattr(mod, "mapping", {}))
-
 
 def parse_constants_symbols() -> set[str]:
     text = CONSTANTS_PATH.read_text(encoding="utf-8")
@@ -216,7 +212,6 @@ def parse_constants_symbols() -> set[str]:
                 names.add(node.target.id)
     return names
 
-
 def git_tracked_files() -> list[Path]:
     out = subprocess.check_output(
         ["git", "ls-files"], cwd=REPO_ROOT, text=True
@@ -230,7 +225,6 @@ def git_tracked_files() -> list[Path]:
                 continue
             files.append(p)
     return files
-
 
 def count_symbol_refs(files: list[Path], symbols: set[str]) -> dict[str, dict[str, int]]:
     per_file: dict[str, dict[str, int]] = {s: defaultdict(int) for s in symbols}
@@ -247,11 +241,9 @@ def count_symbol_refs(files: list[Path], symbols: set[str]) -> dict[str, dict[st
                 per_file[sym][rel] += n
     return per_file
 
-
 def chapter_key(rel_path: str) -> str | None:
     m = re.search(r"book/quarto/contents/(vol[12]/[^/]+)/", rel_path)
     return m.group(1) if m else None
-
 
 def infer_replacement(name: str, mapping: dict[str, str]) -> tuple[str | None, str, str]:
     if name in mapping:
@@ -262,9 +254,8 @@ def infer_replacement(name: str, mapping: dict[str, str]) -> tuple[str | None, s
         if name.startswith(prefix) or name == prefix.rstrip("_"):
             return f"{target}.*", tier, "heuristic_prefix"
     if name.endswith("_THRESHOLD") or name.endswith("_EXAMPLE"):
-        return "defaults.reliability.*", "tier_d", "heuristic_suffix"
+        return "Ops.Monitoring.*", "tier_d", "heuristic_suffix"
     return None, "unknown", "needs_manual_mapping"
-
 
 def build_records(
     symbols: set[str],
@@ -279,7 +270,7 @@ def build_records(
         outside = {
             f: c
             for f, c in file_refs.items()
-            if f != rec.defined_in and not f.endswith("defaults.py")
+            if f != rec.defined_in and not f.endswith(("defaults.py", "calibration.py"))
         }
         rec.refs_outside_definition = sum(outside.values())
         for f, c in outside.items():
@@ -300,7 +291,6 @@ def build_records(
             rec.action = "migrate"
         records.append(rec)
     return records
-
 
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -340,7 +330,6 @@ def main() -> int:
         if len(unknown) > 20:
             print(f"  ... and {len(unknown) - 20} more", file=sys.stderr)
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

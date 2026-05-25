@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -32,14 +30,14 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     import mlsysim
-    from mlsysim.core.defaults import (
-        INFINIBAND_NDR_BW_GBS,
-        INFINIBAND_HDR_BW_GBS,
-        IB_NDR_LATENCY_US,
-        IB_HDR_LATENCY_US,
-        DEFAULT_OVERLAP_EFFICIENCY,
-    )
-    from mlsysim.core.formulas import (
+    from mlsysim import Systems
+    from mlsysim.core import calibration
+    from mlsysim.systems.registry import IB_NDR_LATENCY_US, IB_HDR_LATENCY_US
+
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    INFINIBAND_HDR_BW_GBS = Systems.Fabrics.InfiniBand_HDR.bandwidth.m_as("GB/s")
+    DEFAULT_OVERLAP_EFFICIENCY = calibration.DEFAULT_OVERLAP_EFFICIENCY
+    from mlsysim.physics import (
         calc_ring_allreduce_time,
         calc_tree_allreduce_time,
         calc_hierarchical_allreduce_time,
@@ -58,7 +56,7 @@ async def _():
     NVLINK_GBS = _H100_REG.nvlink.bandwidth.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
+    GPT2 = mlsysim.Models.Language.GPT2
     GPT2_PARAMS = GPT2.parameters.m_as("dimensionless")
 
     ledger = DesignLedger()
@@ -75,7 +73,6 @@ async def _():
         calc_ring_allreduce_time, calc_tree_allreduce_time,
         calc_hierarchical_allreduce_time,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -124,7 +121,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -189,8 +185,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -205,7 +199,6 @@ def _(mo):
       gradient compression trade-offs, communication-computation overlap.
     """), kind="info")
     return
-
 
 @app.cell(hide_code=True)
 def _(
@@ -326,7 +319,6 @@ def _(mo):
     pE_bucket = mo.ui.checkbox(label="Bucket fusion")
     pE_overlap = mo.ui.checkbox(label="Backward overlap")
     return (pE_bucket, pE_fp16, pE_hier, pE_overlap)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1053,8 +1045,6 @@ shard contention, prefetching limits, and checkpoint economics.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1089,7 +1079,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

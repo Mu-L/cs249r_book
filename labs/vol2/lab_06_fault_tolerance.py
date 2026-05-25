@@ -25,16 +25,14 @@ app = marimo.App(width="full")
 #   Synthesis — Key Takeaways + Decision Log
 #
 # Hardware Constants:
-#   GPU_MTTF_HOURS    = 50,000   (from mlsysim defaults)
+#   GPU_MTTF_HOURS  (book MTTF anchor, ~50k h)
 #   H100_RAM_GB       = 80       (NVIDIA H100 SXM5 spec)
 #   H100_COST_HR      = 3.0      ($3/GPU-hour cloud pricing)
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 0: SETUP ─────────────────────────────────────────────────────────────
 @app.cell
@@ -61,7 +59,9 @@ async def _():
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
     from mlsysim import Hardware
-    from mlsysim.core.defaults import GPU_MTTF_HOURS
+    from mlsysim import Systems
+
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100
@@ -74,7 +74,6 @@ async def _():
     if getattr(ledger, "is_wasm", False):
         _ = await ledger.load_async()
     return COLORS, LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np, GPU_MTTF_HOURS, GPU_COST_HR, DecisionLog, Hardware, H100, A100, EDGE, H100_RAM_GB, EDGE_RAM_GB
-
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -112,7 +111,6 @@ def _(COLORS, LAB_CSS, mo):
     """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -173,7 +171,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ──────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -187,11 +184,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: PART A WIDGETS ──────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -209,7 +204,6 @@ def _(mo):
     a1_write_time_s = mo.ui.slider(start=10, stop=300, value=120, step=10, label="Checkpoint write time (seconds)")
     a1_interval_s = mo.ui.slider(start=60, stop=10800, value=600, step=60, label="Your checkpoint interval (seconds)")
     return (a1_cluster_gpus, a1_interval_s, a1_write_time_s, partA_prediction)
-
 
 # ─── CELL 5: PART A REFLECTION + PART B PREDICTION WIDGETS ──────────────────
 @app.cell(hide_code=True)
@@ -235,7 +229,6 @@ def _(mo):
     )
     return (partA_reflection, partB_prediction)
 
-
 # ─── CELL 6: PART B CONTROLS + SYNTHESIS WIDGETS ────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -257,7 +250,6 @@ def _(mo):
         label="What is the most practical solution to the checkpoint storm?",
     )
     return (a2_cluster_gpus, a2_model_b, a2_storage, partB_reflection)
-
 
 # ─── CELL 6b: PART C WIDGETS ─────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -284,7 +276,6 @@ def _(mo):
         label="What is the key requirement for async checkpointing to work?",
     )
     return (c1_cluster_gpus, c1_drain_bw, c1_nvme_bw, partC_prediction, partC_reflection)
-
 
 # ─── CELL 6c: PART D WIDGETS ─────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -313,7 +304,6 @@ def _(mo):
     )
     return (d1_qps, d1_recovery_s, d1_replicas, d1_slo_p99_ms, partD_prediction, partD_reflection)
 
-
 # ─── CELL 7: DECISION LOG WIDGET ────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(DecisionLog, mo, partD_reflection):
@@ -323,11 +313,9 @@ def _(DecisionLog, mo, partD_reflection):
     )
     return (synth_decision_input, synth_decision_ui)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 8: TABS ───────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1447,11 +1435,9 @@ def _(
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 9: LEDGER_HUD ─────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1471,7 +1457,6 @@ def _(COLORS, partA_prediction, partB_prediction, mo):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

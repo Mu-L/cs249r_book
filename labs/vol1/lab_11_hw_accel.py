@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 0: SETUP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -65,7 +64,6 @@ async def _():
         LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np,
     )
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 1: HEADER
 # ═════════════════════════════════════════════════════════════════════════════
@@ -115,7 +113,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 2: BRIEFING
@@ -183,7 +180,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 3: READING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -202,7 +198,6 @@ def _(mo):
     - **Chapter 2: ML Systems** -- Iron Law latency decomposition.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 4: TABS (Parts A-E + Synthesis)
@@ -301,7 +296,6 @@ def _(mo):
     pE_tile = mo.ui.slider(start=32, stop=2048, value=256, step=32, label="Tile size (elements)")
     pE_seq = mo.ui.slider(start=512, stop=16384, value=4096, step=512, label="Sequence length")
     return (pE_seq, pE_tile)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1061,7 +1055,6 @@ Speedup $\\approx M / d$, which is 2-4x at typical dimensions. Tiling keeps Q, K
     _tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 5: LEDGER HUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1094,7 +1087,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

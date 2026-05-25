@@ -1,67 +1,42 @@
 import unittest
-import pint
-from mlsysim.core.provenance import TraceableConstant
-from mlsysim.core.constants import ureg
 
+from mlsysim.core.provenance import ProvenanceKind, Sourced
+from mlsysim.hardware.registry import Hardware
+from mlsysim.infra.registry import Infrastructure
+from mlsysim.systems.reliability import Reliability
 
-class TestTraceableConstant(unittest.TestCase):
-    def test_system_assumption_behaves_like_float(self):
-        assump = TraceableConstant(
-            0.85,
-            name="Test MFU",
-            description="A test assumption.",
-            source="Test Citation",
-        )
-        self.assertIsInstance(assump, float)
-        self.assertEqual(assump, 0.85)
-        self.assertEqual(assump * 2, 1.7)
-        self.assertAlmostEqual(1.0 - assump, 0.15)
-        self.assertEqual(assump / 2, 0.425)
-        self.assertGreater(assump, 0.80)
+class TestProvenance(unittest.TestCase):
+    def test_hardware_cloud_has_provenance(self):
+        h100 = Hardware.Cloud.H100
+        prov = h100.metadata.provenance
+        self.assertIsNotNone(prov)
+        self.assertTrue(bool(prov.ref.strip()))
 
-    def test_system_assumption_preserves_metadata(self):
-        assump = TraceableConstant(
-            0.50,
-            name="Test MFU",
-            description="A test assumption.",
-            source="Test Citation",
-            url="https://example.com",
-        )
-        self.assertEqual(assump.source, "Test Citation")
-        md = assump.render_markdown()
-        self.assertIn("Test MFU", md)
-        self.assertIn("https://example.com", md)
-        self.assertIn("Test Citation", md)
+    def test_grid_has_provenance(self):
+        grid = Infrastructure.Grids.US_Avg
+        prov = grid.metadata.provenance
+        self.assertIsNotNone(prov)
 
-    def test_gpu_mttf_source_mentions_reliability_literature(self):
-        from mlsysim.core import defaults
+    def test_reliability_mttf_is_sourced(self):
+        mttf = Reliability.Gpu.mttf_hours
+        self.assertIsInstance(mttf, Sourced)
+        prov = mttf.provenance
+        self.assertIsNotNone(prov)
+        self.assertEqual(prov.kind, ProvenanceKind.LITERATURE)
 
-        prov = defaults.GPU_MTTF_HOURS.provenance
-        self.assertIn("Kokolis", prov.ref)
-        self.assertIn("Zu", prov.ref)
-        self.assertIn("Barroso", prov.ref)
+    def test_defaults_module_removed(self):
+        import importlib.util
 
-    def test_carbon_constants_share_iea_catalog_id(self):
-        from mlsysim.core import defaults
+        self.assertIsNone(importlib.util.find_spec("mlsysim.core.defaults"))
 
-        self.assertEqual(
-            defaults.CARBON_NORWAY_GCO2_KWH.provenance.id,
-            defaults.CARBON_POLAND_GCO2_KWH.provenance.id,
-        )
+    def test_no_flat_registry_aliases_at_package_root(self):
+        import mlsysim
 
-    def test_system_assumption_with_pint(self):
-        assump = TraceableConstant(
-            15.0,
-            name="Test Overhead",
-            description="Overhead in ms.",
-            source="Test Citation",
-        )
-        quant = assump * ureg.ms
-        self.assertIsInstance(quant, pint.Quantity)
-        self.assertEqual(quant.magnitude, 15.0)
-        rate = 1.0 / quant
-        self.assertAlmostEqual(rate.magnitude, 1 / 15.0)
-
+        for name in ("GPUS_PER_HOST", "ALLREDUCE_FACTOR", "GPU_MTTF_HOURS"):
+            self.assertFalse(
+                hasattr(mlsysim, name),
+                f"remove package-root alias {name}; use Systems/Literature registries",
+            )
 
 if __name__ == "__main__":
     unittest.main()

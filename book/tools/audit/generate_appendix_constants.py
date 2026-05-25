@@ -3,7 +3,7 @@
 
 Appendix ``*Constants`` classes in vol1/vol2 ``appendix_assumptions.qmd`` should
 source hardware/model/fabric values from typed registries (``Hardware.*``,
-``Models.*``, ``Systems.*``) or physics-only ``constants`` / scenario ``defaults``.
+``Models.*``, ``Systems.*``, ``Literature.*``, ``Infrastructure.*``) or physics-only ``constants``.
 
 Usage:
     python3 generate_appendix_constants.py --verify
@@ -61,7 +61,6 @@ class PythonCell:
     source: str
     body: str  # code inside fences, excluding fence lines
 
-
 @dataclass
 class VerifyResult:
     path: Path
@@ -70,7 +69,6 @@ class VerifyResult:
     ok: bool
     error: str | None = None
     registry_sources: list[str] = field(default_factory=list)
-
 
 def _extract_cells(path: Path) -> list[PythonCell]:
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -107,17 +105,15 @@ def _extract_cells(path: Path) -> list[PythonCell]:
         i += 1
     return cells
 
-
 def _exec_preamble() -> str:
     return textwrap.dedent(
         """
         from mlsysim import *
         from mlsysim.core.constants import *
-        from mlsysim.core import constants, defaults
+        from mlsysim.core import constants
         from mlsysim.fmt import fmt, fmt_val, fmt_unit, fmt_int, MarkdownStr, check, sci_latex, fmt_math
         """
     ).strip()
-
 
 def _registry_sources_in_body(body: str) -> list[str]:
     patterns = [
@@ -126,14 +122,14 @@ def _registry_sources_in_body(body: str) -> list[str]:
         r"Systems\.[\w.]+(?:\[[^\]]+\])?(?:\.[\w]+)*",
         r"Datasets\.[\w.]+(?:\[[^\]]+\])?(?:\.[\w]+)*",
         r"Infrastructure\.[\w.]+(?:\[[^\]]+\])?(?:\.[\w]+)*",
-        r"defaults\.[A-Z][A-Z0-9_]+",
+        r"Literature\.[\w.]+(?:\[[^\]]+\])?(?:\.[\w]+)*",
+        r"Ops\.[\w.]+(?:\[[^\]]+\])?(?:\.[\w]+)*",
         r"constants\.[A-Z][A-Z0-9_]+",
     ]
     found: list[str] = []
     for pat in patterns:
         found.extend(re.findall(pat, body))
     return sorted(dict.fromkeys(found))
-
 
 def verify_cell(cell: PythonCell) -> VerifyResult:
     code = _exec_preamble() + "\n\n" + cell.body
@@ -154,7 +150,6 @@ def verify_cell(cell: PythonCell) -> VerifyResult:
         registry_sources=_registry_sources_in_body(cell.body),
     )
 
-
 def verify_all() -> list[VerifyResult]:
     if str(MLSYSIM_ROOT) not in sys.path:
         sys.path.insert(0, str(MLSYSIM_ROOT))
@@ -165,7 +160,6 @@ def verify_all() -> list[VerifyResult]:
                 continue
             results.append(verify_cell(cell))
     return results
-
 
 def _render_interconnect_class() -> str:
     lines = [
@@ -181,7 +175,6 @@ def _render_interconnect_class() -> str:
         lines.append(f"    {name}_val_str{' ' * val_pad}= fmt_val({source})")
         lines.append(f"    {name}_unit_str{' ' * unit_pad}= fmt_unit({source})")
     return "\n".join(lines)
-
 
 def _render_interconnect_cell() -> str:
     body = _render_interconnect_class()
@@ -203,7 +196,6 @@ def _render_interconnect_cell() -> str:
         "```"
     )
 
-
 def _replace_cell_by_label(text: str, label: str, new_cell: str) -> str | None:
     """Replace a single ```{python} cell identified by ``#| label: <label>``."""
     label_pat = re.compile(rf"^#\|\s*label:\s*{re.escape(label)}\s*$", re.MULTILINE)
@@ -219,7 +211,6 @@ def _replace_cell_by_label(text: str, label: str, new_cell: str) -> str | None:
         return None
     end += len("\n```")
     return text[:start] + new_cell + text[end:]
-
 
 def write_interconnect() -> bool:
     path = APPENDIX_PATHS[0]
@@ -239,14 +230,12 @@ def write_interconnect() -> bool:
     print(f"Wrote {path.name}: appendix-interconnectconstants")
     return True
 
-
 def _resolve_source(expr: str):
     if str(MLSYSIM_ROOT) not in sys.path:
         sys.path.insert(0, str(MLSYSIM_ROOT))
     namespace: dict = {}
     exec(_exec_preamble(), namespace)
     return eval(expr, namespace)
-
 
 def verify_interconnect_spec() -> list[str]:
     """Ensure generated interconnect fields resolve to quantities."""
@@ -257,7 +246,6 @@ def verify_interconnect_spec() -> list[str]:
         except Exception as exc:
             errors.append(f"{name}: {source} -> {exc}")
     return errors
-
 
 def refresh_yaml() -> int:
     import importlib.util
@@ -270,7 +258,6 @@ def refresh_yaml() -> int:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.main()
-
 
 def _check_ast_no_legacy_imports(cell: PythonCell) -> list[str]:
     """Flag ``from mlsysim.core.constants import H100_*`` style imports in table cells."""
@@ -285,7 +272,6 @@ def _check_ast_no_legacy_imports(cell: PythonCell) -> list[str]:
                 if alias.name not in ("Q_", "*") and alias.name.isupper():
                     issues.append(f"legacy import: {alias.name}")
     return issues
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -360,7 +346,6 @@ def main(argv: list[str] | None = None) -> int:
         refresh_yaml()
 
     return exit_code
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

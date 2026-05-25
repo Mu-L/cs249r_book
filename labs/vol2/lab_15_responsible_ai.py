@@ -24,11 +24,9 @@ app = marimo.App(width="full")
 # Design Ledger: saves chapter="v2_15"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 0: SETUP ───────────────────────────────────────────────────────────
 @app.cell
@@ -54,8 +52,7 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware, Models
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -101,7 +98,6 @@ async def _():
         LIME_OVERHEAD_MS, SHAP_OVERHEAD_MS, NETWORK_OVERHEAD_MS, SLA_MS,
         AUDIT_COMPUTE_BASE, DecisionLog,
     )
-
 
 # ─── CELL 1: HEADER ──────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -152,7 +148,6 @@ def _(mo, LAB_CSS, COLORS):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -206,7 +201,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: READING ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -222,11 +216,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: Part A prediction + controls ─────────────────────────────────────
 @app.cell(hide_code=True)
@@ -245,7 +237,6 @@ def _(mo):
     partA_base_rate_b = mo.ui.slider(start=0.1, stop=0.9, value=0.3, step=0.05, label="Group B base rate")
     return (partA_base_rate_a, partA_base_rate_b, partA_pred, partA_threshold_slider)
 
-
 # ─── CELL 5: Part B prediction + controls ─────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -255,7 +246,6 @@ def _(mo):
     )
     partB_gap_slider = mo.ui.slider(start=0.0, stop=0.5, value=0.3, step=0.05, label="Base rate gap (|rate_A - rate_B|)")
     return (partB_gap_slider, partB_pred)
-
 
 # ─── CELL 6: Part C prediction + controls ─────────────────────────────────────
 @app.cell(hide_code=True)
@@ -274,7 +264,6 @@ def _(mo):
     partC_output_monitor = mo.ui.switch(label="Output Monitoring", value=False)
     partC_feedback_gov = mo.ui.switch(label="Feedback Governance", value=False)
     return (partC_data_audit, partC_fairness_constraint, partC_feedback_gov, partC_output_monitor, partC_pred)
-
 
 # ─── CELL 7: Part D prediction + controls ─────────────────────────────────────
 @app.cell(hide_code=True)
@@ -302,7 +291,6 @@ def _(mo):
     )
     return (partD_explain, partD_metric, partD_monitor, partD_pred)
 
-
 # ─── CELL 8: Part E controls ──────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -318,11 +306,9 @@ def _(mo):
     partE_ab_days = mo.ui.slider(start=1, stop=7, value=3, step=1, label="A/B test duration (days)")
     return (partE_ab_days, partE_sample, partE_test, partE_threshold)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 9: TABS CELL ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1227,11 +1213,9 @@ low thresholds) shrinks $t_{\\text{debt}}$ but increases $C_{\\text{audit}}$.
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 10: LEDGER HUD ─────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -1266,7 +1250,6 @@ def _(mo, ledger, COLORS, partA_pred, partB_pred, partC_pred, partD_pred, partD_
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

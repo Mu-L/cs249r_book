@@ -8,7 +8,7 @@ from pathlib import Path
 
 CONSTANTS_PATH = Path(__file__).resolve().parents[1] / "mlsysim" / "core" / "constants.py"
 
-# Names matching these patterns belong in registries or defaults.py — not constants.py.
+# Names matching these patterns belong in registries or core/calibration.py — not constants.py.
 FORBIDDEN_NAME_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(H100|A100|V100|B200|H200|MI300X|T4|TPU|JETSON|ESP32|DGX)_"),
     re.compile(r"^NVLINK_"),
@@ -32,7 +32,6 @@ FORBIDDEN_NAME_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^TPU_POD_"),
 )
 
-
 def _defined_names(source: str) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(ast.parse(source)):
@@ -41,7 +40,6 @@ def _defined_names(source: str) -> set[str]:
                 if isinstance(target, ast.Name):
                     names.add(target.id)
     return names
-
 
 def test_constants_has_no_forbidden_symbol_names() -> None:
     source = CONSTANTS_PATH.read_text(encoding="utf-8")
@@ -55,12 +53,10 @@ def test_constants_has_no_forbidden_symbol_names() -> None:
         + "\n  ".join(violations)
     )
 
-
 def test_constants_does_not_reexport_defaults() -> None:
     source = CONSTANTS_PATH.read_text(encoding="utf-8")
     assert "from .defaults import" not in source
     assert "import defaults" not in source
-
 
 def test_constants_size_budget() -> None:
     """Guard against re-accumulating deleted constants."""

@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -32,14 +30,14 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     import mlsysim
-    from mlsysim.core.defaults import (
-        GPU_MTTF_HOURS,
-        INFINIBAND_NDR_BW_GBS,
-        PUE_BEST_AIR,
-        DEFAULT_KWH_PRICE,
-        ANNUAL_MAINTENANCE_RATIO,
-        MFU_INFERENCE_BATCH1,
-    )
+    from mlsysim import Systems, Literature, Infrastructure
+
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    PUE_BEST_AIR = Infrastructure.FacilityCooling.BestAir.pue
+    DEFAULT_KWH_PRICE = Infrastructure.Pricing.Cloud.ElectricityPerKwh.rate.m_as("USD/kWh")
+    ANNUAL_MAINTENANCE_RATIO = float(Infrastructure.Pricing.Capital.AnnualMaintenanceRatio.rate)
+    MFU_INFERENCE_BATCH1 = Literature.Training.MfuInferenceBatch1
     from mlsysim.core.constants import (
         ureg,
         NVME_SEQUENTIAL_BW,
@@ -77,7 +75,7 @@ async def _():
     NVME_GBS = NVME_SEQUENTIAL_BW.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
+    GPT2 = mlsysim.Models.Language.GPT2
     GPT2_PARAMS_B = GPT2.parameters.m_as("dimensionless") / 1e9  # billions
 
     ledger = DesignLedger()
@@ -93,7 +91,6 @@ async def _():
         NVLINK_GBS, PCIE_GBS, IB_NDR_GBS, NVME_GBS,
         PUE_BEST_AIR, DEFAULT_KWH_PRICE, ANNUAL_MAINTENANCE_RATIO,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -142,7 +139,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -208,8 +204,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -225,7 +219,6 @@ def _(mo):
     - **Vol II Ch 2: Total Cost of Ownership** -- CapEx vs OpEx breakdown.
     """), kind="info")
     return
-
 
 @app.cell(hide_code=True)
 def _(
@@ -331,7 +324,6 @@ def _(mo):
     pE_util = mo.ui.slider(start=30, stop=90, value=70, step=5, label="Utilization (%)")
     pE_pue = mo.ui.slider(start=1.06, stop=1.60, value=1.12, step=0.02, label="PUE")
     return (pE_n_gpus, pE_pue, pE_util)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1072,8 +1064,6 @@ AllReduce, hierarchical communication, and gradient compression.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1108,7 +1098,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

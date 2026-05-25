@@ -24,7 +24,6 @@ app = marimo.App(width="full")
 # Design Ledger: saves chapter="v2_13"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -55,8 +54,7 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware, Models
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -106,7 +104,6 @@ async def _():
         FP32_ADV_ACC_EPS4, INT8_ADV_ACC_EPS4, INT8_CLEAN_DELTA,
         DecisionLog,
     )
-
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────
 
@@ -158,7 +155,6 @@ def _(mo, LAB_CSS, COLORS):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ──────────────────────────────────────────────────────
 
@@ -227,7 +223,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ───────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -245,7 +240,6 @@ def _(mo):
       confidence thresholds, and the economics of layered guardrails.
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
@@ -279,7 +273,6 @@ def _(mo):
     )
     return (partA_eps_slider, partA_pred, partA_refl)
 
-
 # ─── CELL 5: PART B WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -298,7 +291,6 @@ def _(mo):
         label="Cluster size (GPUs)",
     )
     return (partB_cluster_slider, partB_pred)
-
 
 # ─── CELL 6: PART C WIDGETS ──────────────────────────────────────────────────
 
@@ -324,7 +316,6 @@ def _(mo):
     )
     return (partC_drift_rate, partC_monitoring, partC_pred, partC_sample_rate)
 
-
 # ─── CELL 7: PART D WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -347,7 +338,6 @@ def _(mo):
     )
     return (partD_adv_train, partD_conf_thresh, partD_feat_squeeze, partD_monitoring, partD_pred)
 
-
 # ─── CELL 8: PART E WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -361,7 +351,6 @@ def _(mo):
         value="FP32", label="Model precision:", inline=True,
     )
     return (partE_eps_slider, partE_precision)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
@@ -1278,7 +1267,6 @@ coarser — and the latter effect dominates. At eps=0 the gap is only
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1307,7 +1295,6 @@ def _(mo, ledger, COLORS, partA_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

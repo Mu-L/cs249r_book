@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -45,7 +43,6 @@ async def _():
         COLORS, H100_TDP_W, JETSON_TDP_W, LAB_CSS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -92,7 +89,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -149,8 +145,6 @@ def _(COLORS, mo):
     </div>""")
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -164,7 +158,6 @@ def _(mo):
       fairness-accuracy Pareto frontier, explainability methods, and carbon accounting.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN LAB CELL
@@ -260,7 +253,6 @@ def _(mo):
                  "Coal-heavy (800 gCO2/kWh)": 800},
         value="Mixed (400 gCO2/kWh)", label="Grid carbon intensity")
     return (partD_explain_pct, partD_grid_mix, partD_retrain_freq)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -930,8 +922,6 @@ $$
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -957,7 +947,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred):
         <span class="hud-label">STATUS</span><span class="hud-active">ACTIVE</span>
     </div>""")
     return
-
 
 if __name__ == "__main__":
     app.run()

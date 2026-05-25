@@ -23,7 +23,6 @@ app = marimo.App(width="full")
 # Design Ledger: saves chapter="v2_14"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -53,8 +52,7 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware, Models
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -108,7 +106,6 @@ async def _():
         DecisionLog,
     )
 
-
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -159,7 +156,6 @@ def _(mo, LAB_CSS, COLORS):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ──────────────────────────────────────────────────────
 
@@ -225,7 +221,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ───────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -244,11 +239,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: PART A WIDGETS ──────────────────────────────────────────────────
 
@@ -266,7 +259,6 @@ def _(mo):
     partA_years_slider = mo.ui.slider(start=1, stop=10, value=7, step=1, label="Timeline (years)")
     return (partA_pred, partA_years_slider)
 
-
 # ─── CELL 5: PART B WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -283,7 +275,6 @@ def _(mo):
     partB_energy_slider = mo.ui.slider(start=1000, stop=100000, value=10000, step=1000, label="Training energy (MWh)")
     partB_pue_slider = mo.ui.slider(start=1.0, stop=2.0, value=1.12, step=0.02, label="PUE")
     return (partB_energy_slider, partB_pred, partB_pue_slider)
-
 
 # ─── CELL 6: PART C WIDGETS ──────────────────────────────────────────────────
 
@@ -303,7 +294,6 @@ def _(mo):
     partC_gpu_count = mo.ui.slider(start=100, stop=10000, value=1000, step=100, label="GPU count")
     return (partC_gpu_count, partC_pred, partC_refresh_slider, partC_util_slider)
 
-
 # ─── CELL 7: PART D WIDGETS ──────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -317,7 +307,6 @@ def _(mo):
     partD_cap_toggle = mo.ui.switch(label="Carbon cap enabled", value=False)
     partD_cap_level = mo.ui.slider(start=0.5, stop=2.0, value=1.0, step=0.1, label="Cap level (fraction of baseline)")
     return (partD_cap_level, partD_cap_toggle, partD_eff_slider, partD_elast_slider, partD_pred)
-
 
 # ─── CELL 8: PART E WIDGETS ──────────────────────────────────────────────────
 
@@ -333,11 +322,9 @@ def _(mo):
     partE_cap = mo.ui.slider(start=0.3, stop=1.5, value=1.0, step=0.1, label="Carbon cap (fraction of baseline)")
     return (partE_cap, partE_eff_gain, partE_geo, partE_temporal)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 9: TABS ────────────────────────────────────────────────────────────
 
@@ -1235,11 +1222,9 @@ achieves 50%+ reduction targets.
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 10: LEDGER HUD ─────────────────────────────────────────────────────
 
@@ -1273,7 +1258,6 @@ def _(mo, ledger, COLORS, partA_pred, partB_pred, partC_pred, partD_pred, partD_
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

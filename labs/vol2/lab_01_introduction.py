@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -33,13 +31,13 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     import mlsysim
-    from mlsysim.core.defaults import (
-        GPU_MTTF_HOURS,
-        INFINIBAND_NDR_BW_GBS,
-        IB_NDR_LATENCY_US,
-        CHINCHILLA_TOKENS_PER_PARAM,
-    )
-    from mlsysim.core.formulas import (
+    from mlsysim import Systems, Literature
+    from mlsysim.systems.registry import IB_NDR_LATENCY_US
+
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    CHINCHILLA_TOKENS_PER_PARAM = Literature.Chinchilla.TokensPerParam
+    from mlsysim.physics import (
         calc_ring_allreduce_time,
         calc_mtbf_cluster,
     )
@@ -59,7 +57,7 @@ async def _():
     EDGE_TDP_W = EDGE.tdp.m_as("W")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
+    GPT2 = mlsysim.Models.Language.GPT2
     GPT2_PARAMS = GPT2.parameters.m_as("dimensionless")
 
     ledger = DesignLedger()
@@ -90,7 +88,6 @@ async def _():
         CHINCHILLA_TOKENS_PER_PARAM,
         ureg,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -140,7 +137,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -206,7 +202,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.callout(mo.md("""
@@ -218,8 +213,6 @@ def _(mo):
     - **Vol II Ch 1: Amdahl's Law at Scale** -- communication fraction and scaling efficiency.
     """), kind="info")
     return
-
-
 
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
@@ -1172,8 +1165,6 @@ at fleet scale, the bandwidth staircase, and the hidden cost of ownership.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1210,7 +1201,6 @@ def _(COLORS, ledger, mo, partA_prediction, partB_prediction, partC_prediction, 
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

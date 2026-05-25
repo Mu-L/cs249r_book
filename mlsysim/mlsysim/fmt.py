@@ -35,11 +35,11 @@ def _get_markdown():
 
 def _numeric_magnitude(quantity):
     """Return a plain float magnitude for fmt safety checks."""
-    from .core.provenance import Sourced, TraceableConstant, scalar_value
+    from .core.provenance import Sourced, scalar_value
 
     if isinstance(quantity, ureg.Quantity):
         return float(quantity.magnitude)
-    if isinstance(quantity, (Sourced, TraceableConstant)):
+    if isinstance(quantity, Sourced):
         return scalar_value(quantity)
     return float(quantity)
 

@@ -1,14 +1,12 @@
-"""Provenance types for registry entries and book-facing defaults."""
+"""Provenance types for registry entries and book-facing sourced scalars."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, Optional, TypeVar, Union
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-T = TypeVar("T")
 Scalar = Union[int, float]
 
 
@@ -44,73 +42,37 @@ class Provenance(BaseModel):
         return self
 
 
-def scalar_value(x: Scalar | "Sourced[Scalar]" | "TraceableConstant") -> float:
-    """Plain float for arithmetic and Quarto ``{python}`` cells."""
-    if isinstance(x, Sourced):
-        v = x.value
-    elif isinstance(x, TraceableConstant):
-        v = float(x)
-    else:
-        v = x
-    return float(v)
+class Sourced(float):
+    """
+    Scalar with mandatory ``Provenance``. Subclasses ``float`` so appendix
+    LEGO cells can divide and format values without extra coercion.
+    """
 
-
-@dataclass(frozen=True)
-class Sourced(Generic[T]):
-    """Value with mandatory provenance (use ``scalar_value`` or ``float()`` in math)."""
-
-    value: T
-    provenance: Provenance
-
-    def __float__(self) -> float:
-        return float(self.value)
-
-    def __int__(self) -> int:
-        return int(self.value)
-
-    # Appendix/table formatting often uses ``val:g`` on scalars.
-    def __format__(self, format_spec: str) -> str:
-        return format(self.value, format_spec)
+    def __new__(
+        cls,
+        value: Scalar,
+        provenance: Provenance,
+        *,
+        name: str = "",
+        description: str = "",
+    ):
+        obj = super().__new__(cls, float(value))
+        obj.provenance = provenance
+        obj.name = name
+        obj.description = description
+        return obj
 
     @property
     def source(self) -> str:
-        """Human-readable source (compat with TraceableConstant)."""
         return self.provenance.ref
 
     @property
     def url(self) -> Optional[str]:
         return self.provenance.url
 
-
-class TraceableConstant(float):
-    """
-    Float assumption with provenance (appendix-safe arithmetic).
-
-    Prefer ``Sourced`` for new code; this type remains for existing defaults
-    and LEGO cells that rely on ``float`` behavior.
-    """
-
-    def __new__(
-        cls,
-        value,
-        name: str,
-        description: str,
-        source: str,
-        url: Optional[str] = None,
-        *,
-        provenance: Optional[Provenance] = None,
-        kind: ProvenanceKind = ProvenanceKind.LITERATURE,
-    ):
-        if provenance is None:
-            provenance = Provenance(kind=kind, ref=source, url=url)
-        obj = super().__new__(cls, value)
-        obj._sourced = Sourced(value, provenance)  # type: ignore[attr-defined]
-        obj.name = name
-        obj.description = description
-        obj.provenance = provenance
-        obj.source = provenance.ref
-        obj.url = provenance.url
-        return obj
+    @property
+    def value(self) -> float:
+        return float(self)
 
     def render_markdown(self) -> str:
         lines = [
@@ -129,23 +91,39 @@ class TraceableConstant(float):
         return "\n".join(lines)
 
 
+def sourced(
+    value: Scalar,
+    provenance: Provenance,
+    *,
+    name: str = "",
+    description: str = "",
+) -> Sourced:
+    """Attach provenance to a scalar used in registries or appendices."""
+    return Sourced(value, provenance, name=name, description=description)
+
+
+def scalar_value(x: Scalar | Sourced) -> float:
+    """Plain float for arithmetic and Quarto ``{python}`` cells."""
+    if isinstance(x, Sourced):
+        return float(x)
+    return float(x)
+
+
 def fleet_mttf_hours(
     hours: float,
     *,
     component: str,
     failure_mode: str = "",
-) -> TraceableConstant:
+) -> Sourced:
     """MTTF anchor aligned with appendix_reliability @tbl-component-fit."""
     from .provenance_catalog import RELIABILITY_MTTF_LITERATURE
 
     desc = f"Steady-state MTTF for {component} in continuous datacenter operation."
     if failure_mode:
         desc += f" Typical mode: {failure_mode}."
-    return TraceableConstant(
+    return sourced(
         hours,
+        RELIABILITY_MTTF_LITERATURE,
         name=f"{component} MTTF (hours)",
         description=desc,
-        source=RELIABILITY_MTTF_LITERATURE.ref,
-        url=RELIABILITY_MTTF_LITERATURE.url,
-        provenance=RELIABILITY_MTTF_LITERATURE,
     )

@@ -40,7 +40,7 @@ You need either tensor parallelism (TP=2) or quantization to INT4.
 Weights are only half the story. Each active request needs a KV cache:
 
 ```python
-from mlsysim.core.formulas import calc_kv_cache_size
+from mlsysim.physics import calc_kv_cache_size
 
 # Llama-3 70B: 80 layers, 8 KV heads (GQA), 128 dim per head
 kv_per_request = calc_kv_cache_size(

@@ -69,7 +69,7 @@ def _conv(id: str, ref: str, *, notes: str | None = None) -> Provenance:
     )
 
 
-# --- Book / grid defaults (existing) ---
+# --- Book / grid anchors (existing) ---
 IEA_WEO_2023 = Provenance(
     id="prov:iea-weo-2023-carbon",
     kind=ProvenanceKind.INDUSTRY_REPORT,
@@ -484,6 +484,48 @@ BOOK_CLOUD_PRICING_2024 = Provenance(
     ref="Illustrative US cloud list prices (2024–2025 order of magnitude)",
     notes="GPU-hour, egress, and electricity rates for worked examples—not a specific vendor quote.",
     verified="2025-03-06",
+)
+
+BOOK_STORAGE_PRICING_2024 = Provenance(
+    id="prov:book-storage-pricing-2024",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Illustrative cloud/object-storage list prices (2024 order of magnitude)",
+    notes="S3, Glacier, NVMe tier rates for data-engineering worked examples.",
+    verified="2025-03-06",
+)
+
+BOOK_LABELING_PRICING_2024 = Provenance(
+    id="prov:book-labeling-pricing-2024",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Illustrative data-labeling cost ranges (2024 estimates)",
+    notes="Crowd, bounding-box, and medical labeling tiers for workflow examples.",
+    verified="2025-03-06",
+)
+
+BOOK_FLEET_ECONOMICS_2024 = Provenance(
+    id="prov:book-fleet-economics-2024",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Illustrative internal GPU-hour and chargeback rates (2024)",
+    notes="On-demand, spot, and internal chargeback references for fleet orchestration examples.",
+    verified="2025-03-06",
+)
+
+BARROSO_DATACENTER_ECONOMICS = _lit(
+    "prov:barroso-datacenter-economics",
+    "Barroso et al. (2018), The Datacenter as a Computer",
+    url="https://doi.org/10.1201/9781351066146",
+)
+
+BOOK_CAPACITY_LEAD_TIMES = _est(
+    "prov:book-capacity-lead-times",
+    "MLSysBook illustrative datacenter build-out lead times",
+    notes="Order-of-magnitude planning anchors for compute-infrastructure chapters.",
+)
+
+BOOK_CARBON_PER_GPU_HR = _est(
+    "prov:book-carbon-per-gpu-hr",
+    "Illustrative per-GPU-hour carbon proxy for responsible-AI examples",
+    notes="0.16 kg/GPU-hr order-of-magnitude; not a grid-specific intensity calculation.",
 )
 
 MFU_INFERENCE_BATCHED_LIT = _lit(

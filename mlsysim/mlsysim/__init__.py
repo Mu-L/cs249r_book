@@ -24,6 +24,9 @@ from .platforms.registry import Platforms
 from .datasets.registry import Datasets
 from .systems.registry import Systems
 from .infra.registry import Infrastructure
+from .literature.registry import Literature
+from .ops import Ops, Monitoring
+from .core import calibration
 
 # AUTHORITATIVE SOLVERS
 from .core.solver import (
@@ -41,11 +44,6 @@ from .core.solver import (
 
 # AUTHORITATIVE MEASUREMENT (units + physics-only constants)
 from .core.constants import *  # noqa: F401,F403
-from .core.defaults import (
-    ALLREDUCE_FACTOR,
-    CLOUD_ELECTRICITY_PER_KWH,
-    GPUS_PER_HOST,
-)
 
 # AUTHORITATIVE PHYSICS FORMULAS
 from .physics import *  # noqa: F401,F403

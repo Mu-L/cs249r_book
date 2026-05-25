@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -59,7 +57,6 @@ async def _():
         LLAMA2_70B_PARAMS, apply_plotly_theme, go, ledger, math, mo, np,
     )
 
-
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
     mo.vstack([
@@ -105,7 +102,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -161,8 +157,6 @@ def _(COLORS, mo):
     </div>""")
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -174,7 +168,6 @@ def _(mo):
     Review your Design Ledger entries from Labs 01&ndash;15.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN LAB CELL
@@ -300,7 +293,6 @@ def _(mo):
     partE_ctx = mo.ui.slider(start=2048, stop=131072, value=32768, step=2048,
                               label="Context length (tokens)")
     return (partE_ctx, partE_distill, partE_int4, partE_pruning, partE_retrain, partE_shap)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1053,8 +1045,6 @@ linearly with context length. At 128K tokens, KV alone would consume
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1079,7 +1069,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred, partE_
         <span class="hud-label">STATUS</span><span class="hud-active">ACTIVE</span>
     </div>""")
     return
-
 
 if __name__ == "__main__":
     app.run()

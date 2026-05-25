@@ -33,6 +33,19 @@ Release body. Omit any section that has no entries for a given release.
     - @profvjreddi
 -->
 
+## Unreleased
+
+### Internal
+
+- Converged book-facing provenance on `Provenance` + `Sourced` (`sourced()` factory);
+  removed `TraceableConstant`. Appendix lineage and `audit_provenance` use one type.
+- Removed duplicate `GPU_UNIT_COST_*` (use `Hardware.Cloud.*.unit_cost`).
+- `Metadata` accepts only `provenance` (dropped `source` / `source_url` coalesce fields).
+- Removed `mlsysim.core.defaults`; reorganized into `Literature`, `Systems`, `Infrastructure`,
+  `Ops.Monitoring`, and `core.calibration` (solver/engine parameters only).
+- Added `Infrastructure.Pricing` (`Cloud`, `Storage`, `Labeling`, `Fleet`, `Capital`).
+  Appendix lineage audits registry paths and rejects stale `defaults.*` references.
+
 ## v0.1.2 (2026-05-17) — CLI & Website Release Polish
 
 Patch release focused on first-run usability for students, instructors, and

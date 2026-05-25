@@ -158,11 +158,11 @@ result = CompressionModel().solve(
 ### 5. Sustainability and Economics
 
 ```python
-from mlsysim import SustainabilityModel, EconomicsModel, Systems, Infra
+from mlsysim import SustainabilityModel, EconomicsModel, Systems, Infrastructure
 
 fleet = Systems.Clusters.Research_256
 
-co2 = SustainabilityModel().solve(fleet, duration_days=30, datacenter=Infra.Quebec, mfu=0.4)
+co2 = SustainabilityModel().solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.Quebec, mfu=0.4)
 # Returns: SustainabilityResult with .total_energy_kwh, .carbon_footprint_kg,
 #          .water_usage_liters, .pue
 

@@ -18,8 +18,13 @@ tutorials should prefer zoos + `mlsysim.physics.*` + explicit operands.
 ## Support (not zoos)
 
 - **`mlsysim.core.constants`** — pint units, energy/latency laws, precision map, dimensionless teaching examples.
-- **`mlsysim.core.defaults`** — economics, reliability thresholds, duplicated IB/network defaults consolidated from constants.
-- **`mlsysim.physics.*`** — formulas split from legacy `core/formulas.py` (roofline, training memory, serving, etc.).
+- **`Literature.*`** — cited appendix scalars (MFU bands, Chinchilla, scaling η, overheads).
+- **`Systems.Reliability` / `Orchestration`** — MTTF, recovery, scheduling assumptions.
+- **`Ops.Monitoring`** — PSI, KS, drift thresholds (MLOps chapters).
+- **`mlsysim.core.calibration`** — solver/engine default kwargs (not appendix tables).
+- **`Infrastructure.Pricing`** — cloud, storage, labeling, fleet economics (`PricePoint.rate`).
+- **Regional carbon / PUE / fleet / fabrics** — `Infrastructure.Grids`, `FacilityCooling`, `Systems.Clusters`, `Systems.Fabrics`.
+- **`mlsysim.physics.*`** — formulas (roofline, training memory, serving, etc.).
 
 ## Relationships
 
@@ -35,7 +40,8 @@ flowchart TB
   end
   subgraph support [Support]
     constants[constants.py]
-    defaults[defaults.py]
+    literature[Literature.*]
+    calibration[core/calibration.py]
     physics[physics.*]
   end
   Hardware --> Systems
@@ -44,7 +50,8 @@ flowchart TB
   Models --> physics
   Datasets --> physics
   constants --> physics
-  defaults --> physics
+  literature --> physics
+  calibration --> physics
   Systems --> physics
 ```
 
@@ -66,7 +73,7 @@ flowchart TB
 | A | GPU/chip constants (`H100_*`, `NVLINK_*`, …) | `Hardware.*` |
 | B | Network/fabric (`INFINIBAND_*`, `ETHERNET_*`, …) | `Hardware.Networks.*` / `Systems.Fabrics.*` |
 | C | Model/dataset constants | `Models.*` / `Datasets.*` |
-| D | Economics/reliability | `defaults.*` |
+| D | Economics/reliability/literature | `Infrastructure.Pricing.*`, `Literature.*`, `Systems.Reliability.*` |
 | Platforms | `Systems.Tiers`, tier latency/RAM strings | `Platforms.*` |
 
 ## No aliases

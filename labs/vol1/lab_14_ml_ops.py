@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -48,7 +46,6 @@ async def _():
         JETSON_TDP_W, JETSON_TFLOPS, LAB_CSS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -94,7 +91,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -150,8 +146,6 @@ def _(COLORS, mo):
     </div>""")
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -165,7 +159,6 @@ def _(mo):
       optimization, deployment cost asymmetry, and technical debt in ML systems.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN LAB CELL
@@ -254,7 +247,6 @@ def _(mo):
     partD_base_loss = mo.ui.slider(start=1.0, stop=5.0, value=2.0, step=0.5,
                                     label="Accuracy loss per missed cycle (pp)")
     return (partD_base_loss, partD_downstream, partD_missed)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -951,8 +943,6 @@ $$
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -978,7 +968,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred):
         <span class="hud-label">STATUS</span><span class="hud-active">ACTIVE</span>
     </div>""")
     return
-
 
 if __name__ == "__main__":
     app.run()

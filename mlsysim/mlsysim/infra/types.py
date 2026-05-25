@@ -1,5 +1,7 @@
+from typing import Any, Optional
+
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional
+
 from ..core.types import Metadata
 
 class GridProfile(BaseModel):
@@ -26,10 +28,31 @@ class GridProfile(BaseModel):
         """
         return facility_energy_kwh * self.carbon_intensity_kg_kwh
 
+class CoolingProfile(BaseModel):
+    """Facility cooling tier (PUE / WUE), not a geographic grid."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str
+    pue: float
+    wue: float  # L/kWh
+    metadata: Metadata = Field(default_factory=Metadata)
+
+
 class RackProfile(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     power_kw: float
     cooling_type: str
+    metadata: Metadata = Field(default_factory=Metadata)
+
+class PricePoint(BaseModel):
+    """Named rate (pint quantity) with provenance for economics tables."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str
+    rate: Any
+    metadata: Metadata = Field(default_factory=Metadata)
+
 
 class Datacenter(BaseModel):
     name: str

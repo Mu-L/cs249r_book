@@ -14,7 +14,7 @@ from .results import (
     ParallelismOptimizerResult,
     BatchingOptimizerResult, PlacementOptimizerResult
 )
-from .formulas import (
+from ..physics import (
     calc_ring_allreduce_time,
     calc_hierarchical_allreduce_time,
     calc_all_to_all_time,
@@ -29,17 +29,11 @@ from .constants import (
     ureg, Q_, PRECISION_MAP,
     BYTES_FP16, LATENCY_INFINIBAND, LATENCY_NVLINK,
 )
-from .defaults import (
-    ANNUAL_MAINTENANCE_RATIO,
-    GPU_MTTF_HOURS,
-    CHINCHILLA_TOKENS_PER_PARAM, CHINCHILLA_COMPUTE_CONSTANT,
-    CLOUD_ELECTRICITY_PER_KWH,
-    MFU_TRAINING_LOW, MFU_TRAINING_HIGH, QUANT_ACCURACY_DELTA_INT4, QUANT_ACCURACY_DELTA_FP8,
-    PRUNING_ACCURACY_THRESHOLD, PRUNING_MILD_DELTA, PRUNING_STEEP_COEFFICIENT, PRUNING_STEEP_EXPONENT,
-    NIC_MTTF_HOURS, PSU_MTTF_HOURS,
-    MFU_FLASH_ATTENTION, MFU_FLASH_ATTENTION_CAP, MFU_FFN_CAP, MFU_CONV_CAP, HFU_MFU_RATIO,
-    TOKENS_PER_REASONING_STEP, REFERENCE_MFU_SUSTAINED, DP_SGD_SLOWDOWN_COEFFICIENT,
-)
+from ..infra.registry import Infrastructure
+from ..literature.registry import Literature
+from ..systems.reliability import Reliability
+from . import calibration as cal
+
 from .types import Quantity
 from ..models.types import Workload, TransformerWorkload, SparseTransformerWorkload
 from ..hardware.types import HardwareNode
@@ -507,7 +501,7 @@ class NetworkRooflineModel(BaseModel):
 
         achieved_rate = (training_ops / latency.to("s")).to(total_flops.units)
         mfu = min((achieved_rate / total_flops).to_base_units().magnitude, 1.0)
-        hfu = min(mfu * HFU_MFU_RATIO, 1.0)
+        hfu = min(mfu * cal.HFU_MFU_RATIO, 1.0)
         throughput = (1 / latency.to("s")).to("1/s")
 
         return PerformanceProfile(
@@ -568,9 +562,9 @@ class ReliabilityModel(BaseModel):
         """
         # Use compound node MTBF accounting for GPUs, NICs, and PSUs
         node_mtbf = calc_mtbf_node(
-            gpu_mtbf_h=GPU_MTTF_HOURS, n_gpus=fleet.node.accelerators_per_node,
-            nic_mtbf_h=NIC_MTTF_HOURS, n_nics=fleet.node.nics_per_node,
-            psu_mtbf_h=PSU_MTTF_HOURS, n_psus=fleet.node.psus_per_node,
+            gpu_mtbf_h=Reliability.Gpu.mttf_hours, n_gpus=fleet.node.accelerators_per_node,
+            nic_mtbf_h=Reliability.Nic.mttf_hours, n_nics=fleet.node.nics_per_node,
+            psu_mtbf_h=Reliability.Psu.mttf_hours, n_psus=fleet.node.psus_per_node,
         )
         fleet_mtbf = calc_mtbf_cluster(node_mtbf, fleet.count)
 
@@ -631,7 +625,7 @@ class CheckpointModel(BaseModel):
             Maximum aggregate filesystem write bandwidth in GB/s (default 500).
             Prevents over-optimistic scaling when n_writers is large.
         """
-        from .formulas import calc_checkpoint_size
+        from ..physics import calc_checkpoint_size
 
         # Calculate size based on optimizer states
         # Mixed-precision Adam: 14 bytes/param (FP32 master + FP32 momentum + FP32 variance + FP16 weights)
@@ -900,7 +894,7 @@ class ServingModel(BaseModel):
         t_decode_per_token = ((model_weights_bytes + kv_cache_bytes) / decode_hw.memory.bandwidth).to("ms")
         
         # 4. Framework Tax (Per-token decode also incurs launch overhead)
-        from .defaults import FRAMEWORK_LAYER_TAX_MS
+        from .calibration import FRAMEWORK_LAYER_TAX_MS
         layer_tax = Q_(model.layers * FRAMEWORK_LAYER_TAX_MS, "ms")
         t_decode_per_token += layer_tax
 
@@ -1016,7 +1010,7 @@ class TrainingMemoryModel(BaseModel):
         data-parallel group according to its stage.
         """
         from ._validation import validate_at_least, validate_range
-        from .formulas import calc_activation_memory
+        from ..physics import calc_activation_memory
 
         if precision not in PRECISION_MAP:
             supported = ", ".join(sorted(PRECISION_MAP))
@@ -1374,7 +1368,7 @@ class ContinuousBatchingModel(BaseModel):
             )
 
         # Calculate memory using PagedAttention formulas
-        from .formulas import calc_paged_kv_cache_size
+        from ..physics import calc_paged_kv_cache_size
         n_heads = model.kv_heads or model.heads or 32
         h_dim = model.hidden_dim or 4096
         head_dim = h_dim // (model.heads or 32)
@@ -1576,7 +1570,7 @@ class TailLatencyModel(BaseModel):
         """
         from ._validation import validate_nonnegative
         validate_nonnegative(service_time_cv, "service_time_cv")
-        from .formulas import calc_queue_latency_mmc
+        from ..physics import calc_queue_latency_mmc
 
         service_rate_hz = 1000.0 / service_latency_ms if service_latency_ms > 0 else 0.0
 
@@ -1666,7 +1660,7 @@ class EconomicsModel(BaseModel):
             target = grid or datacenter or fleet.datacenter or fleet.region
             price = getattr(target, 'kwh_price', None)
             if price is None:
-                price = CLOUD_ELECTRICITY_PER_KWH.magnitude  # 0.12 USD/kWh
+                price = Infrastructure.Pricing.Cloud.ElectricityPerKwh.rate.magnitude
             
         opex_energy = energy_result.total_energy_kwh.magnitude * price
         
@@ -1682,7 +1676,7 @@ class EconomicsModel(BaseModel):
         # Amortize CapEx over deployment period (default 3-year depreciation schedule)
         capex_for_period = (total_capex / amortization_years) * (duration_days / 365.0)
 
-        annual_maintenance_ratio = ANNUAL_MAINTENANCE_RATIO
+        annual_maintenance_ratio = Infrastructure.Pricing.Capital.AnnualMaintenanceRatio.rate
         opex_maintenance = total_capex * annual_maintenance_ratio * (duration_days / 365.0)
 
         # Compose economics + sustainability into single result
@@ -1804,14 +1798,14 @@ class ScalingModel(BaseModel):
         if compute_budget.dimensionality == ureg.day.dimensionality:
             # Convert GPU-days to FLOPs using H100 SXM reference
             # Source: NVIDIA H100 datasheet (989 TFLOPs FP16 dense)
-            c_flops = (compute_budget * (989 * ureg.TFLOPs / ureg.second) * REFERENCE_MFU_SUSTAINED).to(ureg.flop)
+            c_flops = (compute_budget * (989 * ureg.TFLOPs / ureg.second) * cal.REFERENCE_MFU_SUSTAINED).to(ureg.flop)
 
         if target_model_size:
             p_opt = target_model_size.to(ureg.count).magnitude
-            d_opt = (c_flops.magnitude / (CHINCHILLA_COMPUTE_CONSTANT * p_opt))
+            d_opt = (c_flops.magnitude / (Literature.Chinchilla.ComputeConstant * p_opt))
         else:
-            p_opt = math.sqrt(c_flops.magnitude / (CHINCHILLA_COMPUTE_CONSTANT * CHINCHILLA_TOKENS_PER_PARAM))
-            d_opt = CHINCHILLA_TOKENS_PER_PARAM * p_opt
+            p_opt = math.sqrt(c_flops.magnitude / (Literature.Chinchilla.ComputeConstant * Literature.Chinchilla.TokensPerParam))
+            d_opt = Literature.Chinchilla.TokensPerParam * p_opt
 
         return ScalingResult(
             optimal_parameters=Q_(p_opt, ureg.count),
@@ -1946,9 +1940,9 @@ class CompressionModel(BaseModel):
                 compression_ratio = 32 / target_bitwidth  # 2x for FP16, 1x for FP32
             elif target_bitwidth == 8:
                 # FP8/INT8: use FP8 accuracy delta (near-lossless, -0.2%)
-                accuracy_delta = QUANT_ACCURACY_DELTA_FP8
+                accuracy_delta = cal.QUANT_ACCURACY_DELTA_FP8
             elif target_bitwidth >= 4:
-                accuracy_delta = QUANT_ACCURACY_DELTA_INT4
+                accuracy_delta = cal.QUANT_ACCURACY_DELTA_INT4
             else:
                 accuracy_delta = -0.05   # Sub-INT4: significant degradation
 
@@ -1975,10 +1969,10 @@ class CompressionModel(BaseModel):
             compression_ratio = 1.0 / (1.0 - sparsity) if sparsity < 1.0 else 100.0
             # Source: Blalock et al. (2020), "What is the State of Neural Network Pruning?"
             # Log-linear degradation accelerates after 50% sparsity
-            if sparsity <= PRUNING_ACCURACY_THRESHOLD:
-                accuracy_delta = PRUNING_MILD_DELTA
+            if sparsity <= cal.PRUNING_ACCURACY_THRESHOLD:
+                accuracy_delta = cal.PRUNING_MILD_DELTA
             else:
-                accuracy_delta = -PRUNING_STEEP_COEFFICIENT * math.exp(sparsity * PRUNING_STEEP_EXPONENT)
+                accuracy_delta = -cal.PRUNING_STEEP_COEFFICIENT * math.exp(sparsity * cal.PRUNING_STEEP_EXPONENT)
 
             # Inference speedup depends on sparsity type
             if sparsity_type == "structured":
@@ -2057,25 +2051,25 @@ class EfficiencyModel(BaseModel):
         """
         peak_flops = hardware.compute.precision_flops.get(precision, hardware.compute.peak_flops)
 
-        # Base MFU range from defaults (training regime)
-        mfu_low = MFU_TRAINING_LOW
-        mfu_high = MFU_TRAINING_HIGH
+        # Base MFU range from Literature.Training (training regime)
+        mfu_low = Literature.Training.MfuLow
+        mfu_high = Literature.Training.MfuHigh
 
-        # Workload-type MFU adjustment (heuristic calibrations — see defaults.py)
+        # Workload-type MFU adjustment (heuristic calibrations — see core/calibration.py)
         # All values scale linearly with the efficiency parameter relative to 0.5.
         scale = efficiency / 0.5
         if workload_type == "attention":
             if use_flash_attention:
-                eta = min(MFU_FLASH_ATTENTION * scale, MFU_FLASH_ATTENTION_CAP)
+                eta = min(cal.MFU_FLASH_ATTENTION * scale, cal.MFU_FLASH_ATTENTION_CAP)
             else:
                 # Standard attention is memory-bound due to O(S²) reads
                 eta = mfu_low * scale
         elif workload_type == "ffn":
             # FFN layers are compute-dense GEMM — best MFU
-            eta = min(mfu_high * scale, MFU_FFN_CAP)
+            eta = min(mfu_high * scale, cal.MFU_FFN_CAP)
         elif workload_type == "conv":
             # Convolutions via im2col + GEMM — moderate MFU
-            eta = min((mfu_low + mfu_high) / 2.0 * scale, MFU_CONV_CAP)
+            eta = min((mfu_low + mfu_high) / 2.0 * scale, cal.MFU_CONV_CAP)
         else:
             eta = mfu_low * scale
 
@@ -2086,7 +2080,7 @@ class EfficiencyModel(BaseModel):
         # Overhead breakdown: decompose (1 - eta) into meaningful components.
         # Total overhead = 1 - eta, split into occupancy loss and memory stall.
         total_overhead = 1.0 - eta
-        occupancy_loss = 1.0 - min(efficiency * HFU_MFU_RATIO, 1.0)  # SM occupancy overhead
+        occupancy_loss = 1.0 - min(efficiency * cal.HFU_MFU_RATIO, 1.0)  # SM occupancy overhead
         # Memory stall absorbs the remainder: time spent waiting on data movement.
         memory_stall = max(0.0, total_overhead - occupancy_loss)
 
@@ -2308,8 +2302,8 @@ class InferenceScalingModel(BaseModel):
         # Inter-token latency (ITL) is the cost per generated token
         itl = serving_result.itl
 
-        # Average tokens per reasoning step (heuristic — see defaults.py)
-        tokens_per_step = TOKENS_PER_REASONING_STEP
+        # Average tokens per reasoning step (heuristic — see core/calibration.py)
+        tokens_per_step = cal.TOKENS_PER_REASONING_STEP
         total_tokens = reasoning_steps * tokens_per_step
 
         # T_reason = K × tokens_per_step × ITL + TTFT (initial prefill)
@@ -2453,7 +2447,7 @@ class ResponsibleEngineeringModel(BaseModel):
         """
         Calculates the overhead of responsible engineering practices.
         """
-        dp_slowdown = 1.0 + (DP_SGD_SLOWDOWN_COEFFICIENT / max(epsilon, 0.01))
+        dp_slowdown = 1.0 + (cal.DP_SGD_SLOWDOWN_COEFFICIENT / max(epsilon, 0.01))
         additional_data_factor = 1.0 / max(min_subgroup_prevalence, 1e-6)
         effective_time = base_training_time * dp_slowdown
 

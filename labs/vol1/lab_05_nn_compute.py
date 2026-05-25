@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -68,7 +67,6 @@ async def _():
         LAB_CSS, apply_plotly_theme, go, math, mo, np, ledger,
     )
 
-
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -118,7 +116,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -190,7 +187,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -207,7 +203,6 @@ def _(mo):
       activations, and the forward-vs-backward memory multiplier.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
@@ -342,7 +337,6 @@ def _(mo):
         start=64, stop=2048, value=512, step=64, label="Layer width",
     )
     return (partD_batch, partD_depth, partD_phase, partD_width_d)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1162,7 +1156,6 @@ You are deploying a 10-layer vision model on a mobile NPU (iPhone, 8 GB RAM,
     tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1197,7 +1190,6 @@ def _(COLORS, ledger, mo, partA_prediction, partD_prediction):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

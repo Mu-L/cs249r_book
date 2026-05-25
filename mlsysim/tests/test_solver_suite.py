@@ -44,12 +44,11 @@ from mlsysim.core.solver import (
     TailLatencyModel,
 )
 from mlsysim.models.types import SparseTransformerWorkload
-from mlsysim.core.formulas import calc_pipeline_bubble
+from mlsysim.physics import calc_pipeline_bubble
 from mlsysim.systems.types import NetworkFabric
 from mlsysim.core.engine import Engine, PerformanceProfile
 from mlsysim.core.constants import ureg, Q_
 from mlsysim.core.exceptions import OOMError
-
 
 # ======================================================================
 # 1. SingleNodeModel
@@ -139,7 +138,6 @@ class TestSingleNodeModel:
         assert hasattr(perf, "energy")
         assert hasattr(perf, "memory_footprint")
         assert hasattr(perf, "feasible")
-
 
 # ======================================================================
 # 2. ServingModel
@@ -286,7 +284,6 @@ class TestServingModel:
         with pytest.raises(ValueError, match=message):
             ServingModel().solve(llama, h100, **params)
 
-
 class TestTrainingMemoryModel:
     """Tests for per-accelerator training memory accounting."""
 
@@ -337,7 +334,6 @@ class TestTrainingMemoryModel:
             TrainingMemoryModel().solve(llama, h100, batch_size=8, zero_stage=4)
         with pytest.raises(ValueError, match="optimizer"):
             TrainingMemoryModel().solve(llama, h100, batch_size=8, optimizer="mystery")
-
 
 class TestServingCapacityModel:
     """Tests for serving capacity planning."""
@@ -390,7 +386,6 @@ class TestServingCapacityModel:
 
         assert result.feasible is False
         assert result.bottleneck == "Memory"
-
 
 class TestMoERoutingModel:
     """Tests for MoE routing imbalance modeling."""
@@ -454,7 +449,6 @@ class TestMoERoutingModel:
         assert imbalanced.ep_communication_latency > balanced.ep_communication_latency
         assert imbalanced.step_latency_total > balanced.step_latency_total
 
-
 # ======================================================================
 # 3. SustainabilityModel
 # ======================================================================
@@ -515,7 +509,6 @@ class TestSustainabilityModel:
         result = solver.solve(fleet, duration_days=1, datacenter=Infrastructure.Grids.Quebec)
         assert result.it_energy_kwh.magnitude > 0
         assert result.total_energy_kwh.magnitude > 0
-
 
 # ======================================================================
 # 4. DataModel
@@ -588,7 +581,6 @@ class TestDataModel:
         assert result.supply_bw.magnitude == 0
         assert result.is_stalled is True
 
-
 # ======================================================================
 # 5. ScalingModel
 # ======================================================================
@@ -638,7 +630,6 @@ class TestScalingModel:
         # D = C / (6 * P) = 1.2e20 / 6e9 = 2e10
         d = result.optimal_tokens.magnitude
         assert d == pytest.approx(2e10, rel=0.01)
-
 
 # ======================================================================
 # 6. OrchestrationModel
@@ -693,7 +684,6 @@ class TestOrchestrationModel:
         result = solver.solve(fleet, arrival_rate_jobs_per_day=0.2, avg_job_duration_days=2.0)
         assert result.avg_queue_length < float("inf")
         assert result.avg_queue_length >= 0
-
 
 # ======================================================================
 # 7. CompressionModel
@@ -778,26 +768,26 @@ class TestCompressionModel:
         result = solver.solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert result.memory_savings_pct == pytest.approx(75.0, rel=0.01)
 
-
 # ======================================================================
 # 8. Constants & Module Import Tests
 # ======================================================================
 
-    def test_constants_and_defaults_import(self):
-        """Units from constants.py; fleet defaults from defaults.py."""
+    def test_constants_and_registry_import(self):
+        """Units from constants.py; reliability and literature from registries."""
         from mlsysim.core.constants import (
             ureg, Q_,
             BYTES_FP16, BYTES_FP32, BYTES_INT8, BYTES_INT4,
         )
-        from mlsysim.core.defaults import (
-            GPU_MTTF_HOURS,
-            CHINCHILLA_TOKENS_PER_PARAM,
-        )
+        from mlsysim.core.provenance import scalar_value
+        from mlsysim.literature.registry import Literature
+        from mlsysim.systems.reliability import Reliability
+
         assert BYTES_FP16.magnitude == 2
         assert BYTES_FP32.magnitude == 4
         assert BYTES_INT8.magnitude == 1
         assert BYTES_INT4.magnitude == 0.5
-        assert GPU_MTTF_HOURS == 50_000
+        assert scalar_value(Reliability.Gpu.mttf_hours) == 50_000
+        assert scalar_value(Literature.Chinchilla.TokensPerParam) == 20
 
     def test_unit_conversions(self):
         """Basic unit conversions should work correctly."""
@@ -810,7 +800,6 @@ class TestCompressionModel:
         val = Q_("1 TFLOPs")
         flop_val = val.to("flop")
         assert flop_val.magnitude == pytest.approx(1e12, rel=0.01)
-
 
 # ======================================================================
 # 9. Engine (direct usage)
@@ -866,7 +855,6 @@ class TestEngine:
         assert len(summary) > 0
         assert "Bottleneck" in summary
 
-
 # ======================================================================
 # 10. DistributedModel (additional coverage)
 # ======================================================================
@@ -909,7 +897,6 @@ class TestDistributedModel:
         assert result.pipeline_bubble_latency.magnitude == 0
         assert result.bubble_fraction == 0
 
-
 # ======================================================================
 # 11. NetworkRooflineModel
 # ======================================================================
@@ -926,7 +913,6 @@ class TestNetworkRooflineModel:
         assert result.bottleneck in {"Compute", "Network"}
         assert result.peak_flops_actual.magnitude > 0
         assert result.peak_bw_actual.magnitude > 0
-
 
 # ======================================================================
 # 12. ReliabilityModel (additional coverage)
@@ -958,7 +944,6 @@ class TestReliabilityModel:
         cluster = Systems.Clusters.Research_256
         result = solver.solve(cluster, job_duration_hours=100.0)
         assert result.optimal_checkpoint_interval.magnitude > 0
-
 
 # ======================================================================
 # 12. EconomicsModel (additional coverage)
@@ -1013,7 +998,6 @@ class TestEconomicsModel:
         """Placement examples reference Iowa, so it must resolve in the grid registry."""
         assert Infrastructure.Grids.Iowa.name.startswith("Iowa")
 
-
 # ======================================================================
 # 13. EfficiencyModel
 # ======================================================================
@@ -1064,7 +1048,6 @@ class TestEfficiencyModel:
         result = solver.solve(resnet, h100, workload_type="ffn")
         assert "occupancy_loss" in result.overhead_breakdown
         assert "memory_stall" in result.overhead_breakdown
-
 
 # ======================================================================
 # 14. TransformationModel
@@ -1123,7 +1106,6 @@ class TestTransformationModel:
             accelerator_step_time=Q_("50 ms"),
         )
         assert result_fast.accelerator_utilization > result_slow.accelerator_utilization
-
 
 # ======================================================================
 # 15. TopologyModel
@@ -1185,7 +1167,6 @@ class TestTopologyModel:
         result_3x = solver.solve(fabric_3x, topology="fat_tree", num_nodes=64)
         assert result_1x.effective_bw.magnitude > result_3x.effective_bw.magnitude
 
-
 # ======================================================================
 # 16. InferenceScalingModel
 # ======================================================================
@@ -1228,13 +1209,14 @@ class TestInferenceScalingModel:
     def test_tokens_generated_correct(self):
         """tokens_generated should equal reasoning_steps * tokens_per_step."""
         solver = InferenceScalingModel()
-        from mlsysim.core.defaults import TOKENS_PER_REASONING_STEP
+        from mlsysim.core import calibration
+
+        TOKENS_PER_REASONING_STEP = calibration.TOKENS_PER_REASONING_STEP
         llama = Models.Language.Llama3_8B
         h100 = Hardware.Cloud.H100
         steps = 5
         result = solver.solve(llama, h100, reasoning_steps=steps)
         assert result.tokens_generated == steps * TOKENS_PER_REASONING_STEP
-
 
 # ======================================================================
 # 17. SensitivitySolver
@@ -1294,7 +1276,6 @@ class TestSensitivitySolver:
         assert baseline.peak_bw_actual == esp32.memory.sram_bandwidth
         assert result.sensitivities["memory_bandwidth"] <= 0.0 + 1e-9
 
-
 # ======================================================================
 # 18. SynthesisSolver
 # ======================================================================
@@ -1339,7 +1320,6 @@ class TestSynthesisSolver:
         result = solver.solve(resnet, target_latency=Q_("10 ms"))
         assert result.compute_memory_ratio.magnitude > 0
 
-
 # ======================================================================
 # 19. ResponsibleEngineeringModel
 # ======================================================================
@@ -1380,7 +1360,6 @@ class TestResponsibleEngineeringModel:
         solver = ResponsibleEngineeringModel()
         result = solver.solve(base_training_time=Q_("10 day"), epsilon=1.0)
         assert result.privacy_cost_ratio == result.dp_slowdown_factor
-
 
 # ======================================================================
 # 20. CheckpointModel
@@ -1435,7 +1414,6 @@ class TestCheckpointModel:
         result = solver.solve(Models.Language.GPT3, Hardware.Cloud.H100)
         # GPT-3 is 175B params * 14 bytes/param = 2.45TB; at 1 GB/s default = ~2450s
         assert result.storage_bottleneck is True
-
 
 # ======================================================================
 # 21. ContinuousBatchingModel
@@ -1501,7 +1479,6 @@ class TestContinuousBatchingModel:
         res_large = solver.solve(model, hw, seq_len=1024, max_batch_size=16, page_size=64)
         res_small = solver.solve(model, hw, seq_len=1024, max_batch_size=16, page_size=4)
         assert res_small.memory_fragmentation_pct <= res_large.memory_fragmentation_pct
-
 
 # ======================================================================
 # 22. WeightStreamingModel
@@ -1570,7 +1547,6 @@ class TestWeightStreamingModel:
         assert result.layer_compute_time.magnitude > 0
         assert result.layer_injection_time.magnitude > 0
 
-
 # ======================================================================
 # 23. TailLatencyModel
 # ======================================================================
@@ -1623,7 +1599,6 @@ class TestTailLatencyModel:
         expected_rho = 50.0 / (replicas * 100.0)  # service_rate = 1000/10 = 100 qps per replica
         assert result.queue_utilization == pytest.approx(expected_rho, rel=0.01)
 
-
 # ======================================================================
 # 24. Boundary Condition Tests
 # ======================================================================
@@ -1669,7 +1644,6 @@ class TestBoundaryConditions:
         assert result.compression_ratio == pytest.approx(100.0)
         assert result.compressed_size_gb.magnitude > 0
 
-
 # ======================================================================
 # Phase 3 Feature Tests (v0.1.0 additions)
 # ======================================================================
@@ -1706,7 +1680,6 @@ class TestCompressionInferenceSpeedup:
         result = CompressionModel().solve(resnet, a100, method="quantization", target_bitwidth=8)
         assert result.compression_ratio == pytest.approx(4.0)  # 32/8 = 4x
 
-
 class TestReliabilityGoodput:
     """Tests for goodput_ratio added in Phase 3."""
 
@@ -1721,7 +1694,6 @@ class TestReliabilityGoodput:
         fleet = Systems.Clusters.Research_256
         result = ReliabilityModel().solve(fleet, job_duration_hours=24 * 14)
         assert 0.0 <= result.goodput_ratio <= 1.0
-
 
 class TestEconomicsAmortization:
     """Tests for CapEx amortization added in Phase 1F."""
@@ -1741,7 +1713,6 @@ class TestEconomicsAmortization:
         base = solver.solve(fleet, duration_days=365, infrastructure_multiplier=1.0)
         full = solver.solve(fleet, duration_days=365, infrastructure_multiplier=2.5)
         assert full.tco_usd > base.tco_usd
-
 
 class TestSustainabilityEmbodied:
     """Tests for embodied carbon added in Phase 3."""

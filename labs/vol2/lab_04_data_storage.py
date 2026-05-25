@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -32,8 +30,10 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     import mlsysim
-    from mlsysim.core.defaults import GPU_MTTF_HOURS
-    from mlsysim.core.formulas import calc_young_daly_interval, calc_mtbf_cluster
+    from mlsysim import Systems
+
+    GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
+    from mlsysim.physics import calc_young_daly_interval, calc_mtbf_cluster
     from mlsysim.core.constants import (
         ureg,
         NVME_SEQUENTIAL_BW,
@@ -60,7 +60,7 @@ async def _():
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.GPT2
+    GPT2 = mlsysim.Models.Language.GPT2
     GPT2_PARAMS_B = GPT2.parameters.m_as("dimensionless") / 1e9  # billions
 
     ledger = DesignLedger()
@@ -71,10 +71,8 @@ async def _():
         H100_TFLOPS, A100_TFLOPS, B200_TFLOPS, V100_TFLOPS, NVME_GBS,
         H100_RAM_GB, T4_RAM_GB, EDGE_RAM_GB, EDGE_TFLOPS,
         GPT2_PARAMS_B,
-        GPU_MTTF_HOURS,
         calc_young_daly_interval, calc_mtbf_cluster,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -123,7 +121,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -188,8 +185,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -205,12 +200,10 @@ def _(mo):
     """), kind="info")
     return
 
-
 @app.cell(hide_code=True)
 def _(
     COLORS, apply_plotly_theme, go, math, mo, np, ureg,
     H100_TFLOPS, A100_TFLOPS, B200_TFLOPS, V100_TFLOPS, NVME_GBS,
-    GPU_MTTF_HOURS,
     calc_young_daly_interval, calc_mtbf_cluster,
 ):
     # ═════════════════════════════════════════════════════════════════════════
@@ -301,7 +294,6 @@ def _(mo):
     pE_write = mo.ui.slider(start=30, stop=300, value=120, step=10, label="Checkpoint write time (s)")
     pE_interval = mo.ui.slider(start=1, stop=120, value=30, step=1, label="Checkpoint interval (min)")
     return (pE_interval, pE_mtbf, pE_write)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1025,8 +1017,6 @@ and 3D parallelism maps strategies to the bandwidth hierarchy.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1061,7 +1051,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred, pE_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

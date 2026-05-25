@@ -36,7 +36,6 @@ FROM_CONSTANTS_RE = re.compile(
     r"^\s*from\s+mlsysim\.core\.constants\s+import\s+(.+)$"
 )
 
-
 def _constants_defined_names() -> set[str]:
     source = CONSTANTS_PATH.read_text(encoding="utf-8")
     names: set[str] = set()
@@ -46,7 +45,6 @@ def _constants_defined_names() -> set[str]:
                 if isinstance(target, ast.Name):
                     names.add(target.id)
     return names
-
 
 def _legacy_symbols() -> set[str]:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -61,7 +59,6 @@ def _legacy_symbols() -> set[str]:
             legacy.add(entry["name"])
     return legacy
 
-
 def _parse_imported_names(import_clause: str) -> set[str]:
     names: set[str] = set()
     for part in import_clause.split(","):
@@ -72,7 +69,6 @@ def _parse_imported_names(import_clause: str) -> set[str]:
             part = part.split(" as ", 1)[0].strip()
         names.add(part)
     return names
-
 
 def _scan_file(path: Path, legacy: set[str]) -> list[tuple[int, str, str]]:
     hits: list[tuple[int, str, str]] = []
@@ -87,7 +83,6 @@ def _scan_file(path: Path, legacy: set[str]) -> list[tuple[int, str, str]]:
         if bad:
             hits.append((lineno, line.strip(), ", ".join(bad)))
     return hits
-
 
 def test_no_legacy_symbols_imported_from_constants() -> None:
     if not MANIFEST_PATH.exists():
@@ -107,7 +102,7 @@ def test_no_legacy_symbols_imported_from_constants() -> None:
                 rel = path.relative_to(REPO_ROOT)
                 violations.append(f"{rel}:{lineno}: imports {symbols}\n  {line}")
     assert not violations, (
-        "Legacy symbols must use registry/defaults paths, not constants imports:\n"
+        "Legacy symbols must use registry paths, not constants imports:\n"
         + "\n".join(violations[:40])
         + (f"\n... and {len(violations) - 40} more" if len(violations) > 40 else "")
     )

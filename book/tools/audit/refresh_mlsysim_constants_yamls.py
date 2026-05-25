@@ -14,7 +14,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 YAML_DIR = REPO_ROOT / "book" / "tools" / "audits" / "mlsysim_constants"
 AUDIT_DIR = REPO_ROOT / "book" / "tools" / "audit"
 
-
 def _load_merged_mapping() -> dict[str, str]:
     spec = importlib.util.spec_from_file_location(
         "migrate_constants_to_registry",
@@ -25,7 +24,6 @@ def _load_merged_mapping() -> dict[str, str]:
     spec.loader.exec_module(mod)
     return mod.merged_mapping()
 
-
 def _fmt_target(target: str) -> str:
     if target.startswith("mlsysim."):
         return target
@@ -35,13 +33,11 @@ def _fmt_target(target: str) -> str:
         return f"mlsysim.{target}"
     return target
 
-
 def _tokens_from_value(value: str) -> list[str]:
     if not value or value in ("null", "~"):
         return []
     parts = re.split(r"[,\s]+", value.strip().strip('"').strip("'"))
     return [p for p in parts if re.match(r"^[A-Z][A-Z0-9_]+$", p)]
-
 
 APPENDIX_NAPKIN_OVERRIDES: dict[str, dict[str, str]] = {
     "gpt3_accelerators": {
@@ -57,7 +53,6 @@ APPENDIX_NAPKIN_OVERRIDES: dict[str, dict[str, str]] = {
         "current_source": "mlsysim",
     },
 }
-
 
 def finalize_yaml(path: Path) -> bool:
     """Mark migration audit entries complete after QMD migration lands."""
@@ -83,7 +78,6 @@ def finalize_yaml(path: Path) -> bool:
             encoding="utf-8",
         )
     return changed
-
 
 def refresh_yaml(path: Path, mapping: dict[str, str]) -> bool:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -119,7 +113,6 @@ def refresh_yaml(path: Path, mapping: dict[str, str]) -> bool:
         )
     return changed
 
-
 def main() -> int:
     finalize = "--finalize" in sys.argv
     mapping = _load_merged_mapping()
@@ -133,7 +126,6 @@ def main() -> int:
             print(f"updated {path.name}")
     print(f"Done: {updated}/{len(list(YAML_DIR.glob('*.yaml')))} files changed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

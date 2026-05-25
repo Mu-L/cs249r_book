@@ -1,8 +1,8 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
 from .constants import ureg, Q_, BYTES_FP16, PRECISION_MAP
-from .defaults import HFU_MFU_RATIO
-from .formulas import calc_bottleneck
+from .calibration import HFU_MFU_RATIO, FRAMEWORK_LAYER_TAX_MS
+from ..physics import calc_bottleneck
 from .exceptions import OOMError
 from ._validation import validate_range, validate_at_least
 from ..models.types import Workload
@@ -250,7 +250,6 @@ class Engine:
         # Calculate layer-wise software tax
         # Source: Reddi et al. (2025), Wall 7 (Framework Overhead)
         num_layers = getattr(model, 'layers', 1) or 1
-        from .defaults import FRAMEWORK_LAYER_TAX_MS
         # Training has ~3x the launches of inference (Fwd, GradW, GradA)
         launch_multiplier = 3 if is_training else 1
         layer_tax = Q_(num_layers * FRAMEWORK_LAYER_TAX_MS * launch_multiplier, "ms")

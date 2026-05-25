@@ -87,7 +87,6 @@ CANONICAL = [
     ("nvlink_a100",    600,   0.02, "Hardware.Cloud.A100.nvlink.bandwidth"),
 ]
 
-
 # Python LEGO cells are fenced ```{python} ... ```
 CELL_OPEN_RE = re.compile(r"^```\s*\{python\b[^}]*\}\s*$")
 CELL_CLOSE_RE = re.compile(r"^```\s*$")
@@ -96,7 +95,6 @@ CELL_CLOSE_RE = re.compile(r"^```\s*$")
 ASSIGN_RE = re.compile(
     r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([0-9][0-9_]*(?:\.[0-9_]+)?(?:[eE][+\-]?[0-9]+)?)\b"
 )
-
 
 def python_cells(qmd_text: str):
     """Yield (start_line, line) for each line inside a {python} fence."""
@@ -111,13 +109,11 @@ def python_cells(qmd_text: str):
         if in_cell:
             yield i, line
 
-
 def parse_literal(s: str) -> float | None:
     try:
         return float(s.replace("_", ""))
     except ValueError:
         return None
-
 
 def matches_canonical(var_name: str, value: float):
     """Return list of canonical matches for this (var, value) pair."""
@@ -133,7 +129,6 @@ def matches_canonical(var_name: str, value: float):
         if rel_error <= tol:
             matches.append((fragment, canon_value, path))
     return matches
-
 
 def audit_file(path: Path) -> list:
     text = path.read_text(encoding="utf-8", errors="ignore")
@@ -153,7 +148,6 @@ def audit_file(path: Path) -> list:
         if canon:
             findings.append((path, lineno, line.rstrip(), var, val, canon))
     return findings
-
 
 def main():
     root = Path("book/quarto/contents")
@@ -180,7 +174,6 @@ def main():
         print(f"           {line.strip()}")
     print(f"\nTotal: {len(all_findings)} drift candidates")
     return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

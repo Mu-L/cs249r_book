@@ -42,7 +42,6 @@ app = marimo.App(width="full")
 # Design Ledger: chapter="v2_09"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: SETUP + OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -72,8 +71,7 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
+    from mlsysim import Hardware, Models
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -146,7 +144,6 @@ async def _():
         PPL_INT4_NAIVE, PPL_INT4_OUTLIER,
     )
 
-
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -196,7 +193,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -261,7 +257,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -278,7 +273,6 @@ def _(mo):
       and why outlier-aware methods preserve quality.
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS (one cell per prediction + controls chain)
@@ -301,7 +295,6 @@ def _(mo):
         ),
     )
     return (pA_pred,)
-
 
 # ─── CELL 5: Part A controls + Part B prediction ────────────────────────────
 @app.cell(hide_code=True)
@@ -350,7 +343,6 @@ def _(mo):
     )
     return (pA_batch, pA_gpu, pA_op, pB_pred)
 
-
 # ─── CELL 6: Part B controls + Part C prediction ────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -370,7 +362,6 @@ def _(mo):
     )
     return (pB_seqlen, pC_pred)
 
-
 # ─── CELL 7: Part D prediction ──────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -388,7 +379,6 @@ def _(mo):
         ),
     )
     return (pD_pred,)
-
 
 # ─── CELL 8: Part D controls + Part E prediction ────────────────────────────
 @app.cell(hide_code=True)
@@ -414,7 +404,6 @@ def _(mo):
     )
     return (pD_precision, pE_pred)
 
-
 # ─── CELL 9: Part E controls ────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -439,7 +428,6 @@ def _(mo):
         label="Select optimization",
     )
     return (pE_optim, pE_workload)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL (all build_part functions + mo.ui.tabs)
@@ -1401,7 +1389,6 @@ Ratio      = N / (2d) = 32768 / 256 = {_actual_ratio:.0f}x
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER HUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1433,7 +1420,6 @@ def _(COLORS, ledger, mo, pA_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

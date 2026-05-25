@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -59,7 +58,6 @@ async def _():
         LAB_CSS, apply_plotly_theme, go, math, mo, np, ledger, mlsysim,
     )
 
-
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -109,7 +107,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -181,7 +178,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -198,7 +194,6 @@ def _(mo):
       family and the roofline model connection.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
@@ -303,7 +298,6 @@ def _(mo):
         start=1, stop=256, value=1, step=1, label="Batch size",
     )
     return (partD_batch_d,)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -859,9 +853,9 @@ The hardware ridge point (peak_FLOPS / peak_BW) determines the crossover.
 
         # Use Engine.solve for representative models
         _models = [
-            ("ResNet-50 (CNN)", mlsysim.Models.ResNet50),
-            ("GPT-2 (Transformer)", mlsysim.Models.GPT2),
-            ("MobileNetV2 (CNN)", mlsysim.Models.MobileNetV2),
+            ("ResNet-50 (CNN)", mlsysim.Models.Vision.ResNet50),
+            ("GPT-2 (Transformer)", mlsysim.Models.Language.GPT2),
+            ("MobileNetV2 (CNN)", mlsysim.Models.Vision.MobileNetV2),
         ]
         _results = []
         for _name, _model in _models:
@@ -1055,7 +1049,6 @@ Using the four analyses from this lab, justify:
     tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1089,7 +1082,6 @@ def _(COLORS, ledger, mo, partA_prediction, partD_prediction):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

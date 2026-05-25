@@ -304,7 +304,7 @@ carbon footprint of a long training run.
 ### Setup
 
 ```python
-from mlsysim import SustainabilityModel, Infra, Systems
+from mlsysim import SustainabilityModel, Infrastructure, Systems
 
 sustain = SustainabilityModel()
 fleet   = Systems.Clusters.Research_256  # 256 H100s
@@ -317,14 +317,14 @@ Quebec (hydroelectric).
 
 ```python
 # Virginia (US Average)
-r_va = sustain.solve(fleet, duration_days=30, datacenter=Infra.US_Avg, mfu=0.4)
+r_va = sustain.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.US_Avg, mfu=0.4)
 print(f"=== Virginia (US Average Grid) ===")
 print(f"Energy:  {r_va.total_energy_kwh:,.0f} kWh")
 print(f"Carbon:  {r_va.carbon_footprint_kg:,.0f} kg CO2")
 print(f"Water:   {r_va.water_usage_liters:,.0f} liters")
 
 # Quebec (Hydro)
-r_qc = sustain.solve(fleet, duration_days=30, datacenter=Infra.Quebec, mfu=0.4)
+r_qc = sustain.solve(fleet, duration_days=30, datacenter=Infrastructure.Grids.Quebec, mfu=0.4)
 print(f"\n=== Quebec (Hydroelectric) ===")
 print(f"Energy:  {r_qc.total_energy_kwh:,.0f} kWh")
 print(f"Carbon:  {r_qc.carbon_footprint_kg:,.0f} kg CO2")
@@ -381,7 +381,7 @@ that maximizes throughput while meeting latency SLAs.
 ```python
 from mlsysim import (
     EconomicsModel, ServingModel, Hardware, Models,
-    Systems, Infra
+    Systems, Infrastructure
 )
 from mlsysim.systems.types import Fleet, Node, NetworkFabric
 from mlsysim.systems.registry import Nodes, Fabrics
@@ -406,7 +406,7 @@ configs = [
 for name, hw, node_template, n_nodes in configs:
     fleet = Fleet(
         name=name, node=node_template, count=n_nodes,
-        fabric=Fabrics.InfiniBand_NDR, region=Infra.US_Avg
+        fabric=Fabrics.InfiniBand_NDR, region=Infrastructure.Grids.US_Avg
     )
     # Economics: 365-day TCO
     tco = econ.solve(fleet, duration_days=365, mfu=0.3)
@@ -578,7 +578,7 @@ at 1000 QPS, within a $5M annual budget, deployed across two regions.
 ```python
 from mlsysim import (
     ServingModel, EconomicsModel, SustainabilityModel, CompressionModel,
-    Hardware, Models, Infra
+    Hardware, Models, Infrastructure
 )
 from mlsysim.systems.types import Fleet
 from mlsysim.systems.registry import Nodes, Fabrics
@@ -633,9 +633,9 @@ for us_pct in [0.3, 0.5, 0.7]:
     n_qc = n_total - n_us
 
     fleet_us = Fleet(name="US East", node=Nodes.DGX_H100, count=max(1,n_us),
-                     fabric=Fabrics.InfiniBand_NDR, region=Infra.US_Avg)
+                     fabric=Fabrics.InfiniBand_NDR, region=Infrastructure.Grids.US_Avg)
     fleet_qc = Fleet(name="Quebec", node=Nodes.DGX_H100, count=max(1,n_qc),
-                     fabric=Fabrics.InfiniBand_NDR, region=Infra.Quebec)
+                     fabric=Fabrics.InfiniBand_NDR, region=Infrastructure.Grids.Quebec)
 
     tco_us = econ.solve(fleet_us, duration_days=365, mfu=0.3)
     tco_qc = econ.solve(fleet_qc, duration_days=365, mfu=0.3)

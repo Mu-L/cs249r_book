@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -72,7 +71,6 @@ async def _():
         LAB_CSS, apply_plotly_theme, go, math, mo, np, ledger, mlsysim,
     )
 
-
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -121,7 +119,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -193,7 +190,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -210,7 +206,6 @@ def _(mo):
       from PyTorch (1,800 MB) to TF Lite Micro (50 KB).
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
@@ -320,7 +315,6 @@ def _(mo):
         value="MCU (ESP32 512KB)", label="Deployment target:", inline=True,
     )
     return (partD_framework, partD_target)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1016,7 +1010,6 @@ Justify each choice with specific numbers from the lab.
     tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1051,7 +1044,6 @@ def _(COLORS, ledger, mo, partA_prediction, partD_prediction):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

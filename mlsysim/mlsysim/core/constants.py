@@ -10,16 +10,16 @@
 #
 # Hardware specifications belong in: `mlsysim/hardware/registry.py`
 # Model specifications belong in: `mlsysim/models/registry.py`
-# Architecture formulas belong in: `mlsysim/physics/` (re-exported via core.formulas)
+# Architecture formulas belong in: `mlsysim/physics/`
 #
-# Measurement units live in units.py; tuneable simulation defaults live in
-# defaults.py (import explicitly — not re-exported here).
+# Measurement units live in units.py; domain assumptions live in registries
+# (Systems, Literature, Infrastructure) and core/calibration.py — not re-exported here.
 #
 # CI: mlsysim/tests/test_constants_allowlist.py guards this contract.
 
 from .units import *  # noqa: F401,F403 — re-export full unit registry
 
-# --- Legacy System Ratios / Physics ---
+# --- System ratios / physics ---
 # (Chip-specific numbers live in mlsysim/hardware/registry.py)
 
 # --- Latency Hierarchy (2025 Reference) ---
@@ -120,23 +120,6 @@ ML_WORKFLOW_STAGE_PROBLEM_DEFINITION = 1
 ML_WORKFLOW_STAGE_DEPLOYMENT = 5
 ML_WORKFLOW_STAGE_MONITORING = 6
 ML_WORKFLOW_CONSTRAINT_COST_BASE = 2
-
-# --- Deployment Tiers (Reference Envelopes) ---
-CLOUD_LATENCY_RANGE_MS = "100-500"
-EDGE_LATENCY_RANGE_MS = "10-100"
-MOBILE_LATENCY_RANGE_MS = "5-50"
-TINY_LATENCY_RANGE_MS = "1-10"
-
-MOBILE_RAM_RANGE_GB = "8-16"
-MOBILE_STORAGE_RANGE = "128 GB-1 TB"
-MOBILE_TDP_RANGE_W = "3-5"
-
-# Deployment tiers (reference capacities)
-SMARTPHONE_RAM_GB = 8 * GB
-MCU_RAM_KIB = 512 * KiB
-CLOUD_MEM_GIB = 100 * GiB
-MOBILE_MEM_GIB = 8 * GiB
-TINY_MEM_KIB = 512 * KiB
 
 # Google Search (Reference)
 GOOGLE_SEARCHES_PER_DAY = 8.5e9

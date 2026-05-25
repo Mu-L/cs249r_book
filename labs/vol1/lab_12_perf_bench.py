@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 0: SETUP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -46,8 +45,8 @@ async def _():
     JETSON_TFLOPS = mlsysim.Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
     JETSON_TDP    = mlsysim.Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
 
-    RESNET50_FLOPS = mlsysim.Models.ResNet50.inference_flops.m_as("flop")
-    RESNET50_PARAMS = mlsysim.Models.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS = mlsysim.Models.Vision.ResNet50.inference_flops.m_as("flop")
+    RESNET50_PARAMS = mlsysim.Models.Vision.ResNet50.parameters.m_as("count")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -59,7 +58,6 @@ async def _():
         LAB_CSS, RESNET50_FLOPS, RESNET50_PARAMS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 1: HEADER
@@ -111,7 +109,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 2: BRIEFING
@@ -179,7 +176,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 3: READING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -198,7 +194,6 @@ def _(mo):
     - **Chapter 11: Hardware Acceleration** -- Roofline model and hardware constraints.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 4: TABS (Parts A-D + Synthesis)
@@ -287,7 +282,6 @@ def _(mo):
     pD_sigma = mo.ui.slider(start=0.1, stop=1.5, value=0.8, step=0.05, label="Tail heaviness (sigma)")
     pD_slo = mo.ui.slider(start=50, stop=500, value=200, step=10, label="SLO threshold (ms)")
     return (pD_sigma, pD_slo)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1026,7 +1020,6 @@ At $\\sigma = 0.8$ (typical for inference), $P_{99}/\\text{Mean} \\approx 5\\tex
     _tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 5: LEDGER HUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1058,7 +1051,6 @@ def _(COLORS, ledger, mo, pA_pred, pB_pred, pC_pred, pD_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

@@ -17,7 +17,16 @@ CELL_END = re.compile(r"^```\s*$")
 ALIAS_BANNED = re.compile(
     r"Systems\.Tiers\b|"
     r"\bHardware\.(H100|A100|V100|B200|ESP32|Jetson|iPhone)\b|"
-    r"\bInfra\."
+    r"\bInfra\.|"
+    r"\bdefaults\.|"
+    r"\bGPUS_PER_HOST\b(?!_)|"
+    r"\bALLREDUCE_FACTOR\b(?!_)"
+)
+
+# Re-exporting registry scalars under legacy flat names (use registry paths inline).
+REGISTRY_REEXPORT = re.compile(
+    r"^[A-Z][A-Z0-9_]+ = (Systems|Infrastructure|Literature|Ops|calibration)\.",
+    re.M,
 )
 
 FROM_CONSTANTS = re.compile(r"^\s*from\s+mlsysim\.core\.constants\s+import\s+(.+)$", re.M)
@@ -42,10 +51,21 @@ LEGACY_IMPORT_NAMES = frozenset(
             "CLUSTER_LARGE_GPUS",
             "IMAGENET_IMAGES",
             "RESNET50_FLOPs",
+            "CLOUD_LATENCY_RANGE_MS",
+            "CLOUD_MEM_GIB",
+            "EDGE_LATENCY_RANGE_MS",
+            "MOBILE_LATENCY_RANGE_MS",
+            "TINY_LATENCY_RANGE_MS",
+            "MOBILE_RAM_RANGE_GB",
+            "MOBILE_STORAGE_RANGE",
+            "MOBILE_TDP_RANGE_W",
+            "SMARTPHONE_RAM_GB",
+            "MCU_RAM_KIB",
+            "MOBILE_MEM_GIB",
+            "TINY_MEM_KIB",
         )
     }
 )
-
 
 def _parse_imported_names(import_clause: str) -> set[str]:
     names: set[str] = set()
@@ -57,7 +77,6 @@ def _parse_imported_names(import_clause: str) -> set[str]:
             part = part.split(" as ", 1)[0].strip()
         names.add(part)
     return names
-
 
 def python_cells(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -74,12 +93,15 @@ def python_cells(path: Path) -> list[str]:
             i += 1
     return blocks
 
-
 def check_file(path: Path) -> list[str]:
     issues: list[str] = []
     for idx, block in enumerate(python_cells(path), start=1):
         if ALIAS_BANNED.search(block):
-            issues.append(f"cell {idx}: banned legacy alias (use Hardware.Cloud.* / Systems.*)")
+            issues.append(f"cell {idx}: banned legacy alias (use registry paths)")
+        if REGISTRY_REEXPORT.search(block):
+            issues.append(
+                f"cell {idx}: registry re-export alias — use Systems.* / Infrastructure.* / Literature.* inline"
+            )
         for m in FROM_CONSTANTS.finditer(block):
             imported = _parse_imported_names(m.group(1))
             if "*" in m.group(1):
@@ -90,7 +112,6 @@ def check_file(path: Path) -> list[str]:
                     f"cell {idx}: legacy symbol import from constants: {', '.join(bad)}"
                 )
     return issues
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -118,7 +139,6 @@ def main() -> int:
         return 1
     print(f"OK registry sources ({len(paths)} QMD files checked)")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

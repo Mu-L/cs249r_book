@@ -27,11 +27,9 @@ app = marimo.App(width="full")
 # Design Ledger: saves chapter="v2_16"
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 0: SETUP ────────────────────────────────────────────────────────
 @app.cell
@@ -57,9 +55,7 @@ async def _():
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim.hardware.registry import Hardware
-    from mlsysim.models.registry import Models
-    from mlsysim.systems.registry import Systems
+    from mlsysim import Hardware, Models, Systems
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -111,7 +107,6 @@ async def _():
         ALLREDUCE_RING_EFF, GRADIENT_COMPRESS,
         DecisionLog,
     )
-
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────
 
@@ -180,7 +175,6 @@ def _(mo, LAB_CSS, COLORS, CARBON_CAP, FAIRNESS_METRIC, FAIRNESS_OVERHEAD_MS):
     ])
     return
 
-
 # ─── CELL 2: BRIEFING ──────────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -235,7 +229,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: READING ───────────────────────────────────────────────────────
 
 @app.cell(hide_code=True)
@@ -248,11 +241,9 @@ def _(mo):
     """), kind="info")
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET CELLS
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 # ─── CELL 4: Part A prediction + Part A fleet toggle ──────────────────────
 @app.cell(hide_code=True)
@@ -272,7 +263,6 @@ def _(mo):
     )
     return (partA_fleet_toggle, partA_pred)
 
-
 # ─── CELL 5: Part B prediction + Part B sliders ──────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -284,7 +274,6 @@ def _(mo):
     partB_mtbf_slider = mo.ui.slider(start=1000, stop=100000, value=10000, step=1000, label="Per-GPU MTBF (hours)")
     partB_ckpt_slider = mo.ui.slider(start=1, stop=30, value=10, step=1, label="Checkpoint interval (minutes)")
     return (partB_ckpt_slider, partB_fleet_slider, partB_mtbf_slider, partB_pred)
-
 
 # ─── CELL 6: Part C prediction + Part C sliders ──────────────────────────
 @app.cell(hide_code=True)
@@ -305,7 +294,6 @@ def _(mo):
     partC_sustain = mo.ui.slider(start=30, stop=100, value=70, step=5, label="Sustainability (%)")
     partC_fair = mo.ui.slider(start=30, stop=100, value=70, step=5, label="Fairness (%)")
     return (partC_comm, partC_compute, partC_fair, partC_fault, partC_pred, partC_sched, partC_sustain)
-
 
 # ─── CELL 7: Part D prediction + Part D controls ─────────────────────────
 @app.cell(hide_code=True)
@@ -330,11 +318,9 @@ def _(mo):
     )
     return (partD_ckpt_freq, partD_comm_strategy, partD_gpus, partD_refl, partD_scheduling)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1279,11 +1265,9 @@ any single axis while ignoring coupling effects will push another axis into the 
     tabs
     return (tabs, fleet_target_met, fleet_effective_gain, fleet_axes,)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER HUD
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 @app.cell(hide_code=True)
 def _(mo, ledger, COLORS, fleet_target_met, fleet_effective_gain, fleet_axes):
@@ -1310,7 +1294,6 @@ def _(mo, ledger, COLORS, fleet_target_met, fleet_effective_gain, fleet_axes):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

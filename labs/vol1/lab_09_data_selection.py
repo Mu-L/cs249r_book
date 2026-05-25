@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 0: SETUP
 # ═════════════════════════════════════════════════════════════════════════════
@@ -46,10 +45,10 @@ async def _():
     JETSON_RAM    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
 
     # ── Model constants from registry ─────────────────────────────────────
-    RESNET50_PARAMS = mlsysim.Models.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS  = mlsysim.Models.ResNet50.inference_flops.m_as("flop")
-    MOBILENET_PARAMS = mlsysim.Models.MobileNetV2.parameters.m_as("count")
-    MOBILENET_FLOPS  = mlsysim.Models.MobileNetV2.inference_flops.m_as("flop")
+    RESNET50_PARAMS = mlsysim.Models.Vision.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS  = mlsysim.Models.Vision.ResNet50.inference_flops.m_as("flop")
+    MOBILENET_PARAMS = mlsysim.Models.Vision.MobileNetV2.parameters.m_as("count")
+    MOBILENET_FLOPS  = mlsysim.Models.Vision.MobileNetV2.inference_flops.m_as("flop")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -61,7 +60,6 @@ async def _():
         RESNET50_FLOPS, RESNET50_PARAMS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 1: HEADER
@@ -113,7 +111,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 2: BRIEFING
@@ -180,7 +177,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 3: READING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -201,7 +197,6 @@ def _(mo):
     - **Chapter 8: Training** -- training loop fundamentals and batch processing.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 4: TABS (Parts A-D + Synthesis)
@@ -330,7 +325,6 @@ def _(mo):
         label="Model size (B parameters)",
     )
     return (partD_params_b,)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1159,7 +1153,6 @@ The optimal ratio is $D/N \\approx 20$ -- most teams over-allocate to model size
     _tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CELL 5: LEDGER HUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1191,7 +1184,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

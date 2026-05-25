@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report missing or weak provenance on registry entries and sourced defaults."""
+"""Report missing or weak provenance on registry entries."""
 
 from __future__ import annotations
 
@@ -7,9 +7,14 @@ import argparse
 import sys
 from typing import Any, Iterable
 
-from mlsysim.core import defaults
-from mlsysim.core.appendix_lineage import audit_appendix_defaults
-from mlsysim.core.provenance import Provenance, ProvenanceKind, Sourced, TraceableConstant
+from mlsysim.core.appendix_lineage import (
+    audit_appendix_defaults,
+    audit_appendix_literature,
+    audit_appendix_pricing,
+    audit_appendix_reliability,
+)
+from mlsysim.core.provenance import Provenance, ProvenanceKind, Sourced
+from mlsysim.core.registry import Registry
 from mlsysim.hardware.registry import (
     CloudHardware,
     EdgeHardware,
@@ -18,6 +23,9 @@ from mlsysim.hardware.registry import (
     WorkstationHardware,
 )
 from mlsysim.infra.registry import Grids
+from mlsysim.infra.pricing import Cloud, Storage, Labeling, Fleet, Capital
+from mlsysim.infra.capacity import Capacity
+from mlsysim.literature.registry import Training, Scaling, Overheads, Chinchilla, Communication
 from mlsysim.models.registry import (
     GenerativeVisionModels,
     LanguageModels,
@@ -26,8 +34,6 @@ from mlsysim.models.registry import (
     TinyModels,
     VisionModels,
 )
-
-
 def _registry_nodes(registry_cls: type) -> Iterable[Any]:
     if not hasattr(registry_cls, "list"):
         return []
@@ -53,9 +59,15 @@ def _validate_provenance_record(path: str, prov: Provenance | None) -> list[str]
 
 def _check_node(path: str, node: Any) -> list[str]:
     meta = getattr(node, "metadata", None)
-    if meta is None:
-        return [f"{path}: no metadata"]
-    return _validate_provenance_record(path, getattr(meta, "provenance", None))
+    if meta is not None:
+        return _validate_provenance_record(path, getattr(meta, "provenance", None))
+    if isinstance(node, Sourced):
+        return _validate_provenance_record(path, node.provenance)
+    if hasattr(node, "mttf_hours"):
+        return _validate_provenance_record(path, getattr(node.mttf_hours, "provenance", None))
+    if hasattr(node, "rate"):
+        return _check_node(path, node)
+    return []
 
 
 def audit_registries(*, scope_cloud: bool = False) -> list[str]:
@@ -92,18 +104,73 @@ def audit_infra_grids() -> list[str]:
     return issues
 
 
-def audit_defaults_traceable() -> list[str]:
+def audit_infra_pricing() -> list[str]:
     issues: list[str] = []
-    for name in dir(defaults):
+    for prefix, reg in (
+        ("Infrastructure.Pricing.Cloud", Cloud),
+        ("Infrastructure.Pricing.Storage", Storage),
+        ("Infrastructure.Pricing.Labeling", Labeling),
+        ("Infrastructure.Pricing.Fleet", Fleet),
+        ("Infrastructure.Pricing.Capital", Capital),
+    ):
+        for point in _registry_nodes(reg):
+            name = getattr(point, "name", type(point).__name__)
+            issues.extend(_check_node(f"{prefix}.{name}", point))
+    return issues
+
+
+def audit_infra_capacity() -> list[str]:
+    issues: list[str] = []
+    for val in _registry_nodes(Capacity):
+        if isinstance(val, Sourced):
+            issues.extend(_validate_provenance_record("Infrastructure.Capacity", val.provenance))
+    return issues
+
+
+def audit_literature_sourced() -> list[str]:
+    issues: list[str] = []
+    for prefix, reg in (
+        ("Literature.Training", Training),
+        ("Literature.Scaling", Scaling),
+        ("Literature.Overheads", Overheads),
+        ("Literature.Chinchilla", Chinchilla),
+        ("Literature.Communication", Communication),
+    ):
+        for item in _registry_nodes(reg):
+            if isinstance(item, Sourced):
+                issues.extend(_validate_provenance_record(f"{prefix}", item.provenance))
+    return issues
+
+
+def audit_calibration_sourced() -> list[str]:
+    issues: list[str] = []
+    from mlsysim.core import calibration as cal
+
+    for name in dir(cal):
         if name.startswith("_"):
             continue
-        val = getattr(defaults, name)
-        if isinstance(val, TraceableConstant):
+        val = getattr(cal, name)
+        if isinstance(val, Sourced):
             issues.extend(
-                _validate_provenance_record(f"defaults.{name}", getattr(val, "provenance", None))
+                _validate_provenance_record(f"core.calibration.{name}", val.provenance)
             )
-        elif isinstance(val, Sourced):
-            issues.extend(_validate_provenance_record(f"defaults.{name}", val.provenance))
+    return issues
+
+
+def audit_systems_reliability() -> list[str]:
+    from mlsysim.systems.reliability import Reliability
+
+    issues: list[str] = []
+    for comp in _registry_nodes(Reliability):
+        if hasattr(comp, "name"):
+            issues.extend(_check_node(f"Systems.Reliability.{comp.name}", comp))
+    recovery = Reliability.Recovery
+    for field in ("heartbeat_timeout_s", "reschedule_time_s", "checkpoint_write_bw_gbs"):
+        val = getattr(recovery, field)
+        if isinstance(val, Sourced):
+            issues.extend(
+                _validate_provenance_record(f"Systems.Reliability.Recovery.{field}", val.provenance)
+            )
     return issues
 
 
@@ -111,28 +178,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scope",
-        choices=("defaults", "cloud", "all", "textbook"),
-        default="defaults",
-        help="What to scan (textbook = full gates for assumption appendices)",
+        choices=("cloud", "all", "textbook"),
+        default="textbook",
+        help="What to scan",
     )
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Exit 1 when any issue is found (default: report only)",
+        help="Exit 1 when any issue is found",
     )
     args = parser.parse_args(argv)
 
     issues: list[str] = []
-    if args.scope in ("defaults",):
-        issues.extend(audit_defaults_traceable())
     if args.scope == "cloud":
         issues.extend(audit_registries(scope_cloud=True))
     if args.scope in ("all", "textbook"):
-        issues.extend(audit_defaults_traceable())
         issues.extend(audit_registries(scope_cloud=False))
         issues.extend(audit_infra_grids())
+        issues.extend(audit_infra_pricing())
+        issues.extend(audit_infra_capacity())
+        issues.extend(audit_literature_sourced())
+        issues.extend(audit_systems_reliability())
+        issues.extend(audit_calibration_sourced())
     if args.scope == "textbook":
         issues.extend(audit_appendix_defaults())
+        issues.extend(audit_appendix_pricing())
+        issues.extend(audit_appendix_reliability())
+        issues.extend(audit_appendix_literature())
 
     if issues:
         print(f"Provenance audit ({args.scope}): {len(issues)} issue(s)")

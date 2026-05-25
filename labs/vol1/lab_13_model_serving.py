@@ -3,8 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
-
 # ===========================================================================
 # ZONE A: OPENING
 # ===========================================================================
@@ -50,8 +48,8 @@ async def _():
     NVME_SEQ_GBS  = NVME_SEQUENTIAL_BW.m_as("GB/s")
     NET_FS_GBS    = 1.25
 
-    RESNET50_PARAMS = mlsysim.Models.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS  = mlsysim.Models.ResNet50.inference_flops.m_as("flop")
+    RESNET50_PARAMS = mlsysim.Models.Vision.ResNet50.parameters.m_as("count")
+    RESNET50_FLOPS  = mlsysim.Models.Vision.ResNet50.inference_flops.m_as("flop")
 
     LLAMA2_70B_PARAMS = mlsysim.Models.Language.Llama2_70B.parameters.m_as("count")
     LLAMA2_70B_LAYERS = mlsysim.Models.Language.Llama2_70B.layers
@@ -69,7 +67,6 @@ async def _():
         PCIE_GEN5_GBS, RESNET50_FLOPS, RESNET50_PARAMS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
-
 
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -116,7 +113,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 @app.cell(hide_code=True)
 def _(COLORS, mo):
@@ -173,8 +169,6 @@ def _(COLORS, mo):
     """)
     return
 
-
-
 # ===========================================================================
 # ZONE B: WIDGET DEFINITIONS
 # ===========================================================================
@@ -188,7 +182,6 @@ def _(mo):
       batching strategies, KV cache management, and cold start latency.
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN LAB CELL
@@ -287,7 +280,6 @@ def _(mo):
     partD_pcie = mo.ui.dropdown(options={"PCIe Gen4": "gen4", "PCIe Gen5": "gen5"},
                                  value="PCIe Gen5", label="Interconnect")
     return (partD_model, partD_pcie, partD_stor)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -988,8 +980,6 @@ Cold start is dominated by data movement: 140 GB / 7 GB/s = 20s from NVMe alone.
     tabs
     return
 
-
-
 # ===========================================================================
 # ZONE D: LEDGER HUD
 # ===========================================================================
@@ -1016,7 +1006,6 @@ def _(COLORS, ledger, mo, partA_pred, partB_pred, partC_pred, partD_pred):
         <span class="hud-label">STATUS</span><span class="hud-active">ACTIVE</span>
     </div>""")
     return
-
 
 if __name__ == "__main__":
     app.run()

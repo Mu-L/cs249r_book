@@ -58,7 +58,6 @@ HARDWARE_MAP = {
     "DLRM_EMBEDDING_ENTRIES": "Models.Recommendation.DLRM.embedding_entries",
 }
 
-
 def load_map_constants() -> dict[str, str]:
     spec = importlib.util.spec_from_file_location("map_constants", MAP_PATH)
     assert spec and spec.loader
@@ -66,62 +65,61 @@ def load_map_constants() -> dict[str, str]:
     spec.loader.exec_module(mod)
     return dict(getattr(mod, "mapping", {}))
 
-
 _MAPPING_CACHE: dict[str, str] | None = None
 
 DEFAULTS_MAP = {
-    "CLOUD_EGRESS_PER_GB": "defaults.CLOUD_EGRESS_PER_GB",
-    "CLOUD_ELECTRICITY_PER_KWH": "defaults.CLOUD_ELECTRICITY_PER_KWH",
-    "CLOUD_GPU_TRAINING_PER_HOUR": "defaults.CLOUD_GPU_TRAINING_PER_HOUR",
-    "CLOUD_GPU_INFERENCE_PER_HOUR": "defaults.CLOUD_GPU_INFERENCE_PER_HOUR",
-    "TPU_V4_PER_HOUR": "defaults.TPU_V4_PER_HOUR",
-    "FLEET_GPU_HOUR_COST_REF": "defaults.FLEET_GPU_HOUR_COST_REF",
-    "FLEET_SPOT_GPU_HOUR_COST_REF": "defaults.FLEET_SPOT_GPU_HOUR_COST_REF",
-    "FLEET_INTERNAL_CHARGEBACK_PER_HOUR": "defaults.FLEET_INTERNAL_CHARGEBACK_PER_HOUR",
-    "CARBON_PER_GPU_HR_KG": "defaults.CARBON_PER_GPU_HR_KG",
-    "STORAGE_COST_S3_STD": "defaults.STORAGE_COST_S3_STD",
-    "STORAGE_COST_GLACIER": "defaults.STORAGE_COST_GLACIER",
-    "STORAGE_COST_NVME_LOW": "defaults.STORAGE_COST_NVME_LOW",
-    "STORAGE_COST_NVME_HIGH": "defaults.STORAGE_COST_NVME_HIGH",
-    "RETRIEVAL_COST_GLACIER": "defaults.RETRIEVAL_COST_GLACIER",
-    "LABELING_COST_CROWD_LOW": "defaults.LABELING_COST_CROWD_LOW",
-    "LABELING_COST_CROWD_HIGH": "defaults.LABELING_COST_CROWD_HIGH",
-    "LABELING_COST_BOX_LOW": "defaults.LABELING_COST_BOX_LOW",
-    "LABELING_COST_BOX_HIGH": "defaults.LABELING_COST_BOX_HIGH",
-    "LABELING_COST_MEDICAL_LOW": "defaults.LABELING_COST_MEDICAL_LOW",
-    "LABELING_COST_MEDICAL_HIGH": "defaults.LABELING_COST_MEDICAL_HIGH",
-    "LEAD_TIME_GPU_MONTHS": "defaults.LEAD_TIME_GPU_MONTHS",
-    "LEAD_TIME_SUBSTATION_MONTHS": "defaults.LEAD_TIME_SUBSTATION_MONTHS",
-    "GRID_INTERCONNECTION_QUEUE_US_GW": "defaults.GRID_INTERCONNECTION_QUEUE_US_GW",
-    "PUE_LIQUID_COOLED": "defaults.PUE_LIQUID_COOLED",
-    "PUE_BEST_AIR": "defaults.PUE_BEST_AIR",
-    "PUE_TYPICAL": "defaults.PUE_TYPICAL",
-    "PUE_LEGACY": "defaults.PUE_LEGACY",
-    "CARBON_US_AVG_GCO2_KWH": "defaults.CARBON_US_AVG_GCO2_KWH",
-    "CARBON_QUEBEC_GCO2_KWH": "defaults.CARBON_QUEBEC_GCO2_KWH",
-    "CARBON_IOWA_GCO2_KWH": "defaults.CARBON_IOWA_GCO2_KWH",
-    "CARBON_POLAND_GCO2_KWH": "defaults.CARBON_POLAND_GCO2_KWH",
-    "CARBON_NORWAY_GCO2_KWH": "defaults.CARBON_NORWAY_GCO2_KWH",
-    "CARBON_EU_AVG_GCO2_KWH": "defaults.CARBON_EU_AVG_GCO2_KWH",
-    "CARBON_FRANCE_GCO2_KWH": "defaults.CARBON_FRANCE_GCO2_KWH",
-    "MEMORY_BIT_ERROR_RATE_PER_BIT": "defaults.MEMORY_BIT_ERROR_RATE_PER_BIT",
-    "KS_TEST_COEFFICIENT": "defaults.KS_TEST_COEFFICIENT",
-    "PSI_WARN_THRESHOLD": "defaults.PSI_WARN_THRESHOLD",
-    "PSI_REVIEW_THRESHOLD": "defaults.PSI_REVIEW_THRESHOLD",
-    "PSI_CRITICAL_THRESHOLD": "defaults.PSI_CRITICAL_THRESHOLD",
-    "INFINIBAND_NDR_BW_GBS": "defaults.INFINIBAND_NDR_BW_GBS",
-    "INFINIBAND_HDR_BW_GBS": "defaults.INFINIBAND_HDR_BW_GBS",
-    "INFINIBAND_XDR_BW_GBS": "defaults.INFINIBAND_XDR_BW_GBS",
-    "ETHERNET_400G_BW_GBS": "defaults.ETHERNET_400G_BW_GBS",
-    "ETHERNET_800G_BW_GBS": "defaults.ETHERNET_800G_BW_GBS",
-    "ROCE_100G_BW_GBS": "defaults.ROCE_100G_BW_GBS",
-    "IB_NDR_LATENCY_US": "defaults.IB_NDR_LATENCY_US",
-    "IB_HDR_LATENCY_US": "defaults.IB_HDR_LATENCY_US",
-    "ROCE_LATENCY_US": "defaults.ROCE_LATENCY_US",
-    "TCP_LATENCY_US": "defaults.TCP_LATENCY_US",
-    "TPU_POD_CHIPS": "defaults.TPU_POD_CHIPS",
-    "TPU_POD_MEM": "defaults.TPU_POD_MEM",
-    "TPU_POD_POWER": "defaults.TPU_POD_POWER",
+    "CLOUD_EGRESS_PER_GB": "Infrastructure.Pricing.Cloud.EgressPerGB.rate",
+    "CLOUD_ELECTRICITY_PER_KWH": "Infrastructure.Pricing.Cloud.ElectricityPerKwh.rate",
+    "CLOUD_GPU_TRAINING_PER_HOUR": "Infrastructure.Pricing.Cloud.GpuTrainingPerHour.rate",
+    "CLOUD_GPU_INFERENCE_PER_HOUR": "Infrastructure.Pricing.Cloud.GpuInferencePerHour.rate",
+    "TPU_V4_PER_HOUR": "Infrastructure.Pricing.Cloud.TpuV4PerHour.rate",
+    "FLEET_GPU_HOUR_COST_REF": "Infrastructure.Pricing.Fleet.GpuHourRef.rate",
+    "FLEET_SPOT_GPU_HOUR_COST_REF": "Infrastructure.Pricing.Fleet.SpotGpuHourRef.rate",
+    "FLEET_INTERNAL_CHARGEBACK_PER_HOUR": "Infrastructure.Pricing.Fleet.InternalChargebackPerHour.rate",
+    "CARBON_PER_GPU_HR_KG": "Infrastructure.Pricing.Fleet.CarbonPerGpuHr.rate",
+    "STORAGE_COST_S3_STD": "Infrastructure.Pricing.Storage.S3StandardPerTbMonth.rate",
+    "STORAGE_COST_GLACIER": "Infrastructure.Pricing.Storage.GlacierPerTbMonth.rate",
+    "STORAGE_COST_NVME_LOW": "Infrastructure.Pricing.Storage.NvmeLowPerTbMonth.rate",
+    "STORAGE_COST_NVME_HIGH": "Infrastructure.Pricing.Storage.NvmeHighPerTbMonth.rate",
+    "RETRIEVAL_COST_GLACIER": "Infrastructure.Pricing.Storage.GlacierRetrievalPerGB.rate",
+    "LABELING_COST_CROWD_LOW": "Infrastructure.Pricing.Labeling.CrowdLow.rate",
+    "LABELING_COST_CROWD_HIGH": "Infrastructure.Pricing.Labeling.CrowdHigh.rate",
+    "LABELING_COST_BOX_LOW": "Infrastructure.Pricing.Labeling.BoxLow.rate",
+    "LABELING_COST_BOX_HIGH": "Infrastructure.Pricing.Labeling.BoxHigh.rate",
+    "LABELING_COST_MEDICAL_LOW": "Infrastructure.Pricing.Labeling.MedicalLow.rate",
+    "LABELING_COST_MEDICAL_HIGH": "Infrastructure.Pricing.Labeling.MedicalHigh.rate",
+    "LEAD_TIME_GPU_MONTHS": "Infrastructure.Capacity.GpuLeadTimeMonths",
+    "LEAD_TIME_SUBSTATION_MONTHS": "Infrastructure.Capacity.SubstationLeadTimeMonths",
+    "GRID_INTERCONNECTION_QUEUE_US_GW": "Infrastructure.Capacity.GridInterconnectionQueueGw",
+    "PUE_LIQUID_COOLED": "Infrastructure.PUE_LIQUID_COOLED",
+    "PUE_BEST_AIR": "Infrastructure.PUE_BEST_AIR",
+    "PUE_TYPICAL": "Infrastructure.PUE_TYPICAL",
+    "PUE_LEGACY": "Infrastructure.PUE_LEGACY",
+    "CARBON_US_AVG_GCO2_KWH": "Infrastructure.Grids.US_Avg.carbon_intensity_g_kwh",
+    "CARBON_QUEBEC_GCO2_KWH": "Infrastructure.Grids.Quebec.carbon_intensity_g_kwh",
+    "CARBON_IOWA_GCO2_KWH": "Infrastructure.Grids.Iowa.carbon_intensity_g_kwh",
+    "CARBON_POLAND_GCO2_KWH": "Infrastructure.Grids.Poland.carbon_intensity_g_kwh",
+    "CARBON_NORWAY_GCO2_KWH": "Infrastructure.Grids.Norway.carbon_intensity_g_kwh",
+    "CARBON_EU_AVG_GCO2_KWH": "Infrastructure.Grids.EU_Avg.carbon_intensity_g_kwh",
+    "CARBON_FRANCE_GCO2_KWH": "Infrastructure.Grids.France.carbon_intensity_g_kwh",
+    "MEMORY_BIT_ERROR_RATE_PER_BIT": "Monitoring.MemoryBitErrorRatePerBit",
+    "KS_TEST_COEFFICIENT": "Monitoring.KsTestCoefficient",
+    "PSI_WARN_THRESHOLD": "Monitoring.PsiWarnThreshold",
+    "PSI_REVIEW_THRESHOLD": "Monitoring.PsiReviewThreshold",
+    "PSI_CRITICAL_THRESHOLD": "Monitoring.PsiCriticalThreshold",
+    "INFINIBAND_NDR_BW_GBS": "Systems.Fabrics.InfiniBand_NDR.bandwidth",
+    "INFINIBAND_HDR_BW_GBS": "Systems.Fabrics.InfiniBand_HDR.bandwidth",
+    "INFINIBAND_XDR_BW_GBS": "Systems.Fabrics.InfiniBand_XDR.bandwidth",
+    "ETHERNET_400G_BW_GBS": "Systems.Fabrics.Ethernet_400G.bandwidth",
+    "ETHERNET_800G_BW_GBS": "Systems.Fabrics.Ethernet_800G.bandwidth",
+    "ROCE_100G_BW_GBS": "Systems.Fabrics.RoCE_100G.bandwidth",
+    "IB_NDR_LATENCY_US": "mlsysim.systems.registry.IB_NDR_LATENCY_US",
+    "IB_HDR_LATENCY_US": "mlsysim.systems.registry.IB_HDR_LATENCY_US",
+    "ROCE_LATENCY_US": "mlsysim.systems.registry.ROCE_LATENCY_US",
+    "TCP_LATENCY_US": "mlsysim.systems.registry.TCP_LATENCY_US",
+    "TPU_POD_CHIPS": "Systems.Pods.TPUv4_4096.chips",
+    "TPU_POD_MEM": "Systems.Pods.TPUv4_4096.memory",
+    "TPU_POD_POWER": "Systems.Pods.TPUv4_4096.power",
 }
 
 DATASETS_MAP = {
@@ -148,14 +146,12 @@ TRAINING_MAP = {
     "LLAMA2_70B_KV_HEADS": "Models.Language.Llama2_70B.kv_heads",
 }
 
-
 def merged_mapping() -> dict[str, str]:
     global _MAPPING_CACHE
     if _MAPPING_CACHE is None:
         out = {**load_map_constants(), **INTERCONNECT_MAP, **HARDWARE_MAP, **DEFAULTS_MAP, **DATASETS_MAP, **TRAINING_MAP}
         _MAPPING_CACHE = dict(sorted(out.items(), key=lambda kv: len(kv[0]), reverse=True))
     return _MAPPING_CACHE
-
 
 def substitute_cell(cell: str, mapping: dict[str, str]) -> tuple[str, list[str]]:
     replaced: list[str] = []
@@ -172,19 +168,15 @@ def substitute_cell(cell: str, mapping: dict[str, str]) -> tuple[str, list[str]]
             replaced.append(sym)
     return out, replaced
 
-
 def ensure_registry_imports(cell: str) -> str:
     needs_hardware = "Hardware." in cell and "import Hardware" not in cell and "from mlsysim import *" not in cell
     needs_systems = "Systems." in cell and "import Systems" not in cell and "from mlsysim import *" not in cell
     needs_models = "Models." in cell and "import Models" not in cell and "from mlsysim import *" not in cell
     needs_datasets = "Datasets." in cell and "from mlsysim import *" not in cell
-    needs_defaults = "defaults." in cell and "from mlsysim.core import defaults" not in cell
     prefix = []
     if needs_hardware or needs_systems or needs_models or needs_datasets:
         if "from mlsysim import *" not in cell:
             prefix.append("from mlsysim import *")
-    if needs_defaults and "from mlsysim.core import defaults" not in cell:
-        prefix.append("from mlsysim.core import defaults")
     if not prefix:
         return cell
     lines = cell.splitlines()
@@ -195,7 +187,6 @@ def ensure_registry_imports(cell: str) -> str:
         elif line.strip() and not line.startswith("#"):
             break
     return "\n".join(lines[:insert_at] + prefix + lines[insert_at:])
-
 
 def migrate_file(path: Path, mapping: dict[str, str], dry_run: bool) -> dict:
     text = path.read_text(encoding="utf-8")
@@ -229,7 +220,6 @@ def migrate_file(path: Path, mapping: dict[str, str], dry_run: bool) -> dict:
     stats["symbols"] = sorted(stats["symbols"])
     return stats
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("qmd", type=Path)
@@ -242,7 +232,6 @@ def main() -> int:
     for sym in stats["symbols"]:
         print(f"  - {sym}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

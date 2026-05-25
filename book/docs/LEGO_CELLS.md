@@ -46,7 +46,7 @@ The A100 ridge is `{python} A100RidgeExample.ridge_str` FLOP/byte.
 
 - Keep **≤ 5–8 exports** per cell when possible.
 - Use **registry paths** for shared specs — `Hardware.Cloud.H100`, `Models.Vision.ResNet50`,
-  `defaults.GPU_MTTF_HOURS` (via `from mlsysim.core import defaults`), and
+  `Systems.Reliability.Gpu.mttf_hours`, `Literature.Training.MfuHigh`, and
   `mlsysim.physics.calc_*` for architecture formulas. Reserve `mlsysim.core.constants`
   for physics/units only (`HOURS_PER_DAY`, `BYTES_FP16`, latency stack).
 - Put `#| echo: false` as the **first line** after ` ```{python}` (required by

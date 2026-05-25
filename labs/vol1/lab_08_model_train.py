@@ -3,7 +3,6 @@ import marimo
 __generated_with = "0.23.1"
 app = marimo.App(width="full")
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -62,7 +61,6 @@ async def _():
         LAB_CSS, apply_plotly_theme, go, math, mo, np, ledger, mlsysim,
     )
 
-
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(LAB_CSS, mo):
@@ -112,7 +110,6 @@ def _(LAB_CSS, mo):
         """),
     ])
     return
-
 
 # ─── CELL 2: BRIEFING ───────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -184,7 +181,6 @@ def _(COLORS, mo):
     """)
     return
 
-
 # ─── CELL 3: READING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -201,7 +197,6 @@ def _(mo):
       formula Speedup = N / (1 + (N-1)*r).
     """), kind="info")
     return
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE B-D: ALL PARTS AS TABS
@@ -320,7 +315,6 @@ def _(mo):
         start=0.01, stop=0.50, value=0.15, step=0.01, label="Communication fraction (r)",
     )
     return (partD_gpus, partD_r)
-
 
 @app.cell(hide_code=True)
 def _(
@@ -1095,7 +1089,6 @@ You must train a 7B parameter model on H100 GPUs. Using numbers from this lab:
     tabs
     return
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # ZONE D: CLOSING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1130,7 +1123,6 @@ def _(COLORS, ledger, mo, partA_prediction, partD_prediction):
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

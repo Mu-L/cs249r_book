@@ -30,7 +30,6 @@ app = marimo.App(width="full")
 #   H100_COST_HR       = 3.0    $/GPU-hour cloud pricing
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE A: OPENING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -76,7 +75,6 @@ async def _():
         _ = await ledger.load_async()
     return COLORS, LAB_CSS, apply_plotly_theme, go, ledger, math, mo, np, H100_RAM_GB, H100_COST_HR, T4_COST_HR, TRAINING_COST_2M, DecisionLog, Hardware, H100, T4, EDGE, EDGE_RAM_GB
 
-
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(COLORS, LAB_CSS, mo):
@@ -113,7 +111,6 @@ def _(COLORS, LAB_CSS, mo):
     </div>
     """)
     return
-
 
 # ─── CELL 2: BRIEFING ────────────────────────────────────────────────────────
 @app.cell(hide_code=True)
@@ -174,7 +171,6 @@ def _(mo, COLORS):
     """)
     return
 
-
 # ─── CELL 3: RECOMMENDED READING ──────────────────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -187,7 +183,6 @@ def _(mo):
     - The Queuing Theory section from the Fleet Orchestration chapter -- Kingman's formula
     """), kind="info")
     return
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE B: WIDGET DEFINITIONS
@@ -207,7 +202,6 @@ def _(mo):
         label="You spent $2M training a 70B LLM. At 100 QPS and $0.01/query, when does cumulative serving cost exceed training cost?",
     )
     return (partA_prediction,)
-
 
 # ─── CELL 5: Part A controls + Part A reflection + Part B prediction ─────────
 @app.cell(hide_code=True)
@@ -240,7 +234,6 @@ def _(mo):
     )
     return (a1_cost_query, a1_optimization, a1_qps, a1_weeks, partA_reflection, partB_prediction)
 
-
 # ─── CELL 6: Part B controls + Part B reflection ────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -269,7 +262,6 @@ def _(mo):
     )
     return (a2_context_len, a2_model_size, a2_n_gpus, a2_precision, partB_reflection)
 
-
 # ─── CELL 6b: Part C prediction + controls ─────────────────────────────────
 @app.cell(hide_code=True)
 def _(mo):
@@ -295,7 +287,6 @@ def _(mo):
         label="Why is continuous batching the standard for production LLM serving?",
     )
     return (c1_avg_len, c1_batch_size, c1_max_len, partC_prediction, partC_reflection)
-
 
 # ─── CELL 6c: Part D prediction + controls ─────────────────────────────────
 @app.cell(hide_code=True)
@@ -331,7 +322,6 @@ def _(mo):
         label="What is the correct objective function for fleet design?",
     )
     return (d1_batching, d1_gpus_per_replica, d1_quant, d1_target_qps, partD_prediction, partD_reflection)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE C: SINGLE TABS CELL
@@ -1361,7 +1351,6 @@ def _(
     tabs
     return
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ZONE D: LEDGER_HUD
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1370,7 +1359,6 @@ def _(
 def _(mo, DecisionLog):
     decision_input, decision_ui = DecisionLog()
     return (decision_input, decision_ui)
-
 
 @app.cell(hide_code=True)
 def _(COLORS, partA_prediction, partB_prediction, partC_prediction, partD_prediction,
@@ -1411,7 +1399,6 @@ def _(COLORS, partA_prediction, partB_prediction, partC_prediction, partD_predic
     </div>
     """)
     return
-
 
 if __name__ == "__main__":
     app.run()

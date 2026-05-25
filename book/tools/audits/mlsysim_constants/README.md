@@ -12,7 +12,11 @@ should source values after migration.
 | Model workloads | `mlsysim/models/registry.py` → `Models.*` |
 | Datasets | `mlsysim/datasets/registry.py` → `Datasets.*` |
 | Fabrics / topology | `mlsysim/systems/registry.py` → `Systems.*` |
-| Economics / reliability defaults | `mlsysim/core/defaults.py` → `defaults.*` |
+| Cited appendix scalars | `mlsysim/literature/registry.py` → `Literature.*` |
+| Reliability / orchestration | `mlsysim/systems/` → `Systems.Reliability.*`, `Systems.Orchestration` |
+| MLOps thresholds | `mlsysim/ops/` → `Ops.Monitoring.*` |
+| Solver/engine defaults | `mlsysim/core/calibration.py` → `mlsysim.core.calibration.*` |
+| Economics | `mlsysim/infra/pricing.py` → `Infrastructure.Pricing.*` |
 | Physics / units only | `mlsysim/core/constants.py`, `mlsysim/physics/` |
 | Symbol → replacement map | `scripts/map_constants.py`, `book/tools/audit/migrate_constants_to_registry.py` |
 | Live manifest | `book/tools/audit/artifacts/registry_migration_manifest.json` |

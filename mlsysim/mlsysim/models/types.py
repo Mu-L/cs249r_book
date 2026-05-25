@@ -97,7 +97,7 @@ class TransformerWorkload(Workload):
         return (param_count * bpp * ureg.byte).to(ureg.byte)
 
     def get_kv_cache_size(self, seq_len: int, batch_size: int, precision: Quantity = BYTES_FP16) -> Quantity:
-        from ..core.formulas import calc_kv_cache_size
+        from ..physics import calc_kv_cache_size
         h_dim = self.hidden_dim or 4096
         n_heads = self.heads or 32
         head_dim = h_dim // n_heads
@@ -126,7 +126,7 @@ class TransformerWorkload(Workload):
             Quantity[byte]: Total training memory per GPU
         """
         from ..core.constants import BYTES_FP32, BYTES_FP16, BYTES_INT8, BYTES_INT4
-        from ..core.formulas import calc_activation_memory
+        from ..physics import calc_activation_memory
         
         prec_map = {"fp32": BYTES_FP32, "fp16": BYTES_FP16, "int8": BYTES_INT8, "int4": BYTES_INT4}
         bpp = prec_map.get(precision, BYTES_FP16).to(ureg.byte).magnitude

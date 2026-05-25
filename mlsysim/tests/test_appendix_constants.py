@@ -10,7 +10,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = REPO_ROOT / "book/tools/audit/generate_appendix_constants.py"
 
-
 def _load_generator():
     spec = importlib.util.spec_from_file_location("generate_appendix_constants", GENERATOR)
     assert spec and spec.loader
@@ -18,7 +17,6 @@ def _load_generator():
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
-
 
 def test_appendix_lego_cells_verify():
     mod = _load_generator()
@@ -29,12 +27,10 @@ def test_appendix_lego_cells_verify():
         f"{r.path.name}:{r.label or r.class_name}: {r.error}" for r in failed
     )
 
-
 def test_interconnect_registry_spec_resolves():
     mod = _load_generator()
     errors = mod.verify_interconnect_spec()
     assert not errors, "\n".join(errors)
-
 
 def test_generate_appendix_constants_cli_verify():
     proc = subprocess.run(
@@ -44,7 +40,6 @@ def test_generate_appendix_constants_cli_verify():
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-
 
 def test_write_interconnect_preserves_other_cells():
     mod = _load_generator()
