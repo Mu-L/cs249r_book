@@ -195,7 +195,16 @@ def fmt_unit(quantity, default="-"):
     >>> fmt_unit(80)             # "-"
     """
     if isinstance(quantity, ureg.Quantity):
-        out = MarkdownStr(f"{quantity.units}")
+        unit_label = f"{quantity.units}"
+        for plural_rate, canonical_rate in {
+            "MFLOPs/s": "MFLOP/s",
+            "GFLOPs/s": "GFLOP/s",
+            "TFLOPs/s": "TFLOP/s",
+            "PFLOPs/s": "PFLOP/s",
+            "ZFLOPs/s": "ZFLOP/s",
+        }.items():
+            unit_label = unit_label.replace(plural_rate, canonical_rate)
+        out = MarkdownStr(unit_label)
     else:
         out = MarkdownStr(default)
     assert isinstance(out, MarkdownStr), "fmt_unit() must return MarkdownStr"

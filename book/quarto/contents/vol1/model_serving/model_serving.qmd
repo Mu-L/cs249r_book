@@ -388,9 +388,9 @@ These priorities motivate a formal definition of model serving.
 
 ***Model Serving***\index{Model Serving!definition} is the operational phase that provides model predictions to end-users or downstream systems under strict latency constraints.
 
-1.  **Significance (quantitative)**: It inverts the throughput priority ($\eta_{\text{hw}}$) of training into a **latency constraint** $(L_{\text{lat}})$, requiring an architectural stack designed to minimize the **tail latency** (p99) of individual inferences.
-2.  **Distinction (durable)**: Unlike **model training**, which processes large, predictable batches of data, model serving must handle **stochastic request patterns** and unpredictable load.
-3.  **Common pitfall**: A frequent misconception is that serving is "just the forward pass." In reality, it is a **distributed system problem**: the model execution is only one component of a stack that includes request routing, load balancing, and data transformation.
+1.  **Significance (quantitative)**: It inverts the throughput priority ($\eta_{\text{hw}}$) of training into a latency constraint $(L_{\text{lat}})$, requiring an architectural stack designed to minimize the tail latency (p99) of individual inferences.
+2.  **Distinction (durable)**: Unlike model training, which processes large, predictable batches of data, model serving must handle stochastic request patterns and unpredictable load.
+3.  **Common pitfall**: A frequent misconception is that serving is "just the forward pass." In reality, it is a distributed system problem: the model execution is only one component of a stack that includes request routing, load balancing, and data transformation.
 
 :::
 
@@ -734,7 +734,7 @@ The preceding examples explain *why* serving systems must maintain capacity head
 
 #### Static inference {#sec-model-serving-static-inference-35f4}
 
-Static inference\index{Static Inference!precomputed predictions} (also called offline or batch inference) precomputes predictions for anticipated inputs and stores them for retrieval. Consider a recommendation system that generates predictions for all user-item pairs nightly. When a user requests recommendations, the system retrieves precomputed results from a lookup table rather than running inference. This approach eliminates inference latency entirely since results already exist, enables quality verification before deployment, and reduces serving costs. However, static inference *cannot* handle novel inputs that were not anticipated during the batch computation and introduces hours or days of latency when models update [@crankshaw2020].
+Static inference\index{Static Inference!precomputed predictions} (also called offline or batch inference) precomputes predictions for anticipated inputs and stores them for retrieval. Consider a recommendation system that generates predictions for all user-item pairs nightly. When a user requests recommendations, the system retrieves precomputed results from a lookup table rather than running inference. This approach moves compute out of the request path, enables offline quality checks, and can reduce serving costs for predictable inputs. However, static inference needs either a fallback online path or a refreshed batch computation when requests include unanticipated inputs or newly updated models.
 
 #### Dynamic inference {#sec-model-serving-dynamic-inference-d2d5}
 
@@ -1059,7 +1059,7 @@ While load balancers distribute requests *across replicas*, achieving predictabl
 
 An inference server does not operate in isolation. On a single machine, the operating system manages multiple competing processes (logging agents, monitoring tools, and system interrupts) that can intermittently steal CPU cycles from the inference pipeline. These "noisy neighbors" are a primary source of **latency jitter**\index{Latency Jitter!resource contention}, where the time required to process identical requests varies significantly, causing the 99th percentile (P99) latency to spike even when the hardware is underused. The tail latency explosion from @fig-tail-latency-explosion illustrates the same spike, but here the trigger is resource contention rather than queuing.
 
-Achieving deterministic performance\index{Latency!deterministic}\index{Resource Isolation!serving} on a single node requires isolating the inference process from the operating system's normal resource-sharing behavior. The most impactful technique is CPU affinity (pinning)\index{CPU Affinity!latency reduction}, which restricts the inference server's threads to specific physical cores. Without pinning, the OS freely migrates threads between cores, evicting warm cache lines and introducing 10–50 μs context-switch penalties that appear as latency jitter. Pinning eliminates this migration, ensuring that preprocessing always has immediate access to computational resources and that the CPU cache remains warm between requests [@gujarati2020].
+Achieving deterministic performance\index{Latency!deterministic}\index{Resource Isolation!serving} on a single node requires reducing interference from the operating system's normal resource-sharing behavior. Predictable serving systems such as Clockwork show that DNN inference can meet tight request-level SLOs when scheduling and execution are controlled carefully [@gujarati2020]. CPU affinity (pinning)\index{CPU Affinity!latency reduction} is one local isolation tool: it restricts the inference server's threads to specific physical cores so latency-sensitive work is less exposed to thread migration and cache-locality loss. Pinning can reduce one source of latency jitter, but it is part of a broader resource-isolation strategy rather than a complete solution.
 
 Memory locking (`mlock`)\index{Memory!locking, mlock} addresses a related but distinct source of jitter. By default, the OS can page any memory region to disk under memory pressure. If the GPU's DMA engine begins reading model weights from a region that has been paged out, the transfer stalls until the data is faulted back into RAM, a penalty measured in milliseconds rather than microseconds. Locking model weights and KV caches in physical RAM guarantees consistent access times, though the trade-off is that pinned memory cannot be reclaimed by other processes.
 
@@ -1377,7 +1377,7 @@ filllcolor=BlueD!70!,Linewidth=0.75pt, filllcirclecolor=brown!20}};
 
 This architecture serves three functions. First, concurrency management: servers use asynchronous event loops or thread pools to handle thousands of concurrent client connections without blocking, ensuring that network I/O wait times do not idle the accelerator. Second, request transformation\index{Request Transformation!tensor formats}: the server converts network payloads, such as JavaScript Object Notation (JSON) or Protobuf, into the specific tensor formats required by the optimized model runtime. Image tensors, for example, can be stored as NCHW[^fn-nchw-nhwc-serving]\index{NCHW!tensor layout} (batch, channels, height, width) or NHWC\index{NHWC!tensor layout} (batch, height, width, channels). PyTorch and TensorRT prefer NCHW because it places channel data contiguously, enabling efficient convolution on GPUs. TensorFlow defaults to NHWC, which is more efficient on CPUs.
 
-[^fn-nchw-nhwc-serving]: **NCHW and NHWC (Tensor Memory Layouts)**: These acronyms encode the memory layout order of 4D image tensors: N (batch), C (channels), H (height), W (width). NCHW places all values for one channel contiguously, enabling vectorized convolution on GPUs; NHWC interleaves channels at each spatial position, aligning better with CPU single instruction, multiple data (SIMD) instructions. A format mismatch between client and server silently corrupts inference: the model interprets pixel rows as color channels, producing garbage outputs without raising errors [@aminabadi2022]. \index{NCHW!tensor layout}
+[^fn-nchw-nhwc-serving]: **NCHW and NHWC (Tensor Memory Layouts)**: These acronyms encode the memory layout order of 4D image tensors: N (batch), C (channels), H (height), W (width). NCHW places all values for one channel contiguously, enabling vectorized convolution on GPUs; NHWC interleaves channels at each spatial position, aligning better with CPU single instruction, multiple data (SIMD) instructions. A format mismatch between client and server can produce incorrect tensors even when the shape appears valid, so serving code should make layout conversions explicit. \index{NCHW!tensor layout}
 
 Third, model management: inference servers manage the lifecycle of models, including loading weights into VRAM, managing versioning, and ensuring that warmup inferences are completed before exposing the model to live traffic.
 
@@ -1525,11 +1525,11 @@ Managing these percentile constraints requires decomposing the total allowed res
 
 ::: {#dfn-model-serving-latency-budget .callout-definition title="Latency budget"}
 
-***Latency Budget***\index{Latency Budget!definition} is the **time capital** allocated to a request, strictly bounded by the end-to-end **service level objective (SLO)**.
+***Latency Budget***\index{Latency Budget!definition} is the time capital allocated to a request, strictly bounded by the end-to-end service level objective (SLO).
 
-1.  **Significance (quantitative)**: It acts as a **zero-sum constraint system** where any milliseconds consumed by serialization or network overhead directly reduce the latency budget $(L_{\text{lat}})$ available for model inference.
-2.  **Distinction (durable)**: Unlike **average latency**, which hides variance, a latency budget is a **hard bound** that must be maintained for the slowest requests (for example, p99).
-3.  **Common pitfall**: A frequent misconception is that the "model" has the entire budget. In reality, the model often has less than **50 percent of the total budget**; the remainder is consumed by the **request lifecycle** (DNS, TLS, load balancing, serialization).
+1.  **Significance (quantitative)**: It acts as a zero-sum constraint system where any milliseconds consumed by serialization or network overhead directly reduce the latency budget $(L_{\text{lat}})$ available for model inference.
+2.  **Distinction (durable)**: Unlike average latency, which hides variance, a latency budget is a hard bound that must be maintained for the slowest requests (for example, p99).
+3.  **Common pitfall**: A frequent misconception is that the "model" has the entire budget. In reality, the model often has less than 50 percent of the total budget; the remainder is consumed by the request lifecycle (DNS, TLS, load balancing, serialization).
 
 :::
 
@@ -1554,7 +1554,7 @@ Consider these foundational questions:
 
 Every serving request decomposes into three phases that each consume part of the latency budget. Preprocessing\index{Preprocessing!latency impact} transforms raw input such as image bytes or text strings into model-ready tensors. Inference\index{Inference!pipeline phase} executes the model computation. Postprocessing\index{Postprocessing!response formatting} transforms model outputs into user-facing responses.
 
-Faster hardware does not automatically mean faster serving\index{Amdahl's Law!preprocessing bottleneck}. In practice, preprocessing and postprocessing often dominate total latency. Studies of production systems show preprocessing consuming 60 to 70 percent of total request time when inference runs on optimized accelerators [@nvidia_triton]. Optimizing exclusively the inference phase yields diminishing returns if the surrounding pipeline remains bottlenecked by CPU operations.
+Faster hardware does not automatically mean faster serving\index{Amdahl's Law!preprocessing bottleneck}. In practice, preprocessing and postprocessing can dominate total latency when inference runs on optimized accelerators. Optimizing exclusively the inference phase yields diminishing returns if the surrounding pipeline remains bottlenecked by CPU operations.
 
 ### Latency distribution analysis {#sec-model-serving-latency-distribution-analysis-b0f8}
 
@@ -1815,7 +1815,7 @@ class AmdahlServingCalc:
 
 :::
 
-Moving preprocessing to GPU\index{Preprocessing!gpu, accelerated pipelines} can reduce total latency by 6$\times$ in some pipelines by eliminating CPU-GPU data transfers between stages [@nvidia_triton].
+Moving preprocessing closer to the accelerator\index{Preprocessing!gpu, accelerated pipelines} can reduce avoidable CPU-GPU transfers, but the end-to-end gain is pipeline-specific.
 
 Effective optimization targets the largest time consumers first.
 
@@ -2574,11 +2574,11 @@ A model that performed well during validation may silently degrade when deployed
 
 ::: {#dfn-model-serving-training-serving-skew .callout-definition title="Training-serving skew"}
 
-***Training-Serving Skew***\index{Training-Serving Skew!definition} is the **distributional divergence** between the training and inference environments caused by inconsistent logic or state.
+***Training-Serving Skew***\index{Training-Serving Skew!definition} is the distributional divergence between the training and inference environments caused by inconsistent logic or state.
 
-1.  **Significance (quantitative)**: It violates the consistency imperative, causing **silent accuracy degradation** proportional to the difference in the transformation functions $(f_{\text{train}}(x) \neq f_{\text{serve}}(x))$.
-2.  **Distinction (durable)**: Unlike **data drift** (which is an **external shift** in the environment), training-serving skew is an **internal failure** of the engineering stack.
-3.  **Common pitfall**: A frequent misconception is that skew is "found" by looking for errors. In reality, it is **invisible to exceptions**: the system runs perfectly and the latency is low, but the predictions are statistically wrong.
+1.  **Significance (quantitative)**: It violates the consistency imperative, causing silent accuracy degradation proportional to the difference in the transformation functions $(f_{\text{train}}(x) \neq f_{\text{serve}}(x))$.
+2.  **Distinction (durable)**: Unlike data drift (which is an external shift in the environment), training-serving skew is an internal failure of the engineering stack.
+3.  **Common pitfall**: A frequent misconception is that skew is "found" by looking for errors. In reality, it is invisible to exceptions: the system runs perfectly and the latency is low, but the predictions are statistically wrong.
 
 :::
 
@@ -2604,11 +2604,11 @@ With preprocessing pipelines designed to avoid training-serving skew, the next c
 
 ::: {#dfn-model-serving-cold-start .callout-definition title="Cold start"}
 
-***Cold Start***\index{Cold Start!definition} is the **initialization latency** incurred when instantiating a new model replica.
+***Cold Start***\index{Cold Start!definition} is the initialization latency incurred when instantiating a new model replica.
 
-1.  **Significance (quantitative)**: It represents the fixed cost of **state hydration** (loading weights, compiling graphs), which can take seconds or minutes, effectively blocking the system's ability to scale elastically in response to traffic bursts.
-2.  **Distinction (durable)**: Unlike **inference latency** $(L_{\text{lat}})$, which is a **per-request cost**, cold start is a **per-replica cost** that occurs only during deployment or scaling events.
-3.  **Common pitfall**: A frequent misconception is that cold start is "just loading weights." In reality, it includes **graph compilation** and **memory allocation**, which can often take longer than the bandwidth-limited data transfer itself $(D_{\text{vol}}/\text{BW})$.
+1.  **Significance (quantitative)**: It represents the fixed cost of state hydration (loading weights, compiling graphs), which can take seconds or minutes, effectively blocking the system's ability to scale elastically in response to traffic bursts.
+2.  **Distinction (durable)**: Unlike inference latency $(L_{\text{lat}})$, which is a per-request cost, cold start is a per-replica cost that occurs only during deployment or scaling events.
+3.  **Common pitfall**: A frequent misconception is that cold start is "just loading weights." In reality, it includes graph compilation and memory allocation, which can often take longer than the bandwidth-limited data transfer itself $(D_{\text{vol}}/\text{BW})$.
 
 :::
 
@@ -2718,7 +2718,7 @@ When cold start latency is critical for high-traffic models, node-local SSD cach
 
 Production systems often serve multiple models from a single machine\index{Multi-Model Serving!GPU memory management}, whether different model versions for A/B testing, ensemble components, or entirely different models sharing infrastructure. GPU memory becomes the limiting resource, requiring careful management strategies.
 
-Three strategies address multi-model memory management. Time-multiplexing\index{Time-Multiplexing!model swapping} loads one model at a time and swaps based on request routing—simple but introduces swap latency. Memory sharing\index{Memory!sharing, GPU multi-model} partitions GPU memory among models, limiting concurrent execution count but enabling more models to remain resident. Model virtualization\index{Model Virtualization!lifecycle management}, as implemented by frameworks like Triton, manages model lifecycle automatically, loading and unloading models based on traffic patterns [@nvidia_triton]. The choice depends on request patterns: if models receive traffic evenly, concurrent loading works; if traffic is bursty and model-specific, time-multiplexing with intelligent preloading reduces average latency while maximizing GPU utilization.
+Three strategies address multi-model memory management. Time-multiplexing\index{Time-Multiplexing!model swapping} loads one model at a time and swaps based on request routing—simple but introduces swap latency. Memory sharing\index{Memory!sharing, GPU multi-model} partitions GPU memory among models, limiting concurrent execution count but enabling more models to remain resident. Model virtualization\index{Model Virtualization!lifecycle management}, as implemented by frameworks like Triton, separates model lifecycle from application code through model repository and control APIs for loading, unloading, and versioning models [@nvidia_triton]. The choice depends on request patterns: if models receive traffic evenly, concurrent loading works; if traffic is bursty and model-specific, time-multiplexing with explicit preloading reduces average latency while maximizing GPU utilization.
 
 #### Multi-stream execution {#sec-model-serving-multistream-execution-1b1f}
 
@@ -2789,10 +2789,10 @@ Consider a ResNet-50 classifier running on a V100 GPU at batch size one: the GPU
 
 ::: {#dfn-model-serving-dynamic-batching .callout-definition title="Dynamic batching"}
 
-***Dynamic Batching***\index{Dynamic Batching!definition} is the runtime optimization of trading **Latency** for **Throughput** under stochastic arrival patterns.
+***Dynamic Batching***\index{Dynamic Batching!definition} is the runtime optimization of trading Latency for Throughput under stochastic arrival patterns.
 
-1.  **Significance (quantitative)**: By buffering requests into a **Batching Window**, the scheduler amortizes fixed overheads $(L_{\text{lat}})$ across multiple inputs, pushing the system away from the memory-bound regime $(\text{BW})$ toward the compute-bound regime $(R_{\text{peak}})$.
-2.  **Distinction (durable)**: Unlike **Static Batching**, which is fixed during training, Dynamic Batching adaptively adjusts the batch size at **Inference Time** based on real-time traffic volume.
+1.  **Significance (quantitative)**: By buffering requests into a Batching Window, the scheduler amortizes fixed overheads $(L_{\text{lat}})$ across multiple inputs, pushing the system away from the memory-bound regime $(\text{BW})$ toward the compute-bound regime $(R_{\text{peak}})$.
+2.  **Distinction (durable)**: Unlike Static Batching, which is fixed during training, Dynamic Batching adaptively adjusts the batch size at Inference Time based on real-time traffic volume.
 3.  **Common pitfall**: A frequent misconception is that batching "always helps." In reality, there is a latency-throughput Pareto frontier: if the batching window is too large, the increased queuing delay may violate the system's SLO before the throughput gains are realized.
 
 :::
@@ -3554,9 +3554,9 @@ The mechanism works as follows: when a sequence generates its end-of-sequence to
 
 This dynamic approach maintains high GPU utilization even when sequence lengths vary by 100$\times$ or more.
 
-Systems implementing continuous batching, such as vLLM[^fn-vllm-paging] and TensorRT-LLM, achieve 2--4$\times$ higher throughput than traditional static batching [@agrawal2024sarathi]. The improvement comes from two sources: eliminating wasted compute on completed sequences and reducing average wait time for new requests. For production language model serving where response lengths vary from single tokens to thousands, continuous batching has become essential for cost-effective deployment.
+Systems implementing continuous batching, such as vLLM[^fn-vllm-paging] and TensorRT-LLM, improve throughput by keeping decode slots occupied as sequences enter and exit. Sarathi-Serve refines this scheduler with chunked prefill and stall-free batching to reduce interference between prompt processing and token decoding [@agrawal2024sarathi]. The improvement comes from two sources: eliminating wasted compute on completed sequences and reducing average wait time for new requests. For production language model serving where response lengths vary from single tokens to thousands, continuous batching has become essential for cost-effective deployment.
 
-[^fn-vllm-paging]: **vLLM (Virtual LLM)**: An open-source serving system that enables continuous batching via its PagedAttention algorithm. Inspired by OS virtual memory, this technique eliminates the severe memory fragmentation that constrains static batching. By avoiding the 40–50 percent memory waste common in prior systems, vLLM directly achieves the 2--4$\times$ throughput improvement. \index{vLLM!virtual memory analogy}
+[^fn-vllm-paging]: **vLLM (Virtual LLM)**: An open-source serving system that enables continuous batching via its PagedAttention algorithm. Inspired by OS virtual memory, this technique eliminates the severe memory fragmentation that constrains static batching. By avoiding the 40–50 percent memory waste common in prior systems, vLLM can serve larger effective batches on the same hardware. \index{vLLM!virtual memory analogy}
 
 Memory management adds complexity to continuous batching. As sequences enter and exit the batch, the key-value cache that stores attention context must be dynamically allocated and freed. Consider what happens when sequences of varying lengths share GPU memory: a 100-token sequence completes and releases its cache, but a new 150-token sequence cannot use that space because it needs a larger contiguous block. Over time, small unusable gaps accumulate between allocated regions, eventually preventing new sequences from starting even when total free memory appears sufficient. This *memory fragmentation*\index{Memory Fragmentation!KV cache} can waste 40 to 50 percent of available memory in naive implementations, severely limiting the concurrent batch size that determines throughput.
 
@@ -3878,15 +3878,15 @@ Large language models\index{LLM Serving!token generation} introduce three proper
 
 ### Performance metrics: TTFT and TPOT {#sec-model-serving-performance-metrics-ttft-tpot-b009}
 
-Generative models produce a stream of tokens rather than a single output tensor. This streaming nature requires dedicated *LLM performance metrics* that reflect the internal state transition from "prefill" (processing input) to "decode" (generating output). The two key measures are *Time to First Token (TTFT)* and *Time Per Output Token (TPOT)*, which capture responsiveness and fluidity respectively.
+Generative models produce a stream of tokens rather than a single output tensor. This streaming nature requires dedicated *LLM performance metrics* that reflect the internal state transition from "prefill" (processing input) to "decode" (generating output). The two key measures are **Time to First Token (TTFT)**\index{Time to First Token!definition} and **Time Per Output Token (TPOT)**\index{Time Per Output Token!definition}, which capture responsiveness and fluidity respectively.
 
 ::: {#dfn-model-serving-llm-performance-metrics .callout-definition title="LLM performance metrics"}
 
 ***LLM Performance Metrics***\index{LLM Performance Metrics!definition} are the two-dimensional measurements of latency for streaming autoregressive generation.
 
-1.  **Significance (quantitative)**: They decompose user-perceived latency into **Time to First Token (TTFT)**\index{Time to First Token!prefill phase} (governed by the compute-bound **Prefill Phase**) and **Time Per Output Token (TPOT)**\index{Time Per Output Token!decode phase} (governed by the memory-bandwidth-bound **Decode Phase**).
-2.  **Distinction (durable)**: Unlike **Fixed-Output Metrics** (for example, end-to-end latency), LLM metrics measure the **Fluidity of Generation**, acknowledging that the user experience depends on the *rhythm* of token arrival.
-3.  **Common pitfall**: A frequent misconception is that a "fast model" has a low TTFT. In reality, a model can have a fast TTFT but a sluggish TPOT (if the **memory wall $(\text{BW})$** is the bottleneck), leading to a frustrating user experience where the answer starts quickly but "stutters" thereafter.
+1.  **Significance (quantitative)**: They decompose user-perceived latency into Time to First Token (TTFT)\index{Time to First Token!prefill phase} (governed by the compute-bound Prefill Phase) and Time Per Output Token (TPOT)\index{Time Per Output Token!decode phase} (governed by the memory-bandwidth-bound Decode Phase).
+2.  **Distinction (durable)**: Unlike Fixed-Output Metrics (for example, end-to-end latency), LLM metrics measure the Fluidity of Generation, acknowledging that the user experience depends on the *rhythm* of token arrival.
+3.  **Common pitfall**: A frequent misconception is that a "fast model" has a low TTFT. In reality, a model can have a fast TTFT but a sluggish TPOT (if the memory wall $(\text{BW})$ is the bottleneck), leading to a frustrating user experience where the answer starts quickly but "stutters" thereafter.
 
 :::
 
@@ -4383,6 +4383,8 @@ Since the graph structure is known, the compiler can precalculate the exact memo
 
 :::
 
+The JIT vs. AOT choice governs GPU compilation strategy; CPU inference faces its own optimization landscape, where vectorization and quantization replace graph compilation as the primary levers.
+
 ### CPU inference optimization {#sec-model-serving-cpu-inference-optimization-ae86}
 
 GPUs dominate the narrative, yet CPUs remain the workhorse for a vast number of inference workloads, particularly for smaller models, latency-insensitive batch jobs, or cost-constrained environments. Optimizing for the CPU requires a different mindset.
@@ -4559,7 +4561,7 @@ class CostAnalysisCalc:
 
 ### GPU vs. CPU economics {#sec-model-serving-gpu-vs-cpu-economics-eb06}
 
-GPUs provide significant speedup for parallel operations but cost more per hour\index{GPU vs. CPU!economics} [@wu2019machine]. The crossover point depends on model characteristics and latency requirements.
+In the worked AWS example above, GPU instances cost more per hour but deliver much higher parallel throughput\index{GPU vs. CPU!economics}. The crossover point depends on model characteristics and latency requirements.
 
 CPU inference makes economic sense for small models with few parameters and simple operations, when latency requirements are relaxed (hundreds of milliseconds acceptable), when request volume is low or highly variable (making GPU reservation wasteful), or when the model's operations do not parallelize well. GPU inference dominates when models are large with parallel-friendly operations, latency requirements are strict (tens of milliseconds), request volume is high and consistent enough to sustain utilization, and batching can amortize the per-inference overhead of GPU kernel launches.
 
