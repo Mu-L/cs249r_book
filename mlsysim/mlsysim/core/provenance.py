@@ -4,20 +4,14 @@ from __future__ import annotations
 
 from typing import Optional
 
-# How a constant should be interpreted in the textbook appendix.
-SOURCE_DATASHEET = "datasheet"
-SOURCE_LITERATURE = "literature"
-SOURCE_INDUSTRY_REPORT = "industry_report"
-SOURCE_CONVENTION = "convention"
-SOURCE_ILLUSTRATIVE = "illustrative"
-
 
 class TraceableConstant(float):
     """
-    A float that carries citation metadata for the MLSysBook assumptions appendix.
+    A float that carries a human-readable source string for the textbook.
 
-    Behaves as a plain float in arithmetic; exposes ``citation``, ``bib_keys``,
-    ``source_type``, ``url``, and ``last_verified`` for rendering and audits.
+    Behaves as a plain float in arithmetic. The book appendix uses Quarto
+    ``@citekey`` references separately; ``source`` here is for package audits
+    and labs (paper title, datasheet name, URL, or "book convention").
     """
 
     def __new__(
@@ -25,21 +19,14 @@ class TraceableConstant(float):
         value,
         name: str,
         description: str,
-        citation: str,
+        source: str,
         url: Optional[str] = None,
-        *,
-        source_type: str = SOURCE_LITERATURE,
-        bib_keys: Optional[str] = None,
-        last_verified: Optional[str] = None,
     ):
         obj = super().__new__(cls, value)
         obj.name = name
         obj.description = description
-        obj.citation = citation
+        obj.source = source
         obj.url = url
-        obj.source_type = source_type
-        obj.bib_keys = bib_keys
-        obj.last_verified = last_verified
         return obj
 
     def render_markdown(self) -> str:
@@ -49,24 +36,19 @@ class TraceableConstant(float):
             "",
             f"_{self.description}_",
             "",
-            f"> **Source type:** {self.source_type}",
         ]
-        if self.bib_keys:
-            lines.append(f"> **BibTeX keys:** `{self.bib_keys}`")
         if self.url:
-            lines.append(f"> **Reference:** [{self.citation}]({self.url})")
+            lines.append(f"> **Source:** [{self.source}]({self.url})")
         else:
-            lines.append(f"> **Reference:** {self.citation}")
-        if self.last_verified:
-            lines.append(f"> **Last verified:** {self.last_verified}")
+            lines.append(f"> **Source:** {self.source}")
         return "\n".join(lines)
 
 
-# Shared fleet-reliability provenance (order-of-magnitude MTTF tiers).
-_RELIABILITY_BIB_KEYS = "kokolis2025; zu2024tpuv4; barroso2019"
-_RELIABILITY_CITATION = "Kokolis et al. (2025); Zu et al. (2024); Barroso et al. (2019)"
+_RELIABILITY_SOURCE = (
+    "Kokolis et al. (2025, HPCA); Zu et al. (2024, NSDI); "
+    "Barroso et al. (2019) — order-of-magnitude steady-state MTTF"
+)
 _RELIABILITY_URL = "https://doi.org/10.1109/hpca61900.2025.00096"
-_RELIABILITY_VERIFIED = "2025-03-06"
 
 
 def fleet_mttf_hours(
@@ -83,9 +65,6 @@ def fleet_mttf_hours(
         hours,
         name=f"{component} MTTF (hours)",
         description=desc,
-        citation=_RELIABILITY_CITATION,
+        source=_RELIABILITY_SOURCE,
         url=_RELIABILITY_URL,
-        source_type=SOURCE_LITERATURE,
-        bib_keys=_RELIABILITY_BIB_KEYS,
-        last_verified=_RELIABILITY_VERIFIED,
     )

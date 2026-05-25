@@ -5,14 +5,7 @@ for your specific scenario. Every value cites its source.
 """
 
 from .units import USD, ureg, GB, TB, hour, count, day
-from .provenance import (
-    TraceableConstant,
-    SOURCE_CONVENTION,
-    SOURCE_ILLUSTRATIVE,
-    SOURCE_INDUSTRY_REPORT,
-    SOURCE_LITERATURE,
-    fleet_mttf_hours,
-)
+from .provenance import TraceableConstant, fleet_mttf_hours
 
 # --- Reliability (Component MTTF) ---
 # Order-of-magnitude steady-state MTTF; see appendix_reliability @tbl-component-fit.
@@ -38,35 +31,25 @@ CLUSTER_SMALL_GPUS = TraceableConstant(
     256,
     name="Small cluster GPU count",
     description="Research-lab scale tier for fleet napkin math.",
-    citation="MLSysBook editorial convention",
-    source_type=SOURCE_CONVENTION,
-    bib_keys="kokolis2025",
-    last_verified="2025-03-06",
+    source="MLSysBook editorial convention",
 )
 CLUSTER_MEDIUM_GPUS = TraceableConstant(
     2_048,
     name="Medium cluster GPU count",
     description="Medium production tier.",
-    citation="MLSysBook editorial convention",
-    source_type=SOURCE_CONVENTION,
-    last_verified="2025-03-06",
+    source="MLSysBook editorial convention",
 )
 CLUSTER_LARGE_GPUS = TraceableConstant(
     8_192,
     name="Large cluster GPU count",
     description="Large training cluster tier; failure becomes steady state.",
-    citation="MLSysBook editorial convention",
-    source_type=SOURCE_CONVENTION,
-    bib_keys="kokolis2025",
-    last_verified="2025-03-06",
+    source="MLSysBook editorial convention",
 )
 CLUSTER_MEGA_GPUS = TraceableConstant(
     100_000,
     name="Mega cluster GPU count",
     description="Hyperscale fleet tier for order-of-magnitude examples.",
-    citation="MLSysBook editorial convention",
-    source_type=SOURCE_CONVENTION,
-    last_verified="2025-03-06",
+    source="MLSysBook editorial convention",
 )
 
 # Fleet topology assumptions (override for non-DGX node counts).
@@ -100,37 +83,25 @@ PUE_LIQUID_COOLED = TraceableConstant(
     1.06,
     name="PUE (Liquid-Cooled)",
     description="Best-in-class liquid-cooled AI datacenter PUE.",
-    citation="Uptime Institute Global Data Center Survey 2022",
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys="davis2022uptime; thegreengrid2007pue",
-    last_verified="2025-03-06",
+    source="Uptime Institute Global Data Center Survey 2022",
 )
 PUE_BEST_AIR = TraceableConstant(
     1.12,
     name="PUE (Best Air-Cooled)",
     description="Best-in-class air-cooled hyperscale datacenter PUE.",
-    citation="Uptime Institute Global Data Center Survey 2022",
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys="davis2022uptime",
-    last_verified="2025-03-06",
+    source="Uptime Institute Global Data Center Survey 2022",
 )
 PUE_TYPICAL = TraceableConstant(
     1.40,
     name="PUE (Industry Average)",
     description="Industry average traditional datacenter PUE.",
-    citation="Uptime Institute Global Data Center Survey 2022",
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys="davis2022uptime",
-    last_verified="2025-03-06",
+    source="Uptime Institute Global Data Center Survey 2022",
 )
 PUE_LEGACY = TraceableConstant(
     1.58,
     name="PUE (Legacy Air-Cooled)",
     description="Older enterprise datacenter PUE tier.",
-    citation="Uptime Institute Global Data Center Survey 2022",
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys="davis2022uptime",
-    last_verified="2025-03-06",
+    source="Uptime Institute Global Data Center Survey 2022",
 )
 PUE_STATE_OF_ART = 1.10            # Modern highly optimized datacenter benchmark
 
@@ -140,78 +111,56 @@ WUE_EVAPORATIVE = 1.8              # Evaporative cooling towers
 WUE_LIQUID = 0.0                   # Closed-loop liquid cooling (near zero)
 
 # Regional carbon intensity (gCO2 per kWh) — Source: IEA (2023)
-_IEA_CARBON_CITATION = "IEA World Energy Outlook 2023 (rounded gCO2/kWh)"
-_IEA_CARBON_BIB = "iea2023weo"
+_IEA_SOURCE = "IEA World Energy Outlook 2023 (rounded gCO2/kWh)"
 _IEA_CARBON_URL = "https://www.iea.org/reports/world-energy-outlook-2023"
-_IEA_VERIFIED = "2025-03-06"
 
 CARBON_US_AVG_GCO2_KWH = TraceableConstant(
     429,
     name="Carbon Intensity (US Average)",
     description="US national average grid carbon intensity in gCO2/kWh.",
-    citation=_IEA_CARBON_CITATION,
+    source=_IEA_SOURCE,
     url=_IEA_CARBON_URL,
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys=_IEA_CARBON_BIB,
-    last_verified=_IEA_VERIFIED,
 )
 CARBON_EU_AVG_GCO2_KWH = TraceableConstant(
     270,
     name="Carbon Intensity (EU Average)",
     description="EU average grid carbon intensity in gCO2/kWh.",
-    citation=_IEA_CARBON_CITATION,
+    source=_IEA_SOURCE,
     url=_IEA_CARBON_URL,
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys=_IEA_CARBON_BIB,
-    last_verified=_IEA_VERIFIED,
 )
 CARBON_QUEBEC_GCO2_KWH = TraceableConstant(
     20,
     name="Carbon Intensity (Quebec)",
     description="Quebec grid carbon intensity in gCO2/kWh (hydroelectric dominant).",
-    citation=_IEA_CARBON_CITATION,
+    source=_IEA_SOURCE,
     url=_IEA_CARBON_URL,
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys=_IEA_CARBON_BIB,
-    last_verified=_IEA_VERIFIED,
 )
 CARBON_FRANCE_GCO2_KWH = TraceableConstant(
     50,
     name="Carbon Intensity (France)",
     description="France grid carbon intensity in gCO2/kWh (nuclear dominant).",
-    citation=_IEA_CARBON_CITATION,
+    source=_IEA_SOURCE,
     url=_IEA_CARBON_URL,
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys=_IEA_CARBON_BIB,
-    last_verified=_IEA_VERIFIED,
 )
 CARBON_IOWA_GCO2_KWH = TraceableConstant(
     680,
     name="Carbon Intensity (Iowa reference)",
     description="High-carbon US grid mix for tutorial contrast (not IEA country average).",
-    citation="MLSysBook illustrative regional contrast",
-    source_type=SOURCE_ILLUSTRATIVE,
-    last_verified=_IEA_VERIFIED,
+    source="MLSysBook illustrative regional contrast",
 )
 CARBON_POLAND_GCO2_KWH = TraceableConstant(
     820,
     name="Carbon Intensity (Poland)",
     description="Poland grid carbon intensity in gCO2/kWh (coal dominant).",
-    citation=_IEA_CARBON_CITATION,
+    source=_IEA_SOURCE,
     url=_IEA_CARBON_URL,
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys=_IEA_CARBON_BIB,
-    last_verified=_IEA_VERIFIED,
 )
 CARBON_NORWAY_GCO2_KWH = TraceableConstant(
     10,
     name="Carbon Intensity (Norway)",
     description="Norway grid carbon intensity in gCO2/kWh (hydroelectric).",
-    citation=_IEA_CARBON_CITATION,
+    source=_IEA_SOURCE,
     url=_IEA_CARBON_URL,
-    source_type=SOURCE_INDUSTRY_REPORT,
-    bib_keys=_IEA_CARBON_BIB,
-    last_verified=_IEA_VERIFIED,
 )
 
 # Power density
@@ -226,31 +175,22 @@ MFU_TRAINING_LOW = TraceableConstant(
     0.30,
     name="MFU Training (Lower Bound)",
     description="Lower bound MFU for well-optimized large-model training.",
-    citation="Chowdhery et al. (2022), PaLM; Narayanan et al. (2021), Megatron-LM",
-    source_type=SOURCE_LITERATURE,
-    bib_keys="chowdhery2022palm; narayanan2021",
+    source="Chowdhery et al. (2022), PaLM; Narayanan et al. (2021), Megatron-LM",
     url="https://arxiv.org/abs/2204.02311",
-    last_verified="2025-03-06",
 )
 MFU_TRAINING_HIGH = TraceableConstant(
     0.50,
     name="MFU Training (Upper Bound)",
     description="Upper bound MFU for excellent large-model training runs.",
-    citation="Chowdhery et al. (2022), PaLM",
-    source_type=SOURCE_LITERATURE,
-    bib_keys="chowdhery2022palm",
+    source="Chowdhery et al. (2022), PaLM",
     url="https://arxiv.org/abs/2204.02311",
-    last_verified="2025-03-06",
 )
 MFU_INFERENCE_BATCH1 = TraceableConstant(
     0.05,
     name="MFU Inference (Batch 1)",
     description="MFU for single-request inference, heavily memory-bandwidth-bound.",
-    citation="Pope et al. (2023), Efficiently Scaling Transformer Inference",
-    source_type=SOURCE_LITERATURE,
-    bib_keys="pope2023efficiently",
+    source="Pope et al. (2023), Efficiently Scaling Transformer Inference",
     url="https://proceedings.mlsys.org/paper_files/paper/2023/hash/c4be71ab8d24cdfb45e3d06dbfca2780-Abstract-mlsys2023.html",
-    last_verified="2025-03-06",
 )
 MFU_INFERENCE_BATCHED = 0.40       # Inference at large batch size
 
@@ -268,10 +208,7 @@ SCALING_EFF_8192GPU = TraceableConstant(
     0.35,
     name="Scaling Efficiency (8192 GPUs)",
     description="Illustrative scaling efficiency at 8192 GPUs for LLM training.",
-    citation="Chowdhery et al. (2022); Jiang et al. (2024), MegaScale",
-    source_type=SOURCE_LITERATURE,
-    bib_keys="chowdhery2022palm; jiang2024megascale",
-    last_verified="2025-03-06",
+    source="Chowdhery et al. (2022); Jiang et al. (2024), MegaScale",
 )
 
 # Overhead budgets (fraction of wall time)
@@ -286,20 +223,16 @@ CHINCHILLA_TOKENS_PER_PARAM = TraceableConstant(
     20,
     name="Compute-Optimal Token Ratio",
     description="The optimal number of training tokens per model parameter (D ≈ 20P) to minimize loss for a given compute budget.",
-    citation="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
+    source="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
     url="https://arxiv.org/abs/2203.15556",
-    bib_keys="hoffmann2022chinchilla",
-    last_verified="2025-03-06",
 )
 
 CHINCHILLA_COMPUTE_CONSTANT = TraceableConstant(
     6,
     name="Training Compute Constant (C ≈ 6PD)",
     description="The multiplier for calculating total training FLOPs. 2 FLOPs per parameter for the forward pass, and 4 FLOPs for the backward pass.",
-    citation="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
+    source="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
     url="https://arxiv.org/abs/2203.15556",
-    bib_keys="hoffmann2022chinchilla",
-    last_verified="2025-03-06",
 )
 
 # --- Critical Batch Size (McCandlish et al. 2018) ---
@@ -410,7 +343,7 @@ DEFAULT_SCALING_EFFICIENCY = TraceableConstant(
     0.90,
     name="Scaling Efficiency (η)",
     description="The efficiency of parallel scaling. A value of 0.90 means 90% of theoretical linear speedup is achieved.",
-    citation="Common industry rule-of-thumb for highly optimized clusters."
+    source="Common industry rule-of-thumb for highly optimized clusters."
 )
 
 # Default communication overlap efficiency (e.g., Megatron-LM can overlap ~85% of communication)
@@ -418,7 +351,7 @@ DEFAULT_OVERLAP_EFFICIENCY = TraceableConstant(
     0.85,
     name="Communication Overlap Efficiency",
     description="The fraction of network communication time that can be successfully hidden behind compute operations.",
-    citation="Shoeybi et al. (2019). Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism.",
+    source="Shoeybi et al. (2019). Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism.",
     url="https://arxiv.org/abs/1909.08053"
 )
 
@@ -427,6 +360,6 @@ DEFAULT_COMPUTE_EFFICIENCY = TraceableConstant(
     0.50,
     name="Baseline Model FLOPs Utilization (MFU)",
     description="A highly optimized large language model typically achieves around 50% MFU due to communication overhead and memory bandwidth constraints.",
-    citation="Chowdhery et al. (2022). PaLM: Scaling Language Modeling with Pathways.",
+    source="Chowdhery et al. (2022). PaLM: Scaling Language Modeling with Pathways.",
     url="https://arxiv.org/abs/2204.02311"
 )

@@ -25,12 +25,8 @@ Quantity = Annotated[
 class Metadata(BaseModel):
     """Provenance for registry entries (hardware, models, fabrics)."""
 
+    source: Optional[str] = None
     source_url: Optional[str] = None
     description: Optional[str] = None
     last_verified: Optional[str] = None  # YYYY-MM-DD
     version: Optional[str] = None
-    # Textbook bibliography keys (semicolon-separated), e.g. "choquette2023; nvidia2024blackwell"
-    bib_keys: Optional[str] = None
-    # datasheet | literature | industry_report | convention | illustrative | estimate
-    source_type: Optional[str] = None
-    citation: Optional[str] = None

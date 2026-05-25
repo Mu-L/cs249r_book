@@ -10,7 +10,7 @@ class TestTraceableConstant(unittest.TestCase):
             0.85,
             name="Test MFU",
             description="A test assumption.",
-            citation="Test Citation",
+            source="Test Citation",
         )
         self.assertIsInstance(assump, float)
         self.assertEqual(assump, 0.85)
@@ -24,31 +24,29 @@ class TestTraceableConstant(unittest.TestCase):
             0.50,
             name="Test MFU",
             description="A test assumption.",
-            citation="Test Citation",
+            source="Test Citation",
             url="https://example.com",
-            bib_keys="test2020",
-            source_type="literature",
-            last_verified="2025-03-06",
         )
-        self.assertEqual(assump.bib_keys, "test2020")
+        self.assertEqual(assump.source, "Test Citation")
         md = assump.render_markdown()
         self.assertIn("Test MFU", md)
         self.assertIn("https://example.com", md)
-        self.assertIn("test2020", md)
+        self.assertIn("Test Citation", md)
 
-    def test_gpu_mttf_bib_keys_match_book(self):
+    def test_gpu_mttf_source_mentions_reliability_literature(self):
         from mlsysim.core import defaults
 
-        self.assertIn("kokolis2025", defaults.GPU_MTTF_HOURS.bib_keys)
-        self.assertIn("zu2024tpuv4", defaults.GPU_MTTF_HOURS.bib_keys)
-        self.assertIn("barroso2019", defaults.GPU_MTTF_HOURS.bib_keys)
+        src = defaults.GPU_MTTF_HOURS.source
+        self.assertIn("Kokolis", src)
+        self.assertIn("Zu", src)
+        self.assertIn("Barroso", src)
 
     def test_system_assumption_with_pint(self):
         assump = TraceableConstant(
             15.0,
             name="Test Overhead",
             description="Overhead in ms.",
-            citation="Test Citation",
+            source="Test Citation",
         )
         quant = assump * ureg.ms
         self.assertIsInstance(quant, pint.Quantity)

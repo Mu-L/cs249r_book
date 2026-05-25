@@ -27,9 +27,7 @@ class LanguageModels(Registry):
         training_energy_mwh=1287,
         inference_flops=2 * 175e9 * ureg.flop,
         metadata=Metadata(
-            source_type="literature",
-            bib_keys="brown2020language",
-            citation="Brown et al. (2020), Language Models are Few-Shot Learners",
+            source="Brown et al. (2020), Language Models are Few-Shot Learners",
             last_verified="2025-03-06",
         ),
     )
@@ -46,10 +44,8 @@ class LanguageModels(Registry):
         training_hardware_label="A100-class",
         inference_flops=2 * 1.76e12 * ureg.flop,
         metadata=Metadata(
+            source="SemiAnalysis (2023) public MoE estimate; OpenAI (2023) technical report (no parameter count)",
             source_url="https://www.semianalysis.com/p/gpt-4-architecture-infrastructure",
-            source_type="estimate",
-            bib_keys="semianalysisGPT4; openai2023gpt4",
-            citation="SemiAnalysis (2023) public MoE estimate; OpenAI (2023) technical report (no parameter count)",
             description="1.76T parameters and 2.5M GPU-days are third-party estimates, not OpenAI disclosures.",
             last_verified="2025-03-06",
         ),
