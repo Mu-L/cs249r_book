@@ -35,7 +35,7 @@ PDF_BY_VOLUME = {
 }
 
 RESIDUAL_XREF = re.compile(r"\?@((?:sec|fig|tbl|eq|lst)-[\w.-]+)")
-LATEX_UNDEF = re.compile(r"\b(?:Figure|Table|Section|Equation)\s+\?\?+")
+LATEX_UNDEF = re.compile(r"\b(?:Figure|Table|Section|Equation|Listing)\s+\?\?+")
 PYTHON_LEAK = re.compile(
     r"(?:Traceback \(most recent call last\)|"
     r"NameError:|AttributeError:|ModuleNotFoundError:|Error rendering)",

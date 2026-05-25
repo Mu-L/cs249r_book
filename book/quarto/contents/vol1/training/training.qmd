@@ -4694,7 +4694,7 @@ from mlsysim.core.constants import *
 # │ Exports: fa_seq_len_str, embed_dim_str, fa_n_heads_str, bytes_fp32_str,
 # │          attn_matrix_mb_str, total_attn_gb_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_percent, fmt_int, fmt, check
+from mlsysim.fmt import fmt_percent, fmt_int, fmt, check, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class AttentionMemoryCalc:
@@ -4717,9 +4717,12 @@ class AttentionMemoryCalc:
     bytes_fp32_str = fmt(BYTES_FP32.m_as(byte), precision=0, commas=False)
     attn_matrix_mb_str = fmt(attn_matrix_mb, precision=1, commas=False)
     total_attn_gb_str = fmt(total_attn_gb, precision=1, commas=False)
+    attn_bytes_formula_str = MarkdownStr(
+        f"${fa_seq_len_str}^2 \\times {bytes_fp32_str}$"
+    )
 ```
 
-The memory bottleneck emerges from materializing the $S{\times}S$ intermediate matrices for scores and probabilities. For a sequence length of `{python} AttentionMemoryCalc.fa_seq_len_str` tokens with embedding dimension `{python} AttentionMemoryCalc.embed_dim_str` (typical for a single attention head), the attention score matrix alone requires $`{python} AttentionMemoryCalc.fa_seq_len_str`^2 \times `{python} AttentionMemoryCalc.bytes_fp32_str`$ bytes = `{python} AttentionMemoryCalc.attn_matrix_mb_str` MB in FP32. With `{python} AttentionMemoryCalc.fa_n_heads_str` attention heads, this grows to `{python} AttentionMemoryCalc.total_attn_gb_str` GB just for intermediate attention matrices, not including the keys, queries, values, or output tensors.
+The memory bottleneck emerges from materializing the $S{\times}S$ intermediate matrices for scores and probabilities. For a sequence length of `{python} AttentionMemoryCalc.fa_seq_len_str` tokens with embedding dimension `{python} AttentionMemoryCalc.embed_dim_str` (typical for a single attention head), the attention score matrix alone requires `{python} AttentionMemoryCalc.attn_bytes_formula_str` bytes = `{python} AttentionMemoryCalc.attn_matrix_mb_str` MB in FP32. With `{python} AttentionMemoryCalc.fa_n_heads_str` attention heads, this grows to `{python} AttentionMemoryCalc.total_attn_gb_str` GB just for intermediate attention matrices, not including the keys, queries, values, or output tensors.
 
 Modern GPU memory hierarchy exacerbates this bottleneck. HBM\index{HBM!memory bandwidth} provides 40–80 GB capacity with 1–2 TB/s bandwidth, while SRAM\index{SRAM!on-chip memory} provides only 20–40 MB capacity but delivers 20+ TB/s bandwidth (10$\times$ faster). Standard attention stores these large matrices in slow HBM and repeatedly loads them during the backward pass. For GPT-2 scale models processing 2048-token sequences, attention operations spend 70--80 percent of execution time waiting for memory transfers rather than computing, leaving expensive tensor cores underutilized.
 
@@ -5203,7 +5206,7 @@ from mlsysim.core.constants import *
 # │          accum_2wk_str, naive_2wk_str, comm_reduction_pct_str,
 # │          accum_steps_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_percent, fmt_int, fmt, check
+from mlsysim.fmt import fmt_percent, fmt_int, fmt, check, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class GradientAccumulation:
@@ -5257,6 +5260,16 @@ class GradientAccumulation:
     comm_reduction_pct_str = fmt(comm_reduction_pct, precision=0, commas=False)
     accum_steps_str = fmt(accum_steps, precision=0, commas=False)
     v100_mem_str = fmt(v100_mem_gb, precision=1, commas=False)
+    local_grad_eqn_str = MarkdownStr(
+        rf"\frac{{1}}{{{accum_steps}}}\sum_{{j=1}}^{{{accum_steps}}} "
+        rf"\left[\frac{{1}}{{{micro_batch}}}\sum_{{k=1}}^{{{micro_batch}}} "
+        rf"\nabla \mathcal{{L}}(x_{{jk}})\right]"
+    )
+    global_grad_eqn_str = MarkdownStr(
+        rf"\frac{{1}}{{{gpus_accum}}}\sum_{{g=1}}^{{{gpus_accum}}} "
+        rf"\nabla \mathcal{{L}}_{{\text{{local}}}}^{{(g)}}, \qquad "
+        rf"B_{{\text{{global}}}} = {gpus_accum} \times {batch_per_gpu} = {effective_batch}"
+    )
 
 # Export for prose
 ```
@@ -5313,16 +5326,12 @@ With Accumulation (actual GPT-2 approach):
 - Difference: 0.5 percent (within noise margin)
 
 **Why this works**: Gradient accumulation is mathematically equivalent to larger batches because gradients are additive. Each accelerator first accumulates a local gradient over its `{python} GradientAccumulation.batch_per_gpu_str` examples:
-$$
-\nabla \mathcal{L}_{\text{local}} =
-\frac{1}{`{python} GradientAccumulation.accum_steps_str`}\sum_{j=1}^{`{python} GradientAccumulation.accum_steps_str`} \left[\frac{1}{`{python} GradientAccumulation.micro_batch_str`}\sum_{k=1}^{`{python} GradientAccumulation.micro_batch_str`} \nabla \mathcal{L}(x_{jk})\right]
-$$
+
+`{python} GradientAccumulation.local_grad_eqn_str`
+
 AllReduce then averages those local gradients across `{python} GradientAccumulation.gpus_accum_str` accelerators, producing the global effective batch:
-$$
-\nabla \mathcal{L}_{\text{global}} =
-\frac{1}{`{python} GradientAccumulation.gpus_accum_str`}\sum_{g=1}^{`{python} GradientAccumulation.gpus_accum_str`} \nabla \mathcal{L}_{\text{local}}^{(g)}, \qquad
-B_{\text{global}} = `{python} GradientAccumulation.gpus_accum_str` \times `{python} GradientAccumulation.batch_per_gpu_str` = `{python} GradientAccumulation.effective_batch_str`
-$$
+
+`{python} GradientAccumulation.global_grad_eqn_str`
 
 **Systems insight**: For memory-bound models like GPT-2, gradient accumulation + moderate GPU count is more cost-effective than scaling to many GPUs with small batches.
 
@@ -6611,7 +6620,7 @@ from mlsysim.core.constants import *
 # │          cf_energy_kwh_str, cf_energy_saved_str, cf_co2_str,
 # │          cf_household_months_str, cf_flops_mantissa_str, cf_flops_exp_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_int, fmt_percent, fmt, check
+from mlsysim.fmt import fmt_int, fmt_percent, fmt, check, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class TrainingCarbonFootprint:
@@ -6671,6 +6680,9 @@ class TrainingCarbonFootprint:
     cf_energy_saved_str = fmt(cf_energy_saved_kwh, precision=1, commas=True)
     cf_co2_str = fmt(cf_co2_tons, precision=1, commas=False)
     cf_household_months_str = fmt(cf_household_months, precision=1, commas=False)
+    cf_flops_eqn_str = MarkdownStr(
+        f"${cf_flops_mantissa_str} \\times 10^{{{cf_flops_exp_str}}}$"
+    )
 
 # Export for prose
 ```
@@ -6681,7 +6693,7 @@ class TrainingCarbonFootprint:
 Training large models is not just a compute challenge; it is a massive energy sink. We can quantify the environmental impact of scaling training using the **energy corollary** to the iron law:
 
 1.  **Workload**: Training a 7-billion-parameter model for one trillion tokens.
-2.  **Compute**: ≈ `{python} TrainingCarbonFootprint.cf_flops_mantissa_str` $\times 10^{`{python} TrainingCarbonFootprint.cf_flops_exp_str`}$ FLOPs.
+2.  **Compute**: ≈ `{python} TrainingCarbonFootprint.cf_flops_eqn_str` FLOPs.
 3.  **Efficiency**: 150 TFLOP/s sustained on A100 (`{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W TDP).
 4.  **Time**: ≈ `{python} TrainingCarbonFootprint.cf_time_days_str` days on `{python} TrainingCarbonFootprint.cf_num_gpus_str` GPUs.
 5.  **Energy**: (`{python} TrainingCarbonFootprint.cf_num_gpus_str` GPUs $\times$ `{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W + `{python} TrainingCarbonFootprint.cf_hosts_str` hosts $\times$ `{python} TrainingCarbonFootprint.cf_cpu_tdp_per_host_w_str` W) $\times$ `{python} TrainingCarbonFootprint.cf_time_hours_str` hours ≈ **`{python} TrainingCarbonFootprint.cf_energy_kwh_str` kWh**

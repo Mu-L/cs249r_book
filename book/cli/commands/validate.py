@@ -98,6 +98,12 @@ TUPLE_ASSIGN_PATTERN = re.compile(r"^((?:[A-Za-z_]\w*\s*,\s*)+[A-Za-z_]\w*)\s*="
 CLASS_DEF_PATTERN = re.compile(r"^class\s+(\w+)\s*[:(]")
 GRID_TABLE_SEP_PATTERN = re.compile(r"^\+[-:=+]+\+$")
 # NOTE: The LATEX_INLINE_PATTERN and LATEX_ADJACENT_PATTERN checks were retired
+# from validate_inline_refs.py when fmt() gained MarkdownStr; re-enabled here for
+# `{python}` nested inside \(...\) or $...$ (breaks Quarto math parsing).
+LATEX_INLINE_PATTERN = re.compile(
+    r"(?<![\\$])\$(?!\$)[^$\n]*`\{python\}[^$\n]*\$"
+    r"|\\\([^)]*`\{python\}[^)]*\\\)"
+)
 # along with mlsysim.fmt's MarkdownStr migration. They had been guarding against
 # Quarto's auto-escape silently corrupting commas and decimals inside $..$ math
 # mode — a bug class that no longer exists now that fmt() returns a Markdown-
