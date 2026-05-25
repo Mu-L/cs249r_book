@@ -35,7 +35,7 @@ from mlsysim.core.constants import *
 # │ Context: ## The α-β Communication Model
 # │ Goal: α-β table, crossover callout, and perspective ring-N anchor.
 # │ Exports: CommAlphaBeta.*_str
-from mlsysim.fmt import fmt_int, fmt, check
+from mlsysim.fmt import fmt_int, fmt, check, MarkdownStr
 
 from mlsysim.core.constants import (
     LATENCY_NVLINK, LATENCY_PCIE_GEN5,
@@ -60,6 +60,8 @@ class CommAlphaBeta:
     nvlink_latency_ns = int(LATENCY_NVLINK.m_as(NS))
     pcie_latency_ns = int(LATENCY_PCIE_GEN5.m_as(NS))
     ring_n_gpus = 256
+    grad_layer_mb_min = 10
+    grad_layer_mb_max = 100
 
     crossover_kb_val = (ib_ndr_alpha_us * ureg.microsecond * ib_ndr.bandwidth).m_as(KB)
 
@@ -79,6 +81,7 @@ class CommAlphaBeta:
     pcie_lat_str = fmt(pcie_latency_ns, precision=0, commas=False)
     crossover_kb_str = fmt_int(crossover_kb_val, commas=False)
     ring_n_str = fmt(ring_n_gpus, precision=0, commas=False)
+    grad_layer_mb_range_str = MarkdownStr(f"{grad_layer_mb_min}--{grad_layer_mb_max} MB")
 ```
 
 ::: {#psp-appendix-communication-alpha-beta-model-matters .callout-perspective title="Why this matters"}
@@ -134,7 +137,7 @@ Below $n^*$, communication is **latency-dominated**: sending more small messages
 
 $n^* = \alpha \times \beta =$ `{python} CommAlphaBeta.ib_ndr_alpha_us_str` $\times 10^{-6}$ s $\times$ `{python} CommAlphaBeta.ib_ndr_beta_gbs_str` $\times 10^{9}$ B/s $=$ `{python} CommAlphaBeta.crossover_kb_str` KB
 
-**Interpretation**: Messages smaller than `{python} CommAlphaBeta.crossover_kb_str` KB are latency-dominated on IB NDR. Gradient tensors from a single layer of a large model are typically 10--100 MB---well above this threshold. Control messages, heartbeats, and barrier synchronizations, however, are well below it.
+**Interpretation**: Messages smaller than `{python} CommAlphaBeta.crossover_kb_str` KB are latency-dominated on IB NDR. Gradient tensors from a single layer of a large model are typically `{python} CommAlphaBeta.grad_layer_mb_range_str`---well above this threshold. Control messages, heartbeats, and barrier synchronizations, however, are well below it.
 
 **Systems insight**: This is why NCCL and Gloo batch small gradient tensors into larger "buckets" before launching AllReduce. Sending each tensor individually would pay the `{python} CommAlphaBeta.ib_ndr_alpha_us_str` $\mu$s startup cost hundreds of times per iteration instead of a handful.
 
@@ -239,7 +242,7 @@ $T_{\text{ring}} \approx$ **`{python} CommCollectives.ring_time_ms_str` ms**
 
 $T_{\text{tree}} \approx$ **`{python} CommCollectives.tree_time_ms_str` ms**
 
-**Interpretation**: For this 1 GB message, ring AllReduce takes `{python} CommCollectives.ring_time_ms_str` ms while tree takes `{python} CommCollectives.tree_time_ms_str` ms---the ring is significantly faster because it distributes the bandwidth load across all links. The tree's logarithmic latency advantage is negligible compared to its bandwidth penalty for large messages.
+**Interpretation**: For this `{python} CommCollectives.ring_msg_gb_str` GB message, ring AllReduce takes `{python} CommCollectives.ring_time_ms_str` ms while tree takes `{python} CommCollectives.tree_time_ms_str` ms---the ring is significantly faster because it distributes the bandwidth load across all links. The tree's logarithmic latency advantage is negligible compared to its bandwidth penalty for large messages.
 
 **Systems insight**: For the large gradient tensors typical of data-parallel training, ring (or ring-based) algorithms dominate. Tree algorithms are useful only for small messages or when latency---not bandwidth---is the bottleneck.
 

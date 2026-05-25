@@ -935,13 +935,14 @@ class TokenLatencyScenario:
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     h100_tflops_str = fmt(h_h100.peak_flops.m_as(TFLOPs/second), precision=0, commas=False)
     dominance_str = fmt(dominance, precision=1, commas=False)
+    weight_gb_str = fmt(weight_vol.m_as(GB), precision=0, commas=False)
     t_comp_math = fmt_math(f"T_{{\\text{{compute}}}} \\approx \\mathbf{{{t_comp_ms:.2f} \\text{{ ms}}}}")
     t_mem_math = fmt_math(f"T_{{\\text{{mem}}}} \\approx \\mathbf{{{t_mem_ms:.1f} \\text{{ ms}}}}")
 ```
 
 ::: {#nbk-token-latency .callout-notebook title="The physics of token latency"}
 
-**Problem**: Generating one token from Llama-3 70B (140 GB of FP16 weights) requires both arithmetic and a full weight load from HBM. Assuming capacity has been solved (by sharding, a higher-capacity device, or quantization), which dominates the per-token time on an H100: compute or memory transfer?
+**Problem**: Generating one token from Llama-3 70B (`{python} TokenLatencyScenario.weight_gb_str` GB of FP16 weights) requires both arithmetic and a full weight load from HBM. Assuming capacity has been solved (by sharding, a higher-capacity device, or quantization), which dominates the per-token time on an H100: compute or memory transfer?
 
 1. **Compute Time**\index{Latency!compute time}: Each token requires $2 \times 70 \times 10^9 = 1.4 \times 10^{11}$ floating-point operations. At `{python} TokenLatencyScenario.h100_tflops_str` TFLOP/s of low-precision Tensor Core peak throughput, the arithmetic takes:
    `{python} TokenLatencyScenario.t_comp_math`
@@ -958,7 +959,7 @@ class MemoryBandwidthLatencyRecap:
 
 2. **Memory Time**\index{Latency!memory time}:
 
-Loading 140 GB of weights from HBM at `{python} MemoryBandwidthLatencyRecap.h100_bw_str` TB/s takes:
+Loading `{python} TokenLatencyScenario.weight_gb_str` GB of weights from HBM at `{python} MemoryBandwidthLatencyRecap.h100_bw_str` TB/s takes:
    `{python} TokenLatencyScenario.t_mem_math`
 
 **Systems insight**: The processor spends **`{python} TokenLatencyScenario.dominance_str` percent** of its time waiting for data from memory. The arithmetic units are idle for almost the entire token generation. Even a hypothetical processor with *infinite* compute throughput would generate tokens only negligibly faster, because the memory transfer time dominates completely. This is *why* HBM bandwidth improvements deliver nearly linear speedups for inference workloads.
@@ -2036,9 +2037,10 @@ class InfraFrontierTdpServingRecap:
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    weight_gb_str = fmt((Models.Language.GPT3.parameters * BYTES_FP16).m_as(GB), precision=0, commas=False)
 ```
 
-The macro impact appears when serving our `{python} InfraFrontierTdpServingRecap.frontier_params_b_str`B model. Generating a single token requires loading the entire 350 GB weight tensor from HBM:
+The macro impact appears when serving our `{python} InfraFrontierTdpServingRecap.frontier_params_b_str`B model. Generating a single token requires loading the entire `{python} InfraFrontierTdpServingRecap.weight_gb_str` GB weight tensor from HBM:
 
 $$\text{Data Movement Energy} = 350 \text{ GB} \times 8 \text{ bits/byte} \times 4 \text{ pJ/bit} \approx \mathbf{11.2 \text{ Joules}}$$
 
@@ -2365,7 +2367,7 @@ class BandwidthStaircase:
 
 ::: {#nbk-compute-infrastructure-physics-staircase .callout-notebook title="The physics of the staircase"}
 
-**Problem**: A 10 GB buffer is synchronized across the fleet. How much does the physical "Layer" of the fleet affect transfer time?
+**Problem**: A `{python} BandwidthStaircase.transfer_gb_str` GB buffer is synchronized across the fleet. How much does the physical "Layer" of the fleet affect transfer time?
 
 **Math**:
 Transfer time is $T_{\text{transfer}} = D_{\text{vol}} / \text{BW}$.
@@ -2551,7 +2553,9 @@ class BandwidthHierarchyPcieExampleRecap:
 
 ::: {#exmp-compute-infrastructure-nvlink-bandwidth-surprise .callout-example title="The NVLink bandwidth surprise"}
 
+<!-- lego-ok-block: PCIe-vs-NVLink tensor-parallel diagnostic narrative -->
 Early users of multi-GPU nodes often attempted tensor parallelism over PCIe, expecting the `{python} BandwidthHierarchyPcieExampleRecap.pcie_bw_str` GB/s bandwidth to suffice. In practice, tensor parallelism requires AllReduce after *every* Transformer layer, not just *once* per training step. A model with 96 layers generates 96 AllReduce operations per forward pass and another 96 during the backward pass, totaling 192 synchronization events per step. At PCIe bandwidth, each AllReduce for a 12,288-dimensional hidden state takes approximately 4 ms, accumulating to 768 ms of pure communication overhead per step. The compute per step is roughly 200 ms. The accelerators were spending nearly 80 percent of their time waiting for PCIe transfers. Switching to NVLink reduced each AllReduce to 0.2 ms, bringing total communication overhead to 38 ms and restoring accelerator utilization to over 80 percent. The lesson: for tensor parallelism, *the interconnect is the bottleneck*, and the difference between PCIe and NVLink is not incremental; it is the difference between a functional and a nonfunctional system.
+<!-- end lego-ok-block -->
 
 :::
 
@@ -2921,42 +2925,79 @@ To solidify the memory planning concepts, consider a concrete sizing exercise fo
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierNodeModelRecap.frontier_params_b_str
+# │ Exports: InfraFrontierNodeModelRecap.frontier_params_b_str,
+# │          InfraFrontierNodeModelRecap.node_gpus_str,
+# │          InfraFrontierNodeModelRecap.h100_mem_gb_str,
+# │          InfraFrontierNodeModelRecap.total_hbm_gb_str,
+# │          InfraFrontierNodeModelRecap.host_ddr_tb_str,
+# │          InfraFrontierNodeModelRecap.weight_per_gpu_gb_str,
+# │          InfraFrontierNodeModelRecap.opt_state_gb_str,
+# │          InfraFrontierNodeModelRecap.act_gb_str,
+# │          InfraFrontierNodeModelRecap.grad_gb_str,
+# │          InfraFrontierNodeModelRecap.buf_gb_str,
+# │          InfraFrontierNodeModelRecap.total_per_gpu_gb_str,
+# │          InfraFrontierNodeModelRecap.optimizer_pool_gb_str
 class InfraFrontierNodeModelRecap:
+    node_gpus = Systems.Nodes.DGX_H100.accelerators_per_node
+    h100_mem_gb = Hardware.Cloud.H100.memory.capacity.m_as(GiB)
+    host_ddr_tb = 2
+    weight_gb = (Models.Language.GPT3.parameters * BYTES_FP16).m_as(GB)
+    weight_per_gpu_gb = weight_gb / node_gpus
+    opt_state_gb = weight_per_gpu_gb * 4
+    act_gb = 20
+    grad_gb = weight_per_gpu_gb
+    buf_gb = 5
+    total_per_gpu_gb = weight_per_gpu_gb + act_gb + grad_gb + buf_gb
+    optimizer_pool_gb = weight_gb * 4
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    node_gpus_str = fmt(node_gpus, precision=0, commas=False)
+    h100_mem_gb_str = fmt(h100_mem_gb, precision=0, commas=False)
+    total_hbm_gb_str = fmt(h100_mem_gb * node_gpus, precision=0, commas=False)
+    host_ddr_tb_str = fmt(host_ddr_tb, precision=0, commas=False)
+    weight_per_gpu_gb_str = fmt(weight_per_gpu_gb, precision=2, commas=False)
+    opt_state_gb_str = fmt(opt_state_gb, precision=0, commas=False)
+    act_gb_str = fmt(act_gb, precision=0, commas=False)
+    grad_gb_str = fmt(grad_gb, precision=2, commas=False)
+    buf_gb_str = fmt(buf_gb, precision=0, commas=False)
+    total_per_gpu_gb_str = fmt(total_per_gpu_gb, precision=0, commas=False)
+    optimizer_pool_gb_str = fmt(optimizer_pool_gb, precision=0, commas=True)
 ```
 
 - Model: `{python} InfraFrontierNodeModelRecap.frontier_params_b_str`B parameters
-- Node: 8$\times$ H100 GPUs, 80 GB HBM each (640 GB total HBM)
-- Host: 2 TB DDR5
+- Node: `{python} InfraFrontierNodeModelRecap.node_gpus_str`$\times$ H100 GPUs, `{python} InfraFrontierNodeModelRecap.h100_mem_gb_str` GB HBM each (`{python} InfraFrontierNodeModelRecap.total_hbm_gb_str` GB total HBM)
+- Host: `{python} InfraFrontierNodeModelRecap.host_ddr_tb_str` TB DDR5
 - Parallelism: 8-way tensor parallelism within the node
 
 **Step 1**: Weight Distribution
 With 8-way TP, each GPU holds 1/8 of every weight tensor.
-Per-GPU weight memory: 350 GB/8 = 43.75 GB (FP16).
+Per-GPU weight memory: `{python} InfraFrontierNodeModelRecap.weight_per_gpu_gb_str` GB (FP16).
 
 **Step 2**: Optimizer State with ZeRO Stage 1
-ZeRO Stage 1 shards the optimizer states across data-parallel workers. Within a single node using only TP (no data parallelism), the optimizer is not sharded. Each GPU stores the full optimizer state for its TP shard: 43.75 GB$\times$ 4 (FP32 $m$ and $v$) = 175 GB.
+ZeRO Stage 1 shards the optimizer states across data-parallel workers. Within a single node using only TP (no data parallelism), the optimizer is not sharded. Each GPU stores the full optimizer state for its TP shard: `{python} InfraFrontierNodeModelRecap.weight_per_gpu_gb_str` GB$\times$ 4 (FP32 $m$ and $v$) = `{python} InfraFrontierNodeModelRecap.opt_state_gb_str` GB.
 
-The total exceeds the 80 GB HBM capacity. **Solution**: offload optimizer states to host DDR5. The 2 TB of DDR5 can hold the full 1,400 GB of optimizer state with room to spare.
+The total exceeds the `{python} InfraFrontierNodeModelRecap.h100_mem_gb_str` GB HBM capacity. **Solution**: offload optimizer states to host DDR5. The `{python} InfraFrontierNodeModelRecap.host_ddr_tb_str` TB of DDR5 can hold the full `{python} InfraFrontierNodeModelRecap.optimizer_pool_gb_str` GB of optimizer state with room to spare.
 
 **Step 3**: Activations
+<!-- lego-ok-block: activation-memory pedagogical ranges for checkpointing narrative -->
 With activation checkpointing (recomputing every other layer), the activation memory for a microbatch of 4 sequences at 2,048 token length is approximately 15--25 GB per GPU. Without checkpointing, it would be 100--200 GB per GPU, which is impossible.
+<!-- end lego-ok-block -->
 
 **Step 4**: Gradient Accumulation
-Gradients match the weight size: 43.75 GB per GPU in FP16.
+Gradients match the weight size: `{python} InfraFrontierNodeModelRecap.grad_gb_str` GB per GPU in FP16.
 
 **Total per-GPU HBM usage**\index{HBM!per-GPU usage}:
 
-- Weights: 43.75 GB
-- Activations: ~20 GB (with checkpointing)
-- Gradients: 43.75 GB
-- Buffers and fragmentation: ~5 GB
-- **Total: ~113 GB** (exceeds 80 GB HBM)
+- Weights: `{python} InfraFrontierNodeModelRecap.weight_per_gpu_gb_str` GB
+- Activations: ~`{python} InfraFrontierNodeModelRecap.act_gb_str` GB (with checkpointing)
+- Gradients: `{python} InfraFrontierNodeModelRecap.grad_gb_str` GB
+- Buffers and fragmentation: ~`{python} InfraFrontierNodeModelRecap.buf_gb_str` GB
+- **Total: ~`{python} InfraFrontierNodeModelRecap.total_per_gpu_gb_str` GB** (exceeds `{python} InfraFrontierNodeModelRecap.h100_mem_gb_str` GB HBM)
 
+<!-- lego-ok-block: post-mitigation HBM envelope after gradient accumulation/offloading -->
 **Resolution**: Use gradient accumulation\index{Gradient Accumulation} (accumulate over 2--4 microbatches before AllReduce, reducing peak activation memory) and gradient offloading\index{Gradient Offloading} (store inactive gradient shards in DDR5). With these techniques, the per-GPU HBM usage drops to approximately 70--75 GB, fitting within the 80 GB envelope with a small margin for NCCL communication buffers.
+<!-- end lego-ok-block -->
 
 :::
 
@@ -2984,11 +3025,13 @@ from mlsysim import *
 class InterconnectCommMath:
     """Formatted math strings for NVLink vs InfiniBand gradient sync latency."""
 
+    gradient_buffer_gb = 1
     _nvlink_bw_val = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second)
     _ib_bw_gbs_val = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second)
 
-    t_intra_math = fmt_math(f"T_{{\\text{{intra}}}} = 1\\text{{ GB}} / {_nvlink_bw_val:.0f}\\text{{ GB/s}} \\approx \\mathbf{{1.1 \\text{{ ms}}}}")
-    t_inter_math = fmt_math(f"T_{{\\text{{inter}}}} = 1\\text{{ GB}} / {_ib_bw_gbs_val:.0f}\\text{{ GB/s}} \\approx \\mathbf{{20 \\text{{ ms}}}}")
+    t_intra_math = fmt_math(f"T_{{\\text{{intra}}}} = {gradient_buffer_gb}\\text{{ GB}} / {_nvlink_bw_val:.0f}\\text{{ GB/s}} \\approx \\mathbf{{1.1 \\text{{ ms}}}}")
+    t_inter_math = fmt_math(f"T_{{\\text{{inter}}}} = {gradient_buffer_gb}\\text{{ GB}} / {_ib_bw_gbs_val:.0f}\\text{{ GB/s}} \\approx \\mathbf{{20 \\text{{ ms}}}}")
+    gradient_buffer_gb_str = fmt(gradient_buffer_gb, precision=0, commas=False)
 ```
 
 ```{python}
@@ -3004,7 +3047,7 @@ class BandwidthHierarchyNvlinkPodRecap:
 
 ::: {#nbk-comm-overhead .callout-notebook title="The cost of crossing the cliff"}
 
-**Problem**: A training step must synchronize a 1 GB gradient buffer. How much longer does the synchronization take when it crosses the node boundary (InfiniBand) compared to staying within the node (NVLink)?
+**Problem**: A training step must synchronize a `{python} InterconnectCommMath.gradient_buffer_gb_str` GB gradient buffer. How much longer does the synchronization take when it crosses the node boundary (InfiniBand) compared to staying within the node (NVLink)?
 
 1. **Intra-Node (NVLink)**: Bandwidth = `{python} BandwidthHierarchyNvlinkPodRecap.nvlink_bw_str` GB/s.
    `{python} InterconnectCommMath.t_intra_math`
@@ -3132,6 +3175,9 @@ class H100TdpRackRecap:
     power_delta_kw_str = fmt(power_delta_kw, precision=0, commas=False)
     transition_us_str = fmt(transition_us, precision=0, commas=False)
     power_rate_gws_str = fmt(power_rate_gws, precision=2, commas=False)
+    node_power_budget_kw_str = fmt(7.0, precision=0, commas=False)
+    node_gpus_str = fmt(Systems.Nodes.DGX_H100.accelerators_per_node, precision=0, commas=False)
+    node_gpu_only_kw_str = fmt(Hardware.Cloud.H100.tdp.m_as(watt) * Systems.Nodes.DGX_H100.accelerators_per_node / THOUSAND, precision=1, commas=False)
 ```
 
 ## The Rack {#sec-compute-rack}
@@ -3245,7 +3291,7 @@ Verify your understanding of the data center power path:
 
 - [ ] Why does synchronous ML training create more stress on the power grid than asynchronous web traffic?
 - [ ] What is the "Power Ramp" problem, and how do supercapacitor banks address it?
-- [ ] If a node has 8 GPUs at `{python} H100TdpRackRecap.tdp_str` W each, why is the total node power budgeted at ~7 kW rather than 5.6 kW?
+- [ ] If a node has `{python} H100TdpRackRecap.node_gpus_str` GPUs at `{python} H100TdpRackRecap.tdp_str` W each, why is the total node power budgeted at ~`{python} H100TdpRackRecap.node_power_budget_kw_str` kW rather than `{python} H100TdpRackRecap.node_gpu_only_kw_str` kW?
 - [ ] True or False: Converting high-voltage AC to low-voltage DC at the rack level is more efficient than doing it at the server level.
 
 :::
@@ -3416,9 +3462,35 @@ from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Exports: H100TdpCoolingRecap.tdp_str
 class H100TdpCoolingRecap:
+    n_gpus = 1_000
+    gpu_tdp_w = Hardware.Cloud.H100.tdp.m_as(watt)
+    pue_air = 1.5
+    pue_liquid = 1.08
+    electricity_rate = 0.07
+    hours_per_year = HOURS_PER_YEAR
+
+    it_power_kw = n_gpus * gpu_tdp_w / THOUSAND
+    air_total_kw = it_power_kw * pue_air
+    air_cooling_kw = air_total_kw - it_power_kw
+    liquid_total_kw = it_power_kw * pue_liquid
+    liquid_cooling_kw = liquid_total_kw - it_power_kw
+    savings_kw = air_cooling_kw - liquid_cooling_kw
+    annual_savings_usd = savings_kw * hours_per_year * electricity_rate / THOUSAND
+    lifecycle_years = 3
+    three_year_savings_usd = annual_savings_usd * lifecycle_years
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    tdp_str = fmt(Hardware.Cloud.H100.tdp.m_as(watt), precision=0, commas=False)
+    tdp_str = fmt(gpu_tdp_w, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus, precision=0)
+    it_power_kw_str = fmt(it_power_kw, precision=0, commas=False)
+    air_total_kw_str = fmt(air_total_kw, precision=0, commas=False)
+    air_cooling_kw_str = fmt(air_cooling_kw, precision=0, commas=False)
+    liquid_total_kw_str = fmt(liquid_total_kw, precision=0, commas=False)
+    liquid_cooling_kw_str = fmt(liquid_cooling_kw, precision=0, commas=False)
+    savings_kw_str = fmt(savings_kw, precision=0, commas=False)
+    annual_savings_str = fmt(annual_savings_usd, precision=0, prefix="\\$")
+    electricity_rate_str = fmt(electricity_rate, precision=2, commas=False, prefix="\\$", suffix="/kWh")
+    three_year_savings_str = fmt(three_year_savings_usd, precision=0, prefix="\\$")
 ```
 
 Water has a specific heat capacity of 4.18 kJ/kg/K, over four times that of air, and a thermal conductivity roughly 25$\times$ higher. These physical properties make water an inherently superior heat transfer medium. To appreciate the magnitude of the difference, consider how much fluid must flow to remove `{python} H100TdpCoolingRecap.tdp_str` W from a single GPU. Air at a 15-degree temperature rise requires tens of liters per second of airflow (a small wind tunnel). Water at the same temperature rise requires only about 0.01 liters per second (a thin stream). This thousands-fold difference in volumetric flow rate is why air cooling requires massive fans and carefully designed airflow paths, while liquid cooling requires only thin pipes and small pumps.
@@ -3481,13 +3553,13 @@ class RackPowerCoolingRecap:
 
 ::: {#nbk-compute-infrastructure-cooling-tax .callout-notebook title="The cooling tax"}
 
-Consider a 1,000-GPU cluster of H100s at `{python} H100TdpCoolingRecap.tdp_str` W TDP each.
+Consider a `{python} H100TdpCoolingRecap.n_gpus_str`-GPU cluster of H100s at `{python} H100TdpCoolingRecap.tdp_str` W TDP each.
 
-- **IT Power**\index{IT Power}: $1,000 \times 700$ W = 700 kW
-- **Air cooling (PUE 1.5)**: Total facility power = 700 kW$\times$ 1.5 = 1,050 kW. Cooling overhead = 350 kW.
-- **Liquid cooling (PUE 1.08)**: Total facility power = 700 kW$\times$ 1.08 = 756 kW. Cooling overhead = 56 kW.
+- **IT Power**\index{IT Power}: `{python} H100TdpCoolingRecap.n_gpus_str` $\times$ `{python} H100TdpCoolingRecap.tdp_str` W = `{python} H100TdpCoolingRecap.it_power_kw_str` kW
+- **Air cooling (PUE 1.5)**: Total facility power = `{python} H100TdpCoolingRecap.it_power_kw_str` kW$\times$ 1.5 = `{python} H100TdpCoolingRecap.air_total_kw_str` kW. Cooling overhead = `{python} H100TdpCoolingRecap.air_cooling_kw_str` kW.
+- **Liquid cooling (PUE 1.08)**: Total facility power = `{python} H100TdpCoolingRecap.it_power_kw_str` kW$\times$ 1.08 = `{python} H100TdpCoolingRecap.liquid_total_kw_str` kW. Cooling overhead = `{python} H100TdpCoolingRecap.liquid_cooling_kw_str` kW.
 
-**Savings**: Liquid cooling saves 294 kW of continuous power. At \$0.07/kWh, the annual savings are approximately \$180,000. Over a 3-year hardware lifecycle, the cooling savings alone total \$540,000, which often exceeds the capital cost of installing the liquid cooling infrastructure.
+**Savings**: Liquid cooling saves `{python} H100TdpCoolingRecap.savings_kw_str` kW of continuous power. At `{python} H100TdpCoolingRecap.electricity_rate_str`, the annual savings are approximately `{python} H100TdpCoolingRecap.annual_savings_str`. Over a 3-year hardware lifecycle, the cooling savings alone total `{python} H100TdpCoolingRecap.three_year_savings_str`, which often exceeds the capital cost of installing the liquid cooling infrastructure.
 
 :::
 
@@ -3669,6 +3741,8 @@ class PodTrainingMath:
     cluster_throughput_math = fmt_math(f"8{{,}}192 \\times {h100_tflops_str} \\times 10^{{12}} \\times 0.45")
     cluster_eflops = 8192 * h100_fp8_tflops * 1e12 * 0.45 / 1e18
     cluster_eflops_str = fmt(cluster_eflops, precision=2, commas=False)
+    n_gpus_str = fmt(8192, precision=0)
+    mfu_pct_str = fmt(45, precision=0, commas=False)
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
 ```
@@ -3779,7 +3853,7 @@ We can derive the training time for our `{python} InfraFrontierPodTimeRecap.fron
 1. **Total FLOPs**\index{Training Time!total FLOPs}: Using the approximation $6 \times P \times D$, where `{python} PodTrainingMath.n_params_math` and $D = 300 \times 10^9$ tokens:
    `{python} PodTrainingMath.total_flops_math` FLOPs
 
-2. **Cluster throughput**: 8,192 H100 GPUs at `{python} PodTrainingMath.h100_tflops_str` TFLOP/s peak, operating at 45 percent MFU:
+2. **Cluster throughput**: `{python} PodTrainingMath.n_gpus_str` H100 GPUs at `{python} PodTrainingMath.h100_tflops_str` TFLOP/s peak, operating at `{python} PodTrainingMath.mfu_pct_str` percent MFU:
    `{python} PodTrainingMath.cluster_throughput_math` FLOP/s sustained $\approx$ `{python} PodTrainingMath.cluster_eflops_str` EFLOP/s
 
 3. **Idealized Training Time** (the "physics limit"):
@@ -4103,12 +4177,25 @@ class CommScalingMath:
     t_compute_s = 2.1
     exposed_step_s = t_compute_s + _effective_time_s
     scaling_efficiency = t_compute_s / exposed_step_s
+    batch_tokens_m = 2
+    n_gpus = 1024
+    mfu_pct = 50
+    flops_per_token = 6
+    overlap_pct = int(_overlap_fraction * 100)
+    raw_comm_s = _raw_time_s
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     gradient_gb_str = fmt(_gradient_size_gb, precision=0, commas=False)
     exposed_step_s_str = fmt(exposed_step_s, precision=1, commas=False)
     scaling_efficiency_str = fmt(scaling_efficiency, precision=3, commas=False)
     t_compute_s_str = fmt(t_compute_s, precision=1, commas=False)
+    batch_tokens_m_str = fmt(batch_tokens_m, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus, precision=0)
+    mfu_pct_str = fmt(mfu_pct, precision=0, commas=False)
+    raw_comm_s_str = fmt(raw_comm_s, precision=0, commas=False)
+    overlap_pct_str = fmt(overlap_pct, precision=0, commas=False)
+    scaling_efficiency_pct_str = fmt(scaling_efficiency * 100, precision=1, commas=False)
+    flops_per_token_str = fmt(flops_per_token, precision=0, commas=False)
 ```
 
 ```{python}
@@ -4195,18 +4282,20 @@ class PodSetupComputeRecap:
 
 **Setup**\index{Setup}: Training a `{python} InfraFrontierPodSetupRecap.frontier_params_b_str`B model on a DGX H100 cluster with `{python} InfraIbBwPodRecap.ib_bw_str` Gb/s InfiniBand per GPU.
 
-- **Compute per step** (assuming batch size 2M tokens, 6 FLOPs per parameter per token):
+- **Compute per step** (assuming batch size `{python} CommScalingMath.batch_tokens_m_str`M tokens, `{python} CommScalingMath.flops_per_token_str` FLOPs per parameter per token):
   `{python} CommScalingMath.compute_per_step_math` FLOPs
 
-- **Per-GPU compute time** on 1,024 GPUs, each at `{python} PodSetupComputeRecap.h100_tflops_str` TFLOP/s (50 percent utilization):
+- **Per-GPU compute time** on `{python} CommScalingMath.n_gpus_str` GPUs, each at `{python} PodSetupComputeRecap.h100_tflops_str` TFLOP/s (`{python} CommScalingMath.mfu_pct_str` percent utilization):
   `{python} CommScalingMath.t_compute_math` seconds
 
-- **AllReduce time**\index{AllReduce}\index{AllReduce!ring algorithm} for 350 GB of gradients using ring-AllReduce with overlap:
-  `{python} CommScalingMath.t_comm_math` seconds (raw transfer is about 14 seconds; this example assumes 75 percent overlap with the backward pass)
+- **AllReduce time**\index{AllReduce}\index{AllReduce!ring algorithm} for `{python} CommScalingMath.gradient_gb_str` GB of gradients using ring-AllReduce with overlap:
+  `{python} CommScalingMath.t_comm_math` seconds (raw transfer is about `{python} CommScalingMath.raw_comm_s_str` seconds; this example assumes `{python} CommScalingMath.overlap_pct_str` percent overlap with the backward pass)
 
-- **Scaling efficiency**: $\eta_{\text{scaling}} \approx \frac{T_{\text{compute}}/N}{T_{\text{compute}}/N + T_{\text{comm}}(N) + T_{\text{sync}}(N) - T_{\text{overlap}}} = 2.1/5.6 \approx 0.375$ in this simplified example, where synchronization is included in the AllReduce term and 75 percent communication overlap has already been applied.
+- **Scaling efficiency**: $\eta_{\text{scaling}} \approx \frac{T_{\text{compute}}/N}{T_{\text{compute}}/N + T_{\text{comm}}(N) + T_{\text{sync}}(N) - T_{\text{overlap}}} = 2.1/5.6 \approx 0.375$ in this simplified example, where synchronization is included in the AllReduce term and `{python} CommScalingMath.overlap_pct_str` percent communication overlap has already been applied.
 
-The low efficiency (37.5 percent) shows why naive data parallelism at this scale is insufficient. Production systems achieve 70--90 percent efficiency by combining data parallelism with tensor parallelism (which communicates over NVLink) and pipeline parallelism (which overlaps computation with communication).
+The low efficiency (`{python} CommScalingMath.scaling_efficiency_pct_str` percent) shows why naive data parallelism at this scale is insufficient. <!-- lego-ok-block: production hierarchy-aware scaling efficiency range -->
+Production systems achieve 70--90 percent efficiency by combining data parallelism with tensor parallelism (which communicates over NVLink) and pipeline parallelism (which overlaps computation with communication).
+<!-- end lego-ok-block -->
 
 :::
 
@@ -4833,6 +4922,7 @@ class TenKGpuClusterTco:
     electricity_rate_str = fmt(electricity_rate, precision=2, commas=False, prefix="$", suffix="/kWh")
     cloud_gpu_hour_str = fmt(cloud_gpu_hour_usd, precision=2, commas=False, prefix="$", suffix="/hr")
     utilization_str = fmt(utilization, precision=2, commas=False)
+    cloud_utilization_pct_str = fmt(utilization * 100, precision=0, commas=False)
     lifecycle_years_str = fmt(lifecycle_years, precision=0, commas=False)
 ```
 
@@ -4849,7 +4939,7 @@ class InfraFrontierTcoTenKRecap:
     frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
 ```
 
-Consider a cluster of `{python} TenKGpuClusterTco.nodes_str` DGX H100 nodes (10,000 GPUs) for training our `{python} InfraFrontierTcoTenKRecap.frontier_params_b_str`B model.
+Consider a cluster of `{python} TenKGpuClusterTco.nodes_str` DGX H100 nodes (`{python} TenKGpuClusterTco.gpus_str` GPUs) for training our `{python} InfraFrontierTcoTenKRecap.frontier_params_b_str`B model.
 
 **On-Premises (3-year lifecycle)**:
 
@@ -4860,12 +4950,12 @@ Consider a cluster of `{python} TenKGpuClusterTco.nodes_str` DGX H100 nodes (10,
 - **Annual Staffing**\index{Staffing!annual staffing}: ~`{python} TenKGpuClusterTco.annual_staffing_str`/year
 - **3-Year Total**: `{python} TenKGpuClusterTco.upfront_capex_str` + `{python} TenKGpuClusterTco.lifecycle_years_str`$\times$ `{python} TenKGpuClusterTco.annual_opex_str` = **~`{python} TenKGpuClusterTco.three_year_total_str`**
 
-**Cloud (3-year rental at 80 percent utilization)**:
+**Cloud (3-year rental at `{python} TenKGpuClusterTco.cloud_utilization_pct_str` percent utilization)**:
 
 - **Annual Cost**\index{Cost!annual cost}: `{python} TenKGpuClusterTco.gpus_str` GPUs$\times$ `{python} TenKGpuClusterTco.cloud_gpu_hour_str`$\times$ `{python} TenKGpuClusterTco.hours_per_year_str` h$\times$ `{python} TenKGpuClusterTco.utilization_str` = `{python} TenKGpuClusterTco.cloud_annual_str`/year
 - **3-Year Total**: **~`{python} TenKGpuClusterTco.cloud_three_year_str`**
 
-**Break-Even**\index{Total Cost of Ownership!break-even}: On-premises saves approximately `{python} TenKGpuClusterTco.savings_str` over three years at 80 percent utilization. The savings disappear if utilization drops below roughly `{python} TenKGpuClusterTco.breakeven_util_str` percent, because the on-premises hardware still incurs facility and staffing costs regardless of load.
+**Break-Even**\index{Total Cost of Ownership!break-even}: On-premises saves approximately `{python} TenKGpuClusterTco.savings_str` over three years at `{python} TenKGpuClusterTco.cloud_utilization_pct_str` percent utilization. The savings disappear if utilization drops below roughly `{python} TenKGpuClusterTco.breakeven_util_str` percent, because the on-premises hardware still incurs facility and staffing costs regardless of load.
 
 :::
 
@@ -5111,6 +5201,36 @@ For our `{python} InfraFrontierTcoCloudRecap.frontier_params_b_str`B model, the 
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
+# │ Exports: TcoDecisionExercise.models_per_year_str,
+# │          TcoDecisionExercise.gpu_hours_per_model_str,
+# │          TcoDecisionExercise.cluster_gpus_str,
+# │          TcoDecisionExercise.cloud_gpu_hour_str,
+# │          TcoDecisionExercise.node_price_str,
+# │          TcoDecisionExercise.electricity_rate_str,
+# │          TcoDecisionExercise.pue_str
+class TcoDecisionExercise:
+    models_per_year = 10
+    gpu_hours_per_model = 1_000
+    cluster_gpus = 128
+    cloud_gpu_hour_usd = 4.00
+    node_price_usd = 350_000
+    electricity_rate = 0.07
+    pue = 1.1
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    models_per_year_str = fmt(models_per_year, precision=0, commas=False)
+    gpu_hours_per_model_str = fmt(gpu_hours_per_model, precision=0)
+    cluster_gpus_str = fmt(cluster_gpus, precision=0, commas=False)
+    cloud_gpu_hour_str = fmt(cloud_gpu_hour_usd, precision=2, commas=False, prefix="\\$")
+    node_price_str = fmt(node_price_usd, precision=0, prefix="\\$")
+    electricity_rate_str = fmt(electricity_rate, precision=2, commas=False, prefix="\\$", suffix="/kWh")
+    pue_str = fmt(pue, precision=1, commas=False)
+```
+
+```{python}
+#| echo: false
+from mlsysim import *
+# ┌── LEGO ───────────────────────────────────────────────
 # │ Exports: H100TdpExerciseRecap.tdp_str
 class H100TdpExerciseRecap:
 
@@ -5118,7 +5238,7 @@ class H100TdpExerciseRecap:
     tdp_str = fmt(Hardware.Cloud.H100.tdp.m_as(watt), precision=0, commas=False)
 ```
 
-Your organization needs to train 10 models per year, each requiring 1,000 GPU-hours on H100s. You are evaluating whether to purchase a 128-GPU on-premises cluster or use cloud instances at \$4.00/GPU-hour. Calculate the annual cost of each option (assume on-premises costs of \$350,000 per 8-GPU node, \$0.07/kWh electricity at PUE 1.1, and `{python} H100TdpExerciseRecap.tdp_str` W per GPU). At what number of annual training runs does on-premises become cheaper?
+Your organization needs to train `{python} TcoDecisionExercise.models_per_year_str` models per year, each requiring `{python} TcoDecisionExercise.gpu_hours_per_model_str` GPU-hours on H100s. You are evaluating whether to purchase a `{python} TcoDecisionExercise.cluster_gpus_str`-GPU on-premises cluster or use cloud instances at `{python} TcoDecisionExercise.cloud_gpu_hour_str`/GPU-hour. Calculate the annual cost of each option (assume on-premises costs of `{python} TcoDecisionExercise.node_price_str` per 8-GPU node, `{python} TcoDecisionExercise.electricity_rate_str` electricity at PUE `{python} TcoDecisionExercise.pue_str`, and `{python} H100TdpExerciseRecap.tdp_str` W per GPU). At what number of annual training runs does on-premises become cheaper?
 
 :::
 
@@ -5232,7 +5352,43 @@ The 128 nodes draw `{python} RackPowerPlanningRecap.rack_power_str` kW per 4-nod
 
 ::: {#chk-compute-infrastructure-infrastructure-planning-exercise .callout-checkpoint title="Infrastructure planning exercise"}
 
-Your team needs to train a 70B-parameter model on 1 trillion tokens within 4 weeks. Using the following specifications:
+```{python}
+#| echo: false
+from mlsysim import *
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Exports: InfraPlanningExercise.params_b_str,
+# │          InfraPlanningExercise.tokens_t_str,
+# │          InfraPlanningExercise.weeks_str,
+# │          InfraPlanningExercise.power_mw_str,
+# │          InfraPlanningExercise.mfu_pct_str,
+# │          InfraPlanningExercise.pue_str,
+# │          InfraPlanningExercise.non_gpu_overhead_pct_str,
+# │          InfraPlanningExercise.cloud_gpu_hour_str,
+# │          InfraPlanningExercise.node_price_str
+class InfraPlanningExercise:
+    params_b = 70
+    tokens_t = 1
+    weeks = 4
+    power_mw = 2
+    mfu_pct = 45
+    pue = 1.1
+    non_gpu_overhead_pct = 50
+    cloud_gpu_hour_usd = 4.00
+    node_price_usd = 350_000
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    tokens_t_str = fmt(tokens_t, precision=0, commas=False)
+    weeks_str = fmt(weeks, precision=0, commas=False)
+    power_mw_str = fmt(power_mw, precision=0, commas=False)
+    mfu_pct_str = fmt(mfu_pct, precision=0, commas=False)
+    pue_str = fmt(pue, precision=1, commas=False)
+    non_gpu_overhead_pct_str = fmt(non_gpu_overhead_pct, precision=0, commas=False)
+    cloud_gpu_hour_str = fmt(cloud_gpu_hour_usd, precision=2, commas=False, prefix="\\$")
+    node_price_str = fmt(node_price_usd, precision=0, prefix="\\$")
+```
+
+Your team needs to train a `{python} InfraPlanningExercise.params_b_str`B-parameter model on `{python} InfraPlanningExercise.tokens_t_str` trillion tokens within `{python} InfraPlanningExercise.weeks_str` weeks. Using the following specifications:
 
 ```{python}
 #| echo: false
@@ -5245,11 +5401,22 @@ class NodeCapacityScenarioSecComputeTcoRecap:
     h100_tflops_str = fmt(Hardware.Cloud.H100.compute.precision_flops['fp8'].m_as(TFLOPs/second), precision=0, commas=False)
 ```
 
-- H100 GPU: `{python} NodeCapacityScenarioSecComputeTcoRecap.h100_tflops_str` TFLOP/s peak, assume 45 percent MFU
-- Compute budget: $6 \times 70 \times 10^9 \times 10^{12} = 4.2 \times 10^{23}$ FLOPs
-- Available power: 2 MW
+```{python}
+#| echo: false
+from mlsysim import *
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Exports: H100TdpExerciseRecap.tdp_str
+class H100TdpExerciseRecap:
 
-Determine: (a) the minimum number of GPUs needed, (b) whether the 2 MW power budget is sufficient (assume PUE 1.1 and `{python} H100TdpExerciseRecap.tdp_str` W per GPU with 50 percent overhead for non-GPU components), and (c) the approximate cost of the training run at \$4.00/GPU-hour for cloud or \$350,000 per 8-GPU node for on-premises.
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    tdp_str = fmt(Hardware.Cloud.H100.tdp.m_as(watt), precision=0, commas=False)
+```
+
+- H100 GPU: `{python} NodeCapacityScenarioSecComputeTcoRecap.h100_tflops_str` TFLOP/s peak, assume `{python} InfraPlanningExercise.mfu_pct_str` percent MFU
+- Compute budget: $6 \times 70 \times 10^9 \times 10^{12} = 4.2 \times 10^{23}$ FLOPs
+- Available power: `{python} InfraPlanningExercise.power_mw_str` MW
+
+Determine: (a) the minimum number of GPUs needed, (b) whether the `{python} InfraPlanningExercise.power_mw_str` MW power budget is sufficient (assume PUE `{python} InfraPlanningExercise.pue_str` and `{python} H100TdpExerciseRecap.tdp_str` W per GPU with `{python} InfraPlanningExercise.non_gpu_overhead_pct_str` percent overhead for non-GPU components), and (c) the approximate cost of the training run at `{python} InfraPlanningExercise.cloud_gpu_hour_str`/GPU-hour for cloud or `{python} InfraPlanningExercise.node_price_str` per 8-GPU node for on-premises.
 
 :::
 

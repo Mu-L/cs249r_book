@@ -1416,6 +1416,7 @@ class GPT2ActivationMemory:
 
     attn_act_str = fmt(attn_act_mb, precision=1, commas=False)
     ffn_act_str = fmt(ffn_act_mb, precision=1, commas=False)
+    layernorm_mb_str = fmt(layernorm_mb, precision=0, commas=False)
     per_layer_str = fmt(per_layer_mb, precision=1, commas=False)
 
     total_act_str = fmt(total_act_gb, precision=1, commas=False)
@@ -1479,7 +1480,7 @@ For GPT-2 with batch size $B$ = `{python} GPT2ActivationMemory.batch_size_str`, 
 
 - Attention activations: $B \times S \times d \times 4$ (Q, K, V, output) = `{python} GPT2ActivationMemory.batch_size_str` $\times$ `{python} GPT2ActivationMemory.seq_len_str` $\times$ `{python} GPT2ActivationMemory.hidden_dim_str` $\times$ $4 \times 2$ bytes (FP16) = `{python} GPT2ActivationMemory.attn_act_str` MB
 - FFN activations: $B \times S \times (4d)$ (intermediate expansion) = `{python} GPT2ActivationMemory.batch_size_str` $\times$ `{python} GPT2ActivationMemory.seq_len_str` $\times$ `{python} GPT2ActivationMemory.ffn_dim_str` $\times$ 2 bytes = `{python} GPT2ActivationMemory.ffn_act_str` MB
-- Layer norm states: Minimal (~10 MB per layer)
+- Layer norm states: Minimal (~`{python} GPT2ActivationMemory.layernorm_mb_str` MB per layer)
 - Total per layer: ~`{python} GPT2ActivationMemory.per_layer_str` MB
 
 **Full Model Activation Memory.**
@@ -2465,8 +2466,16 @@ class GPT2DataPipeline:
     seq_len = 1024
     token_rate = 500_000 # tokens/s/core
     workers = 8
+    dataset_gb = 40
+    bpe_vocab = 50_257
+    f_access = 0.1
+    gpu_forward_ms = 80
+    utilization_pct = 95
+    throughput_samples = 380
+    n_v100_gpus = 8
 
     pcie_bw = Hardware.Cloud.V100.interconnect.bandwidth.m_as(GB/second)
+    random_access_gbs = NVME_GEN3_SEQUENTIAL_BW.m_as(GB/second) * f_access
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     tokens_per_batch = batch_size * seq_len
@@ -2488,6 +2497,13 @@ class GPT2DataPipeline:
     transfer_ms_str = fmt(transfer_ms, precision=3, commas=False)
     n_cpu_workers_str = fmt(workers, precision=0, commas=False)
     parallel_tokenization_ms_str = fmt(parallel_token_ms, precision=1, commas=False)
+    dataset_gb_str = fmt(dataset_gb, precision=0, commas=False)
+    bpe_vocab_str = fmt_int(bpe_vocab, commas=True)
+    random_access_gbs_str = fmt(random_access_gbs, precision=2, commas=False)
+    f_access_str = fmt(f_access, precision=1, commas=False)
+    utilization_pct_str = fmt(utilization_pct, precision=0, commas=False)
+    throughput_samples_str = fmt_int(throughput_samples, commas=False)
+    n_v100_gpus_str = fmt(n_v100_gpus, precision=0, commas=False)
 
 # Note: Use GPT2DataPipeline.tokenization_ms_str directly.
 ```
@@ -2516,13 +2532,13 @@ Training language models like GPT-2 requires a specialized data pipeline optimiz
 **Pipeline Stages**
 
 1. Raw Text Storage (Storage Zone)
-   - OpenWebText dataset: ~40 GB raw text files
+   - OpenWebText dataset: ~`{python} GPT2DataPipeline.dataset_gb_str` GB raw text files
    - Stored on NVMe SSD: `{python} StorageBandwidthNvme.nvme_bw_str` GB/s sequential read bandwidth
-   - Random access to different documents: ~0.35 GB/s effective (F_access ≈ 0.1)
+   - Random access to different documents: ~`{python} GPT2DataPipeline.random_access_gbs_str` GB/s effective (F_access ≈ `{python} GPT2DataPipeline.f_access_str`)
 2. Tokenization (CPU Preprocessing Zone)
 \index{BPE!tokenization}
 
-   - BPE (Byte-Pair Encoding) tokenizer (50,257 vocabulary) converts text to token IDs
+   - BPE (Byte-Pair Encoding) tokenizer (`{python} GPT2DataPipeline.bpe_vocab_str` vocabulary) converts text to token IDs
    - BPE segments text into subword units (for example, "unbreakable" → ["un", "break", "able"])
    - Processing rate: ~`{python} GPT2DataPipeline.token_rate_str` tokens/s per CPU core
    - For batch size $B=32$ and sequence length $S=1024$: need `{python} GPT2DataPipeline.tokens_per_batch_str` tokens/batch
@@ -2548,7 +2564,7 @@ System is balanced (tokenization ≈ accelerator compute), but tokenization beco
 
 - Multi-worker dataloading: `{python} GPT2DataPipeline.n_cpu_workers_str` CPU workers tokenize in parallel → `{python} GPT2DataPipeline.tokenization_ms_str` ms ÷ `{python} GPT2DataPipeline.n_cpu_workers_str` = `{python} GPT2DataPipeline.parallel_tokenization_ms_str` ms
 - Prefetching: Tokenize next batch while GPU processes current batch
-- Result: accelerator utilization >95 percent, training throughput: 380 samples/second on 8 $\times$ V100
+- Result: accelerator utilization >`{python} GPT2DataPipeline.utilization_pct_str` percent, training throughput: `{python} GPT2DataPipeline.throughput_samples_str` samples/second on `{python} GPT2DataPipeline.n_v100_gpus_str` $\times$ V100
 
 Text tokenization is CPU-bound (unlike image preprocessing, which is I/O-bound). Language model training requires different pipeline optimizations than vision models.
 
@@ -4416,7 +4432,7 @@ On NVIDIA V100 (Tensor Cores enabled):
 
 ```{python}
 #| echo: false
-from mlsysim.fmt import fmt, MarkdownStr
+from mlsysim.fmt import fmt, MarkdownStr, fmt_int
 #| label: mixed-precision-loss-scaling-calc
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Goal: Loss-scaling exponent, gradient range, and learning rate for callout.
@@ -4425,12 +4441,26 @@ class MixedPrecisionLossScaling:
     loss_scale_exp = 15
     grad_range_min_exp = -6
     grad_range_max_exp = 3
+    n_v100_gpus = 32
+    fp32_weeks = 2
+    fp16_weeks = 1.2
+    fp32_cost_usd = 50_000
+    fp16_cost_usd = 28_000
+    savings_usd = fp32_cost_usd - fp16_cost_usd
+    savings_days = 6
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
     loss_scale_eqn_str = MarkdownStr(f"$2^{{{loss_scale_exp}}}$")
     grad_range_min_eqn_str = MarkdownStr(f"$10^{{{grad_range_min_exp}}}$")
     grad_range_max_eqn_str = MarkdownStr(f"$10^{{{grad_range_max_exp}}}$")
     small_lr_str = MarkdownStr("2.5e-4")
+    n_v100_gpus_str = fmt(n_v100_gpus, precision=0, commas=False)
+    fp32_weeks_str = fmt(fp32_weeks, precision=0, commas=False)
+    fp16_weeks_str = fmt(fp16_weeks, precision=1, commas=False)
+    fp32_cost_str = fmt_int(fp32_cost_usd, commas=True)
+    fp16_cost_str = fmt_int(fp16_cost_usd, commas=True)
+    savings_cost_str = fmt_int(savings_usd, commas=True)
+    savings_days_str = fmt(savings_days, precision=0, commas=False)
 ```
 
 **Critical Implementation Details**
@@ -4444,9 +4474,9 @@ class MixedPrecisionLossScaling:
 
 **Training Cost Impact**
 
-- FP32: ~\$50,000 for two weeks on 32 V100s
-- FP16: ~\$28,000 for 1.2 weeks on 32 V100s
-- Savings: \$22,000 + 6 days faster iteration
+- FP32: ~\$`{python} MixedPrecisionLossScaling.fp32_cost_str` for `{python} MixedPrecisionLossScaling.fp32_weeks_str` weeks on `{python} MixedPrecisionLossScaling.n_v100_gpus_str` V100s
+- FP16: ~\$`{python} MixedPrecisionLossScaling.fp16_cost_str` for `{python} MixedPrecisionLossScaling.fp16_weeks_str` weeks on `{python} MixedPrecisionLossScaling.n_v100_gpus_str` V100s
+- Savings: \$`{python} MixedPrecisionLossScaling.savings_cost_str` + `{python} MixedPrecisionLossScaling.savings_days_str` days faster iteration
 
 **Quality impact**: Minimal. GPT-2 perplexity within 0.5 percent of FP32 baseline, well within noise margin.
 
@@ -5290,7 +5320,7 @@ GPT-2's training configuration demonstrates the essential role of gradient accum
 
 **Gradient Accumulation Solution**
 
-Instead of 32 GPUs, use 8 GPUs with gradient accumulation:
+Instead of `{python} GradientAccumulation.gpus_naive_str` GPUs, use `{python} GradientAccumulation.gpus_accum_str` GPUs with gradient accumulation:
 
 Configuration:
 
@@ -5471,6 +5501,14 @@ class GPT2WalkthroughCalc:
     amp_reduction_pct = (1 - total_amp_gb/total_fp32_gb) * 100
     memory_reduction = total_fp32_gb / total_ckpt_gb
 
+    # Step 4 profile breakdown (naive vs optimized)
+    util_naive_pct = 45
+    data_naive_pct = 40
+    compute_naive_pct = 35
+    mem_xfer_naive_pct = 25
+    util_optim_pct = 85
+    overhead_pct = 15
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     total_fp32_str = fmt(total_fp32_gb, precision=1, commas=False)
     total_amp_str = fmt(total_amp_gb, precision=1, commas=False)
@@ -5480,6 +5518,12 @@ class GPT2WalkthroughCalc:
     amp_reduction_str = fmt(amp_reduction_pct, precision=1, commas=False)
     recompute_overhead_str = fmt(recompute_overhead_pct, precision=0, commas=False)
     checkpoint_factor_str = fmt(checkpoint_factor, precision=0, commas=False)
+    util_naive_str = fmt(util_naive_pct, precision=0, commas=False)
+    data_naive_str = fmt(data_naive_pct, precision=0, commas=False)
+    compute_naive_str = fmt(compute_naive_pct, precision=0, commas=False)
+    mem_xfer_naive_str = fmt(mem_xfer_naive_pct, precision=0, commas=False)
+    util_optim_str = fmt(util_optim_pct, precision=0, commas=False)
+    overhead_str = fmt(overhead_pct, precision=0, commas=False)
 ```
 
 ::: {#exmp-training-gpt-2-optimization-v100 .callout-example title="GPT-2 optimization on V100"}
@@ -5500,10 +5544,10 @@ With memory solved, the next step is determining whether throughput is acceptabl
 **Step 4**: Profile for throughput bottlenecks.
 With memory solved, profile shows:
 
-- accelerator utilization: 45 percent
-- Data loading: 40 percent of iteration time
-- Compute: 35 percent of iteration time
-- Memory transfers: 25 percent of iteration time
+- accelerator utilization: `{python} GPT2WalkthroughCalc.util_naive_str` percent
+- Data loading: `{python} GPT2WalkthroughCalc.data_naive_str` percent of iteration time
+- Compute: `{python} GPT2WalkthroughCalc.compute_naive_str` percent of iteration time
+- Memory transfers: `{python} GPT2WalkthroughCalc.mem_xfer_naive_str` percent of iteration time
 
 Bottleneck identified: data-bound---a *Data* constraint in D·A·M terms. GPU starving for data.
 
@@ -5534,7 +5578,7 @@ After optimization:
 
 : **GPT-2 Optimization Final Profile**: Naive vs. optimized memory, accelerator utilization, throughput, and per-epoch time after composing mixed precision, gradient checkpointing, and data prefetching, marking the shift from infeasible to compute-bound. {#tbl-training-gpt2-final-profile tbl-colwidths="[31,23,23,23]"}
 
-Remaining bottleneck: compute-bound---an *Algorithm* constraint in D·A·M terms (as desired). The 85 percent utilization indicates good efficiency; remaining 15 percent is overhead from gradient synchronization, loss scaling, and kernel launch latency.
+Remaining bottleneck: compute-bound---an *Algorithm* constraint in D·A·M terms (as desired). The `{python} GPT2WalkthroughCalc.util_optim_str` percent utilization indicates good efficiency; remaining `{python} GPT2WalkthroughCalc.overhead_str` percent is overhead from gradient synchronization, loss scaling, and kernel launch latency.
 
 :::
 
@@ -6693,6 +6737,9 @@ class TrainingCarbonFootprint:
     cf_flops_eqn_str = MarkdownStr(
         f"${cf_flops_mantissa_str} \\times 10^{{{cf_flops_exp_str}}}$"
     )
+    cf_sustained_tflops_str = fmt(cf_sustained_tflops, precision=0, commas=False)
+    cf_util_before_pct_str = fmt(30, precision=0, commas=False)
+    cf_util_after_pct_str = fmt(60, precision=0, commas=False)
 
 # Export for prose
 ```
@@ -6704,13 +6751,13 @@ Training large models is not just a compute challenge; it is a massive energy si
 
 1.  **Workload**: Training a 7-billion-parameter model for one trillion tokens.
 2.  **Compute**: ≈ `{python} TrainingCarbonFootprint.cf_flops_eqn_str` FLOPs.
-3.  **Efficiency**: 150 TFLOP/s sustained on A100 (`{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W TDP).
+3.  **Efficiency**: `{python} TrainingCarbonFootprint.cf_sustained_tflops_str` TFLOP/s sustained on A100 (`{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W TDP).
 4.  **Time**: ≈ `{python} TrainingCarbonFootprint.cf_time_days_str` days on `{python} TrainingCarbonFootprint.cf_num_gpus_str` GPUs.
 5.  **Energy**: (`{python} TrainingCarbonFootprint.cf_num_gpus_str` GPUs $\times$ `{python} TrainingCarbonFootprint.cf_gpu_tdp_str` W + `{python} TrainingCarbonFootprint.cf_hosts_str` hosts $\times$ `{python} TrainingCarbonFootprint.cf_cpu_tdp_per_host_w_str` W) $\times$ `{python} TrainingCarbonFootprint.cf_time_hours_str` hours ≈ **`{python} TrainingCarbonFootprint.cf_energy_kwh_str` kWh**
 
 **Systems insight**: This single training run consumes as much electricity as an average US household uses in `{python} TrainingCarbonFootprint.cf_household_months_str` months.
 
-- **The optimization dividend**: Improving **Utilization** from 30 percent to 60 percent halves the compute time; it saves ~`{python} TrainingCarbonFootprint.cf_energy_saved_str` kWh of energy and reduces the carbon footprint by over **`{python} TrainingCarbonFootprint.cf_co2_str` tons of CO~2~** (assuming average grid intensity).
+- **The optimization dividend**: Improving **Utilization** from `{python} TrainingCarbonFootprint.cf_util_before_pct_str` percent to `{python} TrainingCarbonFootprint.cf_util_after_pct_str` percent halves the compute time; it saves ~`{python} TrainingCarbonFootprint.cf_energy_saved_str` kWh of energy and reduces the carbon footprint by over **`{python} TrainingCarbonFootprint.cf_co2_str` tons of CO~2~** (assuming average grid intensity).
 - **The true cost**: Training systems engineering is a primary lever for sustainable AI because utilization gains reduce wall-clock time, energy use, and carbon emissions on the same hardware fleet.
 
 :::

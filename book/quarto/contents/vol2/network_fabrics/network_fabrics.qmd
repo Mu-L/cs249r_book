@@ -524,6 +524,7 @@ class NetworkAlphaBeta:
     # Level 2: Messages
     n_small = 4000 # 4 KB
     n_large = 350 * MILLION # 350 MB
+    n_demo_large = 100 * MILLION # 100 MB (alpha-beta walkthrough)
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     n_cross_ib = alpha_ib * beta_ib
@@ -546,6 +547,7 @@ class NetworkAlphaBeta:
     ib_beta_gbs_str = fmt((beta_ib * byte / second).m_as(GB / second), precision=0, commas=False)
     n_small_kb_str = fmt((n_small * byte).m_as(KB), precision=0, commas=False)
     n_large_mb_str = fmt((n_large * byte).m_as(MB), precision=0, commas=False)
+    n_demo_large_mb_str = fmt((n_demo_large * byte).m_as(MB), precision=0, commas=False)
     n_large_grad_mb_str = fmt((350 * MILLION * byte).m_as(MB), precision=0, commas=False)
     eth_alpha_us = 5.0
     eth_beta_gbs = 12.5
@@ -573,7 +575,7 @@ Apply $T(n) = \alpha + n/\beta$ for a `{python} NetworkAlphaBeta.n_small_kb_str`
    - Ethernet: $5.0\,\mu\text{s} + 4 KB/12.5 GB/s = 5.0 + 0.32 = \mathbf{5.32\,\mu\text{s}}$
    - **Result**: InfiniBand is 3.4$\times$ faster purely due to lower $\alpha$.
 
-2. **Large message (100 MB)**:
+2. **Large message (`{python} NetworkAlphaBeta.n_demo_large_mb_str` MB)**:
    - InfiniBand: $1.5\,\mu\text{s} + 100 MB/50 GB/s = 0.0015 + 2.0 = \mathbf{2.00 ms}$
    - Ethernet: $5.0\,\mu\text{s} + 100 MB/12.5 GB/s = 0.005 + 8.0 = \mathbf{8.01 ms}$
    - **Result**: InfiniBand is 4$\times$ faster purely due to higher $\beta$.
@@ -766,24 +768,20 @@ class AllReduceBottleneck:
     t_ring_1b_math       = fmt_math(f"T_{{\\text{{ring}}}} \\approx {t_comm_1b_ms} \\text{{ ms}}")
     comm_frac_display_math = MarkdownStr(f"$$ \\text{{Comm. fraction}} = {comm_frac_1b_pct} \\% $$")
     t_ring_70b_display_math = MarkdownStr(f"$$ T_{{\\text{{ring}}}} \\approx {t_comm_70b_ms} \\text{{ ms}} $$")
+
+    num_gpus_str = fmt(num_gpus, precision=0, commas=False)
+    params_1b_billion_str = fmt(m_1b.parameters.m_as(BILLION), precision=0, commas=False)
+    grad_1b_gb_str = fmt(grad_1b.m_as(GB), precision=0, commas=False)
+    gpu_util_pct_str = fmt(gpu_util * 100, precision=0, commas=False)
+    h100_tflops_str = fmt(peak_tflops, precision=0, commas=False)
+    params_70b_billion_str = fmt(m_70b.parameters.m_as(BILLION), precision=0, commas=False)
+    grad_70b_gb_str = fmt(grad_70b.m_as(GB), precision=0, commas=False)
 ```
 
-```{python}
-#| echo: false
-# ┌── LEGO ───────────────────────────────────────────────
-# │ Context: AllReduce bottleneck setup — H100 throughput.
-# │ Exports: IbNdrAllReduceRecap.h100_tflops_str
-from mlsysim import *
-from mlsysim.core.constants import *
-class IbNdrAllReduceRecap:
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    h100_tflops_str = fmt(Hardware.Cloud.H100.compute.peak_flops.m_as(TFLOPs/second), precision=0, commas=False)
-```
-
-**Setup**\index{Setup}: A cluster of 1,024 H100 GPUs training a model with 1 billion parameters (4 GB of FP32 gradients). Each GPU computes at `{python} IbNdrAllReduceRecap.h100_tflops_str` TFLOP/s. The network uses NDR InfiniBand (`{python} AllReduceBottleneck.alpha_math` and `{python} AllReduceBottleneck.beta_math` per link).
+**Setup**\index{Setup}: A cluster of `{python} AllReduceBottleneck.num_gpus_str` H100 GPUs training a model with `{python} AllReduceBottleneck.params_1b_billion_str` billion parameters (`{python} AllReduceBottleneck.grad_1b_gb_str` GB of FP32 gradients). Each GPU computes at `{python} AllReduceBottleneck.h100_tflops_str` TFLOP/s. The network uses NDR InfiniBand (`{python} AllReduceBottleneck.alpha_math` and `{python} AllReduceBottleneck.beta_math` per link).
 
 **Step 1**: Compute time per iteration.
-Assume each GPU processes a synthetic microbatch requiring $5 \times 10^{13}$ FLOPs, chosen to produce an approximately 100 ms compute phase for this bottleneck example. At `{python} IbNdrAllReduceRecap.h100_tflops_str` TFLOP/s with 50 percent utilization:
+Assume each GPU processes a synthetic microbatch requiring $5 \times 10^{13}$ FLOPs, chosen to produce an approximately 100 ms compute phase for this bottleneck example. At `{python} AllReduceBottleneck.h100_tflops_str` TFLOP/s with `{python} AllReduceBottleneck.gpu_util_pct_str` percent utilization:
 
 `{python} AllReduceBottleneck.t_comp_display_math`
 
@@ -797,7 +795,7 @@ With $N = 1{,}024$ and $M = 4 \times 10^9$ bytes:
 
 With overlap between communication and computation (possible because the backward pass produces gradients layer by layer), the effective overhead can be reduced, but the network is already a major contributor to iteration time for this configuration.
 
-**When does it become the bottleneck?** If we scale to 70 billion parameters (280 GB of gradients) and the per-GPU computation stays similar (through batch size scaling), the bandwidth term alone becomes:
+**When does it become the bottleneck?** If we scale to `{python} AllReduceBottleneck.params_70b_billion_str` billion parameters (`{python} AllReduceBottleneck.grad_70b_gb_str` GB of gradients) and the per-GPU computation stays similar (through batch size scaling), the bandwidth term alone becomes:
 
 `{python} AllReduceBottleneck.t_ring_70b_display_math`
 
@@ -1071,6 +1069,7 @@ from mlsysim.fmt import fmt, check
 class RailLatency:
     # ┌── 1. LOAD ──────────────────────────────────────────
     t_hop_us = FABRIC_HOP_LATENCY.m_as(US) # switch + wire latency
+    n_nodes = 128
     # Standard fat-tree: Leaf -> Spine -> Leaf (2 hops)
     # Rail-optimized: Leaf (direct) (1 hop)
     # ┌── 2. EXECUTE ───────────────────────────────────────
@@ -1082,11 +1081,12 @@ class RailLatency:
     # ┌── 4. OUTPUT ────────────────────────────────────────
     rol_hop_lat_us_str = fmt(t_hop_us, precision=1, commas=False)
     rol_speedup_str = fmt(speedup, precision=0, commas=False)
+    rol_n_nodes_str = fmt(n_nodes, precision=0, commas=False)
 ```
 
 ::: {#nbk-network-fabrics-rail-optimized-dividend .callout-notebook title="The rail-optimized dividend"}
 
-**Problem**: A team is synchronizing per-rank data-parallel gradients across 128 nodes. In a standard fat-tree, each message between same-rank GPUs traverses a Leaf switch and a Spine switch (2 hops). In a rail-optimized network, all corresponding GPUs are on the same rail switch (1 hop). How much "Latency Dividend" does the rail design earn?
+**Problem**: A team is synchronizing per-rank data-parallel gradients across `{python} RailLatency.rol_n_nodes_str` nodes. In a standard fat-tree, each message between same-rank GPUs traverses a Leaf switch and a Spine switch (2 hops). In a rail-optimized network, all corresponding GPUs are on the same rail switch (1 hop). How much "Latency Dividend" does the rail design earn?
 
 **Math**:
 Communication latency ($\alpha$) is proportional to the number of switch hops.

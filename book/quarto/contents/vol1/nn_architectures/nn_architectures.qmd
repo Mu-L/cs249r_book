@@ -806,7 +806,8 @@ class MLPvsCNN:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    # MLP: 784 -> 4096 -> 4096 -> 10
+    mnist_train_examples = 60_000
+    cnn_test_acc_pct = 99
     mlp_in = 784
     mlp_h = 4096
     mlp_out = 10
@@ -836,8 +837,8 @@ class MLPvsCNN:
     mlp_params_str = fmt_int((mlp_p * param).m_as(Mparam), commas=False, suffix="M")
     cnn_params_str = fmt((cnn_p * param).m_as(Kparam), precision=1, commas=False, suffix="K")
     param_ratio_str = fmt(ratio, precision=0, commas=False)
-
-# Note: Use MLPvsCNN.mlp_params_str directly.
+    mnist_train_examples_str = fmt(mnist_train_examples, precision=0)
+    cnn_test_acc_pct_str = fmt(cnn_test_acc_pct, precision=0, commas=False)
 ```
 
 ::: {#exmp-nn-architectures-mnist-representation-vs-learnability .callout-example title="MNIST: Representation vs. learnability"}
@@ -848,7 +849,7 @@ Consider classifying $28{\times}28$ MNIST digits (784 input pixels, 10 output cl
 
 - Architecture: 784 → 4096 → 4096 → 10
 - Parameters: $(784{\times}4096) + (4096{\times}4096) + (4096{\times}10)$ ≈ `{python} MLPvsCNN.mlp_params_str` parameters
-- Training: 60,000 examples (standard MNIST training set)
+- Training: `{python} MLPvsCNN.mnist_train_examples_str` examples (standard MNIST training set)
 - Test Accuracy: ~97–98 percent
 - Rationale: Treats every pixel independently. Must learn all spatial correlations from data alone. No prior knowledge about spatial structure.
 
@@ -856,8 +857,8 @@ Consider classifying $28{\times}28$ MNIST digits (784 input pixels, 10 output cl
 
 - Architecture: Conv(32, $3{\times}3$) → Pool → Conv(64, $3{\times}3$) → Pool → FC(128) → 10
 - Parameters: ($3{\times}3{\times}1{\times}32$) + ($3{\times}3{\times}32{\times}64$) + ($64{\times}7{\times}7{\times}128$) + ($128{\times}10$) ≈ `{python} MLPvsCNN.cnn_params_str` parameters
-- Training: 60,000 examples (same data)
-- Test Accuracy: ~99 percent+
+- Training: `{python} MLPvsCNN.mnist_train_examples_str` examples (same data)
+- Test Accuracy: ~`{python} MLPvsCNN.cnn_test_acc_pct_str` percent+
 - Rationale: Embeds locality bias (nearby pixels are related) and translation invariance (digit patterns are meaningful regardless of position). These structural assumptions reduce parameter count and improve generalization.
 
 **Comparison**:
@@ -5074,7 +5075,7 @@ With the throughput ceiling established, we can now apply the complete decision 
 
 ::: {#exmp-nn-architectures-real-time-wildlife-monitoring .callout-example title="Real-time wildlife monitoring"}
 
-**Problem statement**: Design an ML system to identify wildlife species from camera trap images in a national park. The system must process images locally (no cloud connectivity), operate on battery power for six months, and achieve 90 percent+ accuracy on 50 target species.
+**Problem statement**: Design an ML system to identify wildlife species from camera trap images in a national park. The system must process images locally (no cloud connectivity), operate on battery power for six months, and achieve `{python} WildlifeModelSizing.accuracy_target_pct_str` percent+ accuracy on `{python} WildlifeModelSizing.species_count_str` target species.
 
 **Step 1**: Data characterization.
 The input is spatial data (images from camera traps, typically $1920{\times}1080$ resolution, downsampled to $224{\times}224$ for processing). The task requires recognizing visual patterns (fur textures, body shapes, distinctive markings) that are:
@@ -5139,6 +5140,10 @@ class WildlifeModelSizing:
     activation_bytes = 4
     target_latency_ms = 500
     edge_int8_tops = 0.002  # effective INT8 throughput in TOPS
+    accuracy_target_pct = 90
+    species_count = 50
+    model_budget_mb = 100
+    width_mult = 0.75
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     resnet_params_m = resnet.parameters.m_as(Mparam)
@@ -5199,12 +5204,16 @@ class WildlifeModelSizing:
         f"\\frac{{{mnv2_flops_str} \\times 10^6 \\text{{ INT8 ops}}}}{{{edge_int8_tops_str} \\times 10^12 \\text{{ INT8 ops/s}}}} = "
         f"{compute_latency_ms_str} \\text{{ ms latency}} \\ll {target_latency_ms_str} \\text{{ ms target}}~\\checkmark"
     )
+    accuracy_target_pct_str = fmt(accuracy_target_pct, precision=0, commas=False)
+    species_count_str = fmt(species_count, precision=0, commas=False)
+    model_budget_mb_str = fmt(model_budget_mb, precision=0, commas=False)
+    width_mult_str = fmt(width_mult, precision=2, commas=False)
 ```
 
 **Step 3**: Architecture evaluation using lighthouse benchmarks.
 Compare candidates against our Lighthouse models:
 
-- **ResNet-50** (`{python} WildlifeModelSizing.resnet_params_str` M params, `{python} WildlifeModelSizing.resnet_gflops_str` GFLOPs): Too compute- and power-heavy for this device. At ~`{python} WildlifeModelSizing.resnet_fp32_str` MB FP32, it is also marginal against the ~100 MB model budget before quantization, activations, and runtime buffers. The main blockers are its GFLOP cost and power draw, not raw storage alone.
+- **ResNet-50** (`{python} WildlifeModelSizing.resnet_params_str` M params, `{python} WildlifeModelSizing.resnet_gflops_str` GFLOPs): Too compute- and power-heavy for this device. At ~`{python} WildlifeModelSizing.resnet_fp32_str` MB FP32, it is also marginal against the ~`{python} WildlifeModelSizing.model_budget_mb_str` MB model budget before quantization, activations, and runtime buffers. The main blockers are its GFLOP cost and power draw, not raw storage alone.
 - **MobileNetV1** (`{python} WildlifeModelSizing.mnv1_params_str` M params, `{python} WildlifeModelSizing.mnv1_flops_str` MFLOPs): Promising. ~`{python} WildlifeModelSizing.mnv1_fp32_str` MB at FP32, ~`{python} WildlifeModelSizing.mnv1_int8_str` MB quantized to INT8. Power-efficient depthwise separable convolutions.
 - **KWS DS-CNN** (`{python} WildlifeModelSizing.kws_example_params_str` K params, `{python} WildlifeModelSizing.kws_example_flops_str` MFLOPs): Too small. Designed for 12-class audio, insufficient capacity for 50 visual species.
 
@@ -5239,7 +5248,7 @@ At `{python} WildlifeModelSizing.inferences_per_day_str` inferences/day: `{pytho
 
 : **Wildlife Camera Deployment Risks**: Top accuracy, thermal, and species-coverage risks for the MobileNetV2 deployment, paired with the engineering mitigation chosen for each. {#tbl-nn-architectures-wildlife-risks}
 
-**Final decision**: MobileNetV2 (0.75$\times$ width) with INT8 quantization, deployed on Cortex-A53 system on chip (SoC) with 512 MB RAM.
+**Final decision**: MobileNetV2 (`{python} WildlifeModelSizing.width_mult_str`$\times$ width) with INT8 quantization, deployed on Cortex-A53 system on chip (SoC) with `{python} WildlifeModelSizing.edge_ram_mb_str` MB RAM.
 
 This architecture achieves the accuracy target while operating within the 2 W power envelope, processing images in about `{python} WildlifeModelSizing.compute_latency_ms_str` ms under the stated throughput assumption, and leaving sufficient memory headroom for system operations. The decision was driven by matching the CNN inductive bias to spatial data characteristics, then validating against hardware constraints using quantitative analysis.
 

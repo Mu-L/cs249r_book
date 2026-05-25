@@ -474,6 +474,7 @@ class HierarchicalAllReduceDebug:
 
     observed_ms = 100.0
     residual_ms = observed_ms - hierarchical_total_ms
+    ib_util_pct = 60
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
     check(235 < flat_ring_ms < 245, "Flat ring should be about 240 ms")
@@ -493,6 +494,7 @@ class HierarchicalAllReduceDebug:
     total_gpus_str = fmt(nodes * gpus_per_node, precision=0, commas=True)
     ib_hdr_bw_str = fmt(ib_hdr_bw.m_as(GB/second), precision=0, commas=False)
     flat_single_link_ms_str = fmt((tensor_bytes.m_as(GB) / ib_hdr_bw.m_as(GB/second)) * 1000, precision=0, commas=False)
+    ib_util_pct_str = fmt(ib_util_pct, precision=0, commas=False)
 ```
 
 ::: {#psp-distributed-training-debugging-slow-gradient-synchronization .callout-perspective title="Debugging slow gradient synchronization"}
@@ -510,12 +512,12 @@ class HierarchicalAllReduceDebug:
 
 - **Algorithm choice**: NCCL hierarchical AllReduce (intra-node NVLink ring + inter-node InfiniBand ring)
 - **Expected behavior**: Hierarchical decomposition isolates the slow link from the fast link, scaling with the inter-node share rather than the full tensor
-- **Diagnosis check**: A flat single ring over all 1,024 GPUs would have measured close to `{python} HierarchicalAllReduceDebug.flat_ring_ms_str` ms, so the algorithm is already hierarchical
+- **Diagnosis check**: A flat single ring over all `{python} HierarchicalAllReduceDebug.total_gpus_str` GPUs would have measured close to `{python} HierarchicalAllReduceDebug.flat_ring_ms_str` ms, so the algorithm is already hierarchical
 
 **Serving Layer (Measurement)**:
 
 - **Observed latency**: `{python} HierarchicalAllReduceDebug.observed_ms_str` ms (well below the `{python} HierarchicalAllReduceDebug.flat_ring_ms_str` ms flat-ring upper bound, but about `{python} HierarchicalAllReduceDebug.residual_ms_str` ms above the hierarchical ideal)
-- **Bandwidth utilization**: Only 60 percent of theoretical InfiniBand throughput
+- **Bandwidth utilization**: Only `{python} HierarchicalAllReduceDebug.ib_util_pct_str` percent of theoretical InfiniBand throughput
 - **Network counters**: Show congestion on specific switch uplinks
 
 **Root Cause Diagnosis**: NCCL is already using a hierarchical algorithm (`{python} HierarchicalAllReduceDebug.observed_ms_str` ms vs. the `{python} HierarchicalAllReduceDebug.flat_ring_ms_str` ms flat-ring prediction confirms this). The remaining gap between observed and modeled latency can come from switch congestion on a handful of inter-node uplinks, effective-bandwidth loss, or implementation overhead, not from a fully flat algorithm.
@@ -621,6 +623,7 @@ class Scaling8GPU:
     from mlsysim.physics import calc_ring_allreduce_time
     single_gpu_step_s = 1.8
     batch_per_gpu_val = 16
+    fits_mem_gb = 32
     compute_8gpu_ms = 1800  # Matched to 1.8s baseline
     params_b = Models.Language.GPT2.parameters.m_as(Bparam)  # GPT-2
     nvlink_bw = Hardware.Cloud.H100.nvlink.bandwidth
@@ -661,9 +664,10 @@ class Scaling8GPU:
     # Suffix-bearing prose aliases for raw ints/floats referenced in prose
     batch_per_gpu_str = fmt(batch_per_gpu_val, precision=0, commas=False)
     training_hours_1gpu_str = fmt(training_hours_1gpu, precision=0, commas=False)
+    fits_mem_gb_str = fmt(fits_mem_gb, precision=0, commas=False)
 ```
 
-- Batch size: `{python} Scaling8GPU.batch_per_gpu_str` (with gradient checkpointing, fits in 32 GB)
+- Batch size: `{python} Scaling8GPU.batch_per_gpu_str` (with gradient checkpointing, fits in `{python} Scaling8GPU.fits_mem_gb_str` GB)
 - Time per step: `{python} Scaling8GPU.single_gpu_step_s_str` seconds
 - Time to 50K steps: **`{python} Scaling8GPU.training_hours_1gpu_str` hours**
 
@@ -726,9 +730,11 @@ class Scaling32GPU:
     compute_32gpu_ms_str = fmt(compute_32gpu_ms, precision=0, commas=False)
     comm_32gpu_ms_str = fmt(comm_32gpu_ms_val, precision=1, commas=False)
     intra_node_comm_ms_str = fmt(intra_node_ms_val, precision=1, commas=False)
+    gpus_str = fmt(gpus, precision=0, commas=False)
+    n_nodes_str = fmt(gpus // 8, precision=0, commas=False)
 ```
 
-**32 GPUs: 4 Nodes with Commodity Network**
+**`{python} Scaling32GPU.gpus_str` GPUs: `{python} Scaling32GPU.n_nodes_str` Nodes with Commodity Network**
 
 Configuration:
 
@@ -821,20 +827,32 @@ To understand the scale of memory savings ZeRO provides, consider the concrete m
 
 ```{python}
 #| echo: false
-from mlsysim import Hardware
+from mlsysim import Hardware, Models
 from mlsysim.core.constants import *
 from mlsysim.core.constants import GiB
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, fmt_int
 
 class DistTrainA100Memory:
+    model = Models.Language.Llama2_7B
+    bytes_per_param = 16
+    n_gpus_zero = 64
+    params_b = model.parameters.m_as(Bparam)
     a100_mem_gb = Hardware.Cloud.A100.memory.capacity.m_as(GiB)
-    check(a100_mem_gb > 0, "A100 memory must be positive")
+    total_state_gb = params_b * bytes_per_param
+    zero3_per_gpu_gb = total_state_gb / n_gpus_zero
+    activation_headroom_gb = a100_mem_gb - zero3_per_gpu_gb
+    check(total_state_gb == 112, f"7B ZeRO state ({total_state_gb})")
+    check(abs(zero3_per_gpu_gb - 1.75) < 0.01, f"ZeRO-3 per GPU ({zero3_per_gpu_gb})")
+    params_b_str = fmt(params_b, precision=0, commas=False)
+    bytes_per_param_str = fmt(bytes_per_param, precision=0, commas=False)
+    n_gpus_zero_str = fmt(n_gpus_zero, precision=0, commas=False)
+    activation_headroom_gb_str = fmt_int(round(activation_headroom_gb), commas=False)
     a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False)
 ```
 
 ::: {#nbk-distributed-training-zero-memory-savings .callout-notebook title="ZeRO memory savings"}
 
-**Problem**: Training a 7B parameter Llama-2 model in mixed precision requires 16 bytes per parameter for weights, gradients, and optimizer state. Does the full training state fit on a single A100-80 GB, and how does ZeRO Stage 3 with 64 GPUs change the per-device memory requirement?
+**Problem**: Training a `{python} DistTrainA100Memory.params_b_str`B parameter Llama-2 model in mixed precision requires `{python} DistTrainA100Memory.bytes_per_param_str` bytes per parameter for weights, gradients, and optimizer state. Does the full training state fit on a single A100-`{python} DistTrainA100Memory.a100_mem_str` GB, and how does ZeRO Stage 3 with `{python} DistTrainA100Memory.n_gpus_zero_str` GPUs change the per-device memory requirement?
 
 **Baseline: Standard DDP (Replicated State)**
 Per-Parameter Memory Cost:
@@ -858,7 +876,7 @@ With $N=64$ GPUs, state is partitioned:
 
 Per-GPU Memory:
 $$ C_{\text{state,ZeRO3}} = \frac{112 \text{ GB}}{64} \approx \mathbf{1.75 \text{ GB}} $$
-**Result**: Fits easily, leaving ~78 GB for activations (batch size).
+**Result**: Fits easily, leaving ~`{python} DistTrainA100Memory.activation_headroom_gb_str` GB for activations (batch size).
 
 :::
 
@@ -1287,6 +1305,11 @@ class ScalingWorkers:
     actual_ssp = 2_100
     comm_ssp = 0.25
     critical_batch_size = 4_000
+    n_nodes_64 = 8
+    gpu_hour_rate = 3
+    iter_s_8 = 0.4
+    iter_s_64bsp = 0.58
+    iter_s_64ssp = 0.50
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     batch_8 = n8 * b
@@ -1297,6 +1320,12 @@ class ScalingWorkers:
     speedup_64 = base_iters / (actual_64bsp * (1 + comm_64bsp))
     speedup_ssp = base_iters / (actual_ssp * (1 + comm_ssp))
     lr_factor_ssp = 1/math.sqrt(1 + staleness)
+    sample_eff_8 = exp_iter_8 / actual_8bsp * 100
+    sample_eff_64 = exp_iter_64 / actual_64bsp * 100
+    sample_eff_ssp = exp_iter_64 / actual_ssp * 100
+    cost_8 = actual_8bsp * iter_s_8 * n8 / 3600 * gpu_hour_rate
+    cost_64bsp = actual_64bsp * iter_s_64bsp * n64 / 3600 * gpu_hour_rate
+    cost_64ssp = actual_ssp * iter_s_64ssp * n64 / 3600 * gpu_hour_rate
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(batch_8 == 256, f"8-worker batch ({batch_8})")
@@ -1323,6 +1352,24 @@ class ScalingWorkers:
     n_workers_64_str = MarkdownStr(str(n64))
     ssp_staleness_str = MarkdownStr(str(staleness))
     critical_batch_str = fmt(critical_batch_size, precision=0)
+    actual_8bsp_k_str = fmt(actual_8bsp / THOUSAND, precision=1, commas=False, suffix="K")
+    actual_64bsp_k_str = fmt(actual_64bsp / THOUSAND, precision=2, commas=False, suffix="K")
+    actual_ssp_k_str = fmt(actual_ssp / THOUSAND, precision=1, commas=False, suffix="K")
+    comm_8bsp_pct_str = fmt(comm_8bsp * 100, precision=0, commas=False)
+    comm_64bsp_pct_str = fmt(comm_64bsp * 100, precision=0, commas=False)
+    comm_ssp_pct_str = fmt(comm_ssp * 100, precision=0, commas=False)
+    sample_eff_8_str = fmt_int(round(sample_eff_8), commas=False)
+    sample_eff_64_str = fmt_int(round(sample_eff_64), commas=False)
+    sample_eff_ssp_str = fmt_int(round(sample_eff_ssp), commas=False)
+    n_nodes_64_str = fmt(n_nodes_64, precision=0, commas=False)
+    gpu_hour_rate_str = fmt(gpu_hour_rate, precision=0, commas=False)
+    cost_8_str = fmt_int(round(cost_8), commas=False)
+    cost_64bsp_str = fmt_int(round(cost_64bsp), commas=False)
+    cost_64ssp_str = fmt_int(round(cost_64ssp), commas=False)
+    speedup_64_round_str = fmt_int(round(speedup_64), commas=False)
+    iter_s_8_str = fmt(iter_s_8, precision=1, commas=False)
+    iter_s_64bsp_str = fmt(iter_s_64bsp, precision=2, commas=False)
+    iter_s_64ssp_str = fmt(iter_s_64ssp, precision=2, commas=False)
 ```
 
 ::: {#nbk-distributed-training-scaling-from-8-64-workers .callout-notebook title="Scaling from 8 to 64 workers"}
@@ -1334,8 +1381,8 @@ class ScalingWorkers:
 - Effective batch size: $B = 8 \times 32 =$ `{python} ScalingWorkers.batch_8_str`
 - Learning rate: $\eta =$ `{python} ScalingWorkers.n_workers_8_str` $\times \eta_{\text{base}}$ (linear scaling with warmup)
 - Expected iterations: $100K/8 =$ `{python} ScalingWorkers.exp_iter_8_str` iterations
-- Convergence: Reaches target perplexity in 12.8K iterations (97 percent efficiency)
-- Communication overhead: 15 percent (NVLink intra-node)
+- Convergence: Reaches target perplexity in `{python} ScalingWorkers.actual_8bsp_k_str` iterations (`{python} ScalingWorkers.sample_eff_8_str` percent efficiency)
+- Communication overhead: `{python} ScalingWorkers.comm_8bsp_pct_str` percent (NVLink intra-node)
 - Wall-clock speedup: $100K \times 1.0 / (12.8K \times 1.15) =$ `{python} ScalingWorkers.speedup_8_str`$\times$
 
 **64 Workers (BSP)**
@@ -1344,8 +1391,8 @@ class ScalingWorkers:
 - Learning rate ($N =$ `{python} ScalingWorkers.n_workers_64_str` workers): $\eta = N \times \eta_{\text{base}}$ (if $B < B^*$) or $\eta = \sqrt{N} \times \eta_{\text{base}}$ (if $B > B^*$)
 - Assuming $B^* \approx$ `{python} ScalingWorkers.critical_batch_str` (below critical): Linear scaling applies
 - Expected iterations: $100K/64 =$ `{python} ScalingWorkers.exp_iter_64_str` iterations
-- Convergence: Reaches target perplexity in 1.72K iterations (91 percent efficiency)
-- Communication overhead: 45 percent (InfiniBand inter-node, 8 nodes)
+- Convergence: Reaches target perplexity in `{python} ScalingWorkers.actual_64bsp_k_str` iterations (`{python} ScalingWorkers.sample_eff_64_str` percent efficiency)
+- Communication overhead: `{python} ScalingWorkers.comm_64bsp_pct_str` percent (InfiniBand inter-node, `{python} ScalingWorkers.n_nodes_64_str` nodes)
 - Wall-clock speedup: $100K \times 1.0 / (1.72K \times 1.45) =$ `{python} ScalingWorkers.speedup_64_str`$\times$
 
 **`{python} ScalingWorkers.n_workers_64_str` Workers (SSP, $s =$ `{python} ScalingWorkers.ssp_staleness_str`)**
@@ -1353,8 +1400,8 @@ class ScalingWorkers:
 - Same effective batch size: $B =$ `{python} ScalingWorkers.batch_64_str`
 - Learning rate: $\eta' = \eta_{\text{BSP}} / \sqrt{1 + 4} \approx$ `{python} ScalingWorkers.lr_ssp_str` $\times \eta_{\text{BSP}}$
 - Expected iterations: Higher due to staleness penalty
-- Convergence: Reaches target perplexity in 2.1K iterations (74 percent efficiency)
-- Communication overhead: 25 percent (reduced synchronization)
+- Convergence: Reaches target perplexity in `{python} ScalingWorkers.actual_ssp_k_str` iterations (`{python} ScalingWorkers.sample_eff_ssp_str` percent efficiency)
+- Communication overhead: `{python} ScalingWorkers.comm_ssp_pct_str` percent (reduced synchronization)
 - Wall-clock speedup: $100K \times 1.0 / (2.1K \times 1.25) =$ `{python} ScalingWorkers.speedup_ssp_str`$\times$
 
 **Analysis** (@tbl-scaling-bsp-ssp)
@@ -1368,13 +1415,13 @@ class ScalingWorkers:
 
 : **Scaling SGD Across Cluster Sizes**: Iteration count, communication overhead, wall-clock speedup, and sample efficiency for the same training job at 1, 8, and 64 GPUs. {#tbl-scaling-bsp-ssp}
 
-The 64-GPU BSP configuration achieves 40$\times$ speedup despite only 91 percent sample efficiency because the communication overhead (45 percent) is offset by the massive parallelism. SSP provides comparable wall-clock time with lower communication overhead but requires more total samples.
+The `{python} ScalingWorkers.n_workers_64_str`-GPU BSP configuration achieves `{python} ScalingWorkers.speedup_64_round_str`$\times$ speedup despite only `{python} ScalingWorkers.sample_eff_64_str` percent sample efficiency because the communication overhead (`{python} ScalingWorkers.comm_64bsp_pct_str` percent) is offset by the massive parallelism. SSP provides comparable wall-clock time with lower communication overhead but requires more total samples.
 
-**Cost Analysis** (assuming \$3/GPU-hour):
+**Cost Analysis** (assuming \${python} ScalingWorkers.gpu_hour_rate_str`/GPU-hour):
 
-- 8 GPU: 12.8K iters $\times$ 0.4s/iter $\times$ 8 GPUs/3600 $\times$ \$3 = \$34
-- 64 GPU BSP: 1.72K iters $\times$ 0.58s/iter $\times$ 64 GPUs/3600 $\times$ \$3 = \$53
-- 64 GPU SSP: 2.1K iters $\times$ 0.50s/iter $\times$ 64 GPUs/3600 $\times$ \$3 = \$56
+- `{python} ScalingWorkers.n_workers_8_str` GPU: `{python} ScalingWorkers.actual_8bsp_k_str` iters $\times$ `{python} ScalingWorkers.iter_s_8_str`s/iter $\times$ `{python} ScalingWorkers.n_workers_8_str` GPUs/3600 $\times$ \${python} ScalingWorkers.gpu_hour_rate_str` = \${python} ScalingWorkers.cost_8_str`
+- `{python} ScalingWorkers.n_workers_64_str` GPU BSP: `{python} ScalingWorkers.actual_64bsp_k_str` iters $\times$ `{python} ScalingWorkers.iter_s_64bsp_str`s/iter $\times$ `{python} ScalingWorkers.n_workers_64_str` GPUs/3600 $\times$ \${python} ScalingWorkers.gpu_hour_rate_str` = \${python} ScalingWorkers.cost_64bsp_str`
+- `{python} ScalingWorkers.n_workers_64_str` GPU SSP: `{python} ScalingWorkers.actual_ssp_k_str` iters $\times$ `{python} ScalingWorkers.iter_s_64ssp_str`s/iter $\times$ `{python} ScalingWorkers.n_workers_64_str` GPUs/3600 $\times$ \${python} ScalingWorkers.gpu_hour_rate_str` = \${python} ScalingWorkers.cost_64ssp_str`
 
 Despite higher parallelism, 64-GPU training costs more per run due to communication overhead and reduced sample efficiency. The 8-GPU configuration is more cost-efficient but takes 6$\times$ longer wall-clock time. The choice depends on whether minimizing cost or minimizing time-to-result is the priority.
 
@@ -1842,6 +1889,10 @@ class TensorParallelBandwidth:
     from mlsysim.fmt import fmt
     nvlink_h100_str = fmt(Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second), precision=0, commas=False)
     ib_ndr_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second), precision=0, commas=False)
+    pipeline_ib_lo_gbs = 25
+    pipeline_ib_hi_gbs = 50
+    pipeline_ib_lo_str = fmt(pipeline_ib_lo_gbs, precision=0, commas=False)
+    pipeline_ib_hi_str = fmt(pipeline_ib_hi_gbs, precision=0, commas=False)
 ```
 
 ::: {#dfn-distributed-training-tensor-parallelism .callout-definition title="Tensor parallelism"}
@@ -1862,7 +1913,7 @@ Both strategies split the model, but they split at different granularities and i
 
 Tensor parallelism (intra-layer) splits individual operations (matrix multiplies, attention heads) across devices. Every forward pass requires a synchronization within each layer, so inter-GPU bandwidth must be NVLink-class (~`{python} TensorParallelBandwidth.nvlink_h100_str` GB/s) to avoid stalling on communication.
 
-**Pipeline Parallelism** (inter-layer) assigns complete layers to different devices, communicating only at stage boundaries. These boundary activations are much smaller than gradient tensors, so InfiniBand-class bandwidth (~25–50 GB/s) is sufficient between nodes.
+**Pipeline Parallelism** (inter-layer) assigns complete layers to different devices, communicating only at stage boundaries. These boundary activations are much smaller than gradient tensors, so InfiniBand-class bandwidth (~`{python} TensorParallelBandwidth.pipeline_ib_lo_str`–`{python} TensorParallelBandwidth.pipeline_ib_hi_str` GB/s) is sufficient between nodes.
 
 Megatron-LM popularized tensor model parallelism within transformer layers [@shoeybi2019megatron]. This bandwidth pattern creates the design pressure for a hybrid: use tensor parallelism for bandwidth-intensive intra-layer splits and pipeline parallelism for coarser inter-layer splits. The individual definitions for each strategy appear in @sec-distributed-training-systems-systems-tensor-parallelism-d76e and @sec-distributed-training-systems-systems-pipeline-parallelism-8748.
 
@@ -2706,6 +2757,10 @@ class RLHFBudget:
     kv_per_gpu = kv_total_gb/n_gpus
     remaining_after_kv = remaining - kv_per_gpu
     dpo_activation_ratio = remaining / remaining_after_kv
+    gen_phase_pct = 60
+    train_phase_pct = 100 - gen_phase_pct
+    dpo_mfu_lo = 40
+    dpo_mfu_hi = 55
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(abs(policy_mem - 1120) < 15, f"policy memory ({policy_mem})")
@@ -2745,6 +2800,10 @@ class RLHFBudget:
     dp_str = fmt(8, precision=0, commas=False)
     rollout_seq_str = fmt(batch_size, precision=0, commas=False)
     rollout_tokens_str = fmt(seq_len, precision=0, commas=True)
+    gen_phase_pct_str = fmt(gen_phase_pct, precision=0, commas=False)
+    train_phase_pct_str = fmt(train_phase_pct, precision=0, commas=False)
+    dpo_mfu_lo_str = fmt(dpo_mfu_lo, precision=0, commas=False)
+    dpo_mfu_hi_str = fmt(dpo_mfu_hi, precision=0, commas=False)
 ```
 
 ::: {#nbk-distributed-training-rlhf-infrastructure-budget-ppo-vs-dpo .callout-notebook title="RLHF infrastructure budget: PPO vs. DPO"}
@@ -2765,7 +2824,7 @@ On the policy GPUs, total static memory is `{python} RLHFBudget.policy_per_gpu_s
 
 **Throughput Comparison**
 
-PPO's two-phase design (generate then train) introduces a fundamental throughput penalty. If generation consumes 60 percent of the step time (typical for autoregressive decoding of long sequences), the training hardware achieves only 40 percent utilization during an RLHF step. DPO, operating as a standard training loop, achieves the same 40--55 percent MFU as pretraining. @tbl-ppo-vs-dpo compares the two regimes side by side.
+PPO's two-phase design (generate then train) introduces a fundamental throughput penalty. If generation consumes `{python} RLHFBudget.gen_phase_pct_str` percent of the step time (typical for autoregressive decoding of long sequences), the training hardware achieves only `{python} RLHFBudget.train_phase_pct_str` percent utilization during an RLHF step. DPO, operating as a standard training loop, achieves the same `{python} RLHFBudget.dpo_mfu_lo_str`--`{python} RLHFBudget.dpo_mfu_hi_str` percent MFU as pretraining. @tbl-ppo-vs-dpo compares the two regimes side by side.
 
 | **Metric**                 | **PPO (70B policy)**                              | **DPO (70B policy)**                              |
 |:---------------------------|:--------------------------------------------------|:--------------------------------------------------|

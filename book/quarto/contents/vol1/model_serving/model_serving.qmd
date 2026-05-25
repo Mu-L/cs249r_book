@@ -99,6 +99,8 @@ class BlackFridayCalc:
     bf_qps_spike_str = fmt(bf_qps_spike_value, precision=0)              # e.g. "10,000" QPS
     bf_spike_factor_str = fmt(bf_spike_factor_value, precision=0, commas=False)          # e.g. "10" x
     bf_collapse_latency_s_str = fmt(bf_collapse_latency_s_value, precision=0, commas=False)  # e.g. "10" seconds
+    bf_full_util_pct_value = 100
+    bf_full_util_pct_str = fmt(bf_full_util_pct_value, precision=0, commas=False)
 ```
 
 ::: {#exmp-model-serving-black-friday-traffic-spike .callout-example title="The 'Black Friday' traffic spike"}
@@ -107,9 +109,9 @@ class BlackFridayCalc:
 
 **The event**: On Black Friday, traffic spikes\index{Traffic Spike!nonlinear failure mode} `{python} BlackFridayCalc.bf_spike_factor_str`$\times$ to `{python} BlackFridayCalc.bf_qps_spike_str` QPS.
 
-**Failure**: The system does not slow down `{python} BlackFridayCalc.bf_spike_factor_str`$\times$. It **collapses**. Latency hits `{python} BlackFridayCalc.bf_collapse_latency_s_str` seconds, then requests start timing out. The servers are 100 percent loaded, but useful throughput drops to near zero because most completed requests have already timed out from the client's perspective.
+**Failure**: The system does not slow down `{python} BlackFridayCalc.bf_spike_factor_str`$\times$. It **collapses**. Latency hits `{python} BlackFridayCalc.bf_collapse_latency_s_str` seconds, then requests start timing out. The servers are `{python} BlackFridayCalc.bf_full_util_pct_str` percent loaded, but useful throughput drops to near zero because most completed requests have already timed out from the client's perspective.
 
-**Physics**: This is Little's Law and queueing theory in action. As utilization approaches 100 percent, queue lengths diverge nonlinearly rather than linearly. The system spends more time managing the queue (context switching, thrashing) than doing useful work.
+**Physics**: This is Little's Law and queueing theory in action. As utilization approaches `{python} BlackFridayCalc.bf_full_util_pct_str` percent, queue lengths diverge nonlinearly rather than linearly. The system spends more time managing the queue (context switching, thrashing) than doing useful work.
 
 **Fix**:
 
@@ -1708,7 +1710,7 @@ from mlsysim.core.constants import *
 # │          dlrm_total_str
 # └─────────────────────────────────────────────────────────────────────────────
 
-from mlsysim.fmt import MarkdownStr
+from mlsysim.fmt import MarkdownStr, fmt
 class DlrmLatencyCalc:
     """Models DLRM serving latency to contrast I/O-bound vs. compute-bound bottlenecks."""
 
@@ -1720,6 +1722,7 @@ class DlrmLatencyCalc:
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     dlrm_total_ms_value = dlrm_input_ms_value + dlrm_embed_ms_value + dlrm_mlp_ms_value + dlrm_post_ms_value
+    dlrm_mlp_pct_value = dlrm_mlp_ms_value / dlrm_total_ms_value * 100
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     dlrm_input_str = fmt(dlrm_input_ms_value, precision=1, commas=False, suffix=" ms")
@@ -1727,6 +1730,7 @@ class DlrmLatencyCalc:
     dlrm_mlp_str = fmt(dlrm_mlp_ms_value, precision=1, commas=False, suffix=" ms")
     dlrm_post_str = fmt(dlrm_post_ms_value, precision=0, commas=False, suffix=" ms")
     dlrm_total_str = fmt(dlrm_total_ms_value, precision=0, commas=False, suffix=" ms")
+    dlrm_mlp_pct_str = fmt(dlrm_mlp_pct_value, precision=0, commas=False)
 ```
 
 ::: {#lhs-model-serving-lighthouse-example-dlrm-serving .callout-lighthouse title="Lighthouse example: DLRM serving"}
@@ -1746,7 +1750,7 @@ class DlrmLatencyCalc:
 : **DLRM Serving Latency**: Per-phase breakdown of a recommendation request under a 10 ms p99 budget, contrasting DLRM's memory-bandwidth-bound embedding lookups against ResNet-50's compute-bound forward pass. Adding compute to the inference stage does not help once embedding-table bandwidth is the binding constraint. {#tbl-model-serving-dlrm-latency-budget tbl-colwidths="[28,28,22,22]"}
 
 **Key Systems Insight**:
-In DLRM, the "Inference" multilayer perceptron (MLP) stage is only ~15 percent of the latency. The majority of time is spent in embedding lookups, retrieving massive 128-dim vectors from terabyte-scale tables. This is a memory-bandwidth and capacity-bound workload where adding more compute does not help unless the embedding tables can be served faster.
+In DLRM, the "Inference" multilayer perceptron (MLP) stage is only ~`{python} DlrmLatencyCalc.dlrm_mlp_pct_str` percent of the latency. The majority of time is spent in embedding lookups, retrieving massive 128-dim vectors from terabyte-scale tables. This is a memory-bandwidth and capacity-bound workload where adding more compute does not help unless the embedding tables can be served faster.
 
 :::
 
@@ -2467,6 +2471,9 @@ class CapacityPlanningCalc:
         f"\\mu_{{\\text{{required}}}} = {cp_peak_qps_str} / {cp_rho_safe_str} "
         f"= {cp_mu_required_str} \\text{{ requests/s}}"
     )
+    cp_headroom_pct_value = (cp_headroom_value - 1) * 100
+    cp_headroom_pct_str = fmt(cp_headroom_pct_value, precision=0, commas=False)
+    cp_headroom_multiplier_str = fmt(cp_headroom_value, precision=1, commas=False)
 ```
 
 Applying Little's Law to ResNet-50 makes the capacity constraint concrete.
@@ -2491,12 +2498,12 @@ Single V100 throughput at $B = 16$: `{python} CapacityPlanningCalc.cp_v100_throu
 GPUs needed = `{python} CapacityPlanningCalc.cp_mu_required_str` / `{python} CapacityPlanningCalc.cp_v100_throughput_str` = `{python} CapacityPlanningCalc.cp_gpus_raw_str` → `{python} CapacityPlanningCalc.cp_gpus_ceil_str` GPUs
 
 **Step 4**: Add headroom for variance.
-Production systems add 30 percent headroom for traffic spikes and variance: final count = `{python} CapacityPlanningCalc.cp_gpus_ceil_str` $\times$ 1.3 = `{python} CapacityPlanningCalc.cp_final_raw_str`, rounded up to **`{python} CapacityPlanningCalc.cp_final_ceil_str` GPUs**.
+Production systems add `{python} CapacityPlanningCalc.cp_headroom_pct_str` percent headroom for traffic spikes and variance: final count = `{python} CapacityPlanningCalc.cp_gpus_ceil_str` $\times$ `{python} CapacityPlanningCalc.cp_headroom_multiplier_str` = `{python} CapacityPlanningCalc.cp_final_raw_str`, rounded up to **`{python} CapacityPlanningCalc.cp_final_ceil_str` GPUs**.
 
 **Step 5**: Verify fault tolerance.
-The 30 percent headroom addresses traffic variance, but production systems also need fault tolerance. With `{python} CapacityPlanningCalc.cp_final_ceil_str` GPUs, losing one leaves `{python} CapacityPlanningCalc.cp_gpus_after_fail_str` GPUs handling `{python} CapacityPlanningCalc.cp_peak_qps_str` QPS. The postfailure utilization is (`{python} CapacityPlanningCalc.cp_peak_qps_str` / `{python} CapacityPlanningCalc.cp_v100_throughput_str`) / `{python} CapacityPlanningCalc.cp_gpus_after_fail_str` = **`{python} CapacityPlanningCalc.cp_util_after_fail_str` percent**.
+The `{python} CapacityPlanningCalc.cp_headroom_pct_str` percent headroom addresses traffic variance, but production systems also need fault tolerance. With `{python} CapacityPlanningCalc.cp_final_ceil_str` GPUs, losing one leaves `{python} CapacityPlanningCalc.cp_gpus_after_fail_str` GPUs handling `{python} CapacityPlanningCalc.cp_peak_qps_str` QPS. The postfailure utilization is (`{python} CapacityPlanningCalc.cp_peak_qps_str` / `{python} CapacityPlanningCalc.cp_v100_throughput_str`) / `{python} CapacityPlanningCalc.cp_gpus_after_fail_str` = **`{python} CapacityPlanningCalc.cp_util_after_fail_str` percent**.
 
-This remains well below the `{python} CapacityPlanningCalc.cp_rho_safe_pct_str` percent safe utilization threshold, confirming N+1 redundancy is satisfied. For stricter fault tolerance requirements, N+2 redundancy (tolerating two simultaneous failures) would require `{python} CapacityPlanningCalc.cp_n_plus_2_min_str` GPUs under the same safe-utilization threshold, or about `{python} CapacityPlanningCalc.cp_n_plus_2_headroom_str` GPUs if the 30 percent headroom must remain after two simultaneous failures.
+This remains well below the `{python} CapacityPlanningCalc.cp_rho_safe_pct_str` percent safe utilization threshold, confirming N+1 redundancy is satisfied. For stricter fault tolerance requirements, N+2 redundancy (tolerating two simultaneous failures) would require `{python} CapacityPlanningCalc.cp_n_plus_2_min_str` GPUs under the same safe-utilization threshold, or about `{python} CapacityPlanningCalc.cp_n_plus_2_headroom_str` GPUs if the `{python} CapacityPlanningCalc.cp_headroom_pct_str` percent headroom must remain after two simultaneous failures.
 
 **Result**: Provision `{python} CapacityPlanningCalc.cp_final_ceil_str` V100 GPUs to serve `{python} CapacityPlanningCalc.cp_peak_qps_str` QPS at 50 ms p99 latency with N+1 fault tolerance.
 
@@ -2897,6 +2904,8 @@ class BatchingSweetspotCalc:
     batch8_user_latency_ms_value = batch8_wait_ms_value + batch8_inference_ms_value
     batch8_throughput_value = 8 / (batch8_user_latency_ms_value * ms).m_as(second)
     latency_increase_value = batch8_user_latency_ms_value/batch1_ms_value
+    batch1_util_pct_value = 15
+    latency_budget_ms_value = 20
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     batch1_ms_str = fmt(batch1_ms_value, precision=0, commas=False)
@@ -2906,11 +2915,13 @@ class BatchingSweetspotCalc:
     batch8_user_latency_str = fmt(batch8_user_latency_ms_value, precision=0, commas=False)
     batch8_throughput_str = fmt(batch8_throughput_value, precision=1, commas=False)
     latency_increase_str = fmt(latency_increase_value, precision=1, commas=False)
+    batch1_util_pct_str = fmt(batch1_util_pct_value, precision=0, commas=False)
+    latency_budget_ms_str = fmt(latency_budget_ms_value, precision=0, commas=False)
 ```
 
 ::: {#nbk-model-serving-batching-sweet-spot .callout-notebook title="The batching sweet spot"}
 
-**Problem**: A ResNet-50 model is served at $B = 1$, leaving the GPU mostly idle (15 percent utilization). The goal is to increase throughput to reduce cost, subject to a **20 ms** latency budget.
+**Problem**: A ResNet-50 model is served at $B = 1$, leaving the GPU mostly idle (`{python} BatchingSweetspotCalc.batch1_util_pct_str` percent utilization). The goal is to increase throughput to reduce cost, subject to a **`{python} BatchingSweetspotCalc.latency_budget_ms_str` ms** latency budget.
 
 **Math**:
 
@@ -3754,6 +3765,7 @@ class MobileServingCalc:
     m_resize_ms_value = 5
     m_npu_ms_value = 12
     m_ui_ms_value = 5
+    peak_memory_mb_value = 150
     m_cam_mj_value = 0.08
     m_jpeg_mj_value = 1.5
     m_resize_mj_value = 0.4
@@ -3787,6 +3799,7 @@ class MobileServingCalc:
     battery_wh_str = fmt(battery_wh, precision=0, commas=False)
     sustained_mw_str = fmt(sustained_mw, precision=0, commas=False)
     inferences_per_battery_m_str = fmt(inferences_per_battery_m, precision=0, commas=False)
+    peak_memory_mb_str = fmt(peak_memory_mb_value, precision=0, commas=False)
 ```
 
 ::: {#nbk-model-serving-resnet-50-mobile-serving .callout-notebook title="ResNet-50: Mobile serving"}
@@ -3818,7 +3831,7 @@ class MobileServingCalc:
 - **Energy per inference**: `{python} MobileServingCalc.m_total_mj_str` enables ~`{python} MobileServingCalc.inferences_per_battery_m_str` million inferences per `{python} MobileServingCalc.battery_wh_str` Wh battery (typical smartphone)
 - **Thermal budget**: At `{python} MobileServingCalc.m_total_mj_str` / `{python} MobileServingCalc.m_total_ms_str` = **`{python} MobileServingCalc.sustained_mw_str` mW** sustained, indefinite operation without throttling
 - **NPU vs. CPU trade-off**: CPU fallback replaces the 12 ms, 0.8 mJ NPU inference stage with a 45 ms, 4.2 mJ CPU stage; the full pipeline would rise from 45 ms and `{python} MobileServingCalc.m_total_mj_str` to about 78 ms and 6.4 mJ before additional system overhead.
-- **Memory footprint**: 150 MB peak (model + activations), competing with app memory
+- **Memory footprint**: `{python} MobileServingCalc.peak_memory_mb_str` MB peak (model + activations), competing with app memory
 
 **Systems insight**: Even at batch size one, the mobile NPU achieves 82 percent utilization because its compute capacity matches single-image workloads. This differs from data center GPUs, which achieve only 15 percent utilization at batch size one because their massive parallelism requires larger batches to saturate.
 
@@ -4802,7 +4815,9 @@ The model generates 256 tokens sequentially. This phase is memory-bandwidth boun
 
 ::: {#psp-model-serving-physics-token-generation .callout-perspective title="The physics of token generation"}
 
+<!-- lego-ok-block: pedagogical energy-movement ratio range from @tbl-energy-movement-cost -->
 Recall the energy-movement invariant\index{Energy-Movement Invariant!decode phase} quantified in @tbl-energy-movement-cost: moving a bit is 100--1,000$\times$ more expensive than computing on it. In the **Decode Phase**, this law determines the physical "cost per word."
+<!-- end lego-ok-block -->
 
 **The memory wall for Generative AI**: Because the decode phase has an arithmetic intensity of $\approx 1$ FLOP/byte (we must read every weight just to generate one token), performance is strictly limited by memory bandwidth $(\text{BW})$, not compute. This relationship is captured in @eq-token-generation-time:
 $$ T_{\text{token}} \approx \frac{D_{\text{vol}}}{\text{BW}_{\text{memory}}} $$ {#eq-token-generation-time}

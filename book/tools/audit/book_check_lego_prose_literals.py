@@ -7,21 +7,31 @@ Flag literals when they appear in a *computational walkthrough*: a callout
 notebook or worked example whose nearby LEGO cell exports ``{python} *_str``
 values derived from those inputs.
 
-Two tiers:
+Three tiers:
 
 1. **Calc lines** — any prose line that already mixes ``{python}`` refs with
    arithmetic (`=`, `×`, `/`, `÷`, `≈`) must not also contain hand-typed
    operands or results (``70B × 2``, ``/365``, ``10×``, ``1,287,000 kWh``).
 
 2. **Setup lines** — inside the same ``{python}`` callout, **Problem** /
-   **Setup** / **Consider** lines must not hardcode scenario inputs that the
-   cell uses (``100 GPUs``, ``1,000 QPS``, ``$2/GPU-hour``, ``26 GB footprint``).
+   **Setup** / **Consider** / **Strategy** / **Scenario** lines, numbered
+   list items, and bullet points must not hardcode scenario inputs that the
+   cell uses (``100 GPUs``, ``1,000 QPS``, ``$2/GPU-hour``, ``140 GB``).
+
+3. **Callout quantity lines** — inside any callout that has a ``{python}``
+   cell, *any* prose line containing a unit-bearing quantity (``N GB``,
+   ``N GPUs``, ``N MW``, ``N percent``, ``N seconds``, ``$N/hour``, etc.)
+   is flagged.  This is the broadest tier: if a number participates in or
+   feeds a computation anywhere in the callout, it must come from the cell.
 
 Do *not* flag:
 - Narrative teaching ranges with no nearby LEGO export (``100--1,000×``)
 - Significance / Distinction / Common pitfall bullets (conventions, not math)
 - Inline math dimensions (``$224×224$``), footnotes, or figure/table captions
-- Lines with no ``{python}`` callout context (Tier 2 requires a python callout)
+- Table rows (pipe-delimited lines)
+- Lines with ``<!-- lego-ok: ... -->`` suppression comments
+- Tier-3-only regions between ``<!-- lego-ok-block: ... -->`` and ``<!-- end lego-ok-block -->``
+- Lines with no ``{python}`` callout context (Tiers 2–3 require a python callout)
 """
 
 from __future__ import annotations
@@ -53,11 +63,11 @@ SCENARIO_SKIP = re.compile(
     re.I,
 )
 SCENARIO_MARK = re.compile(
-    r"^\*\*(?:Problem|Setup|Scenario|Variables|Initial Configuration|Strategy|Case)\b",
+    r"^\*\*(?:Problem|Setup|Scenario|Variables|Initial Configuration|Strategy|Case|Cloud|Break-Even|Final decision)\b",
     re.I,
 )
 SCENARIO_OPEN = re.compile(
-    r"^(?:Consider|Imagine|Suppose|Your team)\b",
+    r"^(?:Consider|Imagine|Suppose|Your (?:team|organization))\b",
     re.I,
 )
 
@@ -70,6 +80,14 @@ CALC_OPERAND_SHORTHAND = re.compile(
 TIKZ_LINE = re.compile(
     r"^\\(?:draw|node|pic|fill|colorlet|addplot|begin|end|tikz|scope)\b|^\s*fill=|node distance="
 )
+PEDAGOGICAL_RANGE = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:percent|%)\s*[–-]\s*\d+(?:\.\d+)?\s*(?:percent|%)"
+    r"|\d+\s+to\s+\d+\s+percent"
+    r"|\d+[–-]\d+\s+percent"
+)
+GPU_SKU_MEMORY = re.compile(r"\b[A-Za-z]\d+(?:-\d+)?-\d+(?:\.\d+)?\s+GB\b")
+LEGO_OK_BLOCK_START = re.compile(r"<!--\s*lego-ok-block:")
+LEGO_OK_BLOCK_END = re.compile(r"<!--\s*end lego-ok-block\s*-->")
 
 LITERAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\d{1,3}(?:,\d{3})+"), "comma-formatted number"),
@@ -99,6 +117,7 @@ SETUP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b\d+\s+distinct\b"), "hardcoded distinct count"),
     (re.compile(r"\(\d+\s+GB\s+footprint\s+each\)"), "hardcoded footprint literal"),
     (re.compile(r"\$\d+(?:\.\d+)?(?:/|\s+per\b)"), "hardcoded price rate"),
+    (re.compile(r"\\\$\d+(?:\.\d+)?/"), "hardcoded price rate (escaped $)"),
     (
         re.compile(
             r"\d{1,3}(?:,\d{3})+\s+(?:queries|images|transactions|GPUs?|tokens/s|samples/s)\b",
@@ -107,8 +126,62 @@ SETUP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "hardcoded scenario throughput/count",
     ),
     (
-        re.compile(r"\b(?:Consider|Imagine|Suppose)\s+(?:a\s+)?(?:fleet|serving)\s+(?:of\s+)?\d+\b", re.I),
+        re.compile(r"\b(?:Consider|Imagine|Suppose)\s+(?:a\s+)?(?:fleet|serving|cluster)\s+(?:of\s+)?\d+\b", re.I),
         "hardcoded fleet/serving size in setup",
+    ),
+)
+
+CALLOUT_QUANTITY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"\b\d{1,3}(?:,\d{3})+\s+(?:GPUs?|nodes?|servers?|models?|workers?|machines?)\b",
+            re.I,
+        ),
+        "comma-count + hardware/entity unit",
+    ),
+    (
+        re.compile(
+            r"\b\d{2,}\s+(?:GPUs?|nodes?|servers?)\b",
+        ),
+        "hardcoded hardware count",
+    ),
+    (
+        re.compile(
+            r"\b\d+(?:\.\d+)?\s+(?:GB|TB|MB|GiB|TiB)\b",
+        ),
+        "hardcoded storage/memory size",
+    ),
+    (
+        re.compile(
+            r"\b\d+(?:\.\d+)?\s+(?:MW|GW|kW|kWh|MWh|Wh)\b",
+            re.I,
+        ),
+        "hardcoded power/energy quantity",
+    ),
+    (
+        re.compile(r"\b\d{2,}\s+percent\b"),
+        "hardcoded percentage",
+    ),
+    (
+        re.compile(
+            r"\b\d+(?:\.\d+)?\s+(?:seconds?|minutes?|hours?|weeks?|months?)\b",
+        ),
+        "hardcoded time duration",
+    ),
+    (
+        re.compile(r"\\\$\d+(?:\.\d+)?/|\$\d+(?:\.\d+)?(?:/|\s+per\b)"),
+        "hardcoded dollar rate",
+    ),
+    (
+        re.compile(
+            r"\b\d+(?:\.\d+)?\s+(?:tokens?/s|QPS|FLOPS|TFLOP/?s|PFLOP/?s|samples?/s|images?/s)\b",
+            re.I,
+        ),
+        "hardcoded throughput rate",
+    ),
+    (
+        re.compile(r"\d{1,3}(?:,\d{3})+"),
+        "comma-formatted number in callout",
     ),
 )
 
@@ -117,6 +190,8 @@ def _strip_allowed_fragments(line: str) -> str:
     out = line
     while TENSOR_DIM.search(out):
         out = TENSOR_DIM.sub("", out)
+    out = PEDAGOGICAL_RANGE.sub("", out)
+    out = GPU_SKU_MEMORY.sub("", out)
     out = SCI_NOTATION.sub("", out)
     out = PY_REF.sub("", out)
     out = re.sub(r"#(?:sec|tbl|fig|eq|lst)-[^\s`]+", "", out)
@@ -132,6 +207,10 @@ def _is_excluded_prose(line: str) -> bool:
     if not stripped or stripped.startswith("|") or "fig-cap=" in line:
         return True
     if stripped.startswith("#") or stripped.startswith("[^fn-"):
+        return True
+    if stripped.startswith(": **"):
+        return True
+    if "fig-alt=" in line or "tbl-cap=" in line or "lst-cap=" in line:
         return True
     if "**Systems insight**" in line or "**Significance (quantitative)**" in line:
         return True
@@ -165,6 +244,8 @@ def _is_setup_line(line: str) -> bool:
         return True
     if re.match(r"^\d+\.\s+\*\*", stripped):
         return True
+    if re.match(r"^[-*]\s+\*\*", stripped):
+        return True
     return False
 
 
@@ -177,14 +258,25 @@ def _literal_hits(line: str, patterns: tuple[tuple[re.Pattern[str], str], ...]) 
     return hits
 
 
-def _line_violations(line: str, in_callout: bool, callout_has_python: bool) -> list[str]:
+def _line_violations(
+    line: str,
+    in_callout: bool,
+    callout_has_python: bool,
+    *,
+    strict: bool = False,
+    suppress_strict: bool = False,
+) -> list[str]:
     if _is_excluded_prose(line):
+        return []
+    if "<!-- lego-ok" in line:
         return []
 
     hits: list[str] = []
+    # Tier 1: calc lines mixing {python} refs with arithmetic operators.
     if "{python}" in line and _is_walkthrough_line(line, in_callout):
         hits.extend(_literal_hits(line, LITERAL_PATTERNS))
 
+    # Tier 2: setup/problem/bullet lines in a python-backed callout.
     if (
         in_callout
         and callout_has_python
@@ -193,41 +285,72 @@ def _line_violations(line: str, in_callout: bool, callout_has_python: bool) -> l
     ):
         hits.extend(_literal_hits(line, SETUP_PATTERNS))
 
+    # Tier 3 (--strict): any prose line in a python-backed callout with
+    # unit-bearing quantities.  If a number has units and lives in a
+    # computational callout, it should come from the cell.
+    if (
+        strict
+        and in_callout
+        and callout_has_python
+        and not suppress_strict
+        and not hits
+    ):
+        hits.extend(_literal_hits(line, CALLOUT_QUANTITY_PATTERNS))
+
     return hits
 
 
 def _iter_callout_blocks(lines: list[str]):
-    """Yield (start_lineno, end_lineno, block_lines, in_fence_states)."""
+    """Yield (start_lineno, end_lineno, block_lines).
+
+    Only prose lines are included — content inside any fenced code block
+    (including ``{python}`` cells) is excluded from the block.
+    """
     in_callout = False
     block_start = 0
     block: list[tuple[int, str]] = []
     in_fence = False
+    in_python = False
 
     for idx, raw in enumerate(lines):
         lineno = idx + 1
         line = raw.rstrip()
 
-        if FENCE_START.match(line) and not line.startswith("```{python}"):
-            in_fence = not in_fence
-
-        if CALLOUT_START.match(line):
-            in_callout = True
-            in_fence = False
-            block_start = lineno
-            block = []
-            continue
-
         if in_callout:
             if CALLOUT_END.match(line):
                 yield block_start, lineno, block
                 in_callout = False
+                in_fence = False
+                in_python = False
                 block = []
-            elif not in_fence:
-                block.append((lineno, line))
+                continue
+
+            if CELL_START.match(line):
+                in_python = True
+                continue
+            if in_python:
+                if CELL_END.match(line):
+                    in_python = False
+                continue
+
+            if FENCE_START.match(line):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+
+            block.append((lineno, line))
             continue
 
+        if CALLOUT_START.match(line):
+            in_callout = True
+            in_fence = False
+            in_python = False
+            block_start = lineno
+            block = []
 
-def check_file(path: Path) -> list[tuple[int, str, list[str]]]:
+
+def check_file(path: Path, *, strict: bool = False) -> list[tuple[int, str, list[str]]]:
     issues: list[tuple[int, str, list[str]]] = []
     lines = path.read_text(encoding="utf-8").splitlines()
 
@@ -248,15 +371,25 @@ def check_file(path: Path) -> list[tuple[int, str, list[str]]]:
         if in_fence:
             continue
 
-        # Non-callout walkthrough lines with mixed python + literals.
-        hits = _line_violations(line, in_callout=False, callout_has_python=False)
+        hits = _line_violations(line, in_callout=False, callout_has_python=False, strict=strict)
         if hits:
             issues.append((lineno, line.strip()[:120], hits))
 
     for _start, _end, block in _iter_callout_blocks(lines):
         callout_has_python = any("{python}" in text for _, text in block)
+        suppress_strict = False
         for lineno, line in block:
-            hits = _line_violations(line, in_callout=True, callout_has_python=callout_has_python)
+            if LEGO_OK_BLOCK_START.search(line):
+                suppress_strict = True
+            if LEGO_OK_BLOCK_END.search(line):
+                suppress_strict = False
+            hits = _line_violations(
+                line,
+                in_callout=True,
+                callout_has_python=callout_has_python,
+                strict=strict,
+                suppress_strict=suppress_strict,
+            )
             if hits:
                 issues.append((lineno, line.strip()[:120], hits))
 
@@ -267,6 +400,11 @@ def check_file(path: Path) -> list[tuple[int, str, list[str]]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="QMD files (default: all contents)")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enable Tier 3: flag all unit-bearing quantities in python-backed callouts",
+    )
     args = parser.parse_args()
     if args.paths:
         expanded: list[Path] = []
@@ -285,7 +423,7 @@ def main() -> int:
         p = path if path.is_absolute() else REPO_ROOT / path
         if not p.exists() or p.suffix != ".qmd":
             continue
-        issues = check_file(p)
+        issues = check_file(p, strict=args.strict)
         total += 1
         if not issues:
             continue

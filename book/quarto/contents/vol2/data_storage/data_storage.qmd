@@ -598,6 +598,10 @@ class TextImageBandwidth:
     text_bw_mb_str = fmt(text_bw_mb_s, precision=1, commas=False)
     image_bw_gb_str = fmt(image_bw_gb_s, precision=1, commas=False)
     ratio_rounded_str = fmt(ratio_rounded_val, precision=0)
+    n_gpus_str = fmt(n_gpus, precision=0, commas=True)
+    text_tokens_per_gpu_str = fmt(text_tokens_per_gpu, precision=0, commas=True)
+    step_ms_str = fmt(step_s * 1000, precision=0, commas=False)
+    image_batch_per_gpu_str = fmt(image_batch_per_gpu, precision=0, commas=False)
     text_bw_display_math = MarkdownStr(
         "$$2{,}048 \\text{ GPUs} \\times 4{,}096 \\text{ tokens/GPU} "
         "\\times 4 \\text{ bytes/token} \\div 0.2\\text{s} "
@@ -612,15 +616,15 @@ class TextImageBandwidth:
 
 ::: {#nbk-data-storage-text-vs-image-bandwidth .callout-notebook title="Text vs. image bandwidth"}
 
-The bandwidth demand of a 2,048-GPU cluster depends entirely on the data modality.
+The bandwidth demand of a `{python} TextImageBandwidth.n_gpus_str`-GPU cluster depends entirely on the data modality.
 
-For **text training**\index{Training!text}, the demand is surprisingly low. With a typical batch size of 4,096 tokens per GPU and a 200 ms step time, the aggregate bandwidth is:
+For **text training**\index{Training!text}, the demand is surprisingly low. With a typical batch size of `{python} TextImageBandwidth.text_tokens_per_gpu_str` tokens per GPU and a `{python} TextImageBandwidth.step_ms_str` ms step time, the aggregate bandwidth is:
 
 `{python} TextImageBandwidth.text_bw_display_math`
 
 This is easily served by a single network-attached storage node.
 
-For **image training**\index{Training!image}, the picture changes dramatically. Using a common batch size of 256 images (ImageNet at $224{\times}224$, roughly 150 KB/image), the aggregate bandwidth explodes:
+For **image training**\index{Training!image}, the picture changes dramatically. Using a common batch size of `{python} TextImageBandwidth.image_batch_per_gpu_str` images per GPU (ImageNet at $224{\times}224$, roughly 150 KB/image), the aggregate bandwidth explodes:
 
 `{python} TextImageBandwidth.image_bw_display_math`
 
@@ -2258,6 +2262,7 @@ class CheckpointStormCalc:
     local_drive_bw_gbs = NVME_SEQUENTIAL_BW.m_as(GB/second)
     pfs_aggregate_bw_gbs = 1000
     checkpoint_interval_s = 600
+    checkpoint_interval_min = checkpoint_interval_s // 60
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
     total_checkpoint_gb = (Models.Language.GPT3.parameters.m_as(param) * 10) / 1e9
@@ -2288,17 +2293,20 @@ class CheckpointStormCalc:
     local_drive_bw_gbs_str = fmt(local_drive_bw_gbs, precision=0, commas=False)
     nodes_str = fmt(nodes, precision=0, commas=False)
     pfs_aggregate_bw_tbs_str = fmt(pfs_aggregate_bw_gbs / 1000, precision=0, commas=False)
+    checkpoint_interval_min_str = fmt(checkpoint_interval_min, precision=0, commas=False)
+    checkpoint_interval_s_str = fmt(checkpoint_interval_s, precision=0, commas=False)
+    pfs_aggregate_bw_gbs_str = fmt(pfs_aggregate_bw_gbs, precision=0, commas=False)
 ```
 
 ::: {#nbk-data-storage-checkpoint-storm .callout-notebook title="The checkpoint storm"}
 
-**Problem**: A `{python} CheckpointStormCalc.nodes_str`-node cluster saves a 175B-parameter checkpoint every 10 minutes. Each checkpoint totals `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. With ZeRO-3, each node saves roughly `{python} CheckpointStormCalc.per_node_shard_gb_str` GB.
+**Problem**: A `{python} CheckpointStormCalc.nodes_str`-node cluster saves a 175B-parameter checkpoint every `{python} CheckpointStormCalc.checkpoint_interval_min_str` minutes. Each checkpoint totals `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. With ZeRO-3, each node saves roughly `{python} CheckpointStormCalc.per_node_shard_gb_str` GB.
 
 1. **Per-node write to local NVMe** (`{python} CheckpointStormCalc.local_drive_count_str` drives at `{python} CheckpointStormCalc.local_drive_bw_gbs_str` GB/s each = `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s): `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\div$ `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s $\approx$ `{python} CheckpointStormCalc.local_write_s_str` seconds.
 2. **Async copy to PFS**\index{Checkpointing!async PFS copy}: `{python} CheckpointStormCalc.nodes_str` nodes$\times$ `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\approx$ `{python} CheckpointStormCalc.total_pfs_tb_str` TB total. If the PFS provides `{python} CheckpointStormCalc.pfs_aggregate_bw_tbs_str` TB/s aggregate, the storm completes in roughly `{python} CheckpointStormCalc.pfs_copy_s_str` seconds.
-3. **Per-node PFS bandwidth**\index{Bandwidth!per-node pfs}: If all `{python} CheckpointStormCalc.nodes_str` nodes write simultaneously, each gets $1000/`{python} CheckpointStormCalc.nodes_str` = `{python} CheckpointStormCalc.per_node_pfs_bw_gbs_str` GB/s.
+3. **Per-node PFS bandwidth**\index{Bandwidth!per-node pfs}: If all `{python} CheckpointStormCalc.nodes_str` nodes write simultaneously, each gets `{python} CheckpointStormCalc.pfs_aggregate_bw_gbs_str`/`{python} CheckpointStormCalc.nodes_str` = `{python} CheckpointStormCalc.per_node_pfs_bw_gbs_str` GB/s.
 4. **Training pause**\index{Checkpointing!training pause}: only about `{python} CheckpointStormCalc.local_write_s_str` seconds (the local NVMe write). The PFS copy overlaps with the next training iteration.
-5. **Overhead**\index{Checkpointing!overhead}: `{python} CheckpointStormCalc.local_write_s_str` s pause every 600 s $\approx$ **`{python} CheckpointStormCalc.overhead_pct_str` percent** training time lost to checkpointing.
+5. **Overhead**\index{Checkpointing!overhead}: `{python} CheckpointStormCalc.local_write_s_str` s pause every `{python} CheckpointStormCalc.checkpoint_interval_s_str` s $\approx$ **`{python} CheckpointStormCalc.overhead_pct_str` percent** training time lost to checkpointing.
 
 **Systems insight**: Under these 1 TB/s aggregate-PFS assumptions, tiered staging reduces checkpoint overhead from about a `{python} CheckpointStormCalc.pfs_copy_s_str` second PFS-direct write to a sub-second local write. The key insight is that $T_{\text{write}}$ for the training pipeline is the *local* write time, not the *durable* write time.
 
@@ -2326,13 +2334,34 @@ The checkpoint storage challenge interacts directly with the fault tolerance str
 
 That incident turns checkpoint storage from a capacity question into a restore-design question.
 
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: @chk-data-storage-checkpoint-storage-design
+# │ Goal: Prompt parameters for the checkpoint storage design exercise.
+# │ Exports: CheckpointStorageDesignPrompt.*_str
+from mlsysim.fmt import fmt
+
+class CheckpointStorageDesignPrompt:
+    nodes = 1024
+    checkpoint_interval_min = 10
+    local_nvme_bw_gbs = 28
+    pfs_aggregate_tbs = 1
+
+    # ┌── 4. OUTPUT ───────────────────────────────────────
+    nodes_str = fmt(nodes, precision=0, commas=True)
+    checkpoint_interval_min_str = fmt(checkpoint_interval_min, precision=0, commas=False)
+    local_nvme_bw_gbs_str = fmt(local_nvme_bw_gbs, precision=0, commas=False)
+    pfs_aggregate_tbs_str = fmt(pfs_aggregate_tbs, precision=0, commas=False)
+```
+
 ::: {#chk-data-storage-checkpoint-storage-design .callout-checkpoint title="Checkpoint storage design"}
 
-A training cluster of 1,024 nodes saves a 175B-parameter model checkpoint every 10 minutes. Each checkpoint is `{python} CheckpointStorageContext.ckpt_total_gb_str` GB total, distributed across all nodes.
+A training cluster of `{python} CheckpointStorageDesignPrompt.nodes_str` nodes saves a 175B-parameter model checkpoint every `{python} CheckpointStorageDesignPrompt.checkpoint_interval_min_str` minutes. Each checkpoint is `{python} CheckpointStorageContext.ckpt_total_gb_str` GB total, distributed across all nodes.
 
 1. What is the per-node checkpoint size?
-2. If each node writes to local NVMe at 28 GB/s, what is $T_{\text{write}}$ for the local write?
-3. If the parallel file system provides 1 TB/s aggregate and all 1,024 nodes write simultaneously, what is the per-node write bandwidth, and how long does the async copy take?
+2. If each node writes to local NVMe at `{python} CheckpointStorageDesignPrompt.local_nvme_bw_gbs_str` GB/s, what is $T_{\text{write}}$ for the local write?
+3. If the parallel file system provides `{python} CheckpointStorageDesignPrompt.pfs_aggregate_tbs_str` TB/s aggregate and all `{python} CheckpointStorageDesignPrompt.nodes_str` nodes write simultaneously, what is the per-node write bandwidth, and how long does the async copy take?
 4. Why is tiered staging (local NVMe first, then async PFS copy) faster than writing directly to PFS?
 
 :::
@@ -2440,6 +2469,7 @@ class StorageFootprintTable:
     token_id_bytes = BYTES_INT32.m_as(byte)
     training_days = 30
     checkpoint_interval_min = 10
+    training_nodes = 256
     tokenized_text_tb_val = (training_tokens * token_id_bytes * byte).m_as(TB)
     ckpt_total_gb_val = (gpt3_params.m_as(param) * 10) / 1e9
     checkpoint_count_val = training_days * 24 * 60 // checkpoint_interval_min
@@ -2457,11 +2487,12 @@ class StorageFootprintTable:
         precision=0,
         commas=True,
     )
+    training_nodes_str = fmt(training_nodes, precision=0, commas=False)
 ```
 
 ::: {#nbk-data-storage-175b-models-storage-footprint .callout-notebook title="The 175B model's storage footprint"}
 
-@tbl-data-storage-175b-footprint assembles the complete storage picture for our running example, a 30-day training run of a 175B-parameter model on 256 nodes:
+@tbl-data-storage-175b-footprint assembles the complete storage picture for our running example, a 30-day training run of a 175B-parameter model on `{python} StorageFootprintTable.training_nodes_str` nodes:
 
 | **Category**                               |                                                  **Volume** | **Primary Tier**                                           |
 |:-------------------------------------------|------------------------------------------------------------:|:-----------------------------------------------------------|
@@ -2510,6 +2541,7 @@ class SyntheticStorage:
     verification_passes_str = fmt(verification_passes, precision=0, commas=False)
     provenance_overhead_pct_str = fmt(provenance_metadata_overhead * 100, precision=0, commas=False)
     footprint_multiplier_str = fmt(1 + provenance_metadata_overhead, precision=1, commas=False)
+    data_size_tb_str = fmt(data_size_tb, precision=0, commas=False)
 
     @classmethod
     def plot(cls):
@@ -2525,12 +2557,12 @@ class SyntheticStorage:
 
 ::: {#nbk-data-storage-napkin-math-synthetic-tax .callout-notebook title="The synthetic tax"}
 
-**Problem**: Calculate the storage amplification of a 1 TB synthetic dataset that requires cryptographic lineage and multi-model verification.
+**Problem**: Calculate the storage amplification of a `{python} SyntheticStorage.data_size_tb_str` TB synthetic dataset that requires cryptographic lineage and multi-model verification.
 
-1. **Raw Payload**\index{Synthetic Data!raw payload}: 1 TB.
+1. **Raw Payload**\index{Synthetic Data!raw payload}: `{python} SyntheticStorage.data_size_tb_str` TB.
 2. **Provenance Overhead**\index{Synthetic Data!provenance overhead}: `{python} SyntheticStorage.provenance_overhead_pct_str` percent extra for lineage hashes, generation logs, and reward-model scores.
 3. **Verification Factor**\index{Synthetic Data!verification factor}: To avoid "Self-Poisoning," each sample is verified by **`{python} SyntheticStorage.verification_passes_str` independent "Judge" models**.
-4. **The amplification**: Total footprint = 1 TB $\times$ `{python} SyntheticStorage.footprint_multiplier_str` $\times$ `{python} SyntheticStorage.verification_passes_str` = **`{python} SyntheticStorage.total_tb_str` TB**.
+4. **The amplification**: Total footprint = `{python} SyntheticStorage.data_size_tb_str` TB $\times$ `{python} SyntheticStorage.footprint_multiplier_str` $\times$ `{python} SyntheticStorage.verification_passes_str` = **`{python} SyntheticStorage.total_tb_str` TB**.
 
 **Systems insight**: Synthetic data is **Verified Data**\index{Synthetic Data!verified data}, and verification has a **`{python} SyntheticStorage.amp_str`$\times$ Storage Tax**. In the Machine Learning Fleet, storage moves from being a simple bit-bucket to a **Provenance Engine**. A system that cannot store the *why* and *who* behind a synthetic token risks poisoning the future of the fleet with its own past mistakes.
 
