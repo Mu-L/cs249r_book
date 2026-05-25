@@ -31,6 +31,11 @@ class Cloud(Registry):
         rate=4.0 * USD / hour,
         metadata=_CLOUD,
     )
+    GpuTrainingUtilityScenarioPerHour = PricePoint(
+        name="Cloud GPU training (utility-bill scenario)",
+        rate=3.0 * USD / hour,
+        metadata=_CLOUD,
+    )
     GpuInferencePerHour = PricePoint(
         name="Cloud GPU inference",
         rate=2.5 * USD / hour,
@@ -103,6 +108,16 @@ class Capital(Registry):
     AnnualMaintenanceRatio = PricePoint(
         name="Annual maintenance (fraction of CapEx)",
         rate=0.05,
+        metadata=_CAPITAL,
+    )
+    DgxH100NodeUsd = PricePoint(
+        name="DGX H100 node (CapEx reference)",
+        rate=350_000 * USD,
+        metadata=_CAPITAL,
+    )
+    H100GpuPurchaseUsd = PricePoint(
+        name="H100 GPU purchase (utility-bill scenario)",
+        rate=30_000 * USD,
         metadata=_CAPITAL,
     )
 

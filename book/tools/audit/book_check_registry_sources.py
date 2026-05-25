@@ -154,7 +154,16 @@ HARDCODED_REGISTRY = re.compile(
     r"\b(?:params|cf_params|gpt3_params)\s*=\s*\d+\s*\*\s*BILLION|"
     r"\bparams_b\s*=\s*(?:7|70|8)\b|"
     r"\bn_tokens\s*=\s*300\s*\*\s*BILLION|"
-    r"\btokens\s*=\s*300e9\b",
+    r"\btokens\s*=\s*300e9\b|"
+    r"\b(?:node_price_usd|dgx_h100_price)\s*=\s*350_?000\b|"
+    r"\b(?:rental_rate)\s*=\s*3\b|"
+    r"\bpurchase_price\s*=\s*30_?000\b|"
+    r"\b(?:num_gpus|n_gpus|cf_num_gpus|cluster_gpus|n_total_gpus|full_retrain_gpus|fleet|debug_cluster|gpus)\s*=\s*(?:1000|1_000|1024|10_000|10000)\b|"
+    r"\b(?:nodes|ckpt_node_count)\s*=\s*1024\b|"
+    r"\bgpu_cost_per_hour\s*=\s*3\b|"
+    r"\bn_gpus\s*=\s*8192\b|"
+    r"\bmoe_(?:total|active)_params_b\s*=\s*(?:671|37)\b|"
+    r"\bsmartphone_ram_gb\s*=\s*8\b",
     re.I,
 )
 

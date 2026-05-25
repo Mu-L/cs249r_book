@@ -1,4 +1,4 @@
-from .types import TransformerWorkload, CNNWorkload, Workload, SSMWorkload, DiffusionWorkload
+from .types import TransformerWorkload, CNNWorkload, Workload, SSMWorkload, DiffusionWorkload, SparseTransformerWorkload
 from ..core.registry import Registry
 from ..core.constants import (flop, param, ureg, count, day)
 from ..core.types import Metadata
@@ -137,6 +137,26 @@ class LanguageModels(Registry):
         kv_heads=8,
         inference_flops=2 * 405e9 * ureg.flop,
         metadata=Metadata(provenance=pc.META_LLAMA),
+    )
+    DeepSeek_V3 = SparseTransformerWorkload(
+        name="DeepSeek-V3",
+        architecture="MoE Transformer",
+        parameters=671e9 * param,
+        active_parameters=37e9 * param,
+        layers=61,
+        hidden_dim=7168,
+        heads=56,
+        experts=256,
+        active_experts_per_token=8,
+        inference_flops=2 * 37e9 * ureg.flop,
+        metadata=Metadata(
+            provenance=Provenance(
+                id="prov:deepseek-v3-2024",
+                kind=ProvenanceKind.LITERATURE,
+                ref="DeepSeek-AI (2025), Insights Into DeepSeek-V3",
+                verified="2025-03-06",
+            ),
+        ),
     )
 
 class VisionModels(Registry):

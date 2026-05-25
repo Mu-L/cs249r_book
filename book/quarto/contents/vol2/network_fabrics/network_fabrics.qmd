@@ -51,11 +51,31 @@ from mlsysim import *
 from mlsysim.core.constants import *
 #| label: network-fabrics-setup
 from mlsysim.fmt import fmt_int, MarkdownStr, fmt, fmt_sci, check, fmt_math
+
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Exports: NetworkRunningExampleCluster.n_gpus_str, .n_nodes_str, .peer_gpus_str,
+# │          .gpus_per_rail_str
+class NetworkRunningExampleCluster:
+    """Mid-scale training cluster (`Systems.Clusters.Training_1K`) for the 175B running example."""
+
+    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    _cluster = Systems.Clusters.Training_1K
+    n_gpus = _cluster.total_accelerators
+    n_nodes = _cluster.count
+    gpus_per_rail = n_gpus // 8
+    production_2k_gpus = Systems.Clusters.Production_2K.total_accelerators
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    n_gpus_str = fmt(n_gpus, precision=0, commas=True)
+    n_nodes_str = fmt(n_nodes, precision=0, commas=False)
+    peer_gpus_str = fmt(n_gpus - 1, precision=0, commas=False)
+    gpus_per_rail_str = fmt(gpus_per_rail, precision=0, commas=False)
+    production_2k_gpus_str = fmt(production_2k_gpus, precision=0, commas=True)
 ```
 
 ## The Synchronization Backbone {#sec-network-fabrics-introduction}
 
-Consider the running example that threads through this volume: a 175-billion-parameter language model partitioned across 1,000 GPUs. Each training step requires an AllReduce of 350 GB of gradient data, meaning every GPU must send and receive its share before the next step can begin. If even one link in the fabric is slow, all 999 other GPUs wait. The network is not auxiliary infrastructure; it is the synchronization backbone that determines whether this cluster trains efficiently or wastes millions of dollars in idle compute.
+Consider the running example that threads through this volume: a 175-billion-parameter language model partitioned across `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs. Each training step requires an AllReduce of 350 GB of gradient data, meaning every GPU must send and receive its share before the next step can begin. If even one link in the fabric is slow, all `{python} NetworkRunningExampleCluster.peer_gpus_str` other GPUs wait. The network is not auxiliary infrastructure; it is the synchronization backbone that determines whether this cluster trains efficiently or wastes millions of dollars in idle compute.
 
 In the Fleet Stack\index{Fleet Stack} shown in @fig-fleet-stack, network fabrics form the connective tissue binding the Infrastructure Layer into a coherent whole. @sec-compute-infrastructure established the building blocks: accelerators, power delivery, and cooling. Those components define what each node can compute in isolation. @fig-network-five-level-model organizes the fabric design space into five co-dependent levels, from physical signaling to cluster-scale orchestration.
 
@@ -379,7 +399,7 @@ class FECLatency:
 
 To achieve `{python} IbNdrWireRecap.ib_ndr_gbps_str` Gb/s, we *cannot* simply toggle a voltage on and off faster. Signal attenuation in copper and chromatic dispersion in fiber impose a hard ceiling on the **symbol rate**\index{Symbol Rate} (the number of signal transitions per second). Modern links overcome this by using PAM4 to pack more information into each transition.
 
-However, the gap between adjacent voltage levels in PAM4 shrinks by a factor of three compared to NRZ, making the link highly susceptible to noise. Consequently, modern high-speed links operate near the physical limits of reliable detection and require **Forward Error Correction (FEC)** at the physical layer, typically Reed-Solomon RS(544,514) codes. FEC processing adds `{python} FECLatency.ns_low_str` to `{python} FECLatency.ns_high_str` ns of latency per hop to every packet. For our 175B model training, which generates 350 GB of gradient traffic per step across 1,000 GPUs, this latency floor is nonnegotiable. A packet crossing three switch hops in a fat-tree incurs `{python} FECLatency.three_hop_low_str`--`{python} FECLatency.three_hop_high_str` ns of one-way irreducible latency from FEC decoding and encoding, or `{python} FECLatency.round_trip_low_str`--`{python} FECLatency.round_trip_high_str` ns over a three-hop path in each direction. This "physics tax" sets a hard floor on the $\alpha$ term of our performance models, limiting the speed of latency-sensitive collectives like AllReduce regardless of software optimizations.
+However, the gap between adjacent voltage levels in PAM4 shrinks by a factor of three compared to NRZ, making the link highly susceptible to noise. Consequently, modern high-speed links operate near the physical limits of reliable detection and require **Forward Error Correction (FEC)** at the physical layer, typically Reed-Solomon RS(544,514) codes. FEC processing adds `{python} FECLatency.ns_low_str` to `{python} FECLatency.ns_high_str` ns of latency per hop to every packet. For our 175B model training, which generates 350 GB of gradient traffic per step across `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs, this latency floor is nonnegotiable. A packet crossing three switch hops in a fat-tree incurs `{python} FECLatency.three_hop_low_str`--`{python} FECLatency.three_hop_high_str` ns of one-way irreducible latency from FEC decoding and encoding, or `{python} FECLatency.round_trip_low_str`--`{python} FECLatency.round_trip_high_str` ns over a three-hop path in each direction. This "physics tax" sets a hard floor on the $\alpha$ term of our performance models, limiting the speed of latency-sensitive collectives like AllReduce regardless of software optimizations.
 
 ### Reach and medium: Copper vs. optics {#sec-network-fabrics-copper-optics}
 
@@ -405,7 +425,7 @@ As bandwidth demands grew, the industry moved from binary NRZ signaling to four-
 
 ### SerDes, link budget, and power {#sec-network-fabrics-serdes}
 
-Every port depends on a **Serializer/Deserializer (SerDes)**\index{SerDes}\index{SerDes!definition}\index{Serializer/Deserializer} circuit that converts parallel data from the switch ASIC into a serial stream. As bandwidth scales, these circuits have become the dominant power consumer in the network fabric. Consider the energy implications for our 1,000-GPU cluster: maintaining full $\text{BW}_{\text{bisect}}$ for the 350 GB of gradient traffic requires roughly 3,000 high-speed links. If each `{python} IbNdrWireRecap.ib_ndr_gbps_str` Gb/s port consumes 25 W (combined SerDes and optical transceiver power), the interconnect alone draws 75 kW continuously—over 10 percent of the cluster's power budget dedicated merely to moving bits, not computing on them.
+Every port depends on a **Serializer/Deserializer (SerDes)**\index{SerDes}\index{SerDes!definition}\index{Serializer/Deserializer} circuit that converts parallel data from the switch ASIC into a serial stream. As bandwidth scales, these circuits have become the dominant power consumer in the network fabric. Consider the energy implications for our `{python} NetworkRunningExampleCluster.n_gpus_str`-GPU cluster: maintaining full $\text{BW}_{\text{bisect}}$ for the 350 GB of gradient traffic requires roughly 3,000 high-speed links. If each `{python} IbNdrWireRecap.ib_ndr_gbps_str` Gb/s port consumes 25 W (combined SerDes and optical transceiver power), the interconnect alone draws 75 kW continuously—over 10 percent of the cluster's power budget dedicated merely to moving bits, not computing on them.
 
 The **link budget**\index{Link Budget}, a strict decibel (dB) allowance for signal attenuation, governs the reach of these links. As signals traverse copper, they lose energy to skin effect and dielectric absorption. The link budget is the difference between the transmitter's output power and the receiver's sensitivity limit. For a standard 50G PAM4 lane, the budget might be 30 dB. If a 3-meter DAC cable introduces 18 dB of loss and the connectors add another 2 dB, 10 dB of margin remains. However, as frequency doubles to support 100G lanes (for 800 Gb/s ports), the loss per meter increases sharply. The physics forces a brutal trade-off: to maintain signal integrity without exceeding the power budget, cable reach must decrease. 800 Gb/s copper links are limited to roughly 1–2 meters, physically constraining the diameter of a compute rack and forcing the use of expensive, power-hungry optics for any connection leaving the cabinet. As link speeds approach 1.6 Tb/s, SerDes and optical power will account for over 15 percent of total cluster energy, making power-per-bit a primary scaling constraint.
 
@@ -421,7 +441,7 @@ Large-scale training requires sustained, synchronized bulk transfers. A single A
 
 ***Remote Direct Memory Access (RDMA)***\index{RDMA}\index{RDMA!definition} is a networking technology that allows one machine to read or write the memory of another machine directly, bypassing the operating system kernel and CPU of both endpoints by offloading transport processing to the network interface card.
 
-1.  **Significance (quantitative)**: RDMA reduces end-to-end message latency from the 50–100 μs typical of kernel TCP to approximately 1–2 μs, cutting the $L_{\text{lat}}$ term in the iron law by 25--50$\times$. For a 175B-parameter model exchanging 350 GB of gradient data across 1,000 GPUs, RDMA also eliminates 700 GB of redundant memory copies per step by allowing the NIC to read GPU memory directly without staging through host RAM (GPUDirect RDMA).
+1.  **Significance (quantitative)**: RDMA reduces end-to-end message latency from the 50–100 μs typical of kernel TCP to approximately 1–2 μs, cutting the $L_{\text{lat}}$ term in the iron law by 25--50$\times$. For a 175B-parameter model exchanging 350 GB of gradient data across `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs, RDMA also eliminates 700 GB of redundant memory copies per step by allowing the NIC to read GPU memory directly without staging through host RAM (GPUDirect RDMA).
 2.  **Distinction (durable)**: Unlike traditional TCP/IP, where the CPU processes every packet through the kernel network stack (consuming tens of CPU cores to saturate a 400 Gb/s link), RDMA offloads the entire transport to dedicated NIC hardware, freeing the CPU to orchestrate computation rather than move data.
 3.  **Common pitfall**: A frequent misconception is that RDMA works reliably on any Ethernet network. RDMA lacks TCP's retransmission logic; a single dropped packet can stall an entire 1,024-GPU AllReduce for 100–500 ms as the Go-Back-N recovery retransmits from the loss point. RDMA requires a lossless fabric—InfiniBand or Ethernet with Priority Flow Control—to operate correctly at scale.
 
@@ -725,7 +745,7 @@ class AllReduceBottleneck:
     from mlsysim import Models, Hardware
     from mlsysim.physics import calc_ring_allreduce_time
 
-    num_gpus = 1024
+    num_gpus = Systems.Clusters.Training_1K.total_accelerators
     h_h100 = Hardware.Cloud.H100
     ib_ndr = Systems.Fabrics.InfiniBand_NDR
 
@@ -803,7 +823,7 @@ Now communication dominates computation by more than 100$\times$ under pure data
 
 :::
 
-The $\alpha$-$\beta$ model quantifies the speed of a single link, but our 175B-parameter model requires 1,000 GPUs to work in concert. Scaling these transport primitives from a pair of nodes to a warehouse-scale supercomputer demands a **Topology**\index{Topology}\index{Network Topology!definition}: a specific pattern of connections that maximizes $\text{BW}_{\text{bisect}}$ while minimizing the hop count and cabling cost for global collective operations.
+The $\alpha$-$\beta$ model quantifies the speed of a single link, but our 175B-parameter model requires `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs to work in concert. Scaling these transport primitives from a pair of nodes to a warehouse-scale supercomputer demands a **Topology**\index{Topology}\index{Network Topology!definition}: a specific pattern of connections that maximizes $\text{BW}_{\text{bisect}}$ while minimizing the hop count and cabling cost for global collective operations.
 
 ## Level 3: Switch and Topology {#sec-network-fabrics-topology}
 
@@ -875,7 +895,7 @@ This trade-off between guaranteed bandwidth and economic scalability drives ever
 
 The **Top-of-Rack (ToR)**\index{ToR} switch serves as the fundamental physical aggregation point, defining both bandwidth limits and the minimum **failure domain**\index{Failure Domain} for the cluster. In a high-density AI configuration using standard DGX nodes, a single rack typically houses 4 nodes, each containing 8 GPUs, for a total of 32 accelerators. The ToR switch unites these devices but also creates a critical vulnerability: if the ToR fails, it instantly partitions 32 GPUs from the training job, forcing the global scheduler to halt and recover from the last checkpoint.
 
-To mitigate congestion at this edge, network architects maximize the switch **radix**\index{Radix}, the number of ports available. A modern switch with a radix of 64 allocates 32 ports downlink to the servers (ensuring full bandwidth for the 32 GPUs) and 32 ports uplink to the spine. This 1:1 subscription ratio guarantees non-blocking performance at the rack level. For our 1,000-GPU cluster, the physical topology comprises approximately 32 such racks. The job scheduler must be topology-aware for performance, while reliable replica placement must also span independent rack failure domains so that a single lost rack does not take down the entire training run (see @sec-fault-tolerance-reliability-reliability-replica-placement-failure-domains-73a7).
+To mitigate congestion at this edge, network architects maximize the switch **radix**\index{Radix}, the number of ports available. A modern switch with a radix of 64 allocates 32 ports downlink to the servers (ensuring full bandwidth for the 32 GPUs) and 32 ports uplink to the spine. This 1:1 subscription ratio guarantees non-blocking performance at the rack level. For our `{python} NetworkRunningExampleCluster.n_gpus_str`-GPU cluster, the physical topology comprises approximately 32 such racks. The job scheduler must be topology-aware for performance, while reliable replica placement must also span independent rack failure domains so that a single lost rack does not take down the entire training run (see @sec-fault-tolerance-reliability-reliability-replica-placement-failure-domains-73a7).
 
 ### Fat-tree (Clos) networks {#sec-network-fabrics-fat-tree}
 
@@ -942,7 +962,7 @@ class FatTreeScaling:
     infra_cost_high_m_str = fmt(250, precision=0, commas=False)
 ```
 
-A fat-tree built from switches with radix[^fn-switch-radix-density] $k$ supports $N_{\text{hosts}} = k^3/4$ hosts at three tiers, or $k^2/2$ at two tiers. In a two-tier leaf-spine fabric using radix-64 switches (with $k$ leaves each providing $k/2$ host ports and $k/2$ spine uplinks), the topology supports up to 2,048 GPUs, comfortably accommodating our 1,000-GPU reference cluster with only leaf and spine layers. (A standard fat-tree pod with the leaf-aggregation pair supports $(k/2)^2 = 1{,}024$ hosts per pod; the difference is whether the second tier uplinks to a core layer or terminates as spines.)
+A fat-tree built from switches with radix[^fn-switch-radix-density] $k$ supports $N_{\text{hosts}} = k^3/4$ hosts at three tiers, or $k^2/2$ at two tiers. In a two-tier leaf-spine fabric using radix-64 switches (with $k$ leaves each providing $k/2$ host ports and $k/2$ spine uplinks), the topology supports up to `{python} NetworkRunningExampleCluster.production_2k_gpus_str` GPUs, comfortably accommodating our `{python} NetworkRunningExampleCluster.n_gpus_str`-GPU reference cluster with only leaf and spine layers. (A standard fat-tree pod with the leaf-aggregation pair supports $(k/2)^2 =$ `{python} NetworkRunningExampleCluster.n_gpus_str` hosts per pod; the difference is whether the second tier uplinks to a core layer or terminates as spines.)
 
 A concrete bisection estimate shows how quickly oversubscription turns into synchronization delay.
 
@@ -970,7 +990,7 @@ from mlsysim.fmt import fmt_int,  fmt, check
 
 class BisectionScaling:
     # ┌── 1. LOAD ──────────────────────────────────────────
-    n_gpus = 1024
+    n_gpus = Systems.Clusters.Training_1K.total_accelerators
     beta_gbs = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB / second)
     gradient_gb = 100
     # ┌── 2. EXECUTE ───────────────────────────────────────
@@ -1107,7 +1127,7 @@ That same-rank latency dividend is why the rail pattern appears in production LL
 
 :::
 
-For our 1,000-GPU cluster spanning 125 nodes, this creates 8 parallel networks of 125 GPUs each, allowing per-rank data-parallel AllReduce traffic to traverse a single switch hop rather than the multi-hop leaf-spine-leaf path required by a standard fat-tree. The latency benefit is significant for the frequent, bandwidth-hungry gradient exchanges that synchronous data parallelism demands. However, this architecture introduces a sharp trade-off: traffic that must reach GPUs of *different ranks* (such as expert routing in MoE, or pipeline-stage handoffs that do not align with the rail wiring) requires bridging across rails. Modern clusters therefore employ a hybrid approach, using rail-optimized leaves for *same-rank* data-parallel traffic while bridging the rails with a full fat-tree spine to support cross-rank communication patterns.
+For our `{python} NetworkRunningExampleCluster.n_gpus_str`-GPU cluster spanning `{python} NetworkRunningExampleCluster.n_nodes_str` nodes, this creates 8 parallel networks of `{python} NetworkRunningExampleCluster.gpus_per_rail_str` GPUs each, allowing per-rank data-parallel AllReduce traffic to traverse a single switch hop rather than the multi-hop leaf-spine-leaf path required by a standard fat-tree. The latency benefit is significant for the frequent, bandwidth-hungry gradient exchanges that synchronous data parallelism demands. However, this architecture introduces a sharp trade-off: traffic that must reach GPUs of *different ranks* (such as expert routing in MoE, or pipeline-stage handoffs that do not align with the rail wiring) requires bridging across rails. Modern clusters therefore employ a hybrid approach, using rail-optimized leaves for *same-rank* data-parallel traffic while bridging the rails with a full fat-tree spine to support cross-rank communication patterns.
 
 ::: {#chk-network-fabrics-rail-optimized-networks .callout-checkpoint title="Rail-optimized networks"}
 
@@ -1185,8 +1205,8 @@ class BisectionBottleneck:
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     from mlsysim import Hardware
-    num_gpus = 1024
-    num_nodes = 128
+    num_gpus = Systems.Clusters.Training_1K.total_accelerators
+    num_nodes = Systems.Clusters.Training_1K.count
     injection_bw = Systems.Fabrics.InfiniBand_NDR
     gradient_size_gb = 100
     oversub_ratio_b = 4
@@ -1269,7 +1289,7 @@ You are designing the network for a new ML cluster that will run two primary wor
 
 :::
 
-Topology provides the structural capacity for our 1,000-GPU cluster to communicate, but structure alone does not guarantee performance. When all 1,000 GPUs simultaneously inject 350 GB of gradient traffic into the fabric, that theoretical capacity collides with the reality of **Fabric Behavior**\index{Fabric Behavior}: congestion control and routing dynamics determine whether this traffic flows smoothly or gridlocks under the strict synchronization of the BSP model.
+Topology provides the structural capacity for our `{python} NetworkRunningExampleCluster.n_gpus_str`-GPU cluster to communicate, but structure alone does not guarantee performance. When all `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs simultaneously inject 350 GB of gradient traffic into the fabric, that theoretical capacity collides with the reality of **Fabric Behavior**\index{Fabric Behavior}: congestion control and routing dynamics determine whether this traffic flows smoothly or gridlocks under the strict synchronization of the BSP model.
 
 ## Level 4: Fabric Behavior (Congestion, Routing) {#sec-network-fabrics-behavior}
 
@@ -1432,7 +1452,7 @@ This mechanism becomes essential for Mixture-of-Experts (MoE) models. Unlike the
 
 :::
 
-ML training is structurally susceptible to incast because of its synchronized communication patterns. When a layer finishes backward computation, thousands of nodes simultaneously initiate AllReduce, targeting the same switch ports. In our 175B model training across 1,000 GPUs, each AllReduce involves every node injecting data simultaneously, creating a burst that can momentarily exceed the fabric's capacity at specific switch ports. Production clusters mitigate this by:
+ML training is structurally susceptible to incast because of its synchronized communication patterns. When a layer finishes backward computation, thousands of nodes simultaneously initiate AllReduce, targeting the same switch ports. In our 175B model training across `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs, each AllReduce involves every node injecting data simultaneously, creating a burst that can momentarily exceed the fabric's capacity at specific switch ports. Production clusters mitigate this by:
 
 1. **Layer-staggering**\index{Incast!layer-staggering mitigation}: Starting AllReduce for early layers while later layers are still computing.
 2. **Algorithm selection**\index{Incast!algorithm selection mitigation}: Using tree-based AllReduce instead of ring-based ones to reduce concurrent flow counts.
@@ -1645,7 +1665,7 @@ Virtualization solves the sharing problem but makes performance diagnosis harder
 
 ## Monitoring and Debugging {#sec-network-fabrics-monitoring}
 
-Network performance problems in ML clusters are insidious because they manifest as **silent waste** rather than explicit failures. A degraded transceiver causing a 10 percent reduction in effective bandwidth might slow each training iteration by only 2–3 percent, a drift easily masked by the natural variance of checkpointing or data loading. Over a 30-day training run on 1,000 GPUs, this invisible drag accumulates to roughly 14,000--22,000 wasted GPU-hours, burning about \$40,000--\$65,000 at \$3 per GPU-hour without triggering a single alarm. Traditional IT monitoring tools like SNMP or `ping` measure connectivity, not the sustained throughput required by RDMA. Effective observability\index{Monitoring!network} requires a three-layer approach: **physical monitoring** (FEC errors, signal attenuation), **transport monitoring** (PFC pause frames, retransmission rates), and **application monitoring** (NCCL algorithmic bandwidth) [@jeaugey2017nccl]. Only by correlating signals across these layers can operators detect that a "slow training run" is actually caused by a single degraded cable in one rack.
+Network performance problems in ML clusters are insidious because they manifest as **silent waste** rather than explicit failures. A degraded transceiver causing a 10 percent reduction in effective bandwidth might slow each training iteration by only 2–3 percent, a drift easily masked by the natural variance of checkpointing or data loading. Over a 30-day training run on `{python} NetworkRunningExampleCluster.n_gpus_str` GPUs, this invisible drag accumulates to roughly 14,000--22,000 wasted GPU-hours, burning about \$40,000--\$65,000 at \$3 per GPU-hour without triggering a single alarm. Traditional IT monitoring tools like SNMP or `ping` measure connectivity, not the sustained throughput required by RDMA. Effective observability\index{Monitoring!network} requires a three-layer approach: **physical monitoring** (FEC errors, signal attenuation), **transport monitoring** (PFC pause frames, retransmission rates), and **application monitoring** (NCCL algorithmic bandwidth) [@jeaugey2017nccl]. Only by correlating signals across these layers can operators detect that a "slow training run" is actually caused by a single degraded cable in one rack.
 
 ### Link-level telemetry {#sec-network-fabrics-link-telemetry}
 
@@ -1699,7 +1719,7 @@ class IbNdrMonitoringRecap:
     ib_ndr_gbs_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second), precision=0, commas=False)
 ```
 
-These metrics are typically polled by a centralized monitoring system (for example, Prometheus with Grafana dashboards) at 10–30 second intervals to catch **silent degradation**\index{Silent Degradation}. A common failure mode involves a QSFP56 cable negotiating at HDR speed (`{python} IbHdrReference.ib_hdr_gbps_str` Gb/s) instead of NDR (`{python} IbNdrMonitoringRecap.ib_ndr_gbps_str` Gb/s), or silently dropping from 4 lanes to 2 lanes due to a single bad connector pin. The link remains "up" and functional, but its bandwidth is halved. In a 1,000-GPU cluster with over 3,000 links, a 0.1 percent point-in-time component degradation rate implies about 3 degraded links in expectation, with a high probability that at least one link is degraded. Because distributed training algorithms like Ring AllReduce are synchronous, a single degraded link throttles the entire job to the speed of that straggler, transforming a minor hardware fault into a massive waste of idle compute cycles.
+These metrics are typically polled by a centralized monitoring system (for example, Prometheus with Grafana dashboards) at 10–30 second intervals to catch **silent degradation**\index{Silent Degradation}. A common failure mode involves a QSFP56 cable negotiating at HDR speed (`{python} IbHdrReference.ib_hdr_gbps_str` Gb/s) instead of NDR (`{python} IbNdrMonitoringRecap.ib_ndr_gbps_str` Gb/s), or silently dropping from 4 lanes to 2 lanes due to a single bad connector pin. The link remains "up" and functional, but its bandwidth is halved. In a `{python} NetworkRunningExampleCluster.n_gpus_str`-GPU cluster with over 3,000 links, a 0.1 percent point-in-time component degradation rate implies about 3 degraded links in expectation, with a high probability that at least one link is degraded. Because distributed training algorithms like Ring AllReduce are synchronous, a single degraded link throttles the entire job to the speed of that straggler, transforming a minor hardware fault into a massive waste of idle compute cycles.
 
 ### Bandwidth and latency validation {#sec-network-fabrics-bw-testing}
 
@@ -1825,7 +1845,7 @@ RoCE over Ethernet can achieve throughput comparable to InfiniBand for large tra
 from mlsysim import *
 from mlsysim.core.constants import *
 class BisectionWasteRecap:
-    num_gpus = 1024
+    num_gpus = Systems.Clusters.Training_1K.total_accelerators
     gradient_size_gb = 100
     oversub_ratio_b = 4
     cluster_cost_m = 300

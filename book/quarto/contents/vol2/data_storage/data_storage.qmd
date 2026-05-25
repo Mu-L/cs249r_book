@@ -404,7 +404,7 @@ class StorageAccessPatternFacts:
     tokenized_text_tb_val = (training_tokens * token_id_bytes * byte).m_as(TB)
     ckpt_total_gb_val = (gpt3_params.m_as(param) * 10) / 1e9
     checkpoint_interval_min = 10
-    ckpt_node_count = 1024
+    ckpt_node_count = Systems.Clusters.Training_1K.count
     ckpt_shard_gb = 4
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     gpt3_params_b_str = fmt(gpt3_params.m_as(param) / BILLION, precision=0, commas=False)
@@ -2193,7 +2193,7 @@ class CheckpointStormDefinition:
 
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
     params_b = Models.Language.Llama2_70B.parameters.m_as(Bparam)
-    nodes = 1_000
+    nodes = Systems.Clusters.Training_1K.total_accelerators
     bytes_fp16 = BYTES_FP16.m_as(byte)
     bytes_fp32 = BYTES_FP32.m_as(byte)
     fabric_bw_gbs = Systems.Fabrics.InfiniBand_XDR.bandwidth.m_as(GB/second)
@@ -2213,7 +2213,7 @@ class CheckpointStormDefinition:
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
     check(zero3_total_gb == 1120, "70B sharded training-state total should be 1,120 GB with master weights")
-    check(1390 < naive_write_s < 1410, "Naive 140 TB write at 100 GB/s should be about 1,400 s")
+    check(1420 < naive_write_s < 1440, "Naive write at 100 GB/s should be about 1,430 s for Training_1K replicas")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
     params_b_str = fmt(params_b, precision=0, commas=False)
@@ -2225,11 +2225,12 @@ class CheckpointStormDefinition:
     naive_total_tb_str = fmt(naive_total_tb, precision=0, commas=False)
     naive_write_s_str = fmt(naive_write_s, precision=0)
     naive_write_min_str = fmt(naive_write_min, precision=1, commas=False)
+    nodes_str = fmt(nodes, precision=0, commas=True)
 ```
 
 ***Checkpoint Storm***\index{Checkpoint Storm!definition} is a burst of synchronized network and storage traffic that occurs when all nodes in a training fleet save model state simultaneously.
 
-1.  **Significance (quantitative)**: The storm magnitude scales as $T_{\text{write}} = H \times \text{per-node shard} / \text{BW}_{\text{fabric}}$, where $H$ is the host-node count. For a `{python} CheckpointStormDefinition.params_b_str`B-parameter model in FP16 (`{python} CheckpointStormDefinition.weights_gb_str` GB of weights) trained across 1,000 nodes with vanilla data parallelism (every node holding its own complete copy), a naive checkpoint generates `{python} CheckpointStormDefinition.naive_total_tb_str` TB of simultaneous writes; at 100 GB/s fabric bandwidth, $T_{\text{write}} \approx$ `{python} CheckpointStormDefinition.naive_write_s_str` seconds, over `{python} CheckpointStormDefinition.naive_write_min_str` minutes of training stall per checkpoint event. ZeRO-3 sharding collapses this to roughly `{python} CheckpointStormDefinition.zero3_total_tb_str` TB total (`{python} CheckpointStormDefinition.weights_gb_str` GB weights + `{python} CheckpointStormDefinition.gradients_gb_str` GB gradients + `{python} CheckpointStormDefinition.optimizer_state_gb_str` GB optimizer state, split across 1,000 nodes), bringing $T_{\text{write}}$ down to roughly `{python} CheckpointStormDefinition.zero3_write_s_str` seconds. This stall is the checkpoint $T_{\text{write}}$ term and can dwarf the compute time between checkpoints when the sharding optimization is omitted.
+1.  **Significance (quantitative)**: The storm magnitude scales as $T_{\text{write}} = H \times \text{per-node shard} / \text{BW}_{\text{fabric}}$, where $H$ is the host-node count. For a `{python} CheckpointStormDefinition.params_b_str`B-parameter model in FP16 (`{python} CheckpointStormDefinition.weights_gb_str` GB of weights) trained across `{python} CheckpointStormDefinition.nodes_str` replicas with vanilla data parallelism (every replica holding its own complete copy), a naive checkpoint generates `{python} CheckpointStormDefinition.naive_total_tb_str` TB of simultaneous writes; at 100 GB/s fabric bandwidth, $T_{\text{write}} \approx$ `{python} CheckpointStormDefinition.naive_write_s_str` seconds, over `{python} CheckpointStormDefinition.naive_write_min_str` minutes of training stall per checkpoint event. ZeRO-3 sharding collapses this to roughly `{python} CheckpointStormDefinition.zero3_total_tb_str` TB total (`{python} CheckpointStormDefinition.weights_gb_str` GB weights + `{python} CheckpointStormDefinition.gradients_gb_str` GB gradients + `{python} CheckpointStormDefinition.optimizer_state_gb_str` GB optimizer state, split across `{python} CheckpointStormDefinition.nodes_str` replicas), bringing $T_{\text{write}}$ down to roughly `{python} CheckpointStormDefinition.zero3_write_s_str` seconds. This stall is the checkpoint $T_{\text{write}}$ term and can dwarf the compute time between checkpoints when the sharding optimization is omitted.
 2.  **Distinction (durable)**: Unlike general I/O contention (which is stochastic and unpredictable), a Checkpoint Storm is synchronous and periodic: every node writes at the same moment because the training orchestrator triggers checkpoint after a fixed step count. Its predictability makes it both more damaging (all nodes compete simultaneously) and more tractable (it can be prevented by design through staggered scheduling or asynchronous serialization).
 3.  **Common pitfall**: A frequent misconception is that checkpointing every 100 steps is "low overhead." At 70B scale, this assumption is catastrophically wrong: if each training step takes 10 seconds and a checkpoint storm takes 1,400 seconds, checkpointing every 100 steps means spending $1400/(100 \times 10) = 140\%$ of compute time on checkpointing—more time saving state than doing useful training.
 
@@ -2343,7 +2344,7 @@ That incident turns checkpoint storage from a capacity question into a restore-d
 from mlsysim.fmt import fmt
 
 class CheckpointStorageDesignPrompt:
-    nodes = 1024
+    nodes = Systems.Clusters.Training_1K.count
     checkpoint_interval_min = 10
     local_nvme_bw_gbs = 28
     pfs_aggregate_tbs = 1
@@ -2368,7 +2369,7 @@ A training cluster of `{python} CheckpointStorageDesignPrompt.nodes_str` nodes s
 
 ### Distributed checkpoint coordination {#sec-storage-distributed-checkpoint}
 
-In a data-parallel training setup with 1,024 nodes, every node holds a different shard of the optimizer state, and some parallelism strategies (tensor and pipeline parallelism) distribute the model weights themselves across nodes. A complete checkpoint therefore requires every node to save its shard, and the checkpoint is only complete when all shards have been durably written. This creates a coordination problem: the system must confirm that all 1,024 nodes have finished writing before training can resume.
+In a data-parallel training setup with `{python} CheckpointStorageDesignPrompt.nodes_str` nodes, every node holds a different shard of the optimizer state, and some parallelism strategies (tensor and pipeline parallelism) distribute the model weights themselves across nodes. A complete checkpoint therefore requires every node to save its shard, and the checkpoint is only complete when all shards have been durably written. This creates a coordination problem: the system must confirm that all `{python} CheckpointStorageDesignPrompt.nodes_str` nodes have finished writing before training can resume.
 
 The simplest approach is a synchronous barrier: all nodes pause training, write their shards to local NVMe, then execute a collective AllReduce to confirm completion. Only when every node has acknowledged its write does training resume. This approach minimizes the risk of inconsistent checkpoints (where some shards are from step $i$ and others from step $i+1$) but maximizes the training pause because the slowest node determines the barrier time.
 

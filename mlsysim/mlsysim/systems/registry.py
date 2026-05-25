@@ -102,7 +102,7 @@ _TIER_PROV = pc.BOOK_CLUSTER_TIERS
 
 
 class Clusters(Registry):
-    """Book reference fleet tiers (256 / 2k / 8k / 100k GPUs)."""
+    """Book reference fleet tiers (256 / 1k / 2k / 8k / 10k / 100k GPUs)."""
     Research_256 = Fleet(
         name="Research Cluster (256 GPUs)",
         node=Nodes.DGX_H100,
@@ -117,12 +117,26 @@ class Clusters(Registry):
         fabric=Fabrics.InfiniBand_HDR,
         metadata=Metadata(provenance=_TIER_PROV, description="Medium cluster tier (2048 GPUs)."),
     )
+    Training_1K = Fleet(
+        name="Training Cluster (1024 GPUs)",
+        node=Nodes.DGX_H100,
+        count=128,
+        fabric=Fabrics.InfiniBand_HDR,
+        metadata=Metadata(provenance=_TIER_PROV, description="Mid cluster tier (1024 GPUs)."),
+    )
     Frontier_8K = Fleet(
         name="Frontier Cluster (8192 GPUs)",
         node=Nodes.DGX_H100,
         count=1024,
         fabric=Fabrics.InfiniBand_NDR,
         metadata=Metadata(provenance=_TIER_PROV, description="Large cluster tier (8192 GPUs)."),
+    )
+    Training_10K = Fleet(
+        name="Training Cluster (10000 GPUs)",
+        node=Nodes.DGX_H100,
+        count=1250,
+        fabric=Fabrics.InfiniBand_NDR,
+        metadata=Metadata(provenance=_TIER_PROV, description="Large training tier (10000 GPUs)."),
     )
     Mega_100K = Fleet(
         name="Mega Cluster (100000 GPUs)",

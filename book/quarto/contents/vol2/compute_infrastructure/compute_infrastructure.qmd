@@ -3161,7 +3161,7 @@ from mlsysim.fmt import fmt_int
 class H100TdpRackRecap:
     # ┌── 1. LOAD ──────────────────────────────────────────
     gpu_tdp_w = Hardware.Cloud.H100.tdp.m_as(watt)
-    cluster_gpus = 1024
+    cluster_gpus = Systems.Clusters.Training_1K.total_accelerators
     comm_phase_w = 400
     transition_us = 100
 
@@ -3239,7 +3239,7 @@ class GridQueue:
     gpu_lead_time_months = Infrastructure.Capacity.GpuLeadTimeMonths
     substation_lead_time_months = Infrastructure.Capacity.SubstationLeadTimeMonths
     grid_queue_size_gw = Infrastructure.Capacity.GridInterconnectionQueueGw
-    cluster_gpus = 10_000
+    cluster_gpus = Systems.Clusters.Training_10K.total_accelerators
     cluster_power_mw = 7
     # ┌── 2. EXECUTE ───────────────────────────────────────
     lead_time_ratio = substation_lead_time_months/gpu_lead_time_months
@@ -3469,7 +3469,7 @@ from mlsysim.fmt import fmt_int
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Exports: H100TdpCoolingRecap.tdp_str
 class H100TdpCoolingRecap:
-    n_gpus = 1_000
+    n_gpus = Systems.Clusters.Training_1K.total_accelerators
     gpu_tdp_w = Hardware.Cloud.H100.tdp.m_as(watt)
     pue_air = (Infrastructure.FacilityCooling.Typical.pue + Infrastructure.FacilityCooling.Legacy.pue) / 2
     pue_liquid = (Infrastructure.FacilityCooling.LiquidCooled.pue + Infrastructure.FacilityCooling.StateOfArt.pue) / 2
@@ -3739,19 +3739,34 @@ from mlsysim import *
 class PodTrainingMath:
     """Formatted math strings for 175B training time derivation."""
 
-    gpt3_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    _gpt3 = Models.Language.GPT3
+    _frontier = Systems.Clusters.Frontier_8K
+    gpt3_params_b = _gpt3.parameters.m_as(param) / BILLION
+    gpt3_tokens_b = _gpt3.training_tokens.m_as(BILLION)
+    n_gpus = _frontier.total_accelerators
+    gpt3_params_b_str = fmt(gpt3_params_b, precision=0, commas=False)
+    gpt3_tokens_b_str = fmt(gpt3_tokens_b, precision=0, commas=False)
+    gpt3_tokens_billion_str = fmt(gpt3_tokens_b, precision=0, commas=False)
     h100_fp8_tflops = Hardware.Cloud.H100.compute.precision_flops['fp8'].m_as(TFLOPs/second)
     h100_tflops_str = fmt(h100_fp8_tflops, precision=0, commas=False)
     mfu = Literature.Training.MfuHigh * 0.9
-    pod_flops_math = fmt_math(f"6 \\times {gpt3_params_b_str} \\times 300 \\times 10^{{18}}")
-    total_flops_math = fmt_math(f"3.15 \\times 10^{{23}}")
-    n_params_math = fmt_math(f"P = {gpt3_params_b_str} \\times 10^9")
-    cluster_throughput_math = fmt_math(
-        f"8{{,}}192 \\times {h100_tflops_str} \\times 10^{{12}} \\times {mfu}"
+    _total_flops = 6 * _gpt3.parameters.m_as(param) * _gpt3.training_tokens.m_as(count)
+    _flops_sci = f"{_total_flops:.2e}"
+    _flops_mantissa = _flops_sci.split("e+")[0]
+    _flops_exp = int(_flops_sci.split("e+")[1])
+    pod_flops_math = fmt_math(
+        f"6 \\times {gpt3_params_b_str} \\times {gpt3_tokens_b_str} \\times 10^{{9}}"
     )
-    cluster_eflops = 8192 * h100_fp8_tflops * 1e12 * mfu / 1e18
+    total_flops_math = fmt_math(f"{_flops_mantissa} \\times 10^{{{_flops_exp}}}")
+    n_params_math = fmt_math(f"P = {gpt3_params_b_str} \\times 10^9")
+    n_tokens_math = fmt_math(f"D = {gpt3_tokens_b_str} \\times 10^9")
+    n_gpus_fmt = fmt(n_gpus, precision=0, commas=True)
+    cluster_throughput_math = fmt_math(
+        f"{n_gpus_fmt} \\times {h100_tflops_str} \\times 10^{{12}} \\times {mfu}"
+    )
+    cluster_eflops = n_gpus * h100_fp8_tflops * 1e12 * mfu / 1e18
     cluster_eflops_str = fmt(cluster_eflops, precision=2, commas=False)
-    n_gpus_str = fmt(8192, precision=0)
+    n_gpus_str = fmt(n_gpus, precision=0)
     mfu_pct_str = fmt(mfu * 100, precision=0, commas=False)
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
@@ -3768,7 +3783,7 @@ class InfraFrontierPodTrainingRecap:
     frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
 ```
 
-Training a `{python} InfraFrontierPodTrainingRecap.frontier_params_b_str`B model on this cluster requires `{python} PodTrainingMath.pod_flops_math` total floating-point operations (assuming 300 billion training tokens). At 45 percent MFU -- a strong but achievable figure for well-tuned large-model training -- the cluster sustains `{python} PodTrainingMath.cluster_throughput_math` FLOP/s, or about `{python} PodTrainingMath.cluster_eflops_str` EFLOP/s, yielding a physics-limit training time of approximately 12 hours. This is the absolute floor: every GPU computing useful FLOPs at 45 percent of FP8 peak, with zero communication overhead, zero pipeline bubbles, and zero downtime.
+Training a `{python} InfraFrontierPodTrainingRecap.frontier_params_b_str`B model on this cluster requires `{python} PodTrainingMath.pod_flops_math` total floating-point operations (assuming `{python} PodTrainingMath.gpt3_tokens_billion_str` billion training tokens). At 45 percent MFU -- a strong but achievable figure for well-tuned large-model training -- the cluster sustains `{python} PodTrainingMath.cluster_throughput_math` FLOP/s, or about `{python} PodTrainingMath.cluster_eflops_str` EFLOP/s, yielding a physics-limit training time of approximately 12 hours. This is the absolute floor: every GPU computing useful FLOPs at 45 percent of FP8 peak, with zero communication overhead, zero pipeline bubbles, and zero downtime.
 
 In practice, communication overhead, pipeline bubbles, checkpoint I/O, hardware failures, and maintenance windows compound to extend the actual wall-clock time beyond the physics limit. A simplified multiplier chain reaches an approximately 18-hour system minimum; production schedules can stretch to days or weeks once queueing, data readiness, debugging, reruns, and site-specific operational margins enter the plan. The central theme is unchanged: at pod scale, infrastructure imperfections dominate over the raw capability of the silicon. Recovering this lost time is the central challenge of distributed systems engineering, and the solutions span hardware (better networks), software (overlapped communication), and operations (proactive maintenance to minimize downtime).
 
@@ -3801,7 +3816,7 @@ class TrainingTime175B:
     from mlsysim.physics import dTime
     n_params = Models.Language.GPT3.parameters.m_as(param)
     n_tokens = Models.Language.GPT3.training_tokens.m_as(count)
-    n_gpus = 8192
+    n_gpus = Systems.Clusters.Frontier_8K.total_accelerators
     peak_flops = Hardware.Cloud.H100.compute.precision_flops["fp8"]
     mfu = Literature.Training.MfuHigh * 0.9
 
@@ -3860,7 +3875,7 @@ class InfraFrontierPodTimeRecap:
 
 We can derive the training time for our `{python} InfraFrontierPodTimeRecap.frontier_params_b_str`B model from first principles.
 
-1. **Total FLOPs**\index{Training Time!total FLOPs}: Using the approximation $6 \times P \times D$, where `{python} PodTrainingMath.n_params_math` and $D = 300 \times 10^9$ tokens:
+1. **Total FLOPs**\index{Training Time!total FLOPs}: Using the approximation $6 \times P \times D$, where `{python} PodTrainingMath.n_params_math` and `{python} PodTrainingMath.n_tokens_math` tokens:
    `{python} PodTrainingMath.total_flops_math` FLOPs
 
 2. **Cluster throughput**: `{python} PodTrainingMath.n_gpus_str` H100 GPUs at `{python} PodTrainingMath.h100_tflops_str` TFLOP/s peak, operating at `{python} PodTrainingMath.mfu_pct_str` percent MFU:
@@ -3906,7 +3921,7 @@ class WscThroughput:
     """Aggregate FP16/FP8 throughput + injection bandwidth for a 10,000-H100 WSC."""
 
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
-    n_gpus = 10_000
+    n_gpus = Systems.Clusters.Training_10K.total_accelerators
     per_gpu_inject_gbs = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second)
     oversub_factor = 4                 # 4:1 fabric oversubscription scenario
 
@@ -4188,7 +4203,7 @@ class CommScalingMath:
     exposed_step_s = t_compute_s + _effective_time_s
     scaling_efficiency = t_compute_s / exposed_step_s
     batch_tokens_m = 2
-    n_gpus = 1024
+    n_gpus = Systems.Clusters.Training_1K.total_accelerators
     mfu_pct = 50
     flops_per_token = 6
     overlap_pct = int(_overlap_fraction * 100)
@@ -4411,7 +4426,7 @@ class CheckpointComputeTradeoff:
     # ┌── 1. LOAD ──────────────────────────────────────────
     params = Models.Language.GPT3.parameters.m_as(param)
     write_bw_gbs = 100
-    num_gpus = 10_000
+    num_gpus = Systems.Clusters.Training_10K.total_accelerators
 
     # ┌── 2. EXECUTE ───────────────────────────────────────
     weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
@@ -4652,9 +4667,9 @@ The economics of ML infrastructure differ from traditional IT in three fundament
 The total cost of an ML cluster decomposes into two broad categories. **Capital expenditure (CapEx)** covers the one-time costs of building the infrastructure: accelerators, servers, networking equipment, facility construction, and installation. **Operational expenditure (OpEx)** covers the recurring costs of running it: electricity, cooling, network bandwidth, staffing, maintenance, and software licenses. For a large on-premises cluster, the approximate breakdown is:
 
 - **Accelerators and servers** (50--60 percent of CapEx): The GPUs or TPUs themselves, along with the host servers, baseboard management controllers, and local storage.
-- **Networking** (10--15 percent of CapEx): InfiniBand switches, HCAs, cables, and optical transceivers. A fat-tree fabric for 1,000 GPUs can cost \$10--20 million.
+- **Networking** (10--15 percent of CapEx): InfiniBand switches, HCAs, cables, and optical transceivers. A fat-tree fabric for `{python} InfraFrontierTcoClusterRecap.cluster_gpus_str` GPUs can cost \$10--20 million.
 - **Facility** (15--25 percent of CapEx): Building construction or retrofit, electrical infrastructure (transformers, UPS, PDUs), and cooling plant (chillers, piping, pumps). Liquid cooling infrastructure adds 10--15 percent to facility costs but reduces long-term OpEx.
-- **Electricity** (60--70 percent of OpEx): At \$0.07/kWh, a 1,000-GPU H100 cluster consuming 1 MW (including cooling at PUE 1.1) costs approximately \$615,000 per year in electricity alone.
+- **Electricity** (60--70 percent of OpEx): At \$0.07/kWh, a `{python} InfraFrontierTcoClusterRecap.cluster_gpus_str`-GPU H100 cluster consuming 1 MW (including cooling at PUE 1.1) costs approximately \$615,000 per year in electricity alone.
 - **Staffing and maintenance** (20--30 percent of OpEx): System administrators, hardware technicians, replacement parts, and software license fees.
 
 ```{python}
@@ -4663,12 +4678,20 @@ from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Exports: InfraFrontierTcoClusterRecap.frontier_params_b_str
 class InfraFrontierTcoClusterRecap:
+    _cluster = Systems.Clusters.Training_1K
+    cluster_gpus = _cluster.total_accelerators
+    cluster_nodes = _cluster.count
+    node_price_usd = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
+    hardware_capex_usd = cluster_nodes * node_price_usd
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    cluster_gpus_str = fmt(cluster_gpus, precision=0, commas=True)
+    cluster_nodes_str = fmt(cluster_nodes, precision=0, commas=False)
+    hardware_capex_m_str = fmt(hardware_capex_usd / 1e6, precision=2, commas=False)
 ```
 
-For our `{python} InfraFrontierTcoClusterRecap.frontier_params_b_str`B model, a minimum viable training cluster requires approximately 1,000 H100 GPUs spread across 125 nodes to complete a training run in 2--4 weeks. Evaluating the TCO over a three-year lifecycle reveals a stark utilization dependency. The hardware CapEx dominates at \$43.75 million (\$350,000 per node), supported by a \$5 million investment in a two-tier InfiniBand fat-tree network and a proportional \$10 million facility allocation. Operational costs add approximately \$1.5 million annually for electricity (at \$0.07/kWh with a PUE of 1.1) and specialized staffing, bringing the three-year total to roughly \$63 million. If this dedicated cluster only trains six frontier models per year, the effective cost per run is \$3.5 million. Renting the same 1,000-GPU allocation in the public cloud at \$4.00 per GPU-hour costs about \$1.3--2.7 million per run (1,000 GPUs × 336--672 hours × \$4), or \$24--48 million over three years for six runs per year. The cloud is cheaper for this bursty cadence because the organization is not paying for idle weeks. The economic advantage of owning hardware only materializes at *continuous utilization*: if the cluster runs 24/7 (supporting training, inference, fine-tuning, and experimentation), the effective on-premises cost drops to approximately \$2.40 per GPU-hour, significantly undercutting the cloud rate. This utilization dependency is the central tension in every build-vs.-buy analysis.
+For our `{python} InfraFrontierTcoClusterRecap.frontier_params_b_str`B model, a minimum viable training cluster requires approximately `{python} InfraFrontierTcoClusterRecap.cluster_gpus_str` H100 GPUs spread across `{python} InfraFrontierTcoClusterRecap.cluster_nodes_str` nodes to complete a training run in 2--4 weeks. Evaluating the TCO over a three-year lifecycle reveals a stark utilization dependency. The hardware CapEx dominates at \${python} InfraFrontierTcoClusterRecap.hardware_capex_m_str` million (\$350,000 per node), supported by a \$5 million investment in a two-tier InfiniBand fat-tree network and a proportional \$10 million facility allocation. Operational costs add approximately \$1.5 million annually for electricity (at \$0.07/kWh with a PUE of 1.1) and specialized staffing, bringing the three-year total to roughly \$63 million. If this dedicated cluster only trains six frontier models per year, the effective cost per run is \$3.5 million. Renting the same `{python} InfraFrontierTcoClusterRecap.cluster_gpus_str`-GPU allocation in the public cloud at \$4.00 per GPU-hour costs about \$1.3--2.7 million per run (`{python} InfraFrontierTcoClusterRecap.cluster_gpus_str` GPUs × 336--672 hours × \$4), or \$24--48 million over three years for six runs per year. The cloud is cheaper for this bursty cadence because the organization is not paying for idle weeks. The economic advantage of owning hardware only materializes at *continuous utilization*: if the cluster runs 24/7 (supporting training, inference, fine-tuning, and experimentation), the effective on-premises cost drops to approximately \$2.40 per GPU-hour, significantly undercutting the cloud rate. This utilization dependency is the central tension in every build-vs.-buy analysis.
 
 ### Build vs. buy {#sec-compute-build-vs-buy}
 
@@ -4693,9 +4716,9 @@ class BuildVsBuyFigureScenario:
     """Cluster-level assumptions for the build-vs-buy figure."""
 
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
-    gpus = 1_000
+    gpus = Systems.Clusters.Training_1K.total_accelerators
     gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
-    node_price_usd = 350_000
+    node_price_usd = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
     network_capex_usd = 5_000_000
     facility_capex_usd = 10_000_000
     annual_opex_usd = 1_500_000
@@ -4712,7 +4735,7 @@ class BuildVsBuyFigureScenario:
     breakeven_month = upfront_capex_usd / (cloud_monthly_usd - monthly_opex_usd)
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
-    check(nodes == 125, "1,000 GPUs at 8 GPUs/node should require 125 nodes")
+    check(nodes == Systems.Clusters.Training_1K.count, "Training_1K should require 128 nodes")
     check(26 <= breakeven_month <= 27, "Build-vs-buy break-even should be near month 27")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
@@ -4761,7 +4784,7 @@ class TcoScenario:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     cloud_h100_hourly = Infrastructure.Pricing.Cloud.GpuTrainingPerHour.rate.m_as(USD / hour)
     gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
-    dgx_h100_price = 350000 # USD
+    dgx_h100_price = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
     amortization_years = 3
     utilization = 0.80
     electricity_rate = Infrastructure.Pricing.OnPremises.ElectricityPerKwh.rate.m_as(USD / ureg.kilowatt_hour) # USD/kWh
@@ -4881,9 +4904,9 @@ class TenKGpuClusterTco:
     """TCO for the 10,000-GPU reference cluster."""
 
     # ┌── 1. LOAD ──────────────────────────────────────────────────────────
-    gpus = 10_000
+    gpus = Systems.Clusters.Training_10K.total_accelerators
     gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
-    node_price_usd = 350_000
+    node_price_usd = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
     network_capex_usd = 25_000_000
     facility_capex_usd = 75_000_000
     electricity_rate = Infrastructure.Pricing.OnPremises.ElectricityPerKwh.rate.m_as(USD / ureg.kilowatt_hour)
@@ -5224,7 +5247,7 @@ class TcoDecisionExercise:
     gpu_hours_per_model = 1_000
     cluster_gpus = 128
     cloud_gpu_hour_usd = Infrastructure.Pricing.Cloud.GpuTrainingPerHour.rate.m_as(USD / hour)
-    node_price_usd = 350_000
+    node_price_usd = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
     electricity_rate = Infrastructure.Pricing.OnPremises.ElectricityPerKwh.rate.m_as(USD / ureg.kilowatt_hour)
     pue = Infrastructure.FacilityCooling.StateOfArt.pue
 
@@ -5386,7 +5409,7 @@ class InfraPlanningExercise:
     pue = Infrastructure.FacilityCooling.StateOfArt.pue
     non_gpu_overhead_pct = 50
     cloud_gpu_hour_usd = Infrastructure.Pricing.Cloud.GpuTrainingPerHour.rate.m_as(USD / hour)
-    node_price_usd = 350_000
+    node_price_usd = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     params_b_str = fmt(params_b, precision=0, commas=False)
@@ -5859,7 +5882,8 @@ from mlsysim import *
 class TcoSummaryBreakevenRecap:
     cloud_h100_hourly = Infrastructure.Pricing.Cloud.GpuTrainingPerHour.rate.m_as(USD / hour)
     gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
-    dgx_h100_price = 350_000
+    dgx_h100_price = Infrastructure.Pricing.Capital.DgxH100NodeUsd.rate.m_as(USD)
+    amortization_years = 3
     facility_pue = Infrastructure.FacilityCooling.StateOfArt.pue
     onprem_elec = Infrastructure.Pricing.OnPremises.ElectricityPerKwh.rate.m_as(USD / ureg.kilowatt_hour)
     node_power_kw = (Hardware.Cloud.H100.tdp * Systems.Nodes.DGX_H100.accelerators_per_node).m_as(kilowatt) * 1.2
@@ -5869,7 +5893,7 @@ class TcoSummaryBreakevenRecap:
     )
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    breakeven_util_str = fmt((dgx_h100_price / 3) / denominator * 100, precision=1, commas=False)
+    breakeven_util_str = fmt((dgx_h100_price / amortization_years) / denominator * 100, precision=1, commas=False)
 ```
 
 * **TCO, not CapEx**: The total cost of ownership includes electricity, facility construction, networking, and staffing. Under the simplified per-node hardware-plus-electricity model, on-premises infrastructure becomes favorable above approximately `{python} TcoSummaryBreakevenRecap.breakeven_util_str` percent sustained utilization; in the full 10,000-GPU TCO example including facility, network, and staffing costs, the threshold is roughly 54 percent.
