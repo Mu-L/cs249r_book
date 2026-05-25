@@ -6,6 +6,12 @@ for your specific scenario. Every value cites its source.
 
 from .units import USD, ureg, GB, TB, hour, count, day
 from .provenance import TraceableConstant, fleet_mttf_hours
+from .provenance_catalog import (
+    BOOK_CLUSTER_TIERS,
+    BOOK_ILLUSTRATIVE_IOWA_CARBON,
+    IEA_WEO_2023,
+    UPTIME_PUE_2022,
+)
 
 # --- Reliability (Component MTTF) ---
 # Order-of-magnitude steady-state MTTF; see appendix_reliability @tbl-component-fit.
@@ -31,25 +37,33 @@ CLUSTER_SMALL_GPUS = TraceableConstant(
     256,
     name="Small cluster GPU count",
     description="Research-lab scale tier for fleet napkin math.",
-    source="MLSysBook editorial convention",
+    source=BOOK_CLUSTER_TIERS.ref,
+    provenance=BOOK_CLUSTER_TIERS,
+    kind=BOOK_CLUSTER_TIERS.kind,
 )
 CLUSTER_MEDIUM_GPUS = TraceableConstant(
     2_048,
     name="Medium cluster GPU count",
     description="Medium production tier.",
-    source="MLSysBook editorial convention",
+    source=BOOK_CLUSTER_TIERS.ref,
+    provenance=BOOK_CLUSTER_TIERS,
+    kind=BOOK_CLUSTER_TIERS.kind,
 )
 CLUSTER_LARGE_GPUS = TraceableConstant(
     8_192,
     name="Large cluster GPU count",
     description="Large training cluster tier; failure becomes steady state.",
-    source="MLSysBook editorial convention",
+    source=BOOK_CLUSTER_TIERS.ref,
+    provenance=BOOK_CLUSTER_TIERS,
+    kind=BOOK_CLUSTER_TIERS.kind,
 )
 CLUSTER_MEGA_GPUS = TraceableConstant(
     100_000,
     name="Mega cluster GPU count",
     description="Hyperscale fleet tier for order-of-magnitude examples.",
-    source="MLSysBook editorial convention",
+    source=BOOK_CLUSTER_TIERS.ref,
+    provenance=BOOK_CLUSTER_TIERS,
+    kind=BOOK_CLUSTER_TIERS.kind,
 )
 
 # Fleet topology assumptions (override for non-DGX node counts).
@@ -83,25 +97,33 @@ PUE_LIQUID_COOLED = TraceableConstant(
     1.06,
     name="PUE (Liquid-Cooled)",
     description="Best-in-class liquid-cooled AI datacenter PUE.",
-    source="Uptime Institute Global Data Center Survey 2022",
+    source=UPTIME_PUE_2022.ref,
+    provenance=UPTIME_PUE_2022,
+    kind=UPTIME_PUE_2022.kind,
 )
 PUE_BEST_AIR = TraceableConstant(
     1.12,
     name="PUE (Best Air-Cooled)",
     description="Best-in-class air-cooled hyperscale datacenter PUE.",
-    source="Uptime Institute Global Data Center Survey 2022",
+    source=UPTIME_PUE_2022.ref,
+    provenance=UPTIME_PUE_2022,
+    kind=UPTIME_PUE_2022.kind,
 )
 PUE_TYPICAL = TraceableConstant(
     1.40,
     name="PUE (Industry Average)",
     description="Industry average traditional datacenter PUE.",
-    source="Uptime Institute Global Data Center Survey 2022",
+    source=UPTIME_PUE_2022.ref,
+    provenance=UPTIME_PUE_2022,
+    kind=UPTIME_PUE_2022.kind,
 )
 PUE_LEGACY = TraceableConstant(
     1.58,
     name="PUE (Legacy Air-Cooled)",
     description="Older enterprise datacenter PUE tier.",
-    source="Uptime Institute Global Data Center Survey 2022",
+    source=UPTIME_PUE_2022.ref,
+    provenance=UPTIME_PUE_2022,
+    kind=UPTIME_PUE_2022.kind,
 )
 PUE_STATE_OF_ART = 1.10            # Modern highly optimized datacenter benchmark
 
@@ -110,57 +132,68 @@ WUE_AIR_COOLED = 0.5               # Air-cooled (minimal water)
 WUE_EVAPORATIVE = 1.8              # Evaporative cooling towers
 WUE_LIQUID = 0.0                   # Closed-loop liquid cooling (near zero)
 
-# Regional carbon intensity (gCO2 per kWh) — Source: IEA (2023)
-_IEA_SOURCE = "IEA World Energy Outlook 2023 (rounded gCO2/kWh)"
-_IEA_CARBON_URL = "https://www.iea.org/reports/world-energy-outlook-2023"
-
+# Regional carbon intensity (gCO2 per kWh) — IEA WEO 2023 unless noted
 CARBON_US_AVG_GCO2_KWH = TraceableConstant(
     429,
     name="Carbon Intensity (US Average)",
     description="US national average grid carbon intensity in gCO2/kWh.",
-    source=_IEA_SOURCE,
-    url=_IEA_CARBON_URL,
+    source=IEA_WEO_2023.ref,
+    url=IEA_WEO_2023.url,
+    provenance=IEA_WEO_2023,
+    kind=IEA_WEO_2023.kind,
 )
 CARBON_EU_AVG_GCO2_KWH = TraceableConstant(
     270,
     name="Carbon Intensity (EU Average)",
     description="EU average grid carbon intensity in gCO2/kWh.",
-    source=_IEA_SOURCE,
-    url=_IEA_CARBON_URL,
+    source=IEA_WEO_2023.ref,
+    url=IEA_WEO_2023.url,
+    provenance=IEA_WEO_2023,
+    kind=IEA_WEO_2023.kind,
 )
 CARBON_QUEBEC_GCO2_KWH = TraceableConstant(
     20,
     name="Carbon Intensity (Quebec)",
     description="Quebec grid carbon intensity in gCO2/kWh (hydroelectric dominant).",
-    source=_IEA_SOURCE,
-    url=_IEA_CARBON_URL,
+    source=IEA_WEO_2023.ref,
+    url=IEA_WEO_2023.url,
+    provenance=IEA_WEO_2023,
+    kind=IEA_WEO_2023.kind,
 )
 CARBON_FRANCE_GCO2_KWH = TraceableConstant(
     50,
     name="Carbon Intensity (France)",
     description="France grid carbon intensity in gCO2/kWh (nuclear dominant).",
-    source=_IEA_SOURCE,
-    url=_IEA_CARBON_URL,
+    source=IEA_WEO_2023.ref,
+    url=IEA_WEO_2023.url,
+    provenance=IEA_WEO_2023,
+    kind=IEA_WEO_2023.kind,
 )
 CARBON_IOWA_GCO2_KWH = TraceableConstant(
     680,
     name="Carbon Intensity (Iowa reference)",
     description="High-carbon US grid mix for tutorial contrast (not IEA country average).",
-    source="MLSysBook illustrative regional contrast",
+    source=BOOK_ILLUSTRATIVE_IOWA_CARBON.ref,
+    provenance=BOOK_ILLUSTRATIVE_IOWA_CARBON,
+    kind=BOOK_ILLUSTRATIVE_IOWA_CARBON.kind,
 )
 CARBON_POLAND_GCO2_KWH = TraceableConstant(
     820,
     name="Carbon Intensity (Poland)",
     description="Poland grid carbon intensity in gCO2/kWh (coal dominant).",
-    source=_IEA_SOURCE,
-    url=_IEA_CARBON_URL,
+    source=IEA_WEO_2023.ref,
+    url=IEA_WEO_2023.url,
+    provenance=IEA_WEO_2023,
+    kind=IEA_WEO_2023.kind,
 )
 CARBON_NORWAY_GCO2_KWH = TraceableConstant(
     10,
     name="Carbon Intensity (Norway)",
     description="Norway grid carbon intensity in gCO2/kWh (hydroelectric).",
-    source=_IEA_SOURCE,
-    url=_IEA_CARBON_URL,
+    source=IEA_WEO_2023.ref,
+    url=IEA_WEO_2023.url,
+    provenance=IEA_WEO_2023,
+    kind=IEA_WEO_2023.kind,
 )
 
 # Power density

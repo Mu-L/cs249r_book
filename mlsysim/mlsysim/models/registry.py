@@ -2,6 +2,7 @@ from .types import TransformerWorkload, CNNWorkload, Workload, SSMWorkload, Diff
 from ..core.registry import Registry
 from ..core.constants import (flop, param, ureg, count, day)
 from ..core.types import Metadata
+from ..core.provenance import Provenance, ProvenanceKind
 
 class LanguageModels(Registry):
     GPT2 = TransformerWorkload(
@@ -27,8 +28,12 @@ class LanguageModels(Registry):
         training_energy_mwh=1287,
         inference_flops=2 * 175e9 * ureg.flop,
         metadata=Metadata(
-            source="Brown et al. (2020), Language Models are Few-Shot Learners",
-            last_verified="2025-03-06",
+            provenance=Provenance(
+                id="prov:gpt3-brown-2020",
+                kind=ProvenanceKind.LITERATURE,
+                ref="Brown et al. (2020), Language Models are Few-Shot Learners",
+                verified="2025-03-06",
+            ),
         ),
     )
     GPT4 = TransformerWorkload(
@@ -44,10 +49,15 @@ class LanguageModels(Registry):
         training_hardware_label="A100-class",
         inference_flops=2 * 1.76e12 * ureg.flop,
         metadata=Metadata(
-            source="SemiAnalysis (2023) public MoE estimate; OpenAI (2023) technical report (no parameter count)",
-            source_url="https://www.semianalysis.com/p/gpt-4-architecture-infrastructure",
+            provenance=Provenance(
+                id="prov:gpt4-semianalysis-estimate",
+                kind=ProvenanceKind.ESTIMATE,
+                ref="SemiAnalysis (2023) public MoE estimate; OpenAI (2023) technical report (no parameter count)",
+                url="https://www.semianalysis.com/p/gpt-4-architecture-infrastructure",
+                verified="2025-03-06",
+                notes="1.76T parameters and 2.5M GPU-days are third-party estimates, not OpenAI disclosures.",
+            ),
             description="1.76T parameters and 2.5M GPU-days are third-party estimates, not OpenAI disclosures.",
-            last_verified="2025-03-06",
         ),
     )
     BERT_Base = TransformerWorkload(

@@ -1,7 +1,7 @@
 """
 fmt.py
 Formatting + presentation helpers for QMD output.
-Keep science in core/formulas.py; keep display here.
+Keep science in mlsysim/physics/; keep display here.
 """
 
 from .core.constants import ureg
@@ -35,8 +35,12 @@ def _get_markdown():
 
 def _numeric_magnitude(quantity):
     """Return a plain float magnitude for fmt safety checks."""
+    from .core.provenance import Sourced, TraceableConstant, scalar_value
+
     if isinstance(quantity, ureg.Quantity):
         return float(quantity.magnitude)
+    if isinstance(quantity, (Sourced, TraceableConstant)):
+        return scalar_value(quantity)
     return float(quantity)
 
 

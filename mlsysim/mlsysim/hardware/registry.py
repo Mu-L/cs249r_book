@@ -1,5 +1,6 @@
 from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy, IOInterconnect
 from ..core.registry import Registry
+from ..core.provenance import Provenance, ProvenanceKind
 from ..core.constants import (
     GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt, count,
     LATENCY_NVLINK,
@@ -24,9 +25,13 @@ class CloudHardware(Registry):
         unit_cost=10000 * USD,
         dispatch_tax=0.02 * ureg.ms,
         metadata={
-            "source": "NVIDIA V100 architecture whitepaper",
-            "source_url": "https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf",
-            "last_verified": "2025-03-06",
+            "provenance": Provenance(
+                id="prov:nvidia-v100-datasheet",
+                kind=ProvenanceKind.DATASHEET,
+                ref="NVIDIA V100 architecture whitepaper",
+                url="https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf",
+                verified="2025-03-06",
+            ),
         },
     )
 
@@ -42,9 +47,13 @@ class CloudHardware(Registry):
         embodied_carbon_kg=130.0,  # Gupta et al. 2022 estimate
         dispatch_tax=0.015 * ureg.ms,
         metadata={
-            "source": "NVIDIA A100 datasheet; Choquette et al. (2021), IEEE Micro",
-            "source_url": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf",
-            "last_verified": "2025-03-06",
+            "provenance": Provenance(
+                id="prov:nvidia-a100-datasheet",
+                kind=ProvenanceKind.DATASHEET,
+                ref="NVIDIA A100 datasheet; Choquette et al. (2021), IEEE Micro",
+                url="https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf",
+                verified="2025-03-06",
+            ),
         },
     )
 
@@ -65,9 +74,13 @@ class CloudHardware(Registry):
         embodied_carbon_kg=150.0,  # Gupta et al. 2022 estimate for high-end datacenter GPU
         dispatch_tax=0.01 * ureg.ms,
         metadata={
-            "source": "NVIDIA H100 datasheet; Choquette (2023), IEEE Micro",
-            "source_url": "https://resources.nvidia.com/en-us-tensor-core/nvidia-h100-tensor-core-gpu-datasheet",
-            "last_verified": "2025-03-06",
+            "provenance": Provenance(
+                id="prov:nvidia-h100-datasheet",
+                kind=ProvenanceKind.DATASHEET,
+                ref="NVIDIA H100 datasheet; Choquette (2023), IEEE Micro",
+                url="https://resources.nvidia.com/en-us-tensor-core/nvidia-h100-tensor-core-gpu-datasheet",
+                verified="2025-03-06",
+            ),
         },
     )
 
@@ -95,9 +108,13 @@ class CloudHardware(Registry):
         unit_cost=40000 * USD,
         dispatch_tax=0.008 * ureg.ms,
         metadata={
-            "source": "NVIDIA Blackwell product documentation",
-            "source_url": "https://www.nvidia.com/en-us/data-center/blackwell/",
-            "last_verified": "2025-03-06",
+            "provenance": Provenance(
+                id="prov:nvidia-b200-datasheet",
+                kind=ProvenanceKind.DATASHEET,
+                ref="NVIDIA Blackwell product documentation",
+                url="https://www.nvidia.com/en-us/data-center/blackwell/",
+                verified="2025-03-06",
+            ),
         },
     )
 
@@ -131,9 +148,13 @@ class CloudHardware(Registry):
         unit_cost=15000 * USD,
         dispatch_tax=0.012 * ureg.ms,
         metadata={
-            "source": "AMD Instinct MI300X product documentation",
-            "source_url": "https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html",
-            "last_verified": "2025-03-06",
+            "provenance": Provenance(
+                id="prov:amd-mi300x-datasheet",
+                kind=ProvenanceKind.DATASHEET,
+                ref="AMD Instinct MI300X product documentation",
+                url="https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html",
+                verified="2025-03-06",
+            ),
         },
     )
 
@@ -265,9 +286,13 @@ class CloudHardware(Registry):
         unit_cost=2500 * USD,
         dispatch_tax=0.03 * ureg.ms,
         metadata={
-            "source": "NVIDIA Tesla T4 product documentation",
-            "source_url": "https://www.nvidia.com/en-us/data-center/tesla-t4/",
-            "last_verified": "2025-03-06",
+            "provenance": Provenance(
+                id="prov:nvidia-t4-datasheet",
+                kind=ProvenanceKind.DATASHEET,
+                ref="NVIDIA Tesla T4 product documentation",
+                url="https://www.nvidia.com/en-us/data-center/tesla-t4/",
+                verified="2025-03-06",
+            ),
         },
     )
 

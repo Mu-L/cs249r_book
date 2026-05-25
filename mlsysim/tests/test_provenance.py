@@ -36,10 +36,18 @@ class TestTraceableConstant(unittest.TestCase):
     def test_gpu_mttf_source_mentions_reliability_literature(self):
         from mlsysim.core import defaults
 
-        src = defaults.GPU_MTTF_HOURS.source
-        self.assertIn("Kokolis", src)
-        self.assertIn("Zu", src)
-        self.assertIn("Barroso", src)
+        prov = defaults.GPU_MTTF_HOURS.provenance
+        self.assertIn("Kokolis", prov.ref)
+        self.assertIn("Zu", prov.ref)
+        self.assertIn("Barroso", prov.ref)
+
+    def test_carbon_constants_share_iea_catalog_id(self):
+        from mlsysim.core import defaults
+
+        self.assertEqual(
+            defaults.CARBON_NORWAY_GCO2_KWH.provenance.id,
+            defaults.CARBON_POLAND_GCO2_KWH.provenance.id,
+        )
 
     def test_system_assumption_with_pint(self):
         assump = TraceableConstant(
