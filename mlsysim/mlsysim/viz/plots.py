@@ -56,6 +56,13 @@ def set_book_style():
         'savefig.bbox': 'tight'
     })
 
+WEB_FIG_DPI = 120
+
+def _finalize_web_figure(fig):
+    """Match Quarto web defaults; book PDF cells keep set_book_style() dpi."""
+    fig.set_dpi(WEB_FIG_DPI)
+    return fig
+
 def setup_plot(figsize=(8, 5)):
     """One-line plot setup for QMD blocks."""
     set_book_style()
@@ -236,7 +243,7 @@ def plot_roofline(hardware_node, workloads=None):
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(peak_flops * 0.001, peak_flops * 2)
     ax.legend(loc="lower right", fontsize=8, framealpha=0.9)
-    return fig, ax
+    return _finalize_web_figure(fig), ax
 
 def plot_distributed_roofline(fleet_system, workloads=None):
     """
@@ -370,7 +377,7 @@ def plot_distributed_roofline(fleet_system, workloads=None):
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(peak_flops * 0.001, peak_flops * 2)
     ax.legend(loc="lower right", fontsize=8, framealpha=0.9)
-    return fig, ax
+    return _finalize_web_figure(fig), ax
 
 def _metric_as_float(value, unit=None):
     """Return a numeric metric, converting Pint quantities when needed."""
@@ -432,4 +439,4 @@ def plot_evaluation_scorecard(evaluation):
     ax.set_xlim(0, max(max(ratios) + 0.5, 1.5))
     ax.set_xlabel('Resource Utilization (Demand / Supply)')
     ax.set_title(f'System Evaluation: {evaluation.scenario_name}')
-    return fig, ax
+    return _finalize_web_figure(fig), ax
