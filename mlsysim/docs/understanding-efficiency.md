@@ -165,7 +165,7 @@ Now you have a grounded eta. Use it to explore counterfactuals:
 # "What if I moved from H100 to B200?"
 result = Engine.solve(
     model=my_model,
-    hardware=Hardware.B200,
+    hardware=Hardware.Cloud.B200,
     batch_size=32,
     precision="fp16",
     efficiency=0.423  # calibrated from H100 measurement

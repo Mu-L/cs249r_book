@@ -16,6 +16,8 @@ SCAN_ROOTS = (
     REPO_ROOT / "mlsysim" / "mlsysim",
     REPO_ROOT / "labs",
     REPO_ROOT / "mlsysim" / "examples",
+    REPO_ROOT / "mlsysim" / "docs",
+    REPO_ROOT / "mlsysim" / "tutorial",
 )
 
 SKIP_PATH_SUBSTRINGS = (

@@ -53,9 +53,9 @@ positions will not change.
 ```python
 from mlsysim import Hardware
 
-gpu = Hardware.H100            # All current entries are stable
-gpu = Hardware.A100
-gpu = Hardware.Cloud.H100
+gpu = Hardware.Cloud.H100            # All current entries are stable
+gpu = Hardware.Cloud.A100
+gpu = Hardware.Edge.JetsonOrinNX
 # ... every entry shipping in 0.1.x
 ```
 
@@ -67,12 +67,28 @@ removed or renamed.
 ```python
 from mlsysim import Models
 
-model = Models.Llama3_70B      # All current entries are stable
-model = Models.GPT2
+model = Models.Language.Llama3_70B      # All current entries are stable
+model = Models.Language.GPT2
 # ... every entry shipping in 0.1.x
 ```
 
 Same guarantee as Hardware: additions are allowed, removals are not.
+
+### Registry paths
+
+Use **nested canonical paths** in Python:
+
+```python
+mlsysim.Hardware.Cloud.H100
+mlsysim.Models.Language.Llama3_8B
+mlsysim.Models.Vision.ResNet50
+```
+
+Flat aliases at the registry root (for example bare `H100` or `ResNet50` leaf names) were removed in the registry migration.
+The CLI still resolves short names (`mlsysim eval Llama3_8B H100`) for convenience.
+
+Solvers not listed in `mlsysim.__init__` (for example `CompressionModel`, `MoERoutingModel`)
+import from `mlsysim.core.solver`. Workload types import from `mlsysim.models.types`.
 
 ### Scenario Registry
 

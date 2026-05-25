@@ -94,8 +94,8 @@ Carbon intensity varies 100x by region (1 gCO2/kWh hydro vs. 800 gCO2/kWh coal).
 from mlsysim import Engine, Hardware, Models
 
 profile = Engine.solve(
-    model=Models.Llama3_8B,
-    hardware=Hardware.H100,
+    model=Models.Language.Llama3_8B,
+    hardware=Hardware.Cloud.H100,
     batch_size=1,
     precision="fp16",       # "fp32", "fp16", "int8", "int4", "fp8"
     efficiency=0.5,
@@ -111,8 +111,8 @@ profile = Engine.solve(
 from mlsysim import ServingModel, Hardware, Models
 
 result = ServingModel().solve(
-    model=Models.Llama3_8B,
-    hardware=Hardware.H100,
+    model=Models.Language.Llama3_8B,
+    hardware=Hardware.Cloud.H100,
     seq_len=4096,
     batch_size=32,
     precision="fp16",
@@ -127,7 +127,7 @@ result = ServingModel().solve(
 from mlsysim import DistributedModel, Models, Systems
 
 result = DistributedModel().solve(
-    model=Models.Llama3_70B,
+    model=Models.Language.Llama3_70B,
     fleet=Systems.Clusters.Research_256,
     batch_size=1024,
     tp_size=8, pp_size=4,
@@ -143,11 +143,12 @@ result = DistributedModel().solve(
 ### 4. Compression (Quantization / Pruning)
 
 ```python
-from mlsysim import CompressionModel, Hardware, Models
+from mlsysim import Hardware, Models
+from mlsysim.core.solver import CompressionModel
 
 result = CompressionModel().solve(
-    model=Models.Llama3_8B,
-    hardware=Hardware.H100,
+    model=Models.Language.Llama3_8B,
+    hardware=Hardware.Cloud.H100,
     method="quantization",  # "quantization", "pruning", "distillation"
     target_bitwidth=4,      # 4, 8, 16
 )
@@ -215,7 +216,7 @@ tco = EconomicsModel().solve(fleet, duration_days=365, mfu=0.4)
 
 *H200 capacity listed as 141 GB in registry (non-binary).
 
-Access via: `Hardware.A100`, `Hardware.H100`, `Hardware.Tiny.nRF52840`, etc.
+Access via: `Hardware.Cloud.A100`, `Hardware.Cloud.H100`, `Hardware.Tiny.nRF52840`, etc.
 
 ---
 
@@ -223,9 +224,9 @@ Access via: `Hardware.A100`, `Hardware.H100`, `Hardware.Tiny.nRF52840`, etc.
 
 | Model | Parameters | Architecture | Access |
 |-------|-----------|--------------|--------|
-| ResNet-50 | 25.6M | CNN | `Models.ResNet50` |
-| Llama-3-8B | 8.03B | Transformer | `Models.Llama3_8B` |
-| Llama-3-70B | 70.6B | Transformer | `Models.Llama3_70B` |
-| GPT-3 | 175B | Transformer | `Models.GPT3` |
+| ResNet-50 | 25.6M | CNN | `Models.Vision.ResNet50` |
+| Llama-3-8B | 8.03B | Transformer | `Models.Language.Llama3_8B` |
+| Llama-3-70B | 70.6B | Transformer | `Models.Language.Llama3_70B` |
+| GPT-3 | 175B | Transformer | `Models.Language.GPT3` |
 | DS-CNN (KWS) | 26K | CNN | `Models.Tiny.DS_CNN` |
-| MobileNetV2 | 3.4M | CNN | `Models.MobileNetV2` |
+| MobileNetV2 | 3.4M | CNN | `Models.Vision.MobileNetV2` |

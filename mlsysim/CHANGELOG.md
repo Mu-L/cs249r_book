@@ -35,6 +35,16 @@ Release body. Omit any section that has no entries for a given release.
 
 ## Unreleased
 
+### Documentation
+
+- Align website tutorials and landing pages with canonical nested registry paths
+  (`Hardware.Cloud.*`, `Models.Language.*`, etc.).
+- Add Zoo pages for Platforms, Datasets, Literature, and Ops; document
+  `Infrastructure.Pricing` and provenance audit workflow on the public site.
+- Add CI gate `test_doc_registry_paths.py` for docs and tutorial markdown.
+- Document physics module layout, formatting helpers, and import surface in
+  `api-stability.md` and `contributing.qmd`.
+
 ### Internal
 
 - Converged book-facing provenance on `Provenance` + `Sourced` (`sourced()` factory);

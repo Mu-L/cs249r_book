@@ -34,7 +34,12 @@ def generate_model_appendix():
     divider = "|:---|:---:|:---:|:---:|:---:|\n"
     
     rows = []
-    for m in [Models.GPT2, Models.GPT3, Models.ResNet50, Models.MobileNetV2]:
+    for m in [
+        Models.Language.GPT2,
+        Models.Language.GPT3,
+        Models.Vision.ResNet50,
+        Models.Vision.MobileNetV2,
+    ]:
         row = f"| {m.name} | {m.architecture} | {fmt_q(m.parameters)} | {fmt_q(m.inference_flops)} | {m.layers or '---'} |"
         rows.append(row)
         
