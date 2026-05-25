@@ -1,6 +1,6 @@
 # Chapter HTML audit ledger
 
-Updated: 2026-05-25T01:29:17.118313+00:00
+Updated: 2026-05-25T14:33:44.206490+00:00
 
 Registry migration chapter verification: build HTML → raw HTML scan → LEGO/prose/registry checks.
 
@@ -13,7 +13,7 @@ Registry migration chapter verification: build HTML → raw HTML scan → LEGO/p
 | vol1 | appendix_machine | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 7.8 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | benchmarking | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 20.4 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | conclusion | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 6.6 | OK — build + HTML clean + LEGO/registry consistent |
-| vol1 | data_engineering | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 16.6 | OK — build + HTML clean + LEGO/registry consistent |
+| vol1 | data_engineering | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 16.9 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | data_selection | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 17.2 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | frameworks | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 18.7 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | hw_acceleration | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 18.4 | OK — build + HTML clean + LEGO/registry consistent |
@@ -26,7 +26,7 @@ Registry migration chapter verification: build HTML → raw HTML scan → LEGO/p
 | vol1 | nn_architectures | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 21.3 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | nn_computation | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 25.9 | OK — build + HTML clean + LEGO/registry consistent |
 | vol1 | responsible_engr | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 12.1 | OK — build + HTML clean + LEGO/registry consistent |
-| vol1 | training | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 22.9 | OK — build + HTML clean + LEGO/registry consistent |
+| vol1 | training | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 23.3 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | appendix_assumptions | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 5.5 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | appendix_c3 | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 5.5 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | appendix_communication | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 3.3 | OK — build + HTML clean + LEGO/registry consistent |
@@ -37,11 +37,11 @@ Registry migration chapter verification: build HTML → raw HTML scan → LEGO/p
 | vol2 | compute_infrastructure | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 11.9 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | conclusion | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 6.6 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | data_storage | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 8.4 | OK — build + HTML clean + LEGO/registry consistent |
-| vol2 | distributed_training | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 9.3 | OK — build + HTML clean + LEGO/registry consistent |
+| vol2 | distributed_training | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 7.5 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | edge_intelligence | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 17.8 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | fault_tolerance | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 14.4 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | fleet_orchestration | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 9.1 | OK — build + HTML clean + LEGO/registry consistent |
-| vol2 | inference | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 19.8 | OK — build + HTML clean + LEGO/registry consistent |
+| vol2 | inference | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 23.9 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | introduction | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 13.6 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | network_fabrics | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 8.6 | OK — build + HTML clean + LEGO/registry consistent |
 | vol2 | ops_scale | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 11.7 | OK — build + HTML clean + LEGO/registry consistent |

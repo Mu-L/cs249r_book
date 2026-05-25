@@ -1,6 +1,6 @@
 # Chapter PDF audit ledger
 
-Updated: 2026-05-25T01:55:00.761154+00:00
+Updated: 2026-05-25T14:33:44.325659+00:00
 
 Per-chapter PDF build → keep-tex scan (math env balance + error patterns) → pdftotext scan.
 
@@ -41,7 +41,7 @@ Per-chapter PDF build → keep-tex scan (math env balance + error patterns) → 
 | vol2 | edge_intelligence | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 27.6 | 8416 | OK — PDF+TeX clean; display_math=24, inline_math_lines=275 |
 | vol2 | fault_tolerance | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 27.3 | 11383 | OK — PDF+TeX clean; display_math=28, inline_math_lines=180 |
 | vol2 | fleet_orchestration | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 20.9 | 7504 | OK — PDF+TeX clean; display_math=10, inline_math_lines=175 |
-| vol2 | inference | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 36.2 | 9333 | OK — PDF+TeX clean; display_math=75, inline_math_lines=450 |
+| vol2 | inference | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 38.2 | 9333 | OK — PDF+TeX clean; display_math=75, inline_math_lines=450 |
 | vol2 | introduction | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 21.5 | 7231 | OK — PDF+TeX clean; display_math=11, inline_math_lines=145 |
 | vol2 | network_fabrics | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 18.8 | 8066 | OK — PDF+TeX clean; display_math=6, inline_math_lines=214 |
 | vol2 | ops_scale | **pass** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 24.8 | 7980 | OK — PDF+TeX clean; display_math=54, inline_math_lines=334 |

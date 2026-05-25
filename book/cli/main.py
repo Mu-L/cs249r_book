@@ -262,7 +262,8 @@ class MLSysBookCLI:
             console.print("[dim]  ./binder build html --all[/dim]")
             console.print("[dim]  ./binder build epub --vol1[/dim]")
             console.print("[dim]  ./binder build epub --vol1 --skip-hygiene    # bypass pre-render hygiene check[/dim]")
-            console.print("[dim]  ./binder build epub --vol1 --skip-validate   # bypass post-render smoke + epubcheck[/dim]")
+            console.print("[dim]  ./binder build epub --vol1 --skip-validate   # bypass post-render validation[/dim]")
+            console.print("[dim]  ./binder build pdf --vol1                  # runs pdftotext cross-ref scan after render[/dim]")
             return True
 
         self.config_manager.show_symlink_status()
