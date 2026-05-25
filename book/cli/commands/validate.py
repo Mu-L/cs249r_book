@@ -215,6 +215,8 @@ class ValidateCommand:
         notation   — iron-law symbol consistency (BW, R_peak, L_lat, D_vol)
         spelling   — prose + TikZ spell checks (requires aspell)
         epub       — source hygiene, smoke checks, epubcheck (built)
+        pdf        — post-build PDF cross-ref / leak scan (built artifact)
+        registry   — constants → registry migration gates
         sources    — source citation patterns
         references — bibliography vs. academic DBs (hallucinator; slow)
         content    — content tree (shared/, frontmatter/ required)
@@ -396,6 +398,8 @@ class ValidateCommand:
             # Migrated 2026-05-06: was scripts/check_lego_vars.py
             Scope("lego-dead-code", "_run_lego_dead_code",
                   note="LEGO variables defined but never referenced"),
+            Scope("lego-prose-literals", "_run_lego_prose_literals",
+                  note="hardcoded numbers in callout walkthroughs that share {python} refs"),
         ],
         "tables": [
             Scope("grid-tables", "_run_grid_tables",
@@ -469,6 +473,23 @@ class ValidateCommand:
             # Full W3C epubcheck validation. Requires epubcheck + JRE,
             # slow (~30s per volume). CI-only.
             Scope("epubcheck", "_run_epubcheck", default=False),
+        ],
+        "pdf": [
+            # Scans _build/pdf-vol*/ artifact via pdftotext. Requires
+            # --vol1 or --vol2 (or run both explicitly).
+            Scope("verify", "_run_pdf_verify"),
+        ],
+        "registry": [
+            Scope("sources", "_run_registry_sources",
+                  note="QMD LEGO cells: banned legacy constant/registry imports"),
+            Scope("tests", "_run_registry_tests",
+                  note="mlsysim pytest registry gate tests"),
+            Scope("appendix", "_run_registry_appendix",
+                  note="appendix LEGO cells exec against live registry"),
+            Scope("anchors", "_run_registry_anchors",
+                  note="paper anchor validation"),
+            Scope("yaml-pending", "_run_registry_yaml_pending",
+                  note="audit YAML should_change=true count must be zero"),
         ],
         "sources": [
             Scope("citations", "_run_sources"),
@@ -587,6 +608,10 @@ class ValidateCommand:
             "--update-baseline",
             action="store_true",
             help="epub --scope epubcheck: rewrite --baseline file with current counts (requires --baseline)",
+        )
+        parser.add_argument(
+            "--log", dest="pdf_log", type=str, default=None,
+            help="pdf --scope verify: optional Quarto render log to scan for crossref warnings",
         )
 
         try:
@@ -720,6 +745,8 @@ class ValidateCommand:
                 ))
             elif method_name == "_run_epub_hygiene":
                 results.append(method(root, fix=getattr(ns, 'fix', False)))
+            elif method_name == "_run_pdf_verify":
+                results.append(method(root, vol1=ns.vol1, vol2=ns.vol2, log_path=getattr(ns, 'pdf_log', None)))
             else:
                 results.append(method(root))
         return results
@@ -753,6 +780,8 @@ class ValidateCommand:
             "units": "Physics engine unit conversion tests",
             "spelling": "Prose and TikZ spell checking (requires aspell)",
             "epub": "EPUB hygiene (source), epubcheck (built), structure (legacy)",
+            "pdf": "Built PDF cross-ref / LaTeX undefined-ref / traceback scan",
+            "registry": "Constants → registry migration gates (sources, tests, appendix)",
             "sources": "Source citation analysis and validation",
             "references": "Bibliography vs academic DBs (hallucinator)",
             "content": "Content tree (shared/, frontmatter/ required)",
@@ -6463,6 +6492,154 @@ class ValidateCommand:
         )
 
     # ------------------------------------------------------------------
+    # PDF: built-artifact verification (pdftotext cross-ref scan)
+    # ------------------------------------------------------------------
+
+    def _run_pdf_verify(
+        self,
+        root: Path,
+        *,
+        vol1: bool = False,
+        vol2: bool = False,
+        log_path: Optional[str] = None,
+    ) -> ValidationRunResult:
+        from cli.commands._pdf_checks import format_checklist, verify_volume_pdf
+
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        quarto_dir = repo_root / "book" / "quarto"
+        log = Path(log_path) if log_path else None
+
+        volumes: List[str] = []
+        if vol1:
+            volumes.append("vol1")
+        if vol2:
+            volumes.append("vol2")
+        if not volumes:
+            volumes = ["vol1", "vol2"]
+
+        issues: List[ValidationIssue] = []
+        checked = 0
+        for vol in volumes:
+            result = verify_volume_pdf(quarto_dir, vol, log_path=log)
+            checked += 1
+            if not result.ok:
+                for issue in result.issues:
+                    issues.append(ValidationIssue(
+                        file=str(result.pdf_path.relative_to(repo_root)),
+                        line=0,
+                        code=issue.code,
+                        message=issue.message,
+                        severity="error",
+                        context=f"count={issue.count}" if issue.count > 1 else "",
+                    ))
+                # Surface checklist summary as context for the first failure
+                if issues:
+                    issues[-1].context = format_checklist(result)[:300]
+
+        return ValidationRunResult(
+            name="pdf-verify",
+            description=f"Built PDF verification ({', '.join(volumes)})",
+            files_checked=checked,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Registry: constants → registry migration gates
+    # ------------------------------------------------------------------
+
+    def _run_registry_sources(self, root: Path) -> ValidationRunResult:
+        from cli.commands._registry_checks import check_registry_sources, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_registry_sources(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="registry-sources",
+            description=f"QMD registry source scan ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_registry_tests(self, root: Path) -> ValidationRunResult:
+        from cli.commands._registry_checks import run_registry_pytest, repo_root_from_here
+
+        t0 = time.time()
+        raw = run_registry_pytest(repo_root_from_here())
+        issues = [
+            ValidationIssue(file=i.file, line=i.line, code=i.code, message=i.message, severity=i.severity)
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="registry-tests",
+            description="mlsysim registry pytest gates",
+            files_checked=4,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_registry_appendix(self, root: Path) -> ValidationRunResult:
+        from cli.commands._registry_checks import verify_appendix_lego, repo_root_from_here
+
+        t0 = time.time()
+        raw = verify_appendix_lego(repo_root_from_here())
+        issues = [
+            ValidationIssue(file=i.file, line=i.line, code=i.code, message=i.message, severity=i.severity)
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="registry-appendix",
+            description="Appendix LEGO verify against live registry",
+            files_checked=0,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_registry_anchors(self, root: Path) -> ValidationRunResult:
+        from cli.commands._registry_checks import verify_paper_anchors, repo_root_from_here
+
+        t0 = time.time()
+        raw = verify_paper_anchors(repo_root_from_here())
+        issues = [
+            ValidationIssue(file=i.file, line=i.line, code=i.code, message=i.message, severity=i.severity)
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="registry-anchors",
+            description="Paper anchor validation",
+            files_checked=0,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_registry_yaml_pending(self, root: Path) -> ValidationRunResult:
+        from cli.commands._registry_checks import check_yaml_pending, repo_root_from_here
+
+        t0 = time.time()
+        raw = check_yaml_pending(repo_root_from_here())
+        issues = [
+            ValidationIssue(file=i.file, line=i.line, code=i.code, message=i.message, severity=i.severity)
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="registry-yaml-pending",
+            description="Audit YAML should_change=true count",
+            files_checked=0,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    # ------------------------------------------------------------------
     # Content tree: require shared/ and frontmatter/ (not only vol1/vol2)
     # ------------------------------------------------------------------
 
@@ -7727,37 +7904,70 @@ class ValidateCommand:
     # ------------------------------------------------------------------
 
     def _run_index_anti_patterns(self, root: Path) -> ValidationRunResult:
-        """index --scope anti-patterns: \\index{} anti-patterns from §9.
+        """index --scope anti-patterns: \\index{} anti-patterns from §9."""
+        from cli.commands._index_checks import check_anti_patterns
 
-        Wraps book/tools/audit/index/check_anti_patterns.py.
-        """
-        script = (
-            Path(__file__).resolve().parent.parent.parent
-            / "tools" / "audit" / "index" / "check_anti_patterns.py"
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        raw = check_anti_patterns(repo_root / "book")
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="index-anti-patterns",
+            description="\\index{} anti-patterns (corpus-level)",
+            files_checked=len(list((repo_root / "book" / "quarto" / "contents").rglob("*.qmd"))),
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
         )
-        return self._delegate_script(script, [], "index-anti-patterns")
 
     def _run_index_tag_placement(self, root: Path) -> ValidationRunResult:
-        """index --scope tag-placement: \\index{} not inside bold/italic/code/heading.
+        """index --scope tag-placement: \\index{} not inside bold/italic/code/heading."""
+        from cli.commands._index_checks import check_tag_placement
 
-        Wraps book/tools/audit/index/check_tag_placement.py.
-        """
-        script = (
-            Path(__file__).resolve().parent.parent.parent
-            / "tools" / "audit" / "index" / "check_tag_placement.py"
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        raw = check_tag_placement(repo_root / "book")
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="index-tag-placement",
+            description="\\index{} forbidden placement (bold/code/headings)",
+            files_checked=len(list((repo_root / "book" / "quarto" / "contents").rglob("*.qmd"))),
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
         )
-        return self._delegate_script(script, [], "index-tag-placement")
 
     def _run_index_xref_resolves(self, root: Path) -> ValidationRunResult:
-        """index --scope xref-resolves: every |see / |seealso resolves.
+        """index --scope xref-resolves: every |see / |seealso resolves."""
+        from cli.commands._index_checks import check_xref_resolves
 
-        Wraps book/tools/audit/index/check_xref_resolves.py.
-        """
-        script = (
-            Path(__file__).resolve().parent.parent.parent
-            / "tools" / "audit" / "index" / "check_xref_resolves.py"
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        raw = check_xref_resolves(repo_root / "book")
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        return ValidationRunResult(
+            name="index-xref-resolves",
+            description="\\index{} see/seealso target resolution",
+            files_checked=len(list((repo_root / "book" / "quarto" / "contents").rglob("*.qmd"))),
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
         )
-        return self._delegate_script(script, [], "index-xref-resolves")
 
     def _run_index_placement_contexts(self, root: Path) -> ValidationRunResult:
         """index --scope forbidden-contexts: \\index{} in code / math / attribute strings.
@@ -7791,3 +8001,26 @@ class ValidateCommand:
             / "scripts" / "check_lego_vars.py"
         )
         return self._delegate_script(script, [], "lego-dead-code")
+
+    def _run_lego_prose_literals(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-prose-literals: walkthrough prose must not hardcode computed operands."""
+        from cli.commands._registry_checks import check_lego_prose_literals, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_prose_literals(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-prose-literals",
+            description=f"LEGO walkthrough prose literal scan ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )

@@ -3743,6 +3743,7 @@ from mlsysim.core.constants import *
 # └─────────────────────────────────────────────────────────────────────────────
 
 from mlsysim.fmt import fmt_int,  MarkdownStr
+from mlsysim.core.constants import THOUSAND, MILLION
 class MobileServingCalc:
     """Mobile vision pipeline: JPEG decode dominates energy; NPU handles inference at 82% utilization."""
 
@@ -3765,6 +3766,9 @@ class MobileServingCalc:
     m_total_mj_value = (
         m_cam_mj_value + m_jpeg_mj_value + m_resize_mj_value + m_npu_mj_value + m_ui_mj_value
     )
+    battery_wh = 10
+    sustained_mw = m_total_mj_value / m_total_ms_value
+    inferences_per_battery_m = (battery_wh * 3600 * THOUSAND) / m_total_mj_value / MILLION
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     m_cam_ms_str = fmt(m_cam_ms_value, precision=0, commas=False, suffix=" ms")
@@ -3779,6 +3783,9 @@ class MobileServingCalc:
     m_npu_mj_str = fmt(m_npu_mj_value, precision=1, commas=False, suffix=" mJ")
     m_ui_mj_str = fmt(m_ui_mj_value, precision=1, commas=False, suffix=" mJ")
     m_total_mj_str = fmt_int(round(m_total_mj_value), commas=False, suffix=" mJ")
+    battery_wh_str = fmt(battery_wh, precision=0, commas=False)
+    sustained_mw_str = fmt(sustained_mw, precision=0, commas=False)
+    inferences_per_battery_m_str = fmt(inferences_per_battery_m, precision=0, commas=False)
 ```
 
 ::: {#nbk-model-serving-resnet-50-mobile-serving .callout-notebook title="ResNet-50: Mobile serving"}
@@ -3807,8 +3814,8 @@ class MobileServingCalc:
 
 **Key metrics for ML node serving**:
 
-- **Energy per inference**: `{python} MobileServingCalc.m_total_mj_str` enables ~12 million inferences per 10 Wh battery (typical smartphone)
-- **Thermal budget**: At `{python} MobileServingCalc.m_total_mj_str`/45 ms = 67 mW sustained, indefinite operation without throttling
+- **Energy per inference**: `{python} MobileServingCalc.m_total_mj_str` enables ~`{python} MobileServingCalc.inferences_per_battery_m_str` million inferences per `{python} MobileServingCalc.battery_wh_str` Wh battery (typical smartphone)
+- **Thermal budget**: At `{python} MobileServingCalc.m_total_mj_str` / `{python} MobileServingCalc.m_total_ms_str` = **`{python} MobileServingCalc.sustained_mw_str` mW** sustained, indefinite operation without throttling
 - **NPU vs. CPU trade-off**: CPU fallback replaces the 12 ms, 0.8 mJ NPU inference stage with a 45 ms, 4.2 mJ CPU stage; the full pipeline would rise from 45 ms and `{python} MobileServingCalc.m_total_mj_str` to about 78 ms and 6.4 mJ before additional system overhead.
 - **Memory footprint**: 150 MB peak (model + activations), competing with app memory
 
@@ -4700,9 +4707,12 @@ from mlsysim.core.constants import *
 # │ How: Retrieve constants from Hardware Digital Twins.
 # │
 # │ Imports: mlsysim (Hardware), mlsysim.constants (GiB, TB, second)
-# │ Exports: LlmCaseStudyHwSpecs.h100_mem_str, LlmCaseStudyHwSpecs.a100_bw_tbs_str
+# │ Exports: LlmCaseStudyHwSpecs.h100_mem_str, LlmCaseStudyHwSpecs.a100_bw_tbs_str,
+# │          LlmCaseStudyHwSpecs.case_study_model_weight_gb_str,
+# │          LlmCaseStudyHwSpecs.a100_token_ms_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim import Hardware
+from mlsysim import Hardware, Models
+from mlsysim.core.solver import ServingModel
 from mlsysim.fmt import fmt
 
 class LlmCaseStudyHwSpecs:
@@ -4711,14 +4721,30 @@ class LlmCaseStudyHwSpecs:
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     h_a100 = Hardware.Cloud.A100
     h_h100 = Hardware.Cloud.H100
+    m = Models.Language.Llama3_8B
+    prompt_tokens = 1000
+    decode_tokens = 256
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     a100_bw_tbs_value = h_a100.memory_bw.m_as(TB/second)
+    a100_bw_gbs_value = h_a100.memory_bw.m_as(GB/second)
     h100_mem_value = h_h100.memory_capacity.m_as(GiB)
+    _serving = ServingModel().solve(
+        m, h_a100,
+        seq_len=prompt_tokens + decode_tokens,
+        batch_size=1,
+        precision="int4",
+        efficiency=1.0,
+    )
+    case_study_model_weight_gb = _serving.total_memory_required.m_as(GB)
+    a100_token_ms_value = case_study_model_weight_gb / a100_bw_gbs_value * 1000
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
+    a100_mem_str = fmt(h_a100.memory_capacity.m_as(GiB), precision=0, commas=False)
     a100_bw_tbs_str = fmt(a100_bw_tbs_value, precision=2, commas=False)    # e.g. "2.04" TB/s
     h100_mem_str = fmt(h100_mem_value, precision=0, commas=False)          # e.g. "80" GB
+    case_study_model_weight_gb_str = fmt(case_study_model_weight_gb, precision=1, commas=False)
+    a100_token_ms_str = fmt(a100_token_ms_value, precision=1, commas=False)
 ```
 
 ```{python}
@@ -4781,7 +4807,7 @@ Recall the energy-movement invariant\index{Energy-Movement Invariant!decode phas
 $$ T_{\text{token}} \approx \frac{D_{\text{vol}}}{\text{BW}_{\text{memory}}} $$ {#eq-token-generation-time}
 
 **The engineering implication**:
-Every token generation pays a massive "energy tax" to move the model's logic from HBM into compute registers. For comparison, on an A100 80 GB (`{python} LlmCaseStudyHwSpecs.a100_bw_tbs_str` TB/s HBM2e), an 8-billion-parameter Llama 3 model (3.5 GB INT4) generates tokens at $\approx 1.7$ ms/token. Adding more *compute cores* yields **zero** latency improvement; only *faster memory* (Physics) or *smaller models* (Algorithm) can speed up generation.
+Every token generation pays a massive "energy tax" to move the model's logic from HBM into compute registers. For comparison, on an A100 `{python} LlmCaseStudyHwSpecs.a100_mem_str` GB (`{python} LlmCaseStudyHwSpecs.a100_bw_tbs_str` TB/s HBM2e), an 8-billion-parameter Llama 3 model (`{python} LlmCaseStudyHwSpecs.case_study_model_weight_gb_str` GB INT4) generates tokens at $\approx$ `{python} LlmCaseStudyHwSpecs.a100_token_ms_str` ms/token. Adding more *compute cores* yields **zero** latency improvement; only *faster memory* (Physics) or *smaller models* (Algorithm) can speed up generation.
 
 :::
 
@@ -4867,7 +4893,8 @@ class LlmServingCalc:
     decode_req_capacity_value = concurrent_batch_value / req_time_s_value
 
     serving_req_per_s_value = min(prefill_req_per_s_value, decode_req_capacity_value)
-    tokens_per_hour_value = serving_req_per_s_value * 3600 * total_tokens
+    sec_per_hr = int(SEC_PER_HOUR)
+    tokens_per_hour_value = serving_req_per_s_value * sec_per_hr * total_tokens
 
     hourly_cost_value = 3.00
     cost_per_m_tokens_value = hourly_cost_value / (tokens_per_hour_value / 1e6)
@@ -4886,6 +4913,8 @@ class LlmServingCalc:
     tokens_per_req_str = fmt(total_tokens, precision=0)
     concurrent_batch_str = fmt(concurrent_batch_value, precision=0, commas=False)
     req_time_s_str = fmt(req_time_s_value, precision=2, commas=False)
+    prompt_tokens_str = fmt(prompt_tokens_value, precision=0, commas=True)
+    sec_per_hr_str = fmt_int(sec_per_hr, commas=True)
     prefill_tokens_per_s_str = fmt(prefill_tokens_per_s_value, precision=0)
     prefill_req_per_s_str = fmt(prefill_req_per_s_value, precision=0, commas=False)
     decode_req_capacity_str = fmt_int(round(decode_req_capacity_value), commas=False)
@@ -4912,7 +4941,7 @@ With 4-bit weights occupying `{python} LlmServingCalc.model_weight_gb_str` GB, t
 
 For an H100 SXM5 instance at approximately USD `{python} LlmServingCalc.hourly_cost_str` per hour (specialized cloud providers; major hyperscaler on-demand rates were in the USD 2--13 per hour range in 2026):
 
-*   Prefill-limited admissions: `{python} LlmServingCalc.prefill_tokens_per_s_str` prompt tokens/s divided by 1,000 prompt tokens/req = `{python} LlmServingCalc.prefill_req_per_s_str` requests/s. This is below the KV-residency limit of `{python} LlmServingCalc.concurrent_batch_str` batch / `{python} LlmServingCalc.req_time_s_str` s/req ≈ `{python} LlmServingCalc.decode_req_capacity_str` requests/s, so full-request throughput is `{python} LlmServingCalc.prefill_req_per_s_str` req/s $\times$ 3,600 s/hr $\times$ `{python} LlmServingCalc.tokens_per_req_str` tokens/req ≈ `{python} LlmServingCalc.tokens_per_hour_m_str` million tokens/hour.
+*   Prefill-limited admissions: `{python} LlmServingCalc.prefill_tokens_per_s_str` prompt tokens/s divided by `{python} LlmServingCalc.prompt_tokens_str` prompt tokens/req = `{python} LlmServingCalc.prefill_req_per_s_str` requests/s. This is below the KV-residency limit of `{python} LlmServingCalc.concurrent_batch_str` batch / `{python} LlmServingCalc.req_time_s_str` s/req ≈ `{python} LlmServingCalc.decode_req_capacity_str` requests/s, so full-request throughput is `{python} LlmServingCalc.prefill_req_per_s_str` req/s $\times$ `{python} LlmServingCalc.sec_per_hr_str` s/hr $\times$ `{python} LlmServingCalc.tokens_per_req_str` tokens/req ≈ `{python} LlmServingCalc.tokens_per_hour_m_str` million tokens/hour.
 *   **Cost per million tokens**: USD `{python} LlmServingCalc.hourly_cost_str` / `{python} LlmServingCalc.tokens_per_hour_m_str` ≈ **USD `{python} LlmServingCalc.cost_per_m_tokens_str`**.
 
 This analysis highlights that for LLMs, memory capacity\index{Memory!capacity, LLM throughput}\index{KV Cache!memory capacity} (the size of the KV cache) determines the maximum concurrent residency, while prefill compute and decode bandwidth determine realized token throughput and cost under a specific traffic mix. Memory bandwidth\index{Memory Bandwidth!LLM latency}\index{HBM!memory bandwidth} remains the primary determinant of decode latency.

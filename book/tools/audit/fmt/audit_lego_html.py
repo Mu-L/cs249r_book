@@ -31,6 +31,10 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise SystemExit("audit_lego_html.py requires beautifulsoup4") from exc
 
+from cell_exec import exec_cell_code, make_exec_namespace, setup_headless_matplotlib
+
+setup_headless_matplotlib()
+
 CELL_START = re.compile(r"^```\{python\}")
 CELL_END = re.compile(r"^```\s*$")
 INLINE = re.compile(r"`\{python\}\s+([A-Za-z_][\w.]*)`")
@@ -72,7 +76,7 @@ def _chapter_paths(root: Path) -> list[tuple[str, str, Path, Path]]:
 
 def _exec_cells(qmd: Path) -> tuple[dict, set[str], str | None]:
     lines = qmd.read_text(encoding="utf-8").splitlines()
-    ns: dict = {"__builtins__": __builtins__}
+    ns = make_exec_namespace()
     lego: set[str] = set()
     in_cell = False
     buf: list[str] = []
@@ -88,7 +92,7 @@ def _exec_cells(qmd: Path) -> tuple[dict, set[str], str | None]:
             m = CLASS.search(code)
             cls = m.group(1) if m else None
             try:
-                exec(compile(code, "<string>", "exec"), ns)  # noqa: S102
+                exec_cell_code(code, ns)
             except Exception as exc:
                 return ns, lego, str(exc)
             if cls and is_lego:
@@ -104,7 +108,7 @@ def _resolve(ref: str, ns: dict) -> tuple[str, str]:
     obj = ns[parts[0]]
     for part in parts[1:]:
         obj = getattr(obj, part)
-    kind = "math" if ref.endswith(("_math", "_eq", "_frac")) else "plain"
+    kind = "math" if ref.endswith(("_math", "_eq", "_frac", "_eqn_str")) else "plain"
     return str(obj), kind
 
 

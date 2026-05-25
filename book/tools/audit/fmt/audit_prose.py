@@ -33,10 +33,13 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cell_exec import exec_cell_code, make_exec_namespace, setup_headless_matplotlib
 from spurious_zero import SPURIOUS_ZERO, is_spurious_zero_false_positive
 
 CELL_START = re.compile(r"^```\{python\}")
 CELL_END = re.compile(r"^```\s*$")
+setup_headless_matplotlib()
+
 INLINE_PY = re.compile(r"`\{python\}\s+([A-Za-z_][\w.]*)`")
 
 
@@ -50,7 +53,7 @@ class ProsePreview:
 
 def _exec_python_cells(lines: list[str]) -> dict:
     """Exec all Quarto python cells in document order (shared namespace)."""
-    ns: dict = {}
+    ns = make_exec_namespace()
     in_cell = False
     buf: list[str] = []
     for line in lines:
@@ -62,7 +65,7 @@ def _exec_python_cells(lines: list[str]) -> dict:
             in_cell = False
             code = "\n".join(buf)
             try:
-                exec(code, ns)  # noqa: S102 — intentional chapter eval
+                exec_cell_code(code, ns)
             except Exception as exc:
                 ns["_last_exec_error"] = exc
                 raise RuntimeError(

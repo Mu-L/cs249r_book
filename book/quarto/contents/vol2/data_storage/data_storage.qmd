@@ -838,6 +838,9 @@ class NVMeTierCalcs:
 
     # ┌── 4. OUTPUT ───────────────────────────────────────
     raw_bw_str             = fmt(raw_bw_val, precision=0, commas=False)
+    images_per_sec_str     = fmt(images_per_sec, precision=0, commas=False)
+    img_size_kb_str        = fmt(img_size / THOUSAND, precision=0, commas=False)
+    hdd_iops_str           = fmt(hdd_iops, precision=0, commas=False)
     hdd_slowdown_factor_str = fmt(hdd_slowdown_val, precision=0, commas=False)
     hdd_util_ceiling_pct_str = fmt(hdd_util_ceiling_pct_val, precision=0, commas=False)
     ckpt_nvme_s_str        = fmt(ckpt_nvme_s_val, precision=1, commas=False)
@@ -916,8 +919,8 @@ A standard ImageNet training pipeline makes the cost of the wrong format visible
 
 **Math**:
 
-1.  **Raw Bandwidth**\index{ImageNet!raw bandwidth calculation}: 1,000 images/s$\times$ 150 KB/image = **`{python} NVMeTierCalcs.raw_bw_str` MB/s**.
-2.  **HDD Reality**: A 7200 RPM hard disk drive (HDD) delivers 100 random IOPS\index{HDD!random IOPS bottleneck}. Sustaining 1,000 images/s requires **`{python} NVMeTierCalcs.hdd_slowdown_factor_str`$\times$ more IOPS** than the disk provides.
+1.  **Raw Bandwidth**\index{ImageNet!raw bandwidth calculation}: `{python} NVMeTierCalcs.images_per_sec_str` images/s $\times$ `{python} NVMeTierCalcs.img_size_kb_str` KB/image = **`{python} NVMeTierCalcs.raw_bw_str` MB/s**.
+2.  **HDD Reality**: A 7200 RPM hard disk drive (HDD) delivers `{python} NVMeTierCalcs.hdd_iops_str` random IOPS\index{HDD!random IOPS bottleneck}. Sustaining `{python} NVMeTierCalcs.images_per_sec_str` images/s requires **`{python} NVMeTierCalcs.hdd_slowdown_factor_str`$\times$ more IOPS** than the disk provides.
 3.  **Result**: Shuffling individual files on an HDD will starve the GPU, capping utilization at about `{python} NVMeTierCalcs.hdd_util_ceiling_pct_str` percent before decode, seek, and file-system overheads.
 
 **Systems insight**: The pipeline must either use NVMe (sub-10 μs random access) or convert the dataset to a sequential format (TFRecord/WebDataset) to achieve sequential throughput.
@@ -1756,6 +1759,9 @@ class GDSLatency:
     gds_trad_cpu_cores_str = fmt_int(gds_trad_cpu_seconds_val, commas=False)
     gds_bypass_cpu_seconds_str = fmt(gds_bypass_cpu_seconds_val, precision=2, commas=False)
     gds_freed_cpu_cores_str = fmt_int(gds_freed_cpu_cores_val, commas=False)
+    image_kb_str = fmt(150, precision=0, commas=False)
+    n_gpus_str = fmt(Systems.Nodes.DGX_H100.accelerators_per_node, precision=0, commas=False)
+    images_per_s_per_gpu_str = fmt(images_per_s_per_gpu, precision=0, commas=True)
 ```
 
 ## GPU Direct Storage and the CPU Bypass {#sec-storage-gds}
@@ -1792,7 +1798,7 @@ As @fig-gds-path illustrates, the throughput improvement from GDS is most pronou
 
 ::: {#nbk-data-storage-cpu-bypass-dividend .callout-notebook title="The CPU bypass dividend"}
 
-**Problem**: A training node with 8 GPUs loads 150 KB images at 8,000 images/second per GPU (`{python} GDSLatency.gds_total_images_per_s_str` images/second total). Compare the CPU load under traditional I/O vs. GDS.
+**Problem**: A training node with `{python} GDSLatency.n_gpus_str` GPUs loads `{python} GDSLatency.image_kb_str` KB images at `{python} GDSLatency.images_per_s_per_gpu_str` images/second per GPU (`{python} GDSLatency.gds_total_images_per_s_str` images/second total). Compare the CPU load under traditional I/O vs. GDS.
 
 **Traditional path**\index{Traditional I/O!data path}: Each image requires a DMA from NVMe to DRAM, a `memcpy` from kernel to user space, and a PCIe transfer to GPU. At `{python} GDSLatency.gds_total_images_per_s_str` images/second with `{python} GDSLatency.gds_trad_us_str` μs of CPU time per image, the CPU spends `{python} GDSLatency.gds_trad_cpu_seconds_str` seconds of CPU time per wall-clock second, consuming roughly `{python} GDSLatency.gds_trad_cpu_cores_str` cores worth of processing just for data movement.
 
@@ -2275,15 +2281,19 @@ class CheckpointStormCalc:
     pfs_copy_s_str = fmt(pfs_copy_s, precision=1, commas=False)
     per_node_pfs_bw_gbs_str = fmt(per_node_pfs_bw_gbs, precision=1, commas=False)
     overhead_pct_str = fmt(overhead_pct, precision=2, commas=False)
+    local_drive_count_str = fmt(local_drive_count, precision=0, commas=False)
+    local_drive_bw_gbs_str = fmt(local_drive_bw_gbs, precision=0, commas=False)
+    nodes_str = fmt(nodes, precision=0, commas=False)
+    pfs_aggregate_bw_tbs_str = fmt(pfs_aggregate_bw_gbs / 1000, precision=0, commas=False)
 ```
 
 ::: {#nbk-data-storage-checkpoint-storm .callout-notebook title="The checkpoint storm"}
 
-**Problem**: A 256-node cluster saves a 175B-parameter checkpoint every 10 minutes. Each checkpoint totals `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. With ZeRO-3, each node saves roughly `{python} CheckpointStormCalc.per_node_shard_gb_str` GB.
+**Problem**: A `{python} CheckpointStormCalc.nodes_str`-node cluster saves a 175B-parameter checkpoint every 10 minutes. Each checkpoint totals `{python} CheckpointStorageContext.ckpt_total_gb_str` GB. With ZeRO-3, each node saves roughly `{python} CheckpointStormCalc.per_node_shard_gb_str` GB.
 
-1. **Per-node write to local NVMe** (4 drives at 7 GB/s each = `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s): `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\div$ `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s $\approx$ `{python} CheckpointStormCalc.local_write_s_str` seconds.
-2. **Async copy to PFS**\index{Checkpointing!async PFS copy}: 256 nodes$\times$ `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\approx$ `{python} CheckpointStormCalc.total_pfs_tb_str` TB total. If the PFS provides 1 TB/s aggregate, the storm completes in roughly `{python} CheckpointStormCalc.pfs_copy_s_str` seconds.
-3. **Per-node PFS bandwidth**\index{Bandwidth!per-node pfs}: If all 256 nodes write simultaneously, each gets $1000/256 =$ `{python} CheckpointStormCalc.per_node_pfs_bw_gbs_str` GB/s. Per-node async copy: `{python} CheckpointStormCalc.per_node_shard_gb_str` GB / `{python} CheckpointStormCalc.per_node_pfs_bw_gbs_str` GB/s $\approx$ `{python} CheckpointStormCalc.pfs_copy_s_str` seconds.
+1. **Per-node write to local NVMe** (`{python} CheckpointStormCalc.local_drive_count_str` drives at `{python} CheckpointStormCalc.local_drive_bw_gbs_str` GB/s each = `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s): `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\div$ `{python} CheckpointStormCalc.local_bw_gbs_str` GB/s $\approx$ `{python} CheckpointStormCalc.local_write_s_str` seconds.
+2. **Async copy to PFS**\index{Checkpointing!async PFS copy}: `{python} CheckpointStormCalc.nodes_str` nodes$\times$ `{python} CheckpointStormCalc.per_node_shard_gb_str` GB $\approx$ `{python} CheckpointStormCalc.total_pfs_tb_str` TB total. If the PFS provides `{python} CheckpointStormCalc.pfs_aggregate_bw_tbs_str` TB/s aggregate, the storm completes in roughly `{python} CheckpointStormCalc.pfs_copy_s_str` seconds.
+3. **Per-node PFS bandwidth**\index{Bandwidth!per-node pfs}: If all `{python} CheckpointStormCalc.nodes_str` nodes write simultaneously, each gets $1000/`{python} CheckpointStormCalc.nodes_str` = `{python} CheckpointStormCalc.per_node_pfs_bw_gbs_str` GB/s.
 4. **Training pause**\index{Checkpointing!training pause}: only about `{python} CheckpointStormCalc.local_write_s_str` seconds (the local NVMe write). The PFS copy overlaps with the next training iteration.
 5. **Overhead**\index{Checkpointing!overhead}: `{python} CheckpointStormCalc.local_write_s_str` s pause every 600 s $\approx$ **`{python} CheckpointStormCalc.overhead_pct_str` percent** training time lost to checkpointing.
 
@@ -2438,6 +2448,12 @@ class StorageFootprintTable:
     tokenized_text_tb_str = fmt(tokenized_text_tb_val, precision=0, commas=False)
     ckpt_fleet_total_pb_str = fmt(ckpt_fleet_total_pb_val, precision=1)
     archive_lineage_tb_str = fmt(archive_lineage_tb_val, precision=1, commas=False)
+    epochs_str = fmt(1, precision=0, commas=False)
+    ckpt_io_dominance_factor_str = fmt(
+        int((ckpt_fleet_total_pb_val * 1000) / tokenized_text_tb_val),
+        precision=0,
+        commas=True,
+    )
 ```
 
 ::: {#nbk-data-storage-175b-models-storage-footprint .callout-notebook title="The 175B model's storage footprint"}
@@ -2456,7 +2472,7 @@ class StorageFootprintTable:
 
 : **175B-Parameter Training Storage Footprint**: Volume and primary storage tier for each data category in a 30-day, 256-node training run. {#tbl-data-storage-175b-footprint}
 
-**Total data moved through the hierarchy**\index{Storage!total data movement}: approximately `{python} StorageFootprintTable.ckpt_fleet_total_pb_str` PB of checkpoint data plus `{python} StorageFootprintTable.tokenized_text_tb_str` TB$\times$ epochs of training data reads. For a single-epoch language model training run, checkpoint I/O dominates data loading I/O by a factor of over 1,000.
+**Total data moved through the hierarchy**\index{Storage!total data movement}: approximately `{python} StorageFootprintTable.ckpt_fleet_total_pb_str` PB of checkpoint data plus `{python} StorageFootprintTable.tokenized_text_tb_str` TB$\times$ `{python} StorageFootprintTable.epochs_str` epochs of training data reads. For a single-epoch language model training run, checkpoint I/O dominates data loading I/O by a factor of over `{python} StorageFootprintTable.ckpt_io_dominance_factor_str`.
 
 :::
 

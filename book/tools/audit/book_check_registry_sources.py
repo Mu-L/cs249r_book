@@ -31,6 +31,16 @@ REGISTRY_REEXPORT = re.compile(
 
 FROM_CONSTANTS = re.compile(r"^\s*from\s+mlsysim\.core\.constants\s+import\s+(.+)$", re.M)
 
+# Assignment targets in class bodies or module scope (including *_str / *_val_str).
+ASSIGN_TARGET = re.compile(
+    r"^\s*(?:class\s+\w+.*)?"
+    r"([A-Za-z_][A-Za-z0-9_]*(?:_str|_val_str|_unit_str)?)\s*="
+    r"(?!=)",
+    re.M,
+)
+
+CONSTANTS_SPEC_ACCESS = re.compile(r"\bconstants\.([A-Za-z_][A-Za-z0-9_]*)")
+
 # Legacy flat symbols that must not be imported by name from constants anymore.
 LEGACY_IMPORT_NAMES = frozenset(
     {
@@ -63,9 +73,66 @@ LEGACY_IMPORT_NAMES = frozenset(
             "MCU_RAM_KIB",
             "MOBILE_MEM_GIB",
             "TINY_MEM_KIB",
+            "MOBILE_TDP_W",
         )
     }
 )
+
+# Mirror mlsysim/tests/test_constants_allowlist.py — names belong in registries.
+FORBIDDEN_NAME_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(H100|A100|V100|B200|H200|MI300X|T4|TPU|JETSON|ESP32|DGX)_"),
+    re.compile(r"^NVLINK_"),
+    re.compile(r"^PCIE_GEN\d"),
+    re.compile(r"^INFINIBAND_"),
+    re.compile(r"^(H100|A100|V100|B200|H200|MI300X|T4|TPU).*(FLOPS|TOPS)"),
+    re.compile(r"^(RESNET|BERT|MOBILENET|ALEXNET|YOLO|DLRM|GPT|LLAMA|STABLE_DIFFUSION).*(FLOPS|PARAMS|PARAM)"),
+    re.compile(r"^GPT\d"),
+    re.compile(r"^LLAMA"),
+    re.compile(r"^IMAGENET"),
+    re.compile(r"^MNIST"),
+    re.compile(r"^CIFAR"),
+    re.compile(r"^GPU_MTTF"),
+    re.compile(r"^CLUSTER_"),
+    re.compile(r"^GPUS_PER_HOST"),
+    re.compile(r"^ALLREDUCE_FACTOR"),
+    re.compile(r"^PUE_"),
+    re.compile(r"^WUE_"),
+    re.compile(r"^RACK_POWER_"),
+    re.compile(r"^CARBON_"),
+    re.compile(r"^OVERHEAD_"),
+    re.compile(r"^MFU_"),
+    re.compile(r"^SCALING_EFF_"),
+    re.compile(r"^NIC_MTTF"),
+    re.compile(r"^PSU_MTTF"),
+    re.compile(r"^PCIE_SWITCH_MTTF"),
+    re.compile(r"^CABLE_MTTF"),
+    re.compile(r"^TOR_SWITCH_MTTF"),
+    re.compile(r"^NODE_MTTF"),
+    re.compile(r"^CLOUD_(EGRESS|ELECTRICITY|GPU_)"),
+    re.compile(r"^FLEET_"),
+    re.compile(r"^STORAGE_COST"),
+    re.compile(r"^LABELING_COST"),
+    re.compile(r"^TPU_POD_"),
+)
+
+# Physics-only symbols allowed via constants.* in LEGO cells.
+CONSTANTS_PHYSICS_ALLOWLIST = frozenset(
+    {
+        "THOUSAND", "MILLION", "BILLION", "TRILLION",
+        "HOURS_PER_DAY", "DAYS_PER_YEAR", "HOURS_PER_YEAR", "SECONDS_PER_HOUR",
+        "BYTES_FP16", "BYTES_FP32", "BYTES_FP8", "BYTES_ADAM_STATE", "BYTES_FP32",
+        "GB", "GiB", "TB", "MB", "KB", "KiB", "byte", "second", "watt", "USD",
+        "TFLOPs", "PFLOPs", "Gbps", "Gparam", "Bparam", "param", "count",
+        "ureg", "kilowatt", "NVME_SEQUENTIAL_BW",
+    }
+)
+
+# Hardcoded grid/carbon literals that should use Infrastructure.Grids.*
+HARDCODED_GRID = re.compile(
+    r"(?:grid_ci|carbon_intensity|carbon_kg_per_kwh)\w*\s*=\s*(?:0\.429|0\.4|400\.0|0\.02)\b",
+    re.I,
+)
+
 
 def _parse_imported_names(import_clause: str) -> set[str]:
     names: set[str] = set()
@@ -77,6 +144,21 @@ def _parse_imported_names(import_clause: str) -> set[str]:
             part = part.split(" as ", 1)[0].strip()
         names.add(part)
     return names
+
+
+def _strip_export_suffix(name: str) -> str:
+    for suffix in ("_val_str", "_unit_str", "_str"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _is_legacy_export_name(name: str) -> bool:
+    base = _strip_export_suffix(name)
+    if base in LEGACY_IMPORT_NAMES:
+        return True
+    return any(p.search(base) for p in FORBIDDEN_NAME_PATTERNS)
+
 
 def python_cells(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -92,6 +174,7 @@ def python_cells(path: Path) -> list[str]:
         else:
             i += 1
     return blocks
+
 
 def check_file(path: Path) -> list[str]:
     issues: list[str] = []
@@ -111,7 +194,28 @@ def check_file(path: Path) -> list[str]:
                 issues.append(
                     f"cell {idx}: legacy symbol import from constants: {', '.join(bad)}"
                 )
+        for m in ASSIGN_TARGET.finditer(block):
+            name = m.group(1)
+            if name.startswith("_") or name in {"def", "class", "return", "if", "for"}:
+                continue
+            if _is_legacy_export_name(name):
+                issues.append(
+                    f"cell {idx}: legacy export name {name!r} — use descriptive registry-backed name"
+                )
+        for m in CONSTANTS_SPEC_ACCESS.finditer(block):
+            sym = m.group(1)
+            if sym not in CONSTANTS_PHYSICS_ALLOWLIST and (
+                sym in LEGACY_IMPORT_NAMES or any(p.search(sym) for p in FORBIDDEN_NAME_PATTERNS)
+            ):
+                issues.append(
+                    f"cell {idx}: forbidden constants.{sym} — use registry path"
+                )
+        if HARDCODED_GRID.search(block):
+            issues.append(
+                f"cell {idx}: hardcoded grid carbon intensity — use Infrastructure.Grids.*"
+            )
     return issues
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -139,6 +243,7 @@ def main() -> int:
         return 1
     print(f"OK registry sources ({len(paths)} QMD files checked)")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

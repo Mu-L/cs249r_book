@@ -185,14 +185,16 @@ class GangSchedulingDeadlock:
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(waste_per_hour == 2048, f"Waste ${waste_per_hour} unexpected")
     # ┌── 4. OUTPUT ────────────────────────────────────────
+    partial_gpus = n_total_gpus // n_jobs
     gs_n_gpus_str = fmt(n_total_gpus, precision=0, commas=False)
     gs_n_jobs_str = fmt(n_jobs, precision=0, commas=False)
+    gs_partial_gpus_str = fmt(partial_gpus, precision=0, commas=False)
     gs_waste_m_str = fmt(waste_per_hour, precision=0)
 ```
 
 ::: {#nbk-fleet-orchestration-physics-deadlock .callout-notebook title="The physics of deadlock"}
 
-**Problem**: A `{python} GangSchedulingDeadlock.gs_n_gpus_str`-GPU cluster receives two frontier training jobs from separate teams, each requiring the full cluster. A naive non-gang scheduler allocates 512 GPUs to Team A and 512 to Team B, then waits for more GPUs to become available. What is the steady-state outcome?
+**Problem**: A `{python} GangSchedulingDeadlock.gs_n_gpus_str`-GPU cluster receives two frontier training jobs from separate teams, each requiring the full cluster. A naive non-gang scheduler allocates `{python} GangSchedulingDeadlock.gs_partial_gpus_str` GPUs to Team A and `{python} GangSchedulingDeadlock.gs_partial_gpus_str` to Team B, then waits for more GPUs to become available. What is the steady-state outcome?
 
 **Math**:
 
@@ -1148,6 +1150,15 @@ class ElasticScaling:
     es_s3p2_math = fmt_math(
         rf"(24 - 4 - {rescale_h:.2f}) \times 3.2 \approx {s3_phase2:.1f}"
     )
+    s1_gpus = 128
+    s2_gpus = 512
+    s3_gpus = 256
+    es_s1_gpus_str = fmt(s1_gpus, precision=0, commas=False)
+    es_window_h_str = fmt(window_h, precision=0, commas=False)
+    es_wait_h_str = fmt(wait_h, precision=0, commas=False)
+    es_s2_gpus_str = fmt(s2_gpus, precision=0, commas=False)
+    es_s2_run_h_str = fmt(s2_run_h, precision=0, commas=False)
+    es_s3_gpus_str = fmt(s3_gpus, precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-elastic-scaling-decision .callout-notebook title="The elastic scaling decision"}
@@ -1156,11 +1167,11 @@ Consider a large language model training job with a target batch size that requi
 
 **Assumptions**: Throughput at 128 GPUs is 1 epoch/hour (baseline). Throughput at 256 GPUs is 1.8 epochs/hour (90 percent scaling efficiency). Throughput at 512 GPUs is 3.2 epochs/hour (80 percent scaling efficiency). Re-scaling cost is 10 minutes (`{python} ElasticScaling.es_rescale_str` hours) to checkpoint, re-shard, and restart.
 
-**Strategy 1 -- Immediate start (no scaling)**: The job starts immediately with 128 GPUs and runs for the full 24 hours. Total work: $24 \times 1.0 =$ `{python} ElasticScaling.es_s1_str` epochs.
+**Strategy 1 -- Immediate start (no scaling)**: The job starts immediately with `{python} ElasticScaling.es_s1_gpus_str` GPUs and runs for the full `{python} ElasticScaling.es_window_h_str` hours. Total work: $24 \times 1.0 =$ `{python} ElasticScaling.es_s1_str` epochs.
 
-**Strategy 2 -- Wait for capacity (gang scheduling)**: The job waits in the queue for 4 hours until 512 GPUs become available, then runs for 20 hours. Total work: $20 \times 3.2 =$ `{python} ElasticScaling.es_s2_str` epochs.
+**Strategy 2 -- Wait for capacity (gang scheduling)**: The job waits in the queue for `{python} ElasticScaling.es_wait_h_str` hours until `{python} ElasticScaling.es_s2_gpus_str` GPUs become available, then runs for `{python} ElasticScaling.es_s2_run_h_str` hours. Total work: $20 \times 3.2 =$ `{python} ElasticScaling.es_s2_str` epochs.
 
-**Strategy 3 -- Elastic scaling (step-up)**: The job starts immediately with 256 GPUs. After 4 hours, 256 more GPUs become available. The job pauses, scales up, and resumes. Phase 1: $4 \times 1.8 =$ `{python} ElasticScaling.es_s3p1_str` epochs. Phase 2: `{python} ElasticScaling.es_s3p2_math` epochs. Total work: `{python} ElasticScaling.es_s3p1_str` + `{python} ElasticScaling.es_s3p2_str` = `{python} ElasticScaling.es_s3_str` epochs.
+**Strategy 3 -- Elastic scaling (step-up)**: The job starts immediately with `{python} ElasticScaling.es_s3_gpus_str` GPUs. After `{python} ElasticScaling.es_wait_h_str` hours, `{python} ElasticScaling.es_s3_gpus_str` more GPUs become available. The job pauses, scales up, and resumes. Phase 1: $4 \times 1.8 =$ `{python} ElasticScaling.es_s3p1_str` epochs. Phase 2: `{python} ElasticScaling.es_s3p2_math` epochs. Total work: `{python} ElasticScaling.es_s3p1_str` + `{python} ElasticScaling.es_s3p2_str` = `{python} ElasticScaling.es_s3_str` epochs.
 
 The elastic strategy outperforms waiting by approximately 10 percent and the immediate small-scale run by nearly 3$\times$. However, if the re-scaling cost exceeded 2 hours (due to slow checkpoint transfer or compilation), Strategy 2 would become superior.
 
@@ -1389,7 +1400,7 @@ from mlsysim.core.constants import *
 # │ Imports: mlsysim.fmt (check)
 # │ Exports: spot_* strings for callout
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, MarkdownStr
 
 class SpotTrainingEconomics:
     # ┌── 1. LOAD ──────────────────────────────────────────
@@ -1424,19 +1435,24 @@ class SpotTrainingEconomics:
     savings_str = fmt(savings, precision=1)
     savings_pct_str = fmt(savings_pct, precision=1, commas=False)
     longer_pct_str = fmt(longer_pct, precision=1, commas=False)
+    spot_gpus_str = fmt(gpus, precision=0, commas=False)
+    spot_run_hours_str = fmt(run_hours, precision=0, commas=False)
+    checkpoint_overhead_pct_str = MarkdownStr("5 percent")
+    restart_interruptions_str = fmt(interruptions, precision=0, commas=False)
+    restart_hours_each_str = fmt(restart_hours, precision=1, commas=False)
 ```
 
 ::: {#psp-fleet-orchestration-spot-vs-demand-training .callout-perspective title="Spot vs. on-demand training"}
 
 Consider training a 70B parameter model requiring 512 GPUs for 14 days.
 
-**On-demand**\index{On-Demand Capacity}: 512 GPUs $\times$ 336 hours $\times$ \$2.00/GPU-hour = **\$`{python} SpotTrainingEconomics.on_demand_cost_str`**
+**On-demand**\index{On-Demand Capacity}: `{python} SpotTrainingEconomics.spot_gpus_str` GPUs $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` hours $\times$ \$2.00/GPU-hour = **\$`{python} SpotTrainingEconomics.on_demand_cost_str`**
 
 **Spot** (65 percent discount, 5 percent checkpoint overhead, 1 interruption/day with 30 min restart):
 
-- Base cost: 512 $\times$ 336 $\times$ \$0.70 = \$`{python} SpotTrainingEconomics.spot_base_cost_str`
-- Checkpoint overhead: 5 percent $\times$ 336 hours = `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` extra hours
-- Restart overhead: 14 interruptions $\times$ 0.5 hours = `{python} SpotTrainingEconomics.restart_total_hours_str` hours
+- Base cost: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` $\times$ \$0.70 = \$`{python} SpotTrainingEconomics.spot_base_cost_str`
+- Checkpoint overhead: `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` hours = `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` extra hours
+- Restart overhead: `{python} SpotTrainingEconomics.restart_interruptions_str` interruptions $\times$ `{python} SpotTrainingEconomics.restart_hours_each_str` hours = `{python} SpotTrainingEconomics.restart_total_hours_str` hours
 - Total time: 336 + `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` + `{python} SpotTrainingEconomics.restart_total_hours_str` = `{python} SpotTrainingEconomics.spot_total_hours_str` hours
 - Total cost: 512 $\times$ `{python} SpotTrainingEconomics.spot_total_hours_str` $\times$ \$0.70 = **\$`{python} SpotTrainingEconomics.spot_total_cost_str`**
 
@@ -1678,6 +1694,9 @@ class AutoscalingLag:
     as_violations_str = fmt(slo_violations, precision=0)
     as_pred_trigger_str = fmt(pred_trigger_sec, precision=0)
     as_pred_capacity_str = fmt(pred_capacity, precision=0)
+    as_load_time_str = fmt(load_time_sec, precision=0, commas=False)
+    as_traffic_end_str = fmt(traffic_end, precision=0, commas=False)
+    as_new_replicas_str = fmt(replicas, precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-autoscaling-lag .callout-notebook title="The autoscaling lag"}
@@ -1686,9 +1705,9 @@ Consider a serving fleet with 10 replicas, each capable of 5 queries per second 
 
 **Scenario**: Traffic ramps from 40 QPS to 80 QPS linearly over 60 seconds. Model load time: 3 minutes (180 seconds).
 
-**Reactive scaling**\index{Reactive Scaling}: HPA detects overload at $t =$ `{python} AutoscalingLag.as_detect_str` s (when traffic hits `{python} AutoscalingLag.as_capacity_str` QPS). It requests 10 new replicas. These replicas become ready at $t =$ `{python} AutoscalingLag.as_ready_str` s (`{python} AutoscalingLag.as_detect_str` + 180). From $t =$ `{python} AutoscalingLag.as_detect_str` s to $t =$ `{python} AutoscalingLag.as_ready_str` s, demand exceeds capacity. During the ramp, excess demand grows linearly from 0 to `{python} AutoscalingLag.as_excess_str` QPS; after the ramp reaches 80 QPS, the full `{python} AutoscalingLag.as_excess_str` QPS overload persists until the new replicas are ready. The area above capacity is approximately `{python} AutoscalingLag.as_violations_str` requests, all of which are queued or dropped and violate the SLO.
+**Reactive scaling**\index{Reactive Scaling}: HPA detects overload at $t =$ `{python} AutoscalingLag.as_detect_str` s (when traffic hits `{python} AutoscalingLag.as_capacity_str` QPS). It requests `{python} AutoscalingLag.as_new_replicas_str` new replicas. These replicas become ready at $t =$ `{python} AutoscalingLag.as_ready_str` s (`{python} AutoscalingLag.as_detect_str` + `{python} AutoscalingLag.as_load_time_str`). From $t =$ `{python} AutoscalingLag.as_detect_str` s to $t =$ `{python} AutoscalingLag.as_ready_str` s, demand exceeds capacity. During the ramp, excess demand grows linearly from 0 to `{python} AutoscalingLag.as_excess_str` QPS; after the ramp reaches `{python} AutoscalingLag.as_traffic_end_str` QPS, the full `{python} AutoscalingLag.as_excess_str` QPS overload persists until the new replicas are ready. The area above capacity is approximately `{python} AutoscalingLag.as_violations_str` requests, all of which are queued or dropped and violate the SLO.
 
-**Predictive scaling**: The scaler forecasts the ramp and triggers scale-up at $t =$ `{python} AutoscalingLag.as_pred_trigger_str` s. The 10 new replicas come online at $t = 0$ s, pushing capacity to `{python} AutoscalingLag.as_pred_capacity_str` QPS just as the ramp begins. Zero SLO violations.
+**Predictive scaling**: The scaler forecasts the ramp and triggers scale-up at $t =$ `{python} AutoscalingLag.as_pred_trigger_str` s. The `{python} AutoscalingLag.as_new_replicas_str` new replicas come online at $t = 0$ s, pushing capacity to `{python} AutoscalingLag.as_pred_capacity_str` QPS just as the ramp begins. Zero SLO violations.
 
 :::
 
@@ -1782,15 +1801,22 @@ class GpuSharingRoi:
     gs_saved_gpus_str = fmt(saved_gpus, precision=0)
     gs_saved_pct_str = fmt(saved_pct, precision=1)
     gs_annual_str = fmt(annual_savings, precision=0)
+    gs_n_small_str = fmt(n_small, precision=0, commas=False)
+    gs_a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False)
+    gs_small_footprint_str = fmt(small_footprint_gb, precision=0, commas=False)
+    gs_models_per_gpu_str = fmt(models_per_gpu_shared, precision=0, commas=False)
+    gs_n_large_str = fmt(n_large, precision=0, commas=False)
+    gs_gpus_per_large_str = fmt(gpus_per_large, precision=0, commas=False)
+    gs_excl_used_mem_str = fmt(excl_used_mem_gb, precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-gpu-sharing-roi .callout-notebook title="GPU sharing ROI"}
 
 Consider a fleet serving 100 distinct 7B models (26 GB footprint each) and 10 distinct 175B models (350 GB footprint each). <!-- lego-ok: model counts, footprints, and GPU specs are input assumptions -->
 
-**Strategy A -- Exclusive access (one model per GPU)**: The 7B models require 100 A100 GPUs (80 GB each), achieving only `{python} GpuSharingRoi.gs_excl_util_str` percent memory utilization ($100 \times 26$ GB used out of `{python} GpuSharingRoi.gs_excl_total_mem_str` GB total). The 175B models require `{python} GpuSharingRoi.gs_excl_large_str` GPUs (10 models $\times$ 8 GPUs each for tensor parallelism). Total fleet: `{python} GpuSharingRoi.gs_excl_total_str` GPUs.
+**Strategy A -- Exclusive access (one model per GPU)**: The 7B models require `{python} GpuSharingRoi.gs_n_small_str` A100 GPUs (`{python} GpuSharingRoi.gs_a100_mem_str` GB each), achieving only `{python} GpuSharingRoi.gs_excl_util_str` percent memory utilization (`{python} GpuSharingRoi.gs_n_small_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` GB used out of `{python} GpuSharingRoi.gs_excl_total_mem_str` GB total). The 175B models require `{python} GpuSharingRoi.gs_excl_large_str` GPUs (`{python} GpuSharingRoi.gs_n_large_str` models $\times$ `{python} GpuSharingRoi.gs_gpus_per_large_str` GPUs each for tensor parallelism). Total fleet: `{python} GpuSharingRoi.gs_excl_total_str` GPUs.
 
-**Strategy B -- Mixed sharing (MPS for small, exclusive for large)**: Pack 2 models per A100 for the 7B models ($2 \times 26$ = `{python} GpuSharingRoi.gs_shared_mem_str` GB, well within 80 GB), requiring only `{python} GpuSharingRoi.gs_shared_gpus_str` GPUs at `{python} GpuSharingRoi.gs_shared_util_str` percent memory utilization. The 175B models remain unchanged at `{python} GpuSharingRoi.gs_excl_large_str` GPUs. Total fleet: `{python} GpuSharingRoi.gs_shared_total_str` GPUs.
+**Strategy B -- Mixed sharing (MPS for small, exclusive for large)**: Pack `{python} GpuSharingRoi.gs_models_per_gpu_str` models per A100 for the 7B models (`{python} GpuSharingRoi.gs_models_per_gpu_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` = `{python} GpuSharingRoi.gs_shared_mem_str` GB, well within `{python} GpuSharingRoi.gs_a100_mem_str` GB), requiring only `{python} GpuSharingRoi.gs_shared_gpus_str` GPUs at `{python} GpuSharingRoi.gs_shared_util_str` percent memory utilization. The 175B models remain unchanged at `{python} GpuSharingRoi.gs_excl_large_str` GPUs. Total fleet: `{python} GpuSharingRoi.gs_shared_total_str` GPUs.
 
 Sharing reduces the fleet size by `{python} GpuSharingRoi.gs_saved_pct_str` percent (`{python} GpuSharingRoi.gs_saved_gpus_str` fewer GPUs). At \$2 per GPU-hour, this saves approximately \$`{python} GpuSharingRoi.gs_annual_str` annually in compute costs, purely through scheduling policy.
 
@@ -1859,13 +1885,16 @@ class DiurnalGpuShift:
     ds_dynamic_util_str = fmt(dynamic_util_pct, precision=0)
     ds_reclaimed_str = fmt(reclaimed, precision=0)
     ds_annual_str = fmt(annual_value / MILLION, precision=1, commas=False)
+    ds_serving_peak_str = fmt(serving_peak, precision=0, commas=False)
+    ds_serving_avg_str = fmt(serving_avg, precision=0, commas=False)
+    ds_training_fixed_str = fmt(training_fixed, precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-diurnal-gpu-shift .callout-notebook title="The diurnal GPU shift"}
 
 Consider a fleet of 1,000 GPUs managed under two regimes: <!-- lego-ok: fleet size, serving/training splits are input assumptions -->
 
-**Scenario A -- Static Partitioning**: The serving pool reserves 400 GPUs to handle peak demand, but average usage is only 150 GPUs (37.5 percent utilization). The training pool reserves 600 GPUs, and backlog ensures 100 percent utilization. Result: $150 + 600 =$ `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: **`{python} DiurnalGpuShift.ds_static_util_str` percent**.
+**Scenario A -- Static Partitioning**: The serving pool reserves `{python} DiurnalGpuShift.ds_serving_peak_str` GPUs to handle peak demand, but average usage is only `{python} DiurnalGpuShift.ds_serving_avg_str` GPUs (37.5 percent utilization). The training pool reserves `{python} DiurnalGpuShift.ds_training_fixed_str` GPUs, and backlog ensures 100 percent utilization. Result: `{python} DiurnalGpuShift.ds_serving_avg_str` + `{python} DiurnalGpuShift.ds_training_fixed_str` = `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: **`{python} DiurnalGpuShift.ds_static_util_str` percent**.
 
 **Scenario B -- Dynamic Sharing**: Serving claims GPUs strictly as needed (average 150). Training reclaims unused serving GPUs (average 250), minus a 120-GPU safety buffer. The orchestrator shifts approximately `{python} DiurnalGpuShift.ds_reclaimed_str` GPUs between roles twice daily based on diurnal forecasts. Result: serving (150) + training (600 + `{python} DiurnalGpuShift.ds_reclaimed_str`) = `{python} DiurnalGpuShift.ds_dynamic_active_str` active GPUs (the second training term is reclaimed serving capacity). Fleet utilization: **`{python} DiurnalGpuShift.ds_dynamic_util_str` percent**.
 
@@ -2227,6 +2256,8 @@ class DebugValueCalc:
     debug_productive_gain_str = fmt_int(debug_productive_gain, commas=False)
     debug_recovered_str = fmt_int(debug_recovered, commas=False)
     debug_annual_str    = fmt_int(round(debug_annual / MILLION), commas=False)
+    debug_util_before_str = fmt(debug_util_before, precision=2, commas=False)
+    debug_util_after_str = fmt(debug_util_after, precision=2, commas=False)
 ```
 
 ::: {#exmp-fleet-orchestration-debugging-low-gpu-utilization .callout-example title="Debugging low GPU utilization"}
@@ -2312,7 +2343,7 @@ A simple back-of-envelope calculation quantifies what that recovered capacity is
 
 **Math**:
 
-1. **Productive Gain**: 1,000 GPUs $\times$ (0.84 - 0.60) = **`{python} DebugValueCalc.debug_productive_gain_str` fully utilized GPU-equivalents**.
+1. **Productive Gain**: `{python} DebugValueCalc.debug_cluster_str` GPUs $\times$ (`{python} DebugValueCalc.debug_util_after_str` - `{python} DebugValueCalc.debug_util_before_str`) = **`{python} DebugValueCalc.debug_productive_gain_str` fully utilized GPU-equivalents**.
 2. **Equivalent Raw Hardware**: `{python} DebugValueCalc.debug_productive_gain_str` GPU-equivalents $\div$ 0.60 old utilization = **`{python} DebugValueCalc.debug_recovered_str` raw GPUs**.
 3. **Annual Value**: `{python} DebugValueCalc.debug_recovered_str` GPUs $\times$ \$2/hr $\times$ 8,760 hrs/year $\approx$ **\$`{python} DebugValueCalc.debug_annual_str` Million**.
 

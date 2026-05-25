@@ -265,37 +265,16 @@ class BuildCommand:
             console.print("[yellow]⚠ Skipping post-build PDF validation (--skip-validate)[/yellow]")
             return True
 
-        repo_root = self.config_manager.book_dir.parent.parent
-        script = repo_root / "book" / "tools" / "audit" / "pdf_build_verify.py"
-        if not script.exists():
-            console.print("[dim]ⓘ Post-build PDF validation unavailable in this checkout; skipping.[/dim]")
-            return True
-
-        output_dir = self.config_manager.get_output_dir("pdf", volume)
-        pdf_names = {
-            "vol1": "Machine-Learning-Systems-Vol1.pdf",
-            "vol2": "Machine-Learning-Systems-Vol2.pdf",
-        }
-        pdf_path = output_dir / pdf_names.get(volume, "book.pdf")
-        if not pdf_path.exists():
-            console.print(f"[dim]ⓘ PDF not found at {pdf_path}; skipping post-build validation.[/dim]")
-            return True
-
         volume_name = "Volume I" if volume == "vol1" else "Volume II"
         console.print(f"[cyan]🔍 Post-build PDF validation ({volume_name})[/cyan]")
 
-        result = subprocess.run(
-            [sys.executable, str(script), f"--{volume}"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout:
-            console.print(result.stdout.rstrip())
-        if result.stderr:
-            console.print(result.stderr.rstrip())
+        from cli.commands._pdf_checks import format_checklist, verify_volume_pdf
 
-        if result.returncode != 0:
+        quarto_dir = self.config_manager.book_dir
+        result = verify_volume_pdf(quarto_dir, volume)
+        console.print(format_checklist(result))
+
+        if not result.ok:
             console.print()
             console.print(
                 "[red]Build artifact written but PDF validation failed.[/red] "
@@ -305,7 +284,7 @@ class BuildCommand:
             return False
 
         console.print(
-            f"  [green]✓ pdf[/green] [dim]({pdf_path.name}: no unresolved refs or render errors in text)[/dim]"
+            f"  [green]✓ pdf[/green] [dim]({result.pdf_path.name}: no unresolved refs or render errors in text)[/dim]"
         )
         return True
 

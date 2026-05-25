@@ -1163,6 +1163,8 @@ class KVCacheAnalysis:
     # Capacity per GPU (H100 80 GB)
     tensor_parallel_degree = 4
     gpu_total_gb = Hardware.Cloud.H100.memory_capacity.m_as(GiB)
+    int4_bits = 4
+    fp16_bits = 16
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Base size in GB per request (full model)
@@ -1209,25 +1211,31 @@ class KVCacheAnalysis:
     avail_fp16_gb_str = fmt_int(avail_fp16_gb, commas=False)
     weight_int4_gb_str = fmt(weight_int4_shard_gb, precision=2, commas=False)
     avail_int8_gb_str = fmt(avail_int8_gb, precision=2, commas=False)
+    weight_fp16_shard_gb_str = fmt(weight_fp16_shard_gb, precision=0, commas=False)
+    weight_fp16_total_gb_str = fmt(weight_fp16_shard_gb * tensor_parallel_degree, precision=0, commas=False)
+    tensor_parallel_degree_str = fmt(tensor_parallel_degree, precision=0, commas=False)
+    gpu_total_gb_str = fmt(gpu_total_gb, precision=0, commas=False)
+    int4_scale_num_str = fmt(int4_bits, precision=0, commas=False)
+    int4_scale_den_str = fmt(fp16_bits, precision=0, commas=False)
 ```
 
 A capacity calculation makes the serving impact of precision choices concrete.
 
 ::: {#nbk-performance-engineering-precision-dividend .callout-notebook title="The precision dividend"}
 
-**Problem**: A 70B parameter model is served on 4$\times$ H100 GPUs. The model weights in FP16 consume 140 GB (35 GB per GPU). KV cache at FP16 consumes `{python} KVCacheAnalysis.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
+**Problem**: A 70B parameter model is served on `{python} KVCacheAnalysis.tensor_parallel_degree_str`$\times$ H100 GPUs. The model weights in FP16 consume `{python} KVCacheAnalysis.weight_fp16_total_gb_str` GB (`{python} KVCacheAnalysis.weight_fp16_shard_gb_str` GB per GPU). KV cache at FP16 consumes `{python} KVCacheAnalysis.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
 
 **Before optimization** (all FP16):
 
-- Weights: 35 GB/GPU
-- Available for KV cache: $80 - 35 =$ `{python} KVCacheAnalysis.avail_fp16_gb_str` GB/GPU
+- Weights: `{python} KVCacheAnalysis.weight_fp16_shard_gb_str` GB/GPU
+- Available for KV cache: `{python} KVCacheAnalysis.gpu_total_gb_str` - `{python} KVCacheAnalysis.weight_fp16_shard_gb_str` = `{python} KVCacheAnalysis.avail_fp16_gb_str` GB/GPU
 - KV cache per request: `{python} KVCacheAnalysis.kv_fp16_gb_str` GB total, or approximately `{python} KVCacheAnalysis.kv_fp16_per_gpu_gb_str` GB/GPU
 - Maximum batch size: approximately `{python} KVCacheAnalysis.max_batch_fp16_str` requests
 
 **After optimization** (INT4 weights, INT8 KV cache):
 
-- Weights: 35 GB $\times$ (4/16) = `{python} KVCacheAnalysis.weight_int4_gb_str` GB/GPU (INT4)
-- Available for KV cache: $80 -$ `{python} KVCacheAnalysis.weight_int4_gb_str` $=$ `{python} KVCacheAnalysis.avail_int8_gb_str` GB/GPU
+- Weights: `{python} KVCacheAnalysis.weight_fp16_shard_gb_str` GB $\times$ (`{python} KVCacheAnalysis.int4_scale_num_str`/`{python} KVCacheAnalysis.int4_scale_den_str`) = `{python} KVCacheAnalysis.weight_int4_gb_str` GB/GPU (INT4)
+- Available for KV cache: `{python} KVCacheAnalysis.gpu_total_gb_str` - `{python} KVCacheAnalysis.weight_int4_gb_str` $=$ `{python} KVCacheAnalysis.avail_int8_gb_str` GB/GPU
 - KV cache per request (INT8): approximately `{python} KVCacheAnalysis.kv_int8_total_gb_str` GB total, or `{python} KVCacheAnalysis.kv_int8_per_gpu_gb_str` GB/GPU
 - Maximum batch size: approximately `{python} KVCacheAnalysis.max_batch_int8_str` requests
 
@@ -1616,9 +1624,11 @@ class OverlapCalc:
     step_overlap_ms_str = fmt(step_with_overlap * 1000, precision=1, commas=False)
     overlap_speedup_str = fmt(overlap_speedup, precision=2, commas=False)
     overlap_status_str = MarkdownStr("fully hidden" if can_overlap else "partially hidden")
+    num_gpus_str = fmt(num_gpus, precision=0, commas=False)
+    nvlink_bw_gbs_str = fmt(nvlink_bw.m_as(GB/second), precision=0, commas=False)
 ```
 
-Consider a 7B parameter model trained on 8 H100 GPUs within a single node connected by NVLink at 900 GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers $2 \times (N-1)/N =$ `{python} OverlapCalc.ring_allreduce_factor_str` times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
+Consider a 7B parameter model trained on `{python} OverlapCalc.num_gpus_str` H100 GPUs within a single node connected by NVLink at `{python} OverlapCalc.nvlink_bw_gbs_str` GB/s. The gradient tensor contains `{python} OverlapCalc.gradient_gb_str` GB of FP16 values. By the ring AllReduce analysis in @sec-communication-collective-operations-collective-operations-ring-allreduce-ffce, synchronization transfers $2 \times (N-1)/N =$ `{python} OverlapCalc.ring_allreduce_factor_str` times this volume, taking approximately `{python} OverlapCalc.allreduce_ms_str` ms at NVLink bandwidth. The backward pass computation, at 40 percent Model FLOPs Utilization, takes approximately `{python} OverlapCalc.backward_ms_str` ms.
 
 Without overlap, the training step requires `{python} OverlapCalc.step_no_overlap_ms_str` ms (forward + backward + AllReduce). With overlap, the AllReduce is `{python} OverlapCalc.overlap_status_str` behind the backward pass, reducing the step time to `{python} OverlapCalc.step_overlap_ms_str` ms, a `{python} OverlapCalc.overlap_speedup_str`$\times$ improvement. This example illustrates a critical property: overlap is most effective when backward compute time exceeds AllReduce time. As @fig-overlap-budget shows, as cluster scale increases from 8 to 1024 GPUs, overlap efficiency degrades from ~90 percent to ~18 percent because communication overhead eventually exceeds the computation budget. For smaller models or slower interconnects (for example, PCIe at 64 GB/s instead of NVLink at 900 GB/s), the AllReduce would exceed the backward pass, and no amount of overlap can fully hide the communication.
 
@@ -1821,7 +1831,28 @@ class MemoryWallProfilingRecap:
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     h100_hbm_bw_str = fmt(Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second), precision=2, commas=False)
 ```
-Consider a concrete example: a LayerNorm kernel profiled on an H100 reports 15 TFLOP/s of achieved compute and 2.8 TB/s of achieved memory bandwidth. Its arithmetic intensity is $15 \text{ TFLOP/s} / 2.8 \text{ TB/s} \approx 5.4$ FLOP/byte. The H100's ridge point is approximately `{python} RooflineProfilingRecap.h100_fp16_ridge_str` FLOP/byte at FP16. Since 5.4 is far below `{python} RooflineProfilingRecap.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved 2.8 TB/s (84 percent of the H100's `{python} MemoryWallProfilingRecap.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield little gain; performance can only be improved materially by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
+
+```{python}
+#| echo: false
+# ┌── LEGO ───────────────────────────────────────────────
+# │ Context: Roofline diagnosis — LayerNorm profiling example.
+# │ Exports: LayerNormRoofline.achieved_tflops_str, achieved_tbs_str, arithmetic_intensity_str
+from mlsysim import *
+from mlsysim.core.constants import *
+class LayerNormRoofline:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    achieved_tflops = 15
+    achieved_tbs = 2.8
+
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    arithmetic_intensity = achieved_tflops / achieved_tbs
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    achieved_tflops_str = fmt(achieved_tflops, precision=0, commas=False)
+    achieved_tbs_str = fmt(achieved_tbs, precision=1, commas=False)
+    arithmetic_intensity_str = fmt(arithmetic_intensity, precision=1, commas=False)
+```
+Consider a concrete example: a LayerNorm kernel profiled on an H100 reports `{python} LayerNormRoofline.achieved_tflops_str` TFLOP/s of achieved compute and `{python} LayerNormRoofline.achieved_tbs_str` TB/s of achieved memory bandwidth. Its arithmetic intensity is `{python} LayerNormRoofline.achieved_tflops_str` TFLOP/s / `{python} LayerNormRoofline.achieved_tbs_str` TB/s $\approx$ `{python} LayerNormRoofline.arithmetic_intensity_str` FLOP/byte. The H100's ridge point is approximately `{python} RooflineProfilingRecap.h100_fp16_ridge_str` FLOP/byte at FP16. Since `{python} LayerNormRoofline.arithmetic_intensity_str` is far below `{python} RooflineProfilingRecap.h100_fp16_ridge_str`, the kernel is strictly memory-bound. Its achieved `{python} LayerNormRoofline.achieved_tbs_str` TB/s (84 percent of the H100's `{python} MemoryWallProfilingRecap.h100_hbm_bw_str` TB/s peak bandwidth) confirms it is operating near the physical limit of the memory subsystem. The diagnosis is clear: further FLOP-level optimizations will yield little gain; performance can only be improved materially by reducing data movement, either through fusion (eliminating the HBM round-trip) or precision reduction (halving the bytes per element).
 
 ### PyTorch profiler workflow {#sec-performance-engineering-pytorch-profiler}
 

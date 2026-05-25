@@ -164,11 +164,15 @@ class AllReduceCost:
     ring_total_ms_str = fmt(ring_total_ms, precision=1)
     n_gpus_napkin_str = fmt(n_gpus, precision=0, commas=False)
     ring_bw_factor_str = fmt(ring_bw_factor, precision=2, commas=False)
+    ib_bw_gbs_str = fmt(ib_bw.bandwidth.m_as(GB/second), precision=0, commas=False)
+    alpha_us_str = fmt(alpha_us, precision=0, commas=False)
+    lat_steps_str = fmt(2 * (n_gpus - 1), precision=0, commas=False)
+    params_b_str = fmt(m.parameters.m_as(param) / BILLION, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-allreduce-cost-70b-model .callout-notebook title="AllReduce cost for a 70B model"}
 
-**Problem**: A 70 billion parameter model trains with data parallelism across `{python} AllReduceCost.n_gpus_napkin_str` GPUs connected by InfiniBand NDR (50 GB/s per port). Each GPU computes gradients in BF16 (2 bytes per parameter, standard for Llama-class training). How long does one AllReduce take?
+**Problem**: A `{python} AllReduceCost.params_b_str` billion parameter model trains with data parallelism across `{python} AllReduceCost.n_gpus_napkin_str` GPUs connected by InfiniBand NDR (`{python} AllReduceCost.ib_bw_gbs_str` GB/s per port). Each GPU computes gradients in BF16 (2 bytes per parameter, standard for Llama-class training). How long does one AllReduce take?
 
 **Step 1**: Size the gradient payload.
 Each GPU produces a full gradient tensor: $70 \times 10^9 \times 2\ \text{bytes} =$ `{python} AllReduceCost.gradient_size_gb_str` GB.
@@ -176,12 +180,12 @@ Each GPU produces a full gradient tensor: $70 \times 10^9 \times 2\ \text{bytes}
 **Step 2**: Apply the Ring AllReduce bandwidth formula.
 $$T_{\text{bandwidth}} = 2 \cdot \frac{N-1}{N} \cdot \frac{n}{\beta}$$
 
-Substituting: $T_{\text{bandwidth}}$ = `{python} AllReduceCost.ring_bw_factor_str`$\times$ 140 GB/50 GB/s $\approx$ `{python} AllReduceCost.ring_bw_time_ms_str` ms.
+Substituting: $T_{\text{bandwidth}}$ = `{python} AllReduceCost.ring_bw_factor_str` $\times$ `{python} AllReduceCost.gradient_size_gb_str` GB / `{python} AllReduceCost.ib_bw_gbs_str` GB/s $\approx$ `{python} AllReduceCost.ring_bw_time_ms_str` ms.
 
 **Step 3**: Add the latency term.
 $$T_{\text{latency}} = 2(N-1) \cdot \alpha$$
 
-Substituting: $T_{\text{latency}} = 2 \times 63 \times 3\ \mu\text{s} =$ `{python} AllReduceCost.ring_lat_time_ms_str` ms.
+Substituting: $T_{\text{latency}} =$ `{python} AllReduceCost.lat_steps_str` $\times$ `{python} AllReduceCost.alpha_us_str` $\mu\text{s} =$ `{python} AllReduceCost.ring_lat_time_ms_str` ms.
 
 **Step 4**: Total communication time.
 Total: $T_{\text{AllReduce}} \approx$ `{python} AllReduceCost.ring_bw_time_ms_str` + `{python} AllReduceCost.ring_lat_time_ms_str` $\approx$ `{python} AllReduceCost.ring_total_ms_str` ms.
@@ -456,11 +460,13 @@ class LatencyVsBw:
     bw_b_ms_str = fmt(bw_b_ms, precision=0, commas=False)
     total_b_us_str = fmt(total_b_us, precision=0)
     lat_pct_b_str = fmt(lat_pct_b, precision=2, commas=False)
+    msg_a_mb_str = fmt(msg_a_bytes / 1e6, precision=0, commas=False)
+    msg_b_gb_str = fmt(msg_b_bytes / 1e9, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-latency-vs-bandwidth-dominance .callout-notebook title="Latency vs. bandwidth dominance"}
 
-**Problem**: Consider synchronizing a 1 MB buffer vs. a 1 GB buffer on InfiniBand NDR with $\alpha =$ `{python} LatencyVsBw.alpha_str` $\mu\text{s}$ and $\beta =$ `{python} LatencyVsBw.beta_str` GB/s. How does the bottleneck shift?
+**Problem**: Consider synchronizing a `{python} LatencyVsBw.msg_a_mb_str` MB buffer vs. a `{python} LatencyVsBw.msg_b_gb_str` GB buffer on InfiniBand NDR with $\alpha =$ `{python} LatencyVsBw.alpha_str` $\mu\text{s}$ and $\beta =$ `{python} LatencyVsBw.beta_str` GB/s. How does the bottleneck shift?
 
 **Case A: 1 MB Message**
 
@@ -796,15 +802,21 @@ class MoeAllToAll:
     per_transfer_us_str = fmt(per_transfer_us, precision=0, commas=False)
     serialized_us_str = fmt(serialized_us, precision=0, commas=False)
     parallel_us_str = fmt(parallel_us, precision=0, commas=False)
+    total_tokens_str = fmt(total_tokens, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus, precision=0, commas=False)
+    hidden_dim_str = fmt(hidden_dim, precision=0, commas=False)
+    n_experts_str = fmt(n_experts, precision=0, commas=False)
+    experts_per_gpu_str = fmt(experts_per_gpu, precision=0, commas=False)
+    remote_gpus_str = fmt(remote_gpus, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-alltoall-moe-token-routing .callout-notebook title="AllToAll for MoE token routing"}
 
-**Problem**: A MoE model processes a batch of 4096 tokens across 8 GPUs (`{python} MoeAllToAll.tokens_per_gpu_str` tokens per GPU). Each token is a 2048-dimensional hidden state in BF16 (`{python} MoeAllToAll.kb_per_token_str` KB per token). The gating network assigns each token to exactly 1 of 64 experts (8 experts per GPU). Assuming uniform routing (each expert receives $4096/64$ = `{python} MoeAllToAll.tokens_per_expert_str` tokens), how much data does each GPU send and receive?
+**Problem**: A MoE model processes a batch of `{python} MoeAllToAll.total_tokens_str` tokens across `{python} MoeAllToAll.n_gpus_str` GPUs (`{python} MoeAllToAll.tokens_per_gpu_str` tokens per GPU). Each token is a `{python} MoeAllToAll.hidden_dim_str`-dimensional hidden state in BF16 (`{python} MoeAllToAll.kb_per_token_str` KB per token). The gating network assigns each token to exactly 1 of `{python} MoeAllToAll.n_experts_str` experts (`{python} MoeAllToAll.experts_per_gpu_str` experts per GPU). Assuming uniform routing (each expert receives `{python} MoeAllToAll.tokens_per_expert_str` tokens), how much data does each GPU send and receive?
 
 **Math**:
 
-Each GPU holds `{python} MoeAllToAll.tokens_per_gpu_str` tokens that need to reach 64 different experts across 8 GPUs. With uniform routing, each GPU sends $512/8$ = `{python} MoeAllToAll.tokens_per_transfer_str` tokens to each of the other 7 GPUs (keeping `{python} MoeAllToAll.tokens_per_transfer_str` tokens local).
+Each GPU holds `{python} MoeAllToAll.tokens_per_gpu_str` tokens that need to reach `{python} MoeAllToAll.n_experts_str` different experts across `{python} MoeAllToAll.n_gpus_str` GPUs. With uniform routing, each GPU sends `{python} MoeAllToAll.tokens_per_transfer_str` tokens to each of the other `{python} MoeAllToAll.remote_gpus_str` GPUs (keeping `{python} MoeAllToAll.tokens_per_transfer_str` tokens local).
 
 *   Data per GPU-to-GPU transfer: `{python} MoeAllToAll.tokens_per_transfer_str` tokens $\times$ `{python} MoeAllToAll.kb_per_token_str` KB/token = `{python} MoeAllToAll.data_per_transfer_kb_str` KB
 *   Total data sent per GPU: 7 $\times$ `{python} MoeAllToAll.data_per_transfer_kb_str` KB = `{python} MoeAllToAll.total_sent_mb_str` MB
@@ -1232,11 +1244,13 @@ class RingVsTree:
     ring_total_str = fmt(ring_total_us, precision=1)
     tree_total_str = fmt(tree_total_us, precision=0)
     crossover_str = fmt(crossover_mb, precision=1, commas=False)
+    M_mb_str = fmt(M_mb, precision=0, commas=False)
+    N_str = fmt(N, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-ring-vs-tree-crossover .callout-notebook title="The ring vs. tree crossover"}
 
-**Problem**: A cluster synchronizes a **1 MB** buffer across **64 GPUs**. The network has latency $\alpha =$ `{python} RingVsTree.alpha_str` $\mu\text{s}$ and bandwidth $\beta =$ `{python} RingVsTree.beta_str` GB/s. Which algorithm performs better: Ring or Tree?
+**Problem**: A cluster synchronizes a **`{python} RingVsTree.M_mb_str` MB** buffer across **`{python} RingVsTree.N_str` GPUs**. The network has latency $\alpha =$ `{python} RingVsTree.alpha_str` $\mu\text{s}$ and bandwidth $\beta =$ `{python} RingVsTree.beta_str` GB/s. Which algorithm performs better: Ring or Tree?
 
 **Math**:
 
@@ -1538,11 +1552,14 @@ class ThreeLevelNapkin:
     nvlink_bw_3l_str     = fmt(nvlink_bw_3l, precision=0, commas=False)
     ib_bw_3l_str         = fmt(ib_bw_3l, precision=0, commas=False)
     cross_rack_bw_str    = fmt(cross_rack_bw, precision=0, commas=False)
+    n_racks_str          = fmt(n_racks, precision=0, commas=False)
+    nodes_per_rack_str   = fmt(nodes_per_rack, precision=0, commas=False)
+    gpus_per_node_3l_str = fmt(gpus_per_node_3l, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-three-level-hierarchical-bandwidth-budget .callout-notebook title="Three-level hierarchical bandwidth budget"}
 
-**Problem**: A `{python} ThreeLevelNapkin.total_gpus_3l_str`-GPU cluster is arranged as 4 racks of 4 nodes of 8 GPUs. Cross-rack bandwidth is oversubscribed 2:1 (effective 25 GB/s). How much does 3-level hierarchical AllReduce reduce cross-rack traffic for a `{python} ThreeLevelNapkin.gradient_3l_gb_str` GB gradient?
+**Problem**: A `{python} ThreeLevelNapkin.total_gpus_3l_str`-GPU cluster is arranged as `{python} ThreeLevelNapkin.n_racks_str` racks of `{python} ThreeLevelNapkin.nodes_per_rack_str` nodes of `{python} ThreeLevelNapkin.gpus_per_node_3l_str` GPUs. Cross-rack bandwidth is oversubscribed 2:1 (effective `{python} ThreeLevelNapkin.cross_rack_bw_str` GB/s). How much does 3-level hierarchical AllReduce reduce cross-rack traffic for a `{python} ThreeLevelNapkin.gradient_3l_gb_str` GB gradient?
 
 **Level 1 (Intra-Node, NVLink)**: ReduceScatter reduces each GPU's contribution by 8$\times$. Each GPU sends `{python} ThreeLevelNapkin.step1_payload_gb_str` GB at `{python} ThreeLevelNapkin.nvlink_bw_3l_str` GB/s = `{python} ThreeLevelNapkin.step1_time_ms_str` ms.
 
@@ -2048,6 +2065,8 @@ class OverlapBudgetCalc:
     gradient_per_layer_mb_val = 880  # MB per layer (7B model, FP32)
     bucket_size_mb         = 100   # MB per AllReduce bucket
     allreduce_per_bucket_ms = 3    # ms per bucket (hierarchical on IB NDR)
+    n_gpus_overlap         = 64
+    params_b_overlap       = 7
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     total_backward_ms      = n_layers_overlap * backward_per_layer_ms
@@ -2077,11 +2096,17 @@ class OverlapBudgetCalc:
     with_overlap_ms_str        = fmt(with_overlap_ms, precision=1, commas=False)
     overlap_savings_pct_str    = fmt(overlap_savings_pct, precision=1, commas=False)
     exposed_per_layer_ms_str   = fmt(exposed_per_layer_ms, precision=1, commas=False)
+    n_layers_str               = fmt(n_layers_overlap, precision=0, commas=False)
+    backward_per_layer_ms_str  = fmt(backward_per_layer_ms, precision=0, commas=False)
+    n_gpus_overlap_str         = fmt(n_gpus_overlap, precision=0, commas=False)
+    gradient_per_layer_mb_str  = fmt(gradient_per_layer_mb_val, precision=0, commas=False)
+    bucket_size_mb_str         = fmt(bucket_size_mb, precision=0, commas=False)
+    params_b_overlap_str       = fmt(params_b_overlap, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-overlap-budget-7b-transformer .callout-notebook title="Overlap budget for a 7B transformer"}
 
-**Problem**: A 32-layer transformer model (7B parameters) is trained on 64 GPUs. Each layer's backward pass takes 15 ms. The hierarchical AllReduce for each layer's gradients (~880 MB per layer) takes `{python} OverlapBudgetCalc.allreduce_per_layer_ms_str` ms using 100 MB buckets. What is the step time with and without overlap?
+**Problem**: A `{python} OverlapBudgetCalc.n_layers_str`-layer transformer model (`{python} OverlapBudgetCalc.params_b_overlap_str`B parameters) is trained on `{python} OverlapBudgetCalc.n_gpus_overlap_str` GPUs. Each layer's backward pass takes `{python} OverlapBudgetCalc.backward_per_layer_ms_str` ms. The hierarchical AllReduce for each layer's gradients (~`{python} OverlapBudgetCalc.gradient_per_layer_mb_str` MB per layer) takes `{python} OverlapBudgetCalc.allreduce_per_layer_ms_str` ms using `{python} OverlapBudgetCalc.bucket_size_mb_str` MB buckets. What is the step time with and without overlap?
 
 **Without overlap (sequential)**:
 
@@ -2126,6 +2151,7 @@ class NapkinOverlap:
     comm_s_str = fmt(comm_s, precision=2, commas=False)
     compute_s_str = fmt(compute_s, precision=1, commas=False)
     overlap_pct_str = fmt(overlap_pct, precision=1, commas=False)
+    nvlink_bw_gbs_str = fmt(nvlink_bw_gbs, precision=0, commas=False)
 ```
 
 ::: {#nbk-collective-communication-napkin-math-overlap-budget .callout-notebook title="The overlap budget"}
@@ -2133,7 +2159,7 @@ class NapkinOverlap:
 This analysis determines whether the communication cost of a 70B parameter model on 8 GPUs can be hidden behind computation. The physics determines the answer.
 
 1.  **Gradient size**: 70B params $\times$ 2 bytes (FP16) = `{python} NapkinOverlap.gradient_gb_str` GB.
-2.  **Communication time**: Using Ring AllReduce on NVLink (900 GB/s), time is $\approx \frac{2 \cdot M}{900\text{ GB/s}}$ = `{python} NapkinOverlap.comm_s_str` s.
+2.  **Communication time**: Using Ring AllReduce on NVLink (`{python} NapkinOverlap.nvlink_bw_gbs_str` GB/s), time is $\approx 2 \cdot M / \beta$ = `{python} NapkinOverlap.comm_s_str` s.
 3.  **Compute time**: A typical forward/backward pass for a block of this size takes $\approx$ `{python} NapkinOverlap.compute_s_str` s.
 4.  **Overlap ratio**: `{python} NapkinOverlap.comm_s_str` s divided by `{python} NapkinOverlap.compute_s_str` s $\approx$ `{python} NapkinOverlap.overlap_pct_str` percent.
 

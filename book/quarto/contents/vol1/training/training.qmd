@@ -4482,6 +4482,8 @@ class MixedPrecisionHardwareDetail:
 
     a100_fp16_speedup = a100_tflops_fp16 / a100_tflops_fp32
     h100_fp8_speedup_vs_fp16 = h100_tflops_fp8 / h100_tflops_fp16
+    # FP32 peak TFLOP/s × 4 bytes/FLOP → TB/s if every FLOP needs fresh data
+    fp32_bw_demand_tb_s = a100_tflops_fp32 * 4
 
     check(15 <= a100_fp16_speedup <= 17, f"A100 FP16:FP32 peak ratio should be about 16x, got {a100_fp16_speedup:.1f}")
     check(1.9 <= h100_fp8_speedup_vs_fp16 <= 2.1, f"H100 FP8:FP16 peak ratio should be about 2x, got {h100_fp8_speedup_vs_fp16:.1f}")
@@ -4495,6 +4497,7 @@ class MixedPrecisionHardwareDetail:
     h100_pflops_fp16_str = fmt(h100_pflops_fp16, precision=2, commas=False)
     h100_pflops_fp8_str = fmt(h100_pflops_fp8, precision=2, commas=False)
     h100_fp8_speedup_vs_fp16_str = fmt_int(round(h100_fp8_speedup_vs_fp16), commas=False)
+    fp32_bw_demand_tb_s_str = fmt(fp32_bw_demand_tb_s, precision=0, commas=False)
 ```
 
 Understanding how modern hardware implements reduced-precision arithmetic reveals why mixed-precision achieves substantial speedups beyond mere memory savings. The performance gains from FP16 and BF16 computation stem from specialized hardware units designed explicitly for low-precision tensor operations[^fn-tensor-core-training], with architectural decisions that trade numerical range or precision for dramatic increases in computational throughput.
@@ -4552,7 +4555,7 @@ FP8 training doubles Tensor Core throughput again (`{python} MixedPrecisionHardw
 Reduced precision not only accelerates computation but also alleviates memory bandwidth bottlenecks. Modern GPUs are increasingly compute-bound rather than bandwidth-bound for large matrix operations, but data movement still limits performance for smaller operations. A100's specifications illustrate this:
 
 - HBM2e bandwidth: `{python} MixedPrecisionHardwareDetail.a100_bw_gbs_str` GB/s
-- FP32 throughput: `{python} MixedPrecisionHardwareDetail.a100_tflops_fp32_str` TFLOP/s → requires `{python} MixedPrecisionHardwareDetail.a100_tflops_fp32_str`$\times 10^{12}\times 4$ bytes = 78 TB/s if every FLOP needs new data
+- FP32 throughput: `{python} MixedPrecisionHardwareDetail.a100_tflops_fp32_str` TFLOP/s → requires `{python} MixedPrecisionHardwareDetail.a100_tflops_fp32_str`$\times 10^{12}\times 4$ bytes = `{python} MixedPrecisionHardwareDetail.fp32_bw_demand_tb_s_str` TB/s if every FLOP needs new data
 - Actual requirement (with data reuse): Much lower, but bandwidth-limited for operations with low arithmetic intensity
 
 FP16 halves memory traffic for the same computation, effectively doubling available bandwidth. For operations like layer normalization (arithmetic intensity approximately 1 FLOP/byte), this bandwidth doubling directly translates to speedups even without Tensor Core involvement.
@@ -5293,7 +5296,7 @@ Configuration:
 - Per-GPU micro-batch: 16
 - Accumulation steps: 4
 - Effective batch per accelerator: $16 \times 4$ = `{python} GradientAccumulation.batch_per_gpu_str`
-- Global effective batch: 8 GPUs $\times$ `{python} GradientAccumulation.batch_per_gpu_str` = **512** ✓
+- Global effective batch: `{python} GradientAccumulation.gpus_accum_str` GPUs $\times$ `{python} GradientAccumulation.batch_per_gpu_str` = **`{python} GradientAccumulation.effective_batch_str`** ✓
 
 In @lst-gradient-accumulation-loop, notice that the `no_sync()` context manager suppresses AllReduce during the first three micro-batches, so the expensive gradient synchronization fires only once per effective batch rather than once per micro-batch.
 
@@ -5317,7 +5320,7 @@ With Accumulation (actual GPT-2 approach):
 - Wall-clock overhead: 4 serialized micro-batches per update = ~8 percent slower (pipeline overlap hides some overhead)
 - Memory overhead: Gradient accumulation buffer = negligible (gradients already needed)
 - Communication benefit: Sync frequency reduced by `{python} GradientAccumulation.accum_steps_str`$\times$ → communication time drops by `{python} GradientAccumulation.comm_reduction_pct_str` percent
-- Cost benefit: Training two weeks on 8 GPUs = USD `{python} GradientAccumulation.accum_2wk_str` K vs. 32 GPUs = USD `{python} GradientAccumulation.naive_2wk_str` K
+- Cost benefit: Training two weeks on `{python} GradientAccumulation.gpus_accum_str` GPUs = USD `{python} GradientAccumulation.accum_2wk_str` K vs. `{python} GradientAccumulation.gpus_naive_str` GPUs = USD `{python} GradientAccumulation.naive_2wk_str` K
 
 **Convergence Quality**
 
@@ -5327,11 +5330,15 @@ With Accumulation (actual GPT-2 approach):
 
 **Why this works**: Gradient accumulation is mathematically equivalent to larger batches because gradients are additive. Each accelerator first accumulates a local gradient over its `{python} GradientAccumulation.batch_per_gpu_str` examples:
 
+$$
 `{python} GradientAccumulation.local_grad_eqn_str`
+$$
 
 AllReduce then averages those local gradients across `{python} GradientAccumulation.gpus_accum_str` accelerators, producing the global effective batch:
 
+$$
 `{python} GradientAccumulation.global_grad_eqn_str`
+$$
 
 **Systems insight**: For memory-bound models like GPT-2, gradient accumulation + moderate GPU count is more cost-effective than scaling to many GPUs with small batches.
 

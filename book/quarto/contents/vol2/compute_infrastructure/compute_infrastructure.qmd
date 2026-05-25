@@ -856,14 +856,39 @@ However, the capacity story changes significantly when quantization is applied. 
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: A100HbmQuantRecap.mem_bw_tbs_str
+# │ Exports: A100HbmQuantRecap.model_params_b_str, A100HbmQuantRecap.weights_gb_str,
+# │          A100HbmQuantRecap.mem_bw_tbs_str, A100HbmQuantRecap.a100_token_ms_str,
+# │          A100HbmQuantRecap.h100_bw_tbs_str, A100HbmQuantRecap.h100_token_ms_str,
+# │          A100HbmQuantRecap.b200_bw_tbs_str, A100HbmQuantRecap.b200_token_ms_str
 class A100HbmQuantRecap:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.Llama3_70B.parameters.m_as(param)
+    weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    a100_bw_tbs = Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second)
+    h100_bw_tbs = Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second)
+    b200_bw_tbs = Hardware.Cloud.B200.memory.bandwidth.m_as(TB/second)
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    a100_token_ms = weights_gb / (a100_bw_tbs * THOUSAND) * MS_PER_SEC
+    h100_token_ms = weights_gb / (h100_bw_tbs * THOUSAND) * MS_PER_SEC
+    b200_token_ms = weights_gb / (b200_bw_tbs * THOUSAND) * MS_PER_SEC
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(a100_token_ms > 50, "A100 token latency should exceed 50 ms")
+
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    mem_bw_tbs_str = fmt(Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second), precision=2, commas=False)
+    model_params_b_str = fmt(params / BILLION, precision=0, commas=False)
+    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
+    mem_bw_tbs_str = fmt(a100_bw_tbs, precision=2, commas=False)
+    a100_token_ms_str = fmt(a100_token_ms, precision=1, commas=False)
+    h100_bw_tbs_str = fmt(h100_bw_tbs, precision=2, commas=False)
+    h100_token_ms_str = fmt(h100_token_ms, precision=1, commas=False)
+    b200_bw_tbs_str = fmt(b200_bw_tbs, precision=1, commas=False)
+    b200_token_ms_str = fmt(b200_token_ms, precision=1, commas=False)
 ```
 The bandwidth improvement matters independently of capacity. Each generation of HBM produces a nearly proportional reduction in per-token latency during autoregressive inference once the capacity problem has been handled by sharding or quantization.
 
-A 70B FP16 model has 140 GB of weights, so a bandwidth-floor calculation gives roughly 140 GB/`{python} A100HbmQuantRecap.mem_bw_tbs_str` TB/s = 68.6 ms per token at A100-class bandwidth, 140 GB/3.35 TB/s = 41.8 ms at H100-class bandwidth, and 140 GB/8 TB/s = 17.5 ms at B200-class bandwidth. The A100 and H100 cases do not imply that the full FP16 model fits on one device; they isolate the latency floor imposed by a single accelerator-equivalent HBM path. For interactive applications (chatbots, code assistants, real-time translation), where users perceive delays above 50 ms as "slow," these bandwidth improvements translate directly into better user experience and into the ability to serve larger models within latency budgets.
+A `{python} A100HbmQuantRecap.model_params_b_str`B FP16 model has `{python} A100HbmQuantRecap.weights_gb_str` GB of weights, so a bandwidth-floor calculation gives roughly `{python} A100HbmQuantRecap.weights_gb_str` GB/`{python} A100HbmQuantRecap.mem_bw_tbs_str` TB/s = `{python} A100HbmQuantRecap.a100_token_ms_str` ms per token at A100-class bandwidth, `{python} A100HbmQuantRecap.weights_gb_str` GB/`{python} A100HbmQuantRecap.h100_bw_tbs_str` TB/s = `{python} A100HbmQuantRecap.h100_token_ms_str` ms at H100-class bandwidth, and `{python} A100HbmQuantRecap.weights_gb_str` GB/`{python} A100HbmQuantRecap.b200_bw_tbs_str` TB/s = `{python} A100HbmQuantRecap.b200_token_ms_str` ms at B200-class bandwidth. The A100 and H100 cases do not imply that the full FP16 model fits on one device; they isolate the latency floor imposed by a single accelerator-equivalent HBM path. For interactive applications (chatbots, code assistants, real-time translation), where users perceive delays above 50 ms as "slow," these bandwidth improvements translate directly into better user experience and into the ability to serve larger models within latency budgets.
 
 The forward-looking jump to HBM4 doubles the interface width from 1024 bits to 2048 bits for the first time since HBM's introduction. This signals that per-pin signaling rate increases alone can no longer sustain the required bandwidth growth, and the industry must widen the bus. The doubling of interface width requires a correspondingly larger interposer area for routing, which is one reason that next-generation accelerator packages are expected to grow even larger.
 
@@ -2219,14 +2244,40 @@ The economic argument for multi-accelerator nodes is equally compelling. Conside
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierNodeBudgetRecap.frontier_params_b_str
+# │ Exports: InfraFrontierNodeBudgetRecap.frontier_params_b_str,
+# │          InfraFrontierNodeBudgetRecap.weights_gb_str,
+# │          InfraFrontierNodeBudgetRecap.optimizer_gb_str,
+# │          InfraFrontierNodeBudgetRecap.gradients_gb_str,
+# │          InfraFrontierNodeBudgetRecap.total_static_tb_str,
+# │          InfraFrontierNodeBudgetRecap.gpu_hbm_gb_str,
+# │          InfraFrontierNodeBudgetRecap.node_hbm_gb_str
 class InfraFrontierNodeBudgetRecap:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.GPT3.parameters.m_as(param)
+    gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    optimizer_gb = (params * BYTES_FP32.m_as(byte) * 2 * byte).m_as(GB)
+    gradients_gb = weights_gb
+    total_static_gb = weights_gb + optimizer_gb + gradients_gb
+    gpu_hbm_gb = Hardware.Cloud.H100.memory.capacity.m_as(GiB)
+    node_hbm_gb = gpu_hbm_gb * gpus_per_node
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(abs(total_static_gb - 2100) < 1, "Static training state should be about 2.1 TB")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    frontier_params_b_str = fmt(params / BILLION, precision=0, commas=False)
+    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
+    optimizer_gb_str = fmt(optimizer_gb, precision=0, commas=False)
+    gradients_gb_str = fmt(gradients_gb, precision=0, commas=False)
+    total_static_tb_str = fmt(total_static_gb / THOUSAND, precision=1, commas=False)
+    gpu_hbm_gb_str = fmt(gpu_hbm_gb, precision=0, commas=False)
+    node_hbm_gb_str = fmt(node_hbm_gb, precision=0, commas=False)
 ```
 
-Understanding how the node partitions memory across its components is essential for selecting parallelism strategies. Consider the memory budget for training our `{python} InfraFrontierNodeBudgetRecap.frontier_params_b_str`B model. The model weights in FP16 require 350 GB. The Adam optimizer maintains two additional copies of every parameter (first and second moments) in FP32 precision, adding $175 \times 10^9 \times 2 \times 4$ bytes = 1,400 GB. Gradients require another 350 GB. The total is approximately 2.1 TB before activations, far exceeding both a single accelerator's 80 GB HBM and an 8-H100 node's 640 GB aggregate HBM.
+Understanding how the node partitions memory across its components is essential for selecting parallelism strategies. Consider the memory budget for training our `{python} InfraFrontierNodeBudgetRecap.frontier_params_b_str`B model. The model weights in FP16 require `{python} InfraFrontierNodeBudgetRecap.weights_gb_str` GB. The Adam optimizer maintains two additional copies of every parameter (first and second moments) in FP32 precision, adding `{python} InfraFrontierNodeBudgetRecap.frontier_params_b_str` $\times 10^9 \times 2 \times 4$ bytes = `{python} InfraFrontierNodeBudgetRecap.optimizer_gb_str` GB. Gradients require another `{python} InfraFrontierNodeBudgetRecap.gradients_gb_str` GB. The total is approximately `{python} InfraFrontierNodeBudgetRecap.total_static_tb_str` TB before activations, far exceeding both a single accelerator's `{python} InfraFrontierNodeBudgetRecap.gpu_hbm_gb_str` GB HBM and an 8-H100 node's `{python} InfraFrontierNodeBudgetRecap.node_hbm_gb_str` GB aggregate HBM.
 
 When using ZeRO or FSDP-style optimization (which shards optimizer states, gradients, and optionally parameters across data-parallel workers), the training system avoids replicating this full 2.1 TB state on every GPU. Tensor parallelism first reduces each GPU's active weight shard; data-parallel sharding then spreads optimizer state and gradients across many workers; activation checkpointing reduces the activation peak; and offload moves cold optimizer state to host DRAM over PCIe. The node is therefore a high-bandwidth compute and communication unit, not a standalone container for the entire training state.
 
@@ -2292,12 +2343,20 @@ class BandwidthStaircase:
     hbm_bw_gbs = Hardware.Cloud.H100.memory.bandwidth.m_as(GB/second)           # H100 HBM3
     nvlink_bw_gbs = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second)      # H100 NVLink
     ib_bw_gbs = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second) # 400G NDR InfiniBand
+    transfer_gb = 10
     # ┌── 2. EXECUTE ───────────────────────────────────────
+    hbm_ms = transfer_gb / hbm_bw_gbs * 1000
+    nvlink_ms = transfer_gb / nvlink_bw_gbs * 1000
+    ib_ms = transfer_gb / ib_bw_gbs * 1000
     gap_hbm_nv = hbm_bw_gbs/nvlink_bw_gbs
     gap_nv_ib = nvlink_bw_gbs/ib_bw_gbs
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(gap_nv_ib > 10, f"Narrative Violation: Bandwidth staircase collapsed! Ratio is only {gap_nv_ib:.1f}x (needs to be >10x)")
     # ┌── 4. OUTPUT ────────────────────────────────────────
+    transfer_gb_str = fmt(transfer_gb, precision=0, commas=False)
+    hbm_ms_str = fmt(hbm_ms, precision=0, commas=False)
+    nvlink_ms_str = fmt(nvlink_ms, precision=0, commas=False)
+    ib_ms_str = fmt(ib_ms, precision=0, commas=False)
     bs_hbm_bw_str = fmt(hbm_bw_gbs, precision=0)
     bs_nvlink_bw_str = fmt(nvlink_bw_gbs, precision=0, commas=False)
     bs_ib_bw_str = fmt(ib_bw_gbs, precision=0, commas=False)
@@ -2311,9 +2370,9 @@ class BandwidthStaircase:
 **Math**:
 Transfer time is $T_{\text{transfer}} = D_{\text{vol}} / \text{BW}$.
 
-1. **HBM (Intra-Chip)**: 10 GB/`{python} BandwidthStaircase.bs_hbm_bw_str` GB/s $\approx$ **3 ms**.
-2. **NVLink (Intra-Node)**: 10 GB/`{python} BandwidthStaircase.bs_nvlink_bw_str` GB/s $\approx$ **11 ms**.
-3. **InfiniBand (Inter-Node)**: 10 GB/`{python} BandwidthStaircase.bs_ib_bw_str` GB/s $\approx$ **200 ms**.
+1. **HBM (Intra-Chip)**: `{python} BandwidthStaircase.transfer_gb_str` GB / `{python} BandwidthStaircase.bs_hbm_bw_str` GB/s $\approx$ **`{python} BandwidthStaircase.hbm_ms_str` ms**.
+2. **NVLink (Intra-Node)**: `{python} BandwidthStaircase.transfer_gb_str` GB / `{python} BandwidthStaircase.bs_nvlink_bw_str` GB/s $\approx$ **`{python} BandwidthStaircase.nvlink_ms_str` ms**.
+3. **InfiniBand (Inter-Node)**: `{python} BandwidthStaircase.transfer_gb_str` GB / `{python} BandwidthStaircase.bs_ib_bw_str` GB/s $\approx$ **`{python} BandwidthStaircase.ib_ms_str` ms**.
 
 **Systems insight**: Moving data across the cluster is **`{python} BandwidthStaircase.bs_gap_nv_ib_str`$\times$ slower** than moving it within a node. This "Bandwidth Staircase" is the primary driver of all parallelization strategies: we use tensor parallelism\index{Tensor Parallelism} where bandwidth is abundant (NVLink) and data parallelism\index{Data Parallelism} where it is scarce (InfiniBand). A model that "fits" in memory but ignores the staircase will spend 90 percent of its time waiting for the network.
 
@@ -2353,14 +2412,33 @@ The hierarchy also explains why pipeline parallelism occupies an intermediate po
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierNodeTpRecap.frontier_params_b_str
+# │ Exports: InfraFrontierNodeTpRecap.frontier_params_b_str,
+# │          InfraFrontierNodeTpRecap.activation_mb_str,
+# │          InfraFrontierNodeTpRecap.gradient_allreduce_gb_str
 class InfraFrontierNodeTpRecap:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.GPT3.parameters.m_as(param)
+    hidden_dim = Models.Language.GPT3.hidden_dim
+    microbatch = 4
+    seq_len = 2048
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    activation_mb = microbatch * seq_len * hidden_dim * BYTES_FP16.m_as(byte) / 1e6
+    gradient_allreduce_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(activation_mb < gradient_allreduce_gb * THOUSAND, "Activation payload should be MB-scale")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    frontier_params_b_str = fmt(params / BILLION, precision=0, commas=False)
+    hidden_dim_str = fmt(hidden_dim, precision=0, commas=True)
+    microbatch_str = fmt(microbatch, precision=0, commas=False)
+    seq_len_str = fmt(seq_len, precision=0, commas=True)
+    activation_mb_str = fmt(activation_mb, precision=0, commas=False)
+    gradient_allreduce_gb_str = fmt(gradient_allreduce_gb, precision=0, commas=False)
 ```
 
-For our `{python} InfraFrontierNodeTpRecap.frontier_params_b_str`B model with hidden dimension 12,288 and a microbatch of 4 sequences at 2,048 tokens, the activation tensor at each stage boundary is approximately $4 \times 2{,}048 \times 12{,}288 \times 2$ bytes (FP16) $\approx$ 200 MB. This is far smaller than the 350 GB gradient AllReduce required by data parallelism, which is why pipeline parallelism places less demanding requirements on the inter-node network.
+For our `{python} InfraFrontierNodeTpRecap.frontier_params_b_str`B model with hidden dimension `{python} InfraFrontierNodeTpRecap.hidden_dim_str` and a microbatch of `{python} InfraFrontierNodeTpRecap.microbatch_str` sequences at `{python} InfraFrontierNodeTpRecap.seq_len_str` tokens, the activation tensor at each stage boundary is approximately $4 \times 2{,}048 \times 12{,}288 \times 2$ bytes (FP16) $\approx$ `{python} InfraFrontierNodeTpRecap.activation_mb_str` MB. This is far smaller than the `{python} InfraFrontierNodeTpRecap.gradient_allreduce_gb_str` GB gradient AllReduce required by data parallelism, which is why pipeline parallelism places less demanding requirements on the inter-node network.
 
 Activation transfers occur once per microbatch per stage boundary, far less frequently than tensor parallelism's per-layer AllReduce. Pipeline parallelism can therefore tolerate the lower bandwidth of inter-node links, making it the preferred strategy for spanning multiple nodes when the model's depth exceeds a single node's capacity.
 
@@ -2672,38 +2750,96 @@ class InfraFrontierNodeTableRecap:
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierNodeWeightsRecap.frontier_params_b_str
+# │ Exports: InfraFrontierNodeWeightsRecap.frontier_params_b_str,
+# │          InfraFrontierNodeWeightsRecap.weights_gb_str,
+# │          InfraFrontierNodeWeightsRecap.optimizer_gb_str,
+# │          InfraFrontierNodeWeightsRecap.gradients_gb_str
 class InfraFrontierNodeWeightsRecap:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.GPT3.parameters.m_as(param)
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    optimizer_gb = (params * BYTES_FP32.m_as(byte) * 2 * byte).m_as(GB)
+    gradients_gb = weights_gb
+    activation_min_gb = 100
+    activation_max_gb = 400
+    total_footprint_min_tb = 2.2
+    total_footprint_max_tb = 2.5
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    frontier_params_b_str = fmt(params / BILLION, precision=0, commas=False)
+    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
+    optimizer_gb_str = fmt(optimizer_gb, precision=0, commas=False)
+    gradients_gb_str = fmt(gradients_gb, precision=0, commas=False)
+    activation_range_gb_str = f"{fmt(activation_min_gb, precision=0, commas=False)}--{fmt(activation_max_gb, precision=0, commas=False)}"
+    total_footprint_tb_str = f"{fmt(total_footprint_min_tb, precision=1, commas=False)}--{fmt(total_footprint_max_tb, precision=1, commas=False)}"
 ```
+
+The model weights in FP16 occupy `{python} InfraFrontierNodeWeightsRecap.weights_gb_str` GB (`{python} InfraFrontierNodeWeightsRecap.frontier_params_b_str` $\times 10^9 \times 2$ bytes). The Adam optimizer maintains two FP32 state tensors per parameter (first moment $m$ and second moment $v$), adding `{python} InfraFrontierNodeWeightsRecap.frontier_params_b_str` $\times 10^9 \times 4 \times 2$ = `{python} InfraFrontierNodeWeightsRecap.optimizer_gb_str` GB. The gradients in FP16 add another `{python} InfraFrontierNodeWeightsRecap.gradients_gb_str` GB. Intermediate activations (needed for the backward pass) depend on the batch size and sequence length but typically require `{python} InfraFrontierNodeWeightsRecap.activation_range_gb_str` GB for practical training configurations. The total memory footprint for training is therefore `{python} InfraFrontierNodeWeightsRecap.total_footprint_tb_str` TB, roughly 6--7$\times$ the raw weight size.
 
 ```{python}
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierStragglerRecap7.frontier_params_b_str
-class InfraFrontierStragglerRecap7:
-
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
-```
-
-The model weights in FP16 occupy 350 GB ($`{python} InfraFrontierNodeWeightsRecap.frontier_params_b_str` \times 10^9 \times 2$ bytes). The Adam optimizer maintains two FP32 state tensors per parameter (first moment $m$ and second moment $v$), adding $`{python} InfraFrontierStragglerRecap7.frontier_params_b_str` \times 10^9 \times 4 \times 2 = 1{,}400$ GB. The gradients in FP16 add another 350 GB. Intermediate activations (needed for the backward pass) depend on the batch size and sequence length but typically require 100--400 GB for practical training configurations. The total memory footprint for training is therefore 2.2--2.5 TB, roughly 6--7$\times$ the raw weight size.
-
-```{python}
-#| echo: false
-from mlsysim import *
-# ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: NodeCapacityTrainMemRecap.node_hbm_cap_str
+# │ Exports: NodeCapacityTrainMemRecap.node_hbm_cap_str,
+# │          NodeCapacityTrainMemRecap.host_dram_tb_str,
+# │          NodeCapacityTrainMemRecap.weights_gb_str,
+# │          NodeCapacityTrainMemRecap.gradients_gb_str,
+# │          NodeCapacityTrainMemRecap.optimizer_gb_str,
+# │          NodeCapacityTrainMemRecap.total_dp_gb_str,
+# │          NodeCapacityTrainMemRecap.gpu_hbm_gb_str,
+# │          NodeCapacityTrainMemRecap.zero3_per_gpu_gb_str,
+# │          NodeCapacityTrainMemRecap.tp_weight_shard_gb_str,
+# │          NodeCapacityTrainMemRecap.optimizer_per_gpu_gb_str,
+# │          NodeCapacityTrainMemRecap.optimizer_per_tp_group_gb_str,
+# │          NodeCapacityTrainMemRecap.weight_plus_optimizer_gb_str
 class NodeCapacityTrainMemRecap:
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    node_hbm_cap_str = fmt((Hardware.Cloud.H100.memory.capacity * Systems.Nodes.DGX_H100.accelerators_per_node).m_as(GiB), precision=0, commas=False)
-```
-A DGX H100 node provides `{python} NodeCapacityTrainMemRecap.node_hbm_cap_str` GB of aggregate HBM across its 8 GPUs, plus 2 TB of host DDR5 DRAM. The HBM capacity alone is insufficient for the full training state. To appreciate why, consider the memory arithmetic for different parallelism strategies. With **pure data parallelism**\index{Data Parallelism!pure}, each GPU must hold the complete model: 350 GB weights + 350 GB gradients + 1,400 GB optimizer states = 2,100 GB -- physically impossible on an 80 GB device. Even **ZeRO Stage 3**\index{ZeRO!stage 3}, which shards all three components across only 8 GPUs, yields 2,100/8 ≈ 263 GB per GPU, still more than triple the available HBM. The solution is to combine tensor parallelism (which splits the model's layers across GPUs, reducing per-GPU weights to 350/8 = 43.75 GB) with data-parallel sharding across many replicas. In a configuration with TP-8 within each node and 128-way data parallelism across the cluster, each GPU holds 43.75 GB of weight shards. The optimizer state associated with that tensor-parallel shard is then sharded across the 128 data-parallel replicas, so each GPU holds approximately 1,400/(8 × 128) ≈ 1.4 GB of optimizer state, or 10.9 GB per 8-GPU tensor-parallel group, before gradients, activations, buffers, and fragmentation. The weight-plus-optimizer subtotal of roughly 45 GB is only the starting point; the memory-budget exercise below shows why gradients and activations still require checkpointing and offload. This arithmetic is why tensor parallelism, optimizer sharding, activation checkpointing, and memory tiering are used together for frontier model training. Several additional strategies further optimize this memory budget:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.GPT3.parameters.m_as(param)
+    gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
+    tp_degree = gpus_per_node
+    dp_degree = 128
+    host_dram_tb = 2
 
-- **ZeRO Stage 3 (Full Sharding)**: The optimizer states, gradients, and parameters are sharded across all GPUs participating in data parallelism. With 8-way data parallelism within a node, each GPU holds only 1/8 of each component, reducing per-GPU memory to roughly 263 GB of equivalent storage (2,100 GB total state ÷ 8). This still exceeds 80 GB per GPU, requiring the combination with other techniques.
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    gradients_gb = weights_gb
+    optimizer_gb = (params * BYTES_FP32.m_as(byte) * 2 * byte).m_as(GB)
+    total_dp_gb = weights_gb + gradients_gb + optimizer_gb
+    gpu_hbm_gb = Hardware.Cloud.H100.memory.capacity.m_as(GiB)
+    node_hbm_gb = gpu_hbm_gb * gpus_per_node
+    zero3_per_gpu_gb = total_dp_gb / gpus_per_node
+    tp_weight_shard_gb = weights_gb / tp_degree
+    optimizer_per_gpu_gb = optimizer_gb / (tp_degree * dp_degree)
+    optimizer_per_tp_group_gb = optimizer_gb / dp_degree
+    weight_plus_optimizer_gb = tp_weight_shard_gb + optimizer_per_gpu_gb
+    tp_optimizer_shard_divisor = tp_degree * dp_degree
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(node_hbm_gb < total_dp_gb, "Node HBM should be insufficient for full training state")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    node_hbm_cap_str = fmt(node_hbm_gb, precision=0, commas=False)
+    host_dram_tb_str = fmt(host_dram_tb, precision=0, commas=False)
+    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
+    gradients_gb_str = fmt(gradients_gb, precision=0, commas=False)
+    optimizer_gb_str = fmt(optimizer_gb, precision=0, commas=False)
+    total_dp_gb_str = fmt(total_dp_gb, precision=0, commas=False)
+    gpu_hbm_gb_str = fmt(gpu_hbm_gb, precision=0, commas=False)
+    zero3_per_gpu_gb_str = fmt(zero3_per_gpu_gb, precision=0, commas=False)
+    tp_weight_shard_gb_str = fmt(tp_weight_shard_gb, precision=2, commas=False)
+    optimizer_per_gpu_gb_str = fmt(optimizer_per_gpu_gb, precision=1, commas=False)
+    optimizer_per_tp_group_gb_str = fmt(optimizer_per_tp_group_gb, precision=1, commas=False)
+    weight_plus_optimizer_gb_str = fmt(weight_plus_optimizer_gb, precision=0, commas=False)
+    gpus_per_node_str = fmt(gpus_per_node, precision=0, commas=False)
+    tp_degree_str = fmt(tp_degree, precision=0, commas=False)
+    dp_degree_str = fmt(dp_degree, precision=0, commas=False)
+    tp_optimizer_shard_divisor_str = fmt(tp_optimizer_shard_divisor, precision=0, commas=False)
+```
+A DGX H100 node provides `{python} NodeCapacityTrainMemRecap.node_hbm_cap_str` GB of aggregate HBM across its `{python} NodeCapacityTrainMemRecap.gpus_per_node_str` GPUs, plus `{python} NodeCapacityTrainMemRecap.host_dram_tb_str` TB of host DDR5 DRAM. The HBM capacity alone is insufficient for the full training state. To appreciate why, consider the memory arithmetic for different parallelism strategies. With **pure data parallelism**\index{Data Parallelism!pure}, each GPU must hold the complete model: `{python} NodeCapacityTrainMemRecap.weights_gb_str` GB weights + `{python} NodeCapacityTrainMemRecap.gradients_gb_str` GB gradients + `{python} NodeCapacityTrainMemRecap.optimizer_gb_str` GB optimizer states = `{python} NodeCapacityTrainMemRecap.total_dp_gb_str` GB -- physically impossible on an `{python} NodeCapacityTrainMemRecap.gpu_hbm_gb_str` GB device. Even **ZeRO Stage 3**\index{ZeRO!stage 3}, which shards all three components across only `{python} NodeCapacityTrainMemRecap.gpus_per_node_str` GPUs, yields `{python} NodeCapacityTrainMemRecap.total_dp_gb_str`/`{python} NodeCapacityTrainMemRecap.gpus_per_node_str` ≈ `{python} NodeCapacityTrainMemRecap.zero3_per_gpu_gb_str` GB per GPU, still more than triple the available HBM. The solution is to combine tensor parallelism (which splits the model's layers across GPUs, reducing per-GPU weights to `{python} NodeCapacityTrainMemRecap.weights_gb_str`/`{python} NodeCapacityTrainMemRecap.tp_degree_str` = `{python} NodeCapacityTrainMemRecap.tp_weight_shard_gb_str` GB) with data-parallel sharding across many replicas. In a configuration with TP-`{python} NodeCapacityTrainMemRecap.tp_degree_str` within each node and `{python} NodeCapacityTrainMemRecap.dp_degree_str`-way data parallelism across the cluster, each GPU holds `{python} NodeCapacityTrainMemRecap.tp_weight_shard_gb_str` GB of weight shards. The optimizer state associated with that tensor-parallel shard is then sharded across the `{python} NodeCapacityTrainMemRecap.dp_degree_str` data-parallel replicas, so each GPU holds approximately `{python} NodeCapacityTrainMemRecap.optimizer_gb_str`/(`{python} NodeCapacityTrainMemRecap.tp_optimizer_shard_divisor_str`) ≈ `{python} NodeCapacityTrainMemRecap.optimizer_per_gpu_gb_str` GB of optimizer state, or `{python} NodeCapacityTrainMemRecap.optimizer_per_tp_group_gb_str` GB per `{python} NodeCapacityTrainMemRecap.gpus_per_node_str`-GPU tensor-parallel group, before gradients, activations, buffers, and fragmentation. The weight-plus-optimizer subtotal of roughly `{python} NodeCapacityTrainMemRecap.weight_plus_optimizer_gb_str` GB is only the starting point; the memory-budget exercise below shows why gradients and activations still require checkpointing and offload. This arithmetic is why tensor parallelism, optimizer sharding, activation checkpointing, and memory tiering are used together for frontier model training. Several additional strategies further optimize this memory budget:
+
+- **ZeRO Stage 3 (Full Sharding)**: The optimizer states, gradients, and parameters are sharded across all GPUs participating in data parallelism. With `{python} NodeCapacityTrainMemRecap.tp_degree_str`-way data parallelism within a node, each GPU holds only 1/`{python} NodeCapacityTrainMemRecap.tp_degree_str` of each component, reducing per-GPU memory to roughly `{python} NodeCapacityTrainMemRecap.zero3_per_gpu_gb_str` GB of equivalent storage (`{python} NodeCapacityTrainMemRecap.total_dp_gb_str` GB total state ÷ `{python} NodeCapacityTrainMemRecap.gpus_per_node_str`). This still exceeds `{python} NodeCapacityTrainMemRecap.gpu_hbm_gb_str` GB per GPU, requiring the combination with other techniques.
 - **Activation Checkpointing**\index{Activation Checkpointing}: Instead of storing all intermediate activations for the backward pass, only a subset of "checkpoint" activations are stored. The remaining activations are recomputed from the nearest checkpoint during the backward pass. This trades compute (roughly 33 percent more FLOPs) for memory (up to 10$\times$ reduction in activation memory).
 
 ```{python}
@@ -2969,11 +3105,33 @@ class RackPowerRackRecap:
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: H100TdpRackRecap.tdp_str
+# │ Exports: H100TdpRackRecap.tdp_str, H100TdpRackRecap.cluster_gpus_str,
+# │          H100TdpRackRecap.comm_phase_w_str, H100TdpRackRecap.power_delta_w_str,
+# │          H100TdpRackRecap.power_delta_kw_str, H100TdpRackRecap.transition_us_str,
+# │          H100TdpRackRecap.power_rate_gws_str
 class H100TdpRackRecap:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    gpu_tdp_w = Hardware.Cloud.H100.tdp.m_as(watt)
+    cluster_gpus = 1024
+    comm_phase_w = 400
+    transition_us = 100
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    power_delta_w = gpu_tdp_w - comm_phase_w
+    power_delta_kw = power_delta_w * cluster_gpus / THOUSAND
+    power_rate_gws = power_delta_w * cluster_gpus / (transition_us / 1e6) / 1e9
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(power_delta_kw > 300, "Power ramp should exceed 300 kW")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    tdp_str = fmt(Hardware.Cloud.H100.tdp.m_as(watt), precision=0, commas=False)
+    tdp_str = fmt(gpu_tdp_w, precision=0, commas=False)
+    cluster_gpus_str = fmt(cluster_gpus, precision=0, commas=False)
+    comm_phase_w_str = fmt(comm_phase_w, precision=0, commas=False)
+    power_delta_w_str = fmt(power_delta_w, precision=0, commas=False)
+    power_delta_kw_str = fmt(power_delta_kw, precision=0, commas=False)
+    transition_us_str = fmt(transition_us, precision=0, commas=False)
+    power_rate_gws_str = fmt(power_rate_gws, precision=2, commas=False)
 ```
 
 ## The Rack {#sec-compute-rack}
@@ -3132,7 +3290,7 @@ Battery-backed UPS systems with fast inverter response (under 10 ms switching ti
 
 Dedicated electrical substations with custom transformer designs serve the largest installations. These transformers are rated for the high di/dt (rate of current change) characteristic of ML workloads, with custom winding configurations that can handle rapid load swings without voltage distortion. Standard utility transformers are designed for slowly varying loads and can experience magnetic saturation when subjected to the rapid load changes that ML training creates.
 
-To appreciate the magnitude of these transients, consider a 1,024-GPU cluster transitioning from communication phase (400 W per GPU average) to matrix multiplication phase (`{python} H100TdpRackRecap.tdp_str` W per GPU). The power delta is 300 W$\times$ 1,024 = 307 kW, and this transition occurs in approximately 100 microseconds. The rate of power change is therefore 307 kW/100 $\mu$s = 3.07 GW/s. No passive electrical component can respond at this rate; only energy storage devices (supercapacitors) positioned physically close to the load can absorb the transient before it propagates into the building's electrical distribution.
+To appreciate the magnitude of these transients, consider a `{python} H100TdpRackRecap.cluster_gpus_str`-GPU cluster transitioning from communication phase (`{python} H100TdpRackRecap.comm_phase_w_str` W per GPU average) to matrix multiplication phase (`{python} H100TdpRackRecap.tdp_str` W per GPU). The power delta is `{python} H100TdpRackRecap.power_delta_w_str` W$\times$ `{python} H100TdpRackRecap.cluster_gpus_str` = `{python} H100TdpRackRecap.power_delta_kw_str` kW, and this transition occurs in approximately `{python} H100TdpRackRecap.transition_us_str` microseconds. The rate of power change is therefore `{python} H100TdpRackRecap.power_delta_kw_str` kW/`{python} H100TdpRackRecap.transition_us_str` $\mu$s = `{python} H100TdpRackRecap.power_rate_gws_str` GW/s. No passive electrical component can respond at this rate; only energy storage devices (supercapacitors) positioned physically close to the load can absorb the transient before it propagates into the building's electrical distribution.
 
 The power delivery chain itself introduces inefficiencies at each stage. Utility-to-medium-voltage transformation loses 1--2 percent. The UPS loses 3--5 percent (modern double-conversion designs) or 1--2 percent (eco-mode designs that bypass the inverter during normal operation). The PDU loses 2--3 percent. Voltage regulation on the baseboard loses another 5--8 percent. Cumulatively, 10--15 percent of the power drawn from the grid is dissipated as heat in the delivery chain before it ever reaches a transistor. This overhead is part of the PUE calculation: a PUE of 1.10 implies that the delivery chain and cooling together consume 10 percent above the IT load.
 
@@ -3819,6 +3977,9 @@ class CheckpointOverheadBudget:
     ckpt_run_total_tb_str              = fmt(run_total_tb, precision=0)
     ckpt_recent_retention_tb_str       = fmt(recent_retention_tb, precision=1, commas=False)
     ckpt_sustained_bw_gbs_str          = fmt(sustained_bw_gbs, precision=1, commas=False)
+    ckpt_run_days_str                  = fmt(run_days, precision=0, commas=False)
+    ckpt_run_hours_per_day_str         = fmt(HOURS_PER_DAY, precision=0, commas=False)
+    ckpt_per_hour_str                  = fmt(60 // cadence_min, precision=0, commas=False)
 ```
 
 ```{python}
@@ -3834,7 +3995,7 @@ class InfraFrontierStragglerRecap11:
 
 Checkpointing also creates a significant *storage* requirement that demands its own dedicated infrastructure. A full checkpoint for our `{python} InfraFrontierStragglerRecap11.frontier_params_b_str`B model includes the model weights (350 GB), optimizer states (1,400 GB), and the random number generator states needed to resume training deterministically. The total is approximately `{python} CheckpointOverheadBudget.ckpt_total_tb_str` TB per checkpoint. At a `{python} CheckpointOverheadBudget.ckpt_cadence_min_str`-minute cadence, a `{python} CheckpointOverheadBudget.ckpt_reference_write_s_str`-second write would consume `{python} CheckpointOverheadBudget.ckpt_reference_overhead_pct_str` percent of training time, not `{python} CheckpointOverheadBudget.ckpt_target_overhead_pct_str` percent. To keep checkpoint overhead below `{python} CheckpointOverheadBudget.ckpt_target_overhead_pct_str` percent, the write must complete in about `{python} CheckpointOverheadBudget.ckpt_allowed_write_s_str` seconds, demanding a sustained aggregate write bandwidth of approximately `{python} CheckpointOverheadBudget.ckpt_required_bw_gbs_str` GB/s. A `{python} CheckpointOverheadBudget.ckpt_reference_write_s_str`-second write target corresponds to approximately `{python} CheckpointOverheadBudget.ckpt_reference_bw_gbs_str` GB/s and only fits a `{python} CheckpointOverheadBudget.ckpt_target_overhead_pct_str` percent budget when checkpoints are spaced at least `{python} CheckpointOverheadBudget.ckpt_reference_min_cadence_min_str` minutes apart. Standard NFS or object storage implementations collapse under this "thundering herd" pattern, where all GPUs transition from compute to I/O simultaneously. The solution requires a high-performance parallel file system like Lustre or IBM Spectrum Scale (GPFS), architected with hundreds of Object Storage Targets (OSTs) striping data across thousands of NVMe drives. A failure to architect for this burst bandwidth results in "I/O jitter," where training hangs unpredictably for minutes as the checkpoint write saturates the storage backend, effectively burning millions of dollars in idle GPU cycles. @sec-data-storage examines the storage architectures that meet these throughput requirements in detail. If checkpoints are taken every `{python} CheckpointOverheadBudget.ckpt_cadence_min_str` minutes during a 2-week training run, the system must write:
 
-- **Checkpoints per run**\index{Checkpointing!checkpoints per run}: (14 days$\times$ 24 hours$\times$ 6 per hour) = `{python} CheckpointOverheadBudget.ckpt_run_count_str` checkpoints
+- **Checkpoints per run**\index{Checkpointing!checkpoints per run}: (`{python} CheckpointOverheadBudget.ckpt_run_days_str` days$\times$ `{python} CheckpointOverheadBudget.ckpt_run_hours_per_day_str` hours$\times$ `{python} CheckpointOverheadBudget.ckpt_per_hour_str` per hour) = `{python} CheckpointOverheadBudget.ckpt_run_count_str` checkpoints
 - **Total checkpoint data**\index{Checkpointing!total checkpoint data}: `{python} CheckpointOverheadBudget.ckpt_run_count_str` $\times$ `{python} CheckpointOverheadBudget.ckpt_total_tb_str` TB = `{python} CheckpointOverheadBudget.ckpt_run_total_tb_str` TB
 
 Even retaining only the most recent 10 checkpoints (`{python} CheckpointOverheadBudget.ckpt_recent_retention_tb_str` TB), the storage system must sustain a continuous write throughput of `{python} CheckpointOverheadBudget.ckpt_total_tb_str` TB every `{python} CheckpointOverheadBudget.ckpt_cadence_min_str` minutes, or approximately `{python} CheckpointOverheadBudget.ckpt_sustained_bw_gbs_str` GB/s. Organizations that undersize their checkpoint storage discover that checkpointing itself becomes a bottleneck, as the GPUs must wait for the previous checkpoint to complete writing before starting the next one. @sec-data-storage examines the storage architectures that meet these throughput requirements.
@@ -3935,8 +4096,15 @@ class CommScalingMath:
     compute_per_step_math = fmt_math(f"O_{{\\text{{step}}}} = 6 \\times {gpt3_params_b_str} \\times 10^9 \\times 2 \\times 10^6 \\approx 2.1 \\times 10^{{18}}")
     t_compute_math = fmt_math(f"T_{{\\text{{compute}}}}/N \\approx 2.1")
     t_comm_math = fmt_math(f"T_{{\\text{{comm}}}}(N) \\approx {_effective_time_s:.1f}")
+    t_compute_s = 2.1
+    exposed_step_s = t_compute_s + _effective_time_s
+    scaling_efficiency = t_compute_s / exposed_step_s
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
+    gradient_gb_str = fmt(_gradient_size_gb, precision=0, commas=False)
+    exposed_step_s_str = fmt(exposed_step_s, precision=1, commas=False)
+    scaling_efficiency_str = fmt(scaling_efficiency, precision=3, commas=False)
+    t_compute_s_str = fmt(t_compute_s, precision=1, commas=False)
 ```
 
 ```{python}
@@ -3959,9 +4127,9 @@ class CommScalingIbRecap:
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     ib_bw_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second), precision=0, commas=False)
 ```
-For data-parallel training of our `{python} InfraFrontierStragglerRecap13.frontier_params_b_str`B model, the communication cost per step is dominated by the AllReduce of 350 GB of gradients.
+For data-parallel training of our `{python} InfraFrontierStragglerRecap13.frontier_params_b_str`B model, the communication cost per step is dominated by the AllReduce of `{python} CommScalingMath.gradient_gb_str` GB of gradients.
 
-Using ring-AllReduce over InfiniBand at `{python} CommScalingIbRecap.ib_bw_str` GB/s effective bandwidth, the raw communication time is approximately `{python} CommScalingMath.comm_time_formula_math`, which for large $N$ approaches `{python} CommScalingMath.comm_approx_math` seconds. With 75 percent overlap between gradient communication and the backward pass, the effective exposed communication time drops to `{python} CommScalingMath.t_comm_math` seconds. Under the same assumptions, the compute term is `{python} CommScalingMath.t_compute_math` seconds, so the exposed step time is about 5.6 seconds and naive data-parallel scaling efficiency is $2.1/5.6 \approx 0.375$. Production systems recover much of this loss by combining tensor parallelism, pipeline parallelism, topology-aware placement, and more effective communication overlap, achieving 70--90 percent scaling efficiency for well-optimized training systems.
+Using ring-AllReduce over InfiniBand at `{python} CommScalingIbRecap.ib_bw_str` GB/s effective bandwidth, the raw communication time is approximately `{python} CommScalingMath.comm_time_formula_math`, which for large $N$ approaches `{python} CommScalingMath.comm_approx_math` seconds. With 75 percent overlap between gradient communication and the backward pass, the effective exposed communication time drops to `{python} CommScalingMath.t_comm_math` seconds. Under the same assumptions, the compute term is `{python} CommScalingMath.t_compute_math` seconds, so the exposed step time is about `{python} CommScalingMath.exposed_step_s_str` seconds and naive data-parallel scaling efficiency is `{python} CommScalingMath.t_compute_s_str`/`{python} CommScalingMath.exposed_step_s_str` $\approx$ `{python} CommScalingMath.scaling_efficiency_str`. Production systems recover much of this loss by combining tensor parallelism, pipeline parallelism, topology-aware placement, and more effective communication overlap, achieving 70--90 percent scaling efficiency for well-optimized training systems.
 
 The scaling efficiency depends critically on the ratio of computation to communication. Three factors govern this ratio:
 
@@ -4122,15 +4290,54 @@ In multi-tenant clusters where multiple training jobs share the same physical in
 ```{python}
 #| echo: false
 from mlsysim import *
+#| label: checkpoint-compute-tradeoff
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierStragglerRecap16.frontier_params_b_str
-class InfraFrontierStragglerRecap16:
+# │ Exports: CheckpointComputeTradeoff.frontier_params_b_str,
+# │          CheckpointComputeTradeoff.training_state_tb_str,
+# │          CheckpointComputeTradeoff.write_bw_gbs_str,
+# │          CheckpointComputeTradeoff.t_write_s_str,
+# │          CheckpointComputeTradeoff.num_gpus_str,
+# │          CheckpointComputeTradeoff.mtbf_system_s_str,
+# │          CheckpointComputeTradeoff.tau_opt_s_str,
+# │          CheckpointComputeTradeoff.tau_opt_min_str,
+# │          CheckpointComputeTradeoff.overhead_pct_str
+import math
+
+class CheckpointComputeTradeoff:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.GPT3.parameters.m_as(param)
+    write_bw_gbs = 100
+    num_gpus = 10_000
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    gradients_gb = weights_gb
+    optimizer_gb = (params * BYTES_FP32.m_as(byte) * 2 * byte).m_as(GB)
+    training_state_tb = (weights_gb + gradients_gb + optimizer_gb) / THOUSAND
+    t_write_s = training_state_tb * THOUSAND / write_bw_gbs
+    mtbf_system_s = Systems.Reliability.Gpu.mttf_hours * SEC_PER_HOUR / num_gpus
+    mtbf_system_hr = mtbf_system_s / SEC_PER_HOUR
+    tau_opt_s = math.sqrt(2 * t_write_s * mtbf_system_s)
+    overhead_pct = t_write_s / tau_opt_s * 100
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(abs(t_write_s - 20) < 1, "Checkpoint write time should be about 20 s")
+    check(800 < tau_opt_s < 900, "Optimal checkpoint interval should be about 14 min")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    frontier_params_b_str = fmt(params / BILLION, precision=0, commas=False)
+    training_state_tb_str = fmt(training_state_tb, precision=0, commas=False)
+    write_bw_gbs_str = fmt(write_bw_gbs, precision=0, commas=False)
+    t_write_s_str = fmt(t_write_s, precision=0, commas=False)
+    num_gpus_str = fmt(num_gpus, precision=0, commas=True)
+    mtbf_system_s_str = fmt(mtbf_system_s, precision=0, commas=True)
+    mtbf_system_hr_str = fmt(mtbf_system_hr, precision=0, commas=False)
+    tau_opt_s_str = fmt(tau_opt_s, precision=0, commas=False)
+    tau_opt_min_str = fmt(tau_opt_s / SECONDS_PER_MINUTE, precision=0, commas=False)
+    overhead_pct_str = fmt(overhead_pct, precision=1, commas=False)
 ```
 
-The reliability challenge is formalized by the **checkpoint-compute trade-off**\index{Checkpoint-Compute Trade-Off}, which balances the time lost to saving state against the time lost to recomputing work after a failure. The **Young/Daly formula** defines the optimal checkpoint interval $\tau_{\text{opt}}$ as $\sqrt{2 \cdot T_{\text{write}} \cdot \text{MTBF}_{\text{system}}}$, where $T_{\text{write}}$ is the time to write a checkpoint and $\text{MTBF}_{\text{system}}$ is the system-wide Mean Time Between Failures. For our `{python} InfraFrontierStragglerRecap16.frontier_params_b_str`B model, the full training state -- weights, optimizer moments, and gradients -- approaches 2 TB. Even with a high-performance parallel filesystem capable of 100 GB/s write throughput, committing this state to persistent storage takes approximately $T_{\text{write}} \approx 20$ seconds. In a cluster of 10,000 GPUs where $\text{MTBF}_{\text{system}} \approx 18{,}000\,\text{s}$ (5 hours), the formula yields $\tau_{\text{opt}} = \sqrt{2 \cdot 20\,\text{s} \cdot 18{,}000\,\text{s}} \approx 849\,\text{s}$, an optimal checkpoint interval of roughly 14 minutes. This creates a steady cadence: every 14 minutes, the entire cluster pauses for 20 seconds to serialize its state to disk, introducing a sustained training overhead of approximately 2.4 percent. If the interval is too long, the cost of recomputing lost work after a failure exceeds the savings from fewer checkpoints; if too short, the I/O overhead dominates the training budget. @sec-fault-tolerance-young-daly examines checkpointing strategies, including asynchronous checkpointing and incremental state saving, that reduce this overhead.
+The reliability challenge is formalized by the **checkpoint-compute trade-off**\index{Checkpoint-Compute Trade-Off}, which balances the time lost to saving state against the time lost to recomputing work after a failure. The **Young/Daly formula** defines the optimal checkpoint interval $\tau_{\text{opt}}$ as $\sqrt{2 \cdot T_{\text{write}} \cdot \text{MTBF}_{\text{system}}}$, where $T_{\text{write}}$ is the time to write a checkpoint and $\text{MTBF}_{\text{system}}$ is the system-wide Mean Time Between Failures. For our `{python} CheckpointComputeTradeoff.frontier_params_b_str`B model, the full training state -- weights, optimizer moments, and gradients -- approaches `{python} CheckpointComputeTradeoff.training_state_tb_str` TB. Even with a high-performance parallel filesystem capable of `{python} CheckpointComputeTradeoff.write_bw_gbs_str` GB/s write throughput, committing this state to persistent storage takes approximately $T_{\text{write}} \approx$ `{python} CheckpointComputeTradeoff.t_write_s_str` seconds. In a cluster of `{python} CheckpointComputeTradeoff.num_gpus_str` GPUs where $\text{MTBF}_{\text{system}} \approx$ `{python} CheckpointComputeTradeoff.mtbf_system_s_str` s (`{python} CheckpointComputeTradeoff.mtbf_system_hr_str` hours), the formula yields $\tau_{\text{opt}} \approx$ `{python} CheckpointComputeTradeoff.tau_opt_s_str` s, an optimal checkpoint interval of roughly `{python} CheckpointComputeTradeoff.tau_opt_min_str` minutes. This creates a steady cadence: every `{python} CheckpointComputeTradeoff.tau_opt_min_str` minutes, the entire cluster pauses for `{python} CheckpointComputeTradeoff.t_write_s_str` seconds to serialize its state to disk, introducing a sustained training overhead of approximately `{python} CheckpointComputeTradeoff.overhead_pct_str` percent. If the interval is too long, the cost of recomputing lost work after a failure exceeds the savings from fewer checkpoints; if too short, the I/O overhead dominates the training budget. @sec-fault-tolerance-young-daly examines checkpointing strategies, including asynchronous checkpointing and incremental state saving, that reduce this overhead.
 
 ```{python}
 #| echo: false
@@ -4614,6 +4821,15 @@ class TenKGpuClusterTco:
     cloud_three_year_str = fmt(cloud_three_year_usd / 1e6, precision=1, prefix="$", suffix="M")
     savings_str = fmt(savings_usd / 1e6, precision=1, prefix="$", suffix="M")
     breakeven_util_str = fmt(breakeven_utilization * 100, precision=1, commas=False)
+    gpus_str = fmt(gpus, precision=0, commas=True)
+    node_price_str = fmt(node_price_usd, precision=0, commas=True, prefix="$", suffix="")
+    gpu_tdp_str = fmt(gpu_tdp_w, precision=0, commas=False)
+    pue_str = fmt(pue, precision=1, commas=False)
+    hours_per_year_str = fmt(HOURS_PER_YEAR, precision=0, commas=True)
+    electricity_rate_str = fmt(electricity_rate, precision=2, commas=False, prefix="$", suffix="/kWh")
+    cloud_gpu_hour_str = fmt(cloud_gpu_hour_usd, precision=2, commas=False, prefix="$", suffix="/hr")
+    utilization_str = fmt(utilization, precision=2, commas=False)
+    lifecycle_years_str = fmt(lifecycle_years, precision=0, commas=False)
 ```
 
 ::: {#nbk-compute-infrastructure-10-000-gpu-cluster .callout-notebook title="The 10,000-GPU cluster"}
@@ -4631,29 +4847,18 @@ class InfraFrontierTcoTenKRecap:
 
 Consider a cluster of `{python} TenKGpuClusterTco.nodes_str` DGX H100 nodes (10,000 GPUs) for training our `{python} InfraFrontierTcoTenKRecap.frontier_params_b_str`B model.
 
-```{python}
-#| echo: false
-from mlsysim import *
-# ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: H100TdpTcoRecap.tdp_str
-class H100TdpTcoRecap:
-
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    tdp_str = fmt(Hardware.Cloud.H100.tdp.m_as(watt), precision=0, commas=False)
-```
-
 **On-Premises (3-year lifecycle)**:
 
-- **Hardware CapEx**\index{CapEx!hardware}: `{python} TenKGpuClusterTco.nodes_str` nodes$\times$ \$350,000 = `{python} TenKGpuClusterTco.hardware_capex_str`
+- **Hardware CapEx**\index{CapEx!hardware}: `{python} TenKGpuClusterTco.nodes_str` nodes$\times$ `{python} TenKGpuClusterTco.node_price_str` = `{python} TenKGpuClusterTco.hardware_capex_str`
 - **Network CapEx**\index{CapEx!network}: ~`{python} TenKGpuClusterTco.network_capex_str` (InfiniBand fat-tree fabric)
 - **Facility CapEx**\index{CapEx!facility capex}: ~`{python} TenKGpuClusterTco.facility_capex_str` (liquid-cooled data center hall)
-- **Annual Electricity**\index{Electricity!annual electricity}: simplified GPU-only estimate: 10,000 GPUs $\times$ `{python} H100TdpTcoRecap.tdp_str` W $\times$ PUE 1.1 $\times$ 8,760 h $\times$ \$0.07/kWh = `{python} TenKGpuClusterTco.annual_electricity_str`/year
+- **Annual Electricity**\index{Electricity!annual electricity}: simplified GPU-only estimate: `{python} TenKGpuClusterTco.gpus_str` GPUs $\times$ `{python} TenKGpuClusterTco.gpu_tdp_str` W $\times$ PUE `{python} TenKGpuClusterTco.pue_str` $\times$ `{python} TenKGpuClusterTco.hours_per_year_str` h $\times$ `{python} TenKGpuClusterTco.electricity_rate_str` = `{python} TenKGpuClusterTco.annual_electricity_str`/year
 - **Annual Staffing**\index{Staffing!annual staffing}: ~`{python} TenKGpuClusterTco.annual_staffing_str`/year
-- **3-Year Total**: `{python} TenKGpuClusterTco.upfront_capex_str` + 3$\times$ `{python} TenKGpuClusterTco.annual_opex_str` = **~`{python} TenKGpuClusterTco.three_year_total_str`**
+- **3-Year Total**: `{python} TenKGpuClusterTco.upfront_capex_str` + `{python} TenKGpuClusterTco.lifecycle_years_str`$\times$ `{python} TenKGpuClusterTco.annual_opex_str` = **~`{python} TenKGpuClusterTco.three_year_total_str`**
 
 **Cloud (3-year rental at 80 percent utilization)**:
 
-- **Annual Cost**\index{Cost!annual cost}: 10,000 GPUs$\times$ \$4.00/hr$\times$ 8,760 h$\times$ 0.80 = `{python} TenKGpuClusterTco.cloud_annual_str`/year
+- **Annual Cost**\index{Cost!annual cost}: `{python} TenKGpuClusterTco.gpus_str` GPUs$\times$ `{python} TenKGpuClusterTco.cloud_gpu_hour_str`$\times$ `{python} TenKGpuClusterTco.hours_per_year_str` h$\times$ `{python} TenKGpuClusterTco.utilization_str` = `{python} TenKGpuClusterTco.cloud_annual_str`/year
 - **3-Year Total**: **~`{python} TenKGpuClusterTco.cloud_three_year_str`**
 
 **Break-Even**\index{Total Cost of Ownership!break-even}: On-premises saves approximately `{python} TenKGpuClusterTco.savings_str` over three years at 80 percent utilization. The savings disappear if utilization drops below roughly `{python} TenKGpuClusterTco.breakeven_util_str` percent, because the on-premises hardware still incurs facility and staffing costs regardless of load.
@@ -5266,14 +5471,38 @@ Accelerator power draw varies dynamically between communication phases (lower po
 #| echo: false
 from mlsysim import *
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: A100FallaciesRecap.mem_bw_tbs_str
+# │ Exports: A100FallaciesRecap.mem_bw_tbs_str, A100FallaciesRecap.option_a_hbm_gb_str,
+# │          A100FallaciesRecap.weights_fp16_gb_str, A100FallaciesRecap.option_a_lat_ms_str,
+# │          A100FallaciesRecap.option_b_hbm_gb_str, A100FallaciesRecap.weights_int8_gb_str,
+# │          A100FallaciesRecap.option_b_lat_ms_str, A100FallaciesRecap.speedup_str
 class A100FallaciesRecap:
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.Llama3_70B.parameters.m_as(param)
+    option_a_hbm_gb = 192  # hypothetical large HBM2e package at A100-class bandwidth
+    option_b_hbm_gb = Hardware.Cloud.H100.memory.capacity.m_as(GiB)
+    a100_bw_tbs = Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second)
+    h100_bw_tbs = Hardware.Cloud.H100.memory.bandwidth.m_as(TB/second)
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    weights_fp16_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    weights_int8_gb = (params * BYTES_INT8.m_as(byte) * byte).m_as(GB)
+    option_a_lat_ms = weights_fp16_gb / (a100_bw_tbs * THOUSAND) * MS_PER_SEC
+    option_b_lat_ms = weights_int8_gb / (h100_bw_tbs * THOUSAND) * MS_PER_SEC
+    speedup = option_a_lat_ms / option_b_lat_ms
+
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    mem_bw_tbs_str = fmt(Hardware.Cloud.A100.memory.bandwidth.m_as(TB/second), precision=2, commas=False)
+    mem_bw_tbs_str = fmt(a100_bw_tbs, precision=2, commas=False)
+    option_a_hbm_gb_str = fmt(option_a_hbm_gb, precision=0, commas=False)
+    weights_fp16_gb_str = fmt(weights_fp16_gb, precision=0, commas=False)
+    option_a_lat_ms_str = fmt(option_a_lat_ms, precision=1, commas=False)
+    option_b_hbm_gb_str = fmt(option_b_hbm_gb, precision=0, commas=False)
+    weights_int8_gb_str = fmt(weights_int8_gb, precision=0, commas=False)
+    option_b_lat_ms_str = fmt(option_b_lat_ms, precision=0, commas=False)
+    speedup_str = fmt(speedup, precision=1, commas=False)
 ```
 Procurement teams sometimes focus exclusively on whether a model's weights "fit" in the available HBM, neglecting the bandwidth dimension. A model that fits in HBM but cannot be served at acceptable latency due to insufficient bandwidth is just as unusable as a model that does not fit. Consider two scenarios for serving a 70B model: (a) an accelerator with
 
-192 GB of HBM2e at `{python} A100FallaciesRecap.mem_bw_tbs_str` TB/s bandwidth, and (b) an accelerator with 80 GB of HBM3 at `{python} MemoryBandwidthFallaciesRecap.h100_bw_str` TB/s bandwidth. Option (a) has more than enough capacity (the model requires only 140 GB in FP16) but delivers tokens at 140 GB/`{python} A100FallaciesRecap.mem_bw_tbs_str` TB/s = 68.6 ms per token. Option (b) requires careful quantization to fit (140 GB in FP16 would not fit in 80 GB, but 70 GB in INT8 does) but delivers tokens at 70 GB/`{python} MemoryBandwidthFallaciesRecap.h100_bw_str` TB/s = 21 ms per token, which is 3.3$\times$ faster. For latency-sensitive serving, option (b) is the better choice despite its smaller capacity. The right accelerator is the one whose bandwidth and capacity *jointly* satisfy the workload's requirements.
+`{python} A100FallaciesRecap.option_a_hbm_gb_str` GB of HBM2e at `{python} A100FallaciesRecap.mem_bw_tbs_str` TB/s bandwidth, and (b) an accelerator with `{python} A100FallaciesRecap.option_b_hbm_gb_str` GB of HBM3 at `{python} MemoryBandwidthFallaciesRecap.h100_bw_str` TB/s bandwidth. Option (a) has more than enough capacity (the model requires only `{python} A100FallaciesRecap.weights_fp16_gb_str` GB in FP16) but delivers tokens at `{python} A100FallaciesRecap.weights_fp16_gb_str` GB/`{python} A100FallaciesRecap.mem_bw_tbs_str` TB/s = `{python} A100FallaciesRecap.option_a_lat_ms_str` ms per token. Option (b) requires careful quantization to fit (`{python} A100FallaciesRecap.weights_fp16_gb_str` GB in FP16 would not fit in `{python} A100FallaciesRecap.option_b_hbm_gb_str` GB, but `{python} A100FallaciesRecap.weights_int8_gb_str` GB in INT8 does) but delivers tokens at `{python} A100FallaciesRecap.weights_int8_gb_str` GB/`{python} MemoryBandwidthFallaciesRecap.h100_bw_str` TB/s = `{python} A100FallaciesRecap.option_b_lat_ms_str` ms per token, which is `{python} A100FallaciesRecap.speedup_str`$\times$ faster. For latency-sensitive serving, option (b) is the better choice despite its smaller capacity. The right accelerator is the one whose bandwidth and capacity *jointly* satisfy the workload's requirements.
 
 **Pitfall**: *Neglecting the data loading pipeline until after deployment.*
 

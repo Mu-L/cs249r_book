@@ -337,11 +337,12 @@ class InferenceEconomics:
     qps_str = fmt(qps, precision=0)
     serve_duration_days_str = fmt(serve_duration_days, precision=0, commas=False)
     cost_per_million_str = fmt(cost_per_query * MILLION, precision=0, commas=False)
+    training_cost_brief_str = fmt(training_total_cost, precision=0, prefix="USD ")
 ```
 
 ::: {#nbk-inference-serving-cost-multiplier-2 .callout-notebook title="The serving cost multiplier"}
 
-**Problem**: A recommendation model (DLRM) costs \$12,000 to train and then serves `{python} InferenceEconomics.qps_str` queries per second over `{python} InferenceEconomics.serve_duration_days_str` days. By what factor does the lifetime serving cost exceed the one-time training cost?
+**Problem**: A recommendation model (DLRM) costs `{python} InferenceEconomics.training_cost_brief_str` to train and then serves `{python} InferenceEconomics.qps_str` queries per second over `{python} InferenceEconomics.serve_duration_days_str` days. By what factor does the lifetime serving cost exceed the one-time training cost?
 
 **Training Cost** $(C_{\text{train}})$
 
@@ -2799,7 +2800,7 @@ class KVCacheCalc:
     gqa_kv_fp16_gb = kv_fp16_gb * (8 / kv_heads)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    from mlsysim.fmt import check, MarkdownStr, fmt
+    from mlsysim.fmt import check, MarkdownStr, fmt, fmt_math
     check(kv_fp16_gb > 5, f"KV cache should be substantial, got {kv_fp16_gb:.1f} GB")
     check(abs(gqa_kv_fp16_gb - (kv_fp16_gb / 8)) < 1e-6, "GQA cache should be 8x smaller than MHA baseline")
 
@@ -2814,10 +2815,19 @@ class KVCacheCalc:
     h100_mem_gb_str = fmt(h100_mem.m_as(GiB), precision=0, commas=False)
     batch8_kv_fp16_gb_str = fmt(batch8_kv_fp16_gb, precision=1, commas=False)
     gqa_kv_fp16_gb_str = fmt(gqa_kv_fp16_gb, precision=1, commas=False)
+    gqa_kv_heads = 8
+    kv_fp16_formula_math = fmt_math(
+        rf"2 \times {kv_layers} \times {kv_heads} \times {kv_head_dim} \times {kv_seq_len} \times 2 "
+        rf"\approx {kv_fp16_gb:.1f}"
+    )
+    gqa_kv_fp16_formula_math = fmt_math(
+        rf"2 \times {kv_layers} \times {gqa_kv_heads} \times {kv_head_dim} \times {kv_seq_len} \times 2 "
+        rf"\approx {gqa_kv_fp16_gb:.1f}"
+    )
 ```
 
 $$
-\text{KV cache} = 2 \times 80 \times 64 \times 128 \times 4096 \times 2 \text{ bytes} \approx \text{`{python} KVCacheCalc.kv_fp16_gb_str`} \text{ GB (FP16)}
+\text{KV cache} = `{python} KVCacheCalc.kv_fp16_formula_math` \text{ GB (FP16)}
 $$
 
 A single request's KV cache alone consumes a substantial fraction of the H100's `{python} KVCacheCalc.h100_mem_gb_str` GB of HBM. For a batch of 8 concurrent requests, the KV cache would require `{python} KVCacheCalc.batch8_kv_fp16_gb_str` GB, exceeding single-GPU capacity. Reducing this footprint requires two complementary strategies: quantization and architectural optimization.
@@ -2837,7 +2847,7 @@ An architectural complement to quantization is **Grouped Query Attention (GQA)**
 The impact on KV cache size is proportional to the KV head reduction. For our earlier 70B model, switching from MHA (64 KV heads) to GQA with 8 KV heads shrinks the KV cache by 8$\times$:
 
 $$
-\text{KV cache (GQA)} = 2 \times 80 \times 8 \times 128 \times 4096 \times 2 \approx \text{`{python} KVCacheCalc.gqa_kv_fp16_gb_str`} \text{ GB (FP16)}
+\text{KV cache (GQA)} = `{python} KVCacheCalc.gqa_kv_fp16_formula_math` \text{ GB (FP16)}
 $$
 
 At `{python} KVCacheCalc.gqa_kv_fp16_gb_str` GB, the GQA cache is dramatically more manageable than the `{python} KVCacheCalc.kv_fp16_gb_str` GB required by MHA. Combining GQA with INT8 KV cache quantization yields sub-gigabyte per-request cache sizes, often enabling substantially larger batches on a single GPU. GQA has become a common architectural choice for inference-optimized LLMs because it reduces KV-cache bandwidth and capacity pressure with comparatively small quality impact in many deployments.
@@ -2858,6 +2868,8 @@ class PrecisionDividend:
     fp16_weight_per_gpu = 35
     int4_bits = 4
     fp16_bits = 16
+    tensor_parallel_degree = 4
+    fp16_weight_total_gb = fp16_weight_per_gpu * tensor_parallel_degree
     # ┌── 2. EXECUTE ───────────────────────────────────────
     avail_kv_fp16 = h100_mem_gb - fp16_weight_per_gpu
     int4_weight_per_gpu = fp16_weight_per_gpu * (int4_bits/fp16_bits)
@@ -2867,8 +2879,8 @@ class PrecisionDividend:
     kv_head_dim = 128
     kv_seq_len = 4096
     kv_fp16_gb = (2 * kv_layers * kv_heads * kv_head_dim * kv_seq_len * BYTES_FP16.m_as(byte) * byte).m_as(GB)
-    kv_fp16_per_gpu = kv_fp16_gb / 4
-    kv_int8_per_gpu = (kv_fp16_gb / 2) / 4
+    kv_fp16_per_gpu = kv_fp16_gb / tensor_parallel_degree
+    kv_int8_per_gpu = (kv_fp16_gb / 2) / tensor_parallel_degree
     max_batch_fp16 = int(avail_kv_fp16 / kv_fp16_per_gpu)
     max_batch_int8 = int(avail_kv_int4 / kv_int8_per_gpu)
     # ┌── 3. GUARD ─────────────────────────────────────────
@@ -2886,17 +2898,19 @@ class PrecisionDividend:
     kv_int8_per_gpu_str = fmt(kv_int8_per_gpu, precision=1, commas=False)
     max_batch_fp16_str = fmt(max_batch_fp16, precision=0, commas=False)
     max_batch_int8_str = fmt(max_batch_int8, precision=0, commas=False)
+    fp16_weight_total_gb_str = fmt(fp16_weight_total_gb, precision=0, commas=False)
+    tensor_parallel_degree_str = fmt(tensor_parallel_degree, precision=0, commas=False)
 ```
 
 ::: {#nbk-inference-precision-dividend .callout-notebook title="The precision dividend"}
 
-**Problem**: A team serves a 70B model on 4$\times$ H100 GPUs. Weights in FP16 consume 140 GB (35 GB/GPU). KV cache at FP16 consumes `{python} KVCacheCalc.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
+**Problem**: A team serves a 70B model on `{python} PrecisionDividend.tensor_parallel_degree_str`$\times$ H100 GPUs. Weights in FP16 consume `{python} PrecisionDividend.fp16_weight_total_gb_str` GB (`{python} PrecisionDividend.fp16_weight_per_gpu_str` GB/GPU). KV cache at FP16 consumes `{python} KVCacheCalc.kv_fp16_gb_str` GB per request. How does quantizing weights to INT4 and KV cache to INT8 change the maximum batch size?
 
 **Before optimization** (all FP16):
 
-- Weights: 35 GB/GPU
+- Weights: `{python} PrecisionDividend.fp16_weight_per_gpu_str` GB/GPU
 - Available for KV cache: $80 -$ `{python} PrecisionDividend.fp16_weight_per_gpu_str` $=$ `{python} PrecisionDividend.avail_kv_fp16_str` GB/GPU
-- KV cache per request: `{python} KVCacheCalc.kv_fp16_gb_str` GB $\div$ 4 GPUs $\approx$ `{python} PrecisionDividend.kv_fp16_per_gpu_str` GB/GPU
+- KV cache per request: `{python} KVCacheCalc.kv_fp16_gb_str` GB $\div$ `{python} PrecisionDividend.tensor_parallel_degree_str` GPUs $\approx$ `{python} PrecisionDividend.kv_fp16_per_gpu_str` GB/GPU
 - Maximum batch size: $\lfloor$ `{python} PrecisionDividend.avail_kv_fp16_str` $/$ `{python} PrecisionDividend.kv_fp16_per_gpu_str` $\rfloor$ $\approx$ `{python} PrecisionDividend.max_batch_fp16_str` requests
 
 **After optimization** (INT4 weights, INT8 KV cache):
@@ -3668,6 +3682,9 @@ class MoECapacityPlan:
     nodes_needed_str = fmt(nodes_needed, precision=0, commas=False)
     cluster_capacity_gb_str = fmt(cluster_capacity_gb, precision=0)
     active_mem_gb_str = fmt(active_mem_gb, precision=0, commas=False)
+    moe_active_params_b_str = fmt(moe_active_params_b, precision=0, commas=False)
+    n_gpus_str = fmt(n_gpus, precision=0, commas=False)
+    alltoall_overhead_ms_str = fmt(alltoall_overhead_ms, precision=1, commas=False)
     h100_bw_tbs_str = fmt(h100_bw_tbs, precision=2, commas=False)
 ```
 
@@ -3678,7 +3695,7 @@ class MoECapacityPlan:
 **Math**:
 
 1.  **Memory**: Total weight memory = `{python} MoECapacityPlan.total_weight_gb_str` GB. A single node (`{python} MoECapacityPlan.node_capacity_gb_str` GB) is insufficient. `{python} MoECapacityPlan.nodes_needed_str` nodes provide `{python} MoECapacityPlan.cluster_capacity_gb_str` GB, leaving enough room for KV caches.
-2.  **Latency**: Each decode step reads 37B active parameters (`{python} MoECapacityPlan.active_mem_gb_str` GB). Distributed across 16 GPUs, each reads about `{python} MoECapacityPlan.read_per_gpu_str` GB. At `{python} MoECapacityPlan.h100_bw_tbs_str` TB/s HBM bandwidth, $t_{\text{read}} \approx$ `{python} MoECapacityPlan.t_read_ms_str` ms. AllToAll routing adds about 0.3 ms.
+2.  **Latency**: Each decode step reads `{python} MoECapacityPlan.moe_active_params_b_str`B active parameters (`{python} MoECapacityPlan.active_mem_gb_str` GB). Distributed across `{python} MoECapacityPlan.n_gpus_str` GPUs, each reads about `{python} MoECapacityPlan.read_per_gpu_str` GB. At `{python} MoECapacityPlan.h100_bw_tbs_str` TB/s HBM bandwidth, $t_{\text{read}} \approx$ `{python} MoECapacityPlan.t_read_ms_str` ms. AllToAll routing adds about `{python} MoECapacityPlan.alltoall_overhead_ms_str` ms.
 3.  **Floor**: Estimated decode latency $\approx$ `{python} MoECapacityPlan.total_decode_ms_str` ms/token, or `{python} MoECapacityPlan.tokens_per_sec_str` tokens/second at batch size 1.
 
 **Systems insight**: MoE allows a 671B model to approach the per-token bandwidth cost of a much smaller dense model, but capacity planning is still driven by the full parameter set that must remain resident.

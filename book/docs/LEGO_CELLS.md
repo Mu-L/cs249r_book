@@ -66,6 +66,14 @@ The A100 ridge is `{python} A100RidgeExample.ridge_str` FLOP/byte.
   output type.
 - **Kitchen-sink exports** — header lists ten fields used once each across the
   chapter; split by callout instead.
+- **Legacy constant export names** — do not mirror removed `constants.py`
+  symbols (`H100_FLOPS_FP16_TENSOR_val_str`, `GPUS_PER_HOST_str`, …). Use
+  scenario-descriptive names (`h100_peak_fp16_val_str`, `dgx_h100_gpus_per_node_str`)
+  with registry paths on the RHS. `./binder check registry --scope sources` enforces this.
+- **Hardcoded walkthrough operands** — in callout **Math** / **Step** prose that
+  already uses ``{python} Class.field_str``, do not type intermediate numbers
+  (`1,287,000 kWh`, `times 429 g/kWh`, `USD 18,000`). Export them from the cell.
+  `./binder check code --scope lego-prose-literals` flags common cases.
 
 ## Review checklist
 
@@ -77,6 +85,7 @@ When editing or auditing a chapter:
 | Span | Do all exports appear in the same callout / `##` section? |
 | Coupling | Does any other cell read this class's attributes? |
 | Dead code | Does `lego-dead-code` report unused exports? |
+| Walkthrough literals | Does `lego-prose-literals` pass on touched callouts? |
 | Fmt | Do prose preview + canonical audit pass (`fmt/` workflow)? |
 
 ## Migration (existing chapters)
@@ -96,6 +105,7 @@ automate the checklist; until then, apply this contract in review.
 
 - `book/tools/audit/fmt/README.md` — spurious `.0` / fmt precision workflow
 - `./book/binder check math --scope canonical` — static fmt and suffix lint
+- `./book/binder check code --scope lego-prose-literals` — walkthrough prose must not hardcode computed operands
 - `./book/binder check refs --scope inline-python` — chapter exec validation
 - `book/tools/audit/book_check_registry_sources.py` — legacy alias / constant import gate
 - `mlsysim/tests/test_constants_allowlist.py` — CI lock on `constants.py` surface

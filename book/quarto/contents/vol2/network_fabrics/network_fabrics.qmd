@@ -512,7 +512,7 @@ from mlsysim.core.constants import *
 # │          NetworkAlphaBeta.ib_alpha_us_str,
 # │          NetworkAlphaBeta.ib_beta_gbs_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check
+from mlsysim.fmt import fmt, check, fmt_math
 
 class NetworkAlphaBeta:
     """Namespace for the alpha-beta communication model."""
@@ -544,6 +544,14 @@ class NetworkAlphaBeta:
     t_large_ib_ms_str = fmt(t_large_ib * 1e3, precision=1, commas=False)
     ib_alpha_us_str = fmt(alpha_ib * 1e6, precision=1, commas=False)
     ib_beta_gbs_str = fmt((beta_ib * byte / second).m_as(GB / second), precision=0, commas=False)
+    n_small_kb_str = fmt((n_small * byte).m_as(KB), precision=0, commas=False)
+    n_large_mb_str = fmt((n_large * byte).m_as(MB), precision=0, commas=False)
+    n_large_grad_mb_str = fmt((350 * MILLION * byte).m_as(MB), precision=0, commas=False)
+    eth_alpha_us = 5.0
+    eth_beta_gbs = 12.5
+    eth_alpha_us_str = fmt(eth_alpha_us, precision=1, commas=False)
+    eth_beta_gbs_str = fmt(eth_beta_gbs, precision=1, commas=False)
+    doubled_beta_gbs_str = fmt((beta_ib * byte / second).m_as(GB / second) * 2, precision=0, commas=False)
 ```
 
 The model reveals two regimes:
@@ -555,10 +563,10 @@ For NDR InfiniBand with $\alpha \approx$ `{python} NetworkAlphaBeta.ib_alpha_us_
 
 ::: {#nbk-network-fabrics-alpha-beta-crossover .callout-notebook title="The alpha-beta crossover"}
 
-**Problem**: A fabric designer is comparing InfiniBand NDR (`{python} NetworkAlphaBeta.ib_alpha_us_str` $\mu\text{s}$, `{python} NetworkAlphaBeta.ib_beta_gbs_str` GB/s) against a slower Ethernet baseline (5.0 $\mu\text{s}$, 12.5 GB/s). For a 4 KB control message and a 100 MB gradient shard, which part of $T(n)=\alpha+n/\beta$ dominates, and why does the faster fabric help for different reasons in each regime?
+**Problem**: A fabric designer is comparing InfiniBand NDR (`{python} NetworkAlphaBeta.ib_alpha_us_str` $\mu\text{s}$, `{python} NetworkAlphaBeta.ib_beta_gbs_str` GB/s) against a slower Ethernet baseline (`{python} NetworkAlphaBeta.eth_alpha_us_str` $\mu\text{s}$, `{python} NetworkAlphaBeta.eth_beta_gbs_str` GB/s). For a `{python} NetworkAlphaBeta.n_small_kb_str` control message and a `{python} NetworkAlphaBeta.n_large_mb_str` gradient shard, which part of $T(n)=\alpha+n/\beta$ dominates, and why does the faster fabric help for different reasons in each regime?
 
 **Math**:
-Apply $T(n) = \alpha + n/\beta$ for a 4 KB control message and a 100 MB gradient shard.
+Apply $T(n) = \alpha + n/\beta$ for a `{python} NetworkAlphaBeta.n_small_kb_str` control message and a `{python} NetworkAlphaBeta.n_large_mb_str` gradient shard.
 
 1. **Small message (4 KB)**:
    - InfiniBand: $1.5\,\mu\text{s} + 4 KB/50 GB/s = 1.5 + 0.08 = \mathbf{1.58\,\mu\text{s}}$
@@ -574,9 +582,9 @@ Apply $T(n) = \alpha + n/\beta$ for a 4 KB control message and a 100 MB gradient
 
 :::
 
-To see *why* this distinction matters in practice, consider two messages that our 175B model training job sends every iteration. The first is a 4 KB pipeline-scheduling control message that coordinates microbatch handoffs between pipeline stages. Applying the model: $T(4\text{ KB}) \approx$ **`{python} NetworkAlphaBeta.t_small_ib_us_str` $\mu\text{s}$**. The bandwidth term contributes only `{python} NetworkAlphaBeta.small_bw_pct_str` percent of the total. Doubling the link speed would save a negligible fraction of a microsecond. For this message, the only way to reduce transfer time is to reduce the hop count (which lowers $\alpha$), not to buy faster links.
+To see *why* this distinction matters in practice, consider two messages that our 175B model training job sends every iteration. The first is a `{python} NetworkAlphaBeta.n_small_kb_str` pipeline-scheduling control message that coordinates microbatch handoffs between pipeline stages. Applying the model: $T(n) \approx$ **`{python} NetworkAlphaBeta.t_small_ib_us_str` $\mu\text{s}$** for the control message. The bandwidth term contributes only `{python} NetworkAlphaBeta.small_bw_pct_str` percent of the total. Doubling the link speed would save a negligible fraction of a microsecond. For this message, the only way to reduce transfer time is to reduce the hop count (which lowers $\alpha$), not to buy faster links.
 
-The second message is a 350 MB gradient shard for one layer's AllReduce. Now: $T(350\text{ MB}) \approx$ **`{python} NetworkAlphaBeta.t_large_ib_ms_str` ms**. The latency term is invisible. Doubling bandwidth to 100 GB/s would halve this transfer time, a direct and proportional gain. These two cases illustrate *why* network design must address both $\alpha$ and $\beta$ simultaneously: topology and hop count control the latency-dominated regime, while link speed and path diversity control the bandwidth-dominated regime.
+The second message is a `{python} NetworkAlphaBeta.n_large_grad_mb_str` gradient shard for one layer's AllReduce. Now: $T(n) \approx$ **`{python} NetworkAlphaBeta.t_large_ib_ms_str` ms**. The latency term is invisible. Doubling bandwidth to `{python} NetworkAlphaBeta.doubled_beta_gbs_str` GB/s would halve this transfer time, a direct and proportional gain. These two cases illustrate *why* network design must address both $\alpha$ and $\beta$ simultaneously: topology and hop count control the latency-dominated regime, while link speed and path diversity control the bandwidth-dominated regime.
 
 @fig-alpha-beta-crossover makes these two regimes visible across the full range of message sizes. For InfiniBand, the crossover occurs at approximately `{python} NetworkAlphaBeta.n_cross_ib_kb_str` KB: messages smaller than this are latency-dominated (the flat region on the left), while larger messages are bandwidth-dominated (the linear region on the right). The 5$\times$ latency gap between InfiniBand and Ethernet RoCE dominates for small messages but becomes irrelevant for the multi-megabyte gradient transfers that dominate training communication.
 
@@ -919,12 +927,21 @@ class FatTreeScaling:
 
     # ┌── 2. EXECUTE ───────────────────────────────────────────────────────
     fat_tree_hosts_val = (fat_tree_k ** 3) // 4
+    fat_tree_two_tier_hosts_val = (fat_tree_k // 2) ** 2
+    fat_tree_switches_val = (5 * fat_tree_k ** 2) // 4
 
     # ┌── 3. GUARD ─────────────────────────────────────────────────────────
     check(fat_tree_hosts_val == 65536, f"k=64 fat-tree should support 65,536 hosts, got {fat_tree_hosts_val}")
+    check(fat_tree_two_tier_hosts_val == 1024, f"k=64 two-tier should support 1,024 hosts, got {fat_tree_two_tier_hosts_val}")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────────────────────
-    fat_tree_hosts_str = fmt(fat_tree_hosts_val, precision=0)
+    fat_tree_hosts_str = fmt(fat_tree_hosts_val, precision=0, commas=False)
+    fat_tree_two_tier_hosts_str = fmt(fat_tree_two_tier_hosts_val, precision=0, commas=False)
+    fat_tree_switches_str = fmt(fat_tree_switches_val, precision=0, commas=False)
+    switch_cost_low_str = fmt(10000, precision=0, commas=False)
+    switch_cost_high_str = fmt(50000, precision=0, commas=False)
+    infra_cost_low_m_str = fmt(50, precision=0, commas=False)
+    infra_cost_high_m_str = fmt(250, precision=0, commas=False)
 ```
 
 A fat-tree built from switches with radix[^fn-switch-radix-density] $k$ supports $N_{\text{hosts}} = k^3/4$ hosts at three tiers, or $k^2/2$ at two tiers. In a two-tier leaf-spine fabric using radix-64 switches (with $k$ leaves each providing $k/2$ host ports and $k/2$ spine uplinks), the topology supports up to 2,048 GPUs, comfortably accommodating our 1,000-GPU reference cluster with only leaf and spine layers. (A standard fat-tree pod with the leaf-aggregation pair supports $(k/2)^2 = 1{,}024$ hosts per pod; the difference is whether the second tier uplinks to a core layer or terminates as spines.)
@@ -1012,7 +1029,7 @@ Verify your understanding of hierarchical switch fabrics:
 
 [^fn-switch-radix-density]: **Switch Radix**: Modern high-end switches (for example, NVIDIA Quantum-2) feature a radix of 64 ports, each at 400 Gb/s. This density allows a two-tier fat-tree to support up to 2,048 GPUs with only two switch hops. As model scale pushes toward 100,000 GPUs, increasing switch radix (to 128 or 256) is the only way to avoid adding more tiers and the resulting latency/cost explosion. \index{Switch Radix!port density}
 
-Scaling beyond this requires a three-tier architecture with core switches, enabling the fabric to reach `{python} FatTreeScaling.fat_tree_hosts_str` hosts. The infrastructure cost is substantial: a non-blocking $k=64$ three-tier tree requires roughly $5k^2/4 \approx 5{,}120$ switches across the core, aggregation, and edge layers. At \$10,000 to \$50,000 per switch, the switching layer alone represents \$50 to \$250 million.
+Scaling beyond this requires a three-tier architecture with core switches, enabling the fabric to reach `{python} FatTreeScaling.fat_tree_hosts_str` hosts. The infrastructure cost is substantial: a non-blocking $k=64$ three-tier tree requires roughly $5k^2/4 \approx$ `{python} FatTreeScaling.fat_tree_switches_str` switches across the core, aggregation, and edge layers. At \$`{python} FatTreeScaling.switch_cost_low_str` to \$`{python} FatTreeScaling.switch_cost_high_str` per switch, the switching layer alone represents \$`{python} FatTreeScaling.infra_cost_low_m_str` to \$`{python} FatTreeScaling.infra_cost_high_m_str` million.
 
 However, scale imposes a latency tax. Typical **hop counts**\index{Hop Count} are 2 for intra-pod (leaf-spine-leaf) and 4 for inter-pod (leaf-spine-core-spine-leaf). Each additional hop introduces serialization delay and switch processing time, adding microseconds to the $\alpha$ latency term that accumulates during the thousands of synchronization steps in a training run.
 
@@ -1204,6 +1221,9 @@ class BisectionBottleneck:
     bisec_bw_a_tbs_str = fmt(total_bisec_bw_a / 1000, precision=1, commas=False)
     bisec_bw_b_tbs_str = fmt(total_bisec_bw_b / 1000, precision=1, commas=False)
     data_crossing_gb_str = fmt(total_data_crossing_bisection, precision=0)
+    num_gpus_str = fmt(num_gpus, precision=0, commas=False)
+    num_nodes_str = fmt(num_nodes, precision=0, commas=False)
+    gradient_size_gb_str = fmt(gradient_size_gb, precision=0, commas=False)
     time_a_ms_str = fmt(time_a_s * 1000, precision=0, commas=False)
     time_b_ms_str = fmt(time_b_s * 1000, precision=0, commas=False)
     waste_m_str = fmt(waste_val, precision=1, commas=False, prefix="$", suffix="M")
@@ -1222,13 +1242,13 @@ class IbNdrTopologyRecap:
     ib_ndr_gbs_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second), precision=0, commas=False)
 ```
 
-**Problem**: A cluster has 1,024 accelerators across 128 nodes. Each accelerator has `{python} IbNdrTopologyRecap.ib_ndr_gbps_str` Gb/s (`{python} IbNdrTopologyRecap.ib_ndr_gbs_str` GB/s) network injection bandwidth. An AllReduce job requires full $\text{BW}_{\text{bisect}}$.
+**Problem**: A cluster has `{python} BisectionBottleneck.num_gpus_str` accelerators across `{python} BisectionBottleneck.num_nodes_str` nodes. Each accelerator has `{python} IbNdrTopologyRecap.ib_ndr_gbps_str` Gb/s (`{python} IbNdrTopologyRecap.ib_ndr_gbs_str` GB/s) network injection bandwidth. An AllReduce job requires full $\text{BW}_{\text{bisect}}$.
 
 **Scenario A (non-blocking fat-tree)**: 1:1 oversubscription ratio. Per-direction $\text{BW}_{\text{bisect}} =$ `{python} BisectionBottleneck.gpus_per_side_str` $\times 50 =$ `{python} BisectionBottleneck.bisec_bw_a_gbs_str` GB/s = `{python} BisectionBottleneck.bisec_bw_a_tbs_str` TB/s.
 
 **Scenario B (cost-optimized)**: 4:1 oversubscription at the spine layer. Per-direction $\text{BW}_{\text{bisect}} =$ `{python} BisectionBottleneck.bisec_bw_a_gbs_str`$/4 =$ `{python} BisectionBottleneck.bisec_bw_b_gbs_str` GB/s = `{python} BisectionBottleneck.bisec_bw_b_tbs_str` TB/s.
 
-**Math**: Suppose the AllReduce must exchange 100 GB of gradient data per accelerator. In this simplified per-direction bisection model, `{python} BisectionBottleneck.data_crossing_gb_str` GB crosses the cut.
+**Math**: Suppose the AllReduce must exchange `{python} BisectionBottleneck.gradient_size_gb_str` GB of gradient data per accelerator. In this simplified per-direction bisection model, `{python} BisectionBottleneck.data_crossing_gb_str` GB crosses the cut.
 
 - Time on Scenario A: `{python} BisectionBottleneck.time_a_ms_str` ms
 - Time on Scenario B: `{python} BisectionBottleneck.time_b_ms_str` ms
@@ -1343,6 +1363,7 @@ class PfcStormRisk:
         f"\\Pr(\\text{{storm}}) = 1 - {pfc_safe_prob_str} "
         f"= \\mathbf{{{pfc_storm_prob_decimal_str}}}"
     )
+    pfc_links_per_gpu_str = fmt(links_per_gpu, precision=0, commas=False)
 ```
 
 ::: {#ws-network-fabrics-microsoft-pfc-deadlock .callout-war-story title="Microsoft's PFC deadlock"}
@@ -1364,7 +1385,7 @@ A simple probability calculation shows that such incidents are not rare edge cas
 **Math**:
 In a lossless Ethernet fabric, one bad link can pause its neighbor, which pauses its neighbor, eventually freezing the entire tree.
 
-1. **Total exposure**: 4,096 GPUs $\times$ 3 tiers = `{python} PfcStormRisk.pfc_total_links_str` links, or `{python} PfcStormRisk.pfc_total_transceivers_str` transceivers.
+1. **Total exposure**: `{python} PfcStormRisk.pfc_n_gpus_str` GPUs $\times$ `{python} PfcStormRisk.pfc_links_per_gpu_str` tiers = `{python} PfcStormRisk.pfc_total_links_str` links, or `{python} PfcStormRisk.pfc_total_transceivers_str` transceivers.
 2. **Probability of zero transceiver failures**: `{python} PfcStormRisk.pfc_safe_prob_math`.
 3. **Probability of at least one storm**: `{python} PfcStormRisk.pfc_storm_prob_math` (about `{python} PfcStormRisk.pfc_storm_prob_rounded_str` percent).
 
