@@ -23,7 +23,7 @@ from mlsysim.hardware.registry import (
     WorkstationHardware,
 )
 from mlsysim.infra.registry import Grids
-from mlsysim.infra.pricing import Cloud, Storage, Labeling, Fleet, Capital
+from mlsysim.infra.pricing import Cloud, Storage, Labeling, Fleet, Capital, OnPremises
 from mlsysim.infra.capacity import Capacity
 from mlsysim.literature.registry import Training, Scaling, Overheads, Chinchilla, Communication
 from mlsysim.models.registry import (
@@ -112,6 +112,7 @@ def audit_infra_pricing() -> list[str]:
         ("Infrastructure.Pricing.Labeling", Labeling),
         ("Infrastructure.Pricing.Fleet", Fleet),
         ("Infrastructure.Pricing.Capital", Capital),
+        ("Infrastructure.Pricing.OnPremises", OnPremises),
     ):
         for point in _registry_nodes(reg):
             name = getattr(point, "name", type(point).__name__)

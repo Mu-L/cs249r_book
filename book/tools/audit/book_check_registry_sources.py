@@ -149,7 +149,12 @@ HARDCODED_REGISTRY = re.compile(
     r"\b(?:pue)\s*=\s*1\.2\b|"
     r"\b(?:mfu|case2_mfu)\s*=\s*0\.45\b|"
     r"\b(?:utilization)\s*=\s*0\.50\b(?!\d)|"
-    r"\bcloud_(?:gpu_hour_usd|h100_hourly)\s*=\s*4\.0",
+    r"\bcloud_(?:gpu_hour_usd|h100_hourly)\s*=\s*4\.0|"
+    r"\belectricity_rate\s*=\s*0\.07|"
+    r"\b(?:params|cf_params|gpt3_params)\s*=\s*\d+\s*\*\s*BILLION|"
+    r"\bparams_b\s*=\s*(?:7|70|8)\b|"
+    r"\bn_tokens\s*=\s*300\s*\*\s*BILLION|"
+    r"\btokens\s*=\s*300e9\b",
     re.I,
 )
 

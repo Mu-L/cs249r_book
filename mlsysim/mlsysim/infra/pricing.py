@@ -11,6 +11,7 @@ _STORAGE = Metadata(provenance=pc.BOOK_STORAGE_PRICING_2024)
 _LABELING = Metadata(provenance=pc.BOOK_LABELING_PRICING_2024)
 _FLEET = Metadata(provenance=pc.BOOK_FLEET_ECONOMICS_2024)
 _CAPITAL = Metadata(provenance=pc.BARROSO_DATACENTER_ECONOMICS)
+_ONPREM = Metadata(provenance=pc.BARROSO_DATACENTER_ECONOMICS)
 
 
 class Cloud(Registry):
@@ -106,9 +107,19 @@ class Capital(Registry):
     )
 
 
+class OnPremises(Registry):
+    """Owned-facility utility rates for TCO build-vs-buy examples."""
+    ElectricityPerKwh = PricePoint(
+        name="On-premises electricity (US industrial)",
+        rate=0.07 * USD / ureg.kilowatt_hour,
+        metadata=_ONPREM,
+    )
+
+
 class Pricing(Registry):
     Cloud = Cloud
     Storage = Storage
     Labeling = Labeling
     Fleet = Fleet
     Capital = Capital
+    OnPremises = OnPremises
