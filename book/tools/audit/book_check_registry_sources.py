@@ -142,6 +142,17 @@ HARDCODED_DATASET = re.compile(
     re.I,
 )
 
+# Hardcoded literature/infrastructure scalars that belong in registries.
+HARDCODED_REGISTRY = re.compile(
+    r"\b(?:scaling_factor|cf_scaling_factor|training_flops_per_token_param)\s*=\s*6\b|"
+    r"\b(?:psi_threshold)\s*=\s*0\.2\b|"
+    r"\b(?:pue)\s*=\s*1\.2\b|"
+    r"\b(?:mfu|case2_mfu)\s*=\s*0\.45\b|"
+    r"\b(?:utilization)\s*=\s*0\.50\b(?!\d)|"
+    r"\bcloud_(?:gpu_hour_usd|h100_hourly)\s*=\s*4\.0",
+    re.I,
+)
+
 
 def _parse_imported_names(import_clause: str) -> set[str]:
     names: set[str] = set()
@@ -226,6 +237,10 @@ def check_file(path: Path) -> list[str]:
         if HARDCODED_DATASET.search(block):
             issues.append(
                 f"cell {idx}: hardcoded dataset size — use Datasets.ImageNet/CIFAR10/MNIST.*"
+            )
+        if HARDCODED_REGISTRY.search(block):
+            issues.append(
+                f"cell {idx}: hardcoded registry scalar — use Literature.* / Infrastructure.* / Monitoring.*"
             )
     return issues
 
