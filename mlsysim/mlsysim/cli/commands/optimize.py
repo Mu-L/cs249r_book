@@ -16,6 +16,7 @@ optimize_app = typer.Typer(
 
 
 def _load_plan_schema(config_file: Path) -> MlsysPlanSchema:
+    """Loads the optimization plan schema from the specified YAML configuration."""
     if not config_file.exists():
         raise ValueError(f"File not found: {config_file}")
 

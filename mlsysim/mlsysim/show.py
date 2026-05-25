@@ -119,6 +119,7 @@ def table(headers, rows, alignments=None):
 
     # Build format strings
     def _align(text, width, align_char):
+        """Aligns numeric and string metrics for clean CLI output."""
         if align_char == "<":
             return text.ljust(width)
         elif align_char == "^":

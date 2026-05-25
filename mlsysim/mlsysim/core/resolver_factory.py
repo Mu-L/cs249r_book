@@ -17,6 +17,12 @@ class ResolverFactory:
 
     @classmethod
     def _load_all(cls):
+        """
+        Discovers and registers all built-in and third-party resolvers.
+        
+        This method is idempotent and ensures that subclasses of BaseResolver
+        are correctly registered into the factory before any retrievals occur.
+        """
         if cls._loaded:
             return
             

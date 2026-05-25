@@ -13,6 +13,7 @@ def _ds(
     verified: str = "2025-03-06",
     notes: str | None = None,
 ) -> Provenance:
+    """Creates a Provenance object for a hardware datasheet or technical specification."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.DATASHEET,
@@ -31,6 +32,7 @@ def _lit(
     verified: str = "2025-03-06",
     notes: str | None = None,
 ) -> Provenance:
+    """Creates a Provenance object for peer-reviewed literature or academic whitepapers."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.LITERATURE,
@@ -49,6 +51,7 @@ def _est(
     url: str | None = None,
     verified: str = "2025-03-06",
 ) -> Provenance:
+    """Creates a Provenance object for expert estimates or rules of thumb."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.ESTIMATE,
@@ -60,6 +63,7 @@ def _est(
 
 
 def _conv(id: str, ref: str, *, notes: str | None = None) -> Provenance:
+    """Creates a Provenance object for widely accepted industry conventions."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.CONVENTION,

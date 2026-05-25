@@ -34,12 +34,14 @@ from mlsysim.models.registry import (
     VisionModels,
 )
 def _registry_nodes(registry_cls: type) -> Iterable[Any]:
+    """Yields all Sourced AST nodes found in the target registry file."""
     if not hasattr(registry_cls, "list"):
         return []
     return registry_cls.list()
 
 
 def _validate_provenance_record(path: str, prov: Provenance | None) -> list[str]:
+    """Validates that a Provenance record meets the required traceability constraints."""
     if prov is None:
         return [f"{path}: missing provenance"]
     issues: list[str] = []
@@ -57,6 +59,7 @@ def _validate_provenance_record(path: str, prov: Provenance | None) -> list[str]
 
 
 def _check_node(path: str, node: Any) -> list[str]:
+    """Inspects an AST node to verify its provenance lineage."""
     meta = getattr(node, "metadata", None)
     if meta is not None:
         return _validate_provenance_record(path, getattr(meta, "provenance", None))

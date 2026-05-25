@@ -163,6 +163,7 @@ class Pods(Registry):
 
 
 class Systems(Registry):
+    """Registry namespace for Systems."""
     Nodes = Nodes
     Clusters = Clusters
     Fabrics = Fabrics

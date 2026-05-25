@@ -43,6 +43,7 @@ class BatchSize(Registry):
 
 
 class Literature(Registry):
+    """Registry namespace for Literature."""
     Training = Training
     Scaling = Scaling
     Overheads = Overheads

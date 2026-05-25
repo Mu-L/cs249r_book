@@ -25,6 +25,7 @@ class MarkdownStr(str):
     """
 
     def _repr_markdown_(self):
+        """Jupyter notebook hook to render the object as Markdown."""
         return str.__str__(self)
 
 

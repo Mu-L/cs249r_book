@@ -501,6 +501,7 @@ class TinyHardware(Registry):
     )
 
 class Hardware(Registry):
+    """Registry namespace for Hardware."""
     Cloud = CloudHardware
     Workstation = WorkstationHardware
     Mobile = MobileHardware
