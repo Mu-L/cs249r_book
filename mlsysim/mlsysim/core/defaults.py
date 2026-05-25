@@ -9,7 +9,13 @@ from .provenance import TraceableConstant, fleet_mttf_hours
 from .provenance_catalog import (
     BOOK_CLUSTER_TIERS,
     BOOK_ILLUSTRATIVE_IOWA_CARBON,
+    CHINCHILLA,
     IEA_WEO_2023,
+    MEGASCALE,
+    BOOK_SCALING_RULE_OF_THUMB,
+    MEGATRON_OVERLAP,
+    PALM_MFU,
+    POPE_INFERENCE,
     UPTIME_PUE_2022,
 )
 
@@ -208,22 +214,28 @@ MFU_TRAINING_LOW = TraceableConstant(
     0.30,
     name="MFU Training (Lower Bound)",
     description="Lower bound MFU for well-optimized large-model training.",
-    source="Chowdhery et al. (2022), PaLM; Narayanan et al. (2021), Megatron-LM",
-    url="https://arxiv.org/abs/2204.02311",
+    source=PALM_MFU.ref,
+    url=PALM_MFU.url,
+    provenance=PALM_MFU,
+    kind=PALM_MFU.kind,
 )
 MFU_TRAINING_HIGH = TraceableConstant(
     0.50,
     name="MFU Training (Upper Bound)",
     description="Upper bound MFU for excellent large-model training runs.",
-    source="Chowdhery et al. (2022), PaLM",
-    url="https://arxiv.org/abs/2204.02311",
+    source=PALM_MFU.ref,
+    url=PALM_MFU.url,
+    provenance=PALM_MFU,
+    kind=PALM_MFU.kind,
 )
 MFU_INFERENCE_BATCH1 = TraceableConstant(
     0.05,
     name="MFU Inference (Batch 1)",
     description="MFU for single-request inference, heavily memory-bandwidth-bound.",
-    source="Pope et al. (2023), Efficiently Scaling Transformer Inference",
-    url="https://proceedings.mlsys.org/paper_files/paper/2023/hash/c4be71ab8d24cdfb45e3d06dbfca2780-Abstract-mlsys2023.html",
+    source=POPE_INFERENCE.ref,
+    url=POPE_INFERENCE.url,
+    provenance=POPE_INFERENCE,
+    kind=POPE_INFERENCE.kind,
 )
 MFU_INFERENCE_BATCHED = 0.40       # Inference at large batch size
 
@@ -241,7 +253,9 @@ SCALING_EFF_8192GPU = TraceableConstant(
     0.35,
     name="Scaling Efficiency (8192 GPUs)",
     description="Illustrative scaling efficiency at 8192 GPUs for LLM training.",
-    source="Chowdhery et al. (2022); Jiang et al. (2024), MegaScale",
+    source=f"{PALM_MFU.ref}; {MEGASCALE.ref}",
+    provenance=MEGASCALE,
+    kind=MEGASCALE.kind,
 )
 
 # Overhead budgets (fraction of wall time)
@@ -256,16 +270,20 @@ CHINCHILLA_TOKENS_PER_PARAM = TraceableConstant(
     20,
     name="Compute-Optimal Token Ratio",
     description="The optimal number of training tokens per model parameter (D ≈ 20P) to minimize loss for a given compute budget.",
-    source="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
-    url="https://arxiv.org/abs/2203.15556",
+    source=CHINCHILLA.ref,
+    url=CHINCHILLA.url,
+    provenance=CHINCHILLA,
+    kind=CHINCHILLA.kind,
 )
 
 CHINCHILLA_COMPUTE_CONSTANT = TraceableConstant(
     6,
     name="Training Compute Constant (C ≈ 6PD)",
     description="The multiplier for calculating total training FLOPs. 2 FLOPs per parameter for the forward pass, and 4 FLOPs for the backward pass.",
-    source="Hoffmann et al. (2022). Training Compute-Optimal Large Language Models.",
-    url="https://arxiv.org/abs/2203.15556",
+    source=CHINCHILLA.ref,
+    url=CHINCHILLA.url,
+    provenance=CHINCHILLA,
+    kind=CHINCHILLA.kind,
 )
 
 # --- Critical Batch Size (McCandlish et al. 2018) ---
@@ -376,7 +394,9 @@ DEFAULT_SCALING_EFFICIENCY = TraceableConstant(
     0.90,
     name="Scaling Efficiency (η)",
     description="The efficiency of parallel scaling. A value of 0.90 means 90% of theoretical linear speedup is achieved.",
-    source="Common industry rule-of-thumb for highly optimized clusters."
+    source=BOOK_SCALING_RULE_OF_THUMB.ref,
+    provenance=BOOK_SCALING_RULE_OF_THUMB,
+    kind=BOOK_SCALING_RULE_OF_THUMB.kind,
 )
 
 # Default communication overlap efficiency (e.g., Megatron-LM can overlap ~85% of communication)
@@ -384,8 +404,10 @@ DEFAULT_OVERLAP_EFFICIENCY = TraceableConstant(
     0.85,
     name="Communication Overlap Efficiency",
     description="The fraction of network communication time that can be successfully hidden behind compute operations.",
-    source="Shoeybi et al. (2019). Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism.",
-    url="https://arxiv.org/abs/1909.08053"
+    source=MEGATRON_OVERLAP.ref,
+    url=MEGATRON_OVERLAP.url,
+    provenance=MEGATRON_OVERLAP,
+    kind=MEGATRON_OVERLAP.kind,
 )
 
 # Default compute efficiency (MFU baseline)
@@ -393,6 +415,8 @@ DEFAULT_COMPUTE_EFFICIENCY = TraceableConstant(
     0.50,
     name="Baseline Model FLOPs Utilization (MFU)",
     description="A highly optimized large language model typically achieves around 50% MFU due to communication overhead and memory bandwidth constraints.",
-    source="Chowdhery et al. (2022). PaLM: Scaling Language Modeling with Pathways.",
-    url="https://arxiv.org/abs/2204.02311"
+    source=PALM_MFU.ref,
+    url=PALM_MFU.url,
+    provenance=PALM_MFU,
+    kind=PALM_MFU.kind,
 )

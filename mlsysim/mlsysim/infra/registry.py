@@ -7,6 +7,8 @@ from ..core.defaults import (
     RACK_POWER_TRADITIONAL_KW, RACK_POWER_AI_TYPICAL_KW,
 )
 from ..core.registry import Registry
+from ..core.types import Metadata
+from ..core import provenance_catalog as pc
 
 
 class Grids(Registry):
@@ -19,7 +21,7 @@ class Grids(Registry):
         lat=52.9399,
         lon=-73.5491,
         renewable_pct=99.0,
-        metadata={"source_url": "https://www.hydroquebec.com/about/our-energy.html", "last_verified": "2025-03-06"},
+        metadata=Metadata(provenance=pc.HYDRO_QUEBEC_GRID),
     )
     Norway = GridProfile(
         name="Norway (Hydro)",
@@ -30,6 +32,10 @@ class Grids(Registry):
         lat=60.472,
         lon=8.4689,
         renewable_pct=98.0,
+        metadata=Metadata(
+            provenance=pc.IEA_WEO_2023,
+            description="Norway grid carbon from IEA WEO 2023; PUE/WUE from book defaults.",
+        ),
     )
     US_Avg = GridProfile(
         name="US Average",
@@ -40,6 +46,10 @@ class Grids(Registry):
         lat=39.8283,
         lon=-98.5795,
         renewable_pct=21.0,
+        metadata=Metadata(
+            provenance=pc.IEA_WEO_2023,
+            description="US average grid carbon from IEA WEO 2023; PUE from Uptime survey defaults.",
+        ),
     )
     Iowa = GridProfile(
         name="Iowa (Coal/Gas Reference)",
@@ -50,10 +60,11 @@ class Grids(Registry):
         lat=42.0329,
         lon=-93.5815,
         renewable_pct=64.0,
-        metadata={
-            "description": "Reference high-carbon grid profile used in MLSys·im tutorials for regional contrast.",
-            "last_verified": "2026-04-25",
-        },
+        metadata=Metadata(
+            provenance=pc.BOOK_ILLUSTRATIVE_IOWA_CARBON,
+            description="Reference high-carbon grid profile used in MLSys·im tutorials for regional contrast.",
+            last_verified="2026-04-25",
+        ),
     )
     Poland = GridProfile(
         name="Poland (Coal)",
@@ -64,6 +75,7 @@ class Grids(Registry):
         lat=51.9194,
         lon=19.1451,
         renewable_pct=17.0,
+        metadata=Metadata(provenance=pc.IEA_WEO_2023),
     )
 
 

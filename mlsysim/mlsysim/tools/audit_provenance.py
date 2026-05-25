@@ -16,6 +16,7 @@ from mlsysim.hardware.registry import (
     TinyHardware,
     WorkstationHardware,
 )
+from mlsysim.infra.registry import Grids
 from mlsysim.models.registry import (
     GenerativeVisionModels,
     LanguageModels,
@@ -70,6 +71,14 @@ def audit_registries(*, scope_cloud: bool = False) -> list[str]:
     return issues
 
 
+def audit_infra_grids() -> list[str]:
+    issues: list[str] = []
+    for grid in _registry_nodes(Grids):
+        name = getattr(grid, "name", type(grid).__name__)
+        issues.extend(_check_node(f"Infrastructure.Grids.{name}", grid))
+    return issues
+
+
 def audit_defaults_traceable() -> list[str]:
     issues: list[str] = []
     for name in dir(defaults):
@@ -108,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.scope == "all":
         issues.extend(audit_defaults_traceable())
         issues.extend(audit_registries(scope_cloud=False))
+        issues.extend(audit_infra_grids())
 
     if issues:
         print(f"Provenance audit ({args.scope}): {len(issues)} issue(s)")

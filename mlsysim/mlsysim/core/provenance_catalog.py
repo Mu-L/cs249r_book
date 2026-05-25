@@ -4,6 +4,72 @@ from __future__ import annotations
 
 from .provenance import Provenance, ProvenanceKind
 
+
+def _ds(
+    id: str,
+    ref: str,
+    url: str,
+    *,
+    verified: str = "2025-03-06",
+    notes: str | None = None,
+) -> Provenance:
+    return Provenance(
+        id=id,
+        kind=ProvenanceKind.DATASHEET,
+        ref=ref,
+        url=url,
+        verified=verified,
+        notes=notes,
+    )
+
+
+def _lit(
+    id: str,
+    ref: str,
+    *,
+    url: str | None = None,
+    verified: str = "2025-03-06",
+    notes: str | None = None,
+) -> Provenance:
+    return Provenance(
+        id=id,
+        kind=ProvenanceKind.LITERATURE,
+        ref=ref,
+        url=url,
+        verified=verified,
+        notes=notes,
+    )
+
+
+def _est(
+    id: str,
+    ref: str,
+    notes: str,
+    *,
+    url: str | None = None,
+    verified: str = "2025-03-06",
+) -> Provenance:
+    return Provenance(
+        id=id,
+        kind=ProvenanceKind.ESTIMATE,
+        ref=ref,
+        url=url,
+        verified=verified,
+        notes=notes,
+    )
+
+
+def _conv(id: str, ref: str, *, notes: str | None = None) -> Provenance:
+    return Provenance(
+        id=id,
+        kind=ProvenanceKind.CONVENTION,
+        ref=ref,
+        verified="2025-03-06",
+        notes=notes,
+    )
+
+
+# --- Book / grid defaults (existing) ---
 IEA_WEO_2023 = Provenance(
     id="prov:iea-weo-2023-carbon",
     kind=ProvenanceKind.INDUSTRY_REPORT,
@@ -19,22 +85,15 @@ UPTIME_PUE_2022 = Provenance(
     verified="2025-03-06",
 )
 
-BOOK_CLUSTER_TIERS = Provenance(
-    id="prov:book-cluster-tier-convention",
-    kind=ProvenanceKind.CONVENTION,
-    ref="MLSysBook editorial cluster tiers (256 / 2k / 8k / 100k GPUs)",
-    verified="2025-03-06",
+BOOK_CLUSTER_TIERS = _conv(
+    "prov:book-cluster-tier-convention",
+    "MLSysBook editorial cluster tiers (256 / 2k / 8k / 100k GPUs)",
 )
 
-RELIABILITY_MTTF_LITERATURE = Provenance(
-    id="prov:reliability-mttf-literature",
-    kind=ProvenanceKind.LITERATURE,
-    ref=(
-        "Kokolis et al. (2025, HPCA); Zu et al. (2024, NSDI); "
-        "Barroso et al. (2019) — order-of-magnitude steady-state MTTF"
-    ),
+RELIABILITY_MTTF_LITERATURE = _lit(
+    "prov:reliability-mttf-literature",
+    "Kokolis et al. (2025, HPCA); Zu et al. (2024, NSDI); Barroso et al. (2019) — order-of-magnitude steady-state MTTF",
     url="https://doi.org/10.1109/hpca61900.2025.00096",
-    verified="2025-03-06",
 )
 
 BOOK_ILLUSTRATIVE_IOWA_CARBON = Provenance(
@@ -42,4 +101,276 @@ BOOK_ILLUSTRATIVE_IOWA_CARBON = Provenance(
     kind=ProvenanceKind.ILLUSTRATIVE,
     ref="MLSysBook illustrative high-carbon US grid contrast (not IEA country average)",
     verified="2025-03-06",
+)
+
+HYDRO_QUEBEC_GRID = _ds(
+    "prov:hydro-quebec-grid",
+    "Hydro-Québec electricity mix and carbon intensity",
+    "https://www.hydroquebec.com/about/our-energy.html",
+)
+
+# --- Cloud accelerators ---
+NVIDIA_H200 = _ds(
+    "prov:nvidia-h200-datasheet",
+    "NVIDIA H200 Tensor Core GPU product documentation",
+    "https://www.nvidia.com/en-us/data-center/h200/",
+)
+
+NVIDIA_GB200_NVL72 = _ds(
+    "prov:nvidia-gb200-nvl72-datasheet",
+    "NVIDIA GB200 NVL72 rack-scale system documentation",
+    "https://www.nvidia.com/en-us/data-center/gb200-nvl72/",
+)
+
+AMD_MI250X = _ds(
+    "prov:amd-mi250x-datasheet",
+    "AMD Instinct MI250X product documentation",
+    "https://www.amd.com/en/products/accelerators/instinct/mi200/mi250x.html",
+)
+
+INTEL_GAUDI2 = _ds(
+    "prov:intel-gaudi2-datasheet",
+    "Intel Gaudi 2 AI accelerator product documentation",
+    "https://www.intel.com/content/www/us/en/products/details/processors/ai-accelerators/gaudi2.html",
+)
+
+INTEL_GAUDI3 = _ds(
+    "prov:intel-gaudi3-datasheet",
+    "Intel Gaudi 3 AI accelerator product documentation",
+    "https://www.intel.com/content/www/us/en/products/details/processors/ai-accelerators/gaudi3.html",
+)
+
+AWS_TRAINIUM2 = _ds(
+    "prov:aws-trainium2-datasheet",
+    "AWS Trainium2 accelerator (EC2 Trn2) product documentation",
+    "https://aws.amazon.com/ai/machine-learning/trainium/",
+)
+
+GOOGLE_TPU_V1 = _lit(
+    "prov:google-tpu-v1",
+    "Jouppi et al. (2017), In-Datacenter Performance Analysis of a Tensor Processing Unit",
+    url="https://arxiv.org/abs/1704.04760",
+)
+
+GOOGLE_TPU_V2_V3 = _lit(
+    "prov:google-tpu-v2-v3",
+    "Jouppi et al. (2020), A Domain-Specific Supercomputer for Training Deep Neural Networks",
+    url="https://arxiv.org/abs/2007.13828",
+)
+
+GOOGLE_TPU_V4 = _lit(
+    "prov:google-tpu-v4",
+    "Jouppi et al. (2023), TPU v4: An Optically Reconfigurable Supercomputer for Training Deep Neural Networks",
+    url="https://arxiv.org/abs/2304.01433",
+)
+
+GOOGLE_TPU_V5P = _ds(
+    "prov:google-tpu-v5p",
+    "Google Cloud TPU v5p documentation",
+    "https://cloud.google.com/tpu/docs/v5p",
+)
+
+GOOGLE_TPU_V6 = _ds(
+    "prov:google-tpu-v6-trillium",
+    "Google Cloud TPU v6e (Trillium) documentation",
+    "https://cloud.google.com/tpu/docs/v6e",
+)
+
+CEREBRAS_CS3 = _ds(
+    "prov:cerebras-cs3-datasheet",
+    "Cerebras CS-3 system product documentation",
+    "https://www.cerebras.net/product-system/",
+)
+
+INTEL_SGX = _ds(
+    "prov:intel-sgx-datasheet",
+    "Intel Software Guard Extensions (SGX) developer guide",
+    "https://www.intel.com/content/www/us/en/developer/tools/software-guard-extensions/overview.html",
+)
+
+BOOK_REFERENCE_CPU = _conv(
+    "prov:book-reference-desktop-cpu",
+    "MLSysBook reference 1 TFLOP/s FP32 desktop CPU for pedagogy (order-of-magnitude)",
+)
+
+# --- Workstation / mobile / edge / tiny ---
+NVIDIA_DGX_SPARK = _ds(
+    "prov:nvidia-dgx-spark-gb10",
+    "NVIDIA DGX Spark (GB10 Grace Blackwell) product page",
+    "https://www.nvidia.com/en-us/products/workstations/dgx-spark/",
+)
+
+APPLE_M3_MAX = _est(
+    "prov:apple-m3-max-estimate",
+    "Apple M3 Max technical specifications (GPU core count × peak FLOP/core, rounded)",
+    notes="Peak TFLOP/s is an MLSysBook rounding of Apple-published core counts, not a sustained ML benchmark.",
+    url="https://www.apple.com/macbook-pro/specs/",
+)
+
+MOBILE_SOC_ESTIMATE = _est(
+    "prov:mobile-npu-peak-estimate",
+    "Smartphone SoC NPU peak TOPS from vendor product briefs (marketing peak)",
+    notes="Used for order-of-magnitude edge inference examples; not MLPerf-submitted sustained throughput.",
+)
+
+NVIDIA_JETSON_AGX_ORIN = _ds(
+    "prov:nvidia-jetson-agx-orin",
+    "NVIDIA Jetson AGX Orin technical brief",
+    "https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/",
+)
+
+NVIDIA_JETSON_ORIN_NX = _ds(
+    "prov:nvidia-jetson-orin-nx",
+    "NVIDIA Jetson Orin NX series documentation",
+    "https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/",
+)
+
+GOOGLE_CORAL = _ds(
+    "prov:google-coral-edge-tpu",
+    "Google Coral Edge TPU product documentation",
+    "https://coral.ai/products/",
+)
+
+INTEL_NUC_MOVIDIUS = _est(
+    "prov:intel-nuc-movidius-estimate",
+    "Intel NUC + Movidius VPU reference kit (peak TOPS from Intel Neural Compute Stick spec)",
+    notes="Composite edge reference node for tutorials; not a single-SKU datasheet.",
+    url="https://www.intel.com/content/www/us/en/products/details/processors/neural-processing-unit.html",
+)
+
+BOOK_EDGE_SERVER = _conv(
+    "prov:book-edge-server-reference",
+    "MLSysBook reference edge server (1 TFLOP/s, 128 GB) for pedagogy",
+)
+
+ESP32_S3 = _ds(
+    "prov:esp32-s3-datasheet",
+    "Espressif ESP32-S3 technical reference manual",
+    "https://www.espressif.com/en/products/socs/esp32-s3",
+)
+
+NORDIC_NRF52840 = _ds(
+    "prov:nordic-nrf52840-datasheet",
+    "Nordic nRF52840 product specification (MLPerf Tiny reference MCU)",
+    "https://www.nordicsemi.com/Products/Development-hardware/Other/nRF52840",
+)
+
+HIMAX_WE1 = _ds(
+    "prov:himax-we1-plus",
+    "Himax WE-I Plus Edge AI platform documentation",
+    "https://www.himax.com.tw/products/edge-ai-platform/we-plus/",
+)
+
+# --- Models ---
+RADFOR_GPT2 = _lit(
+    "prov:radford-gpt2-2019",
+    "Radford et al. (2019), Language Models are Unsupervised Multitask Learners",
+    url="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf",
+)
+
+DEVLIN_BERT = _lit(
+    "prov:devlin-bert-2019",
+    "Devlin et al. (2019), BERT: Pre-training of Deep Bidirectional Transformers",
+    url="https://arxiv.org/abs/1810.04805",
+)
+
+META_LLAMA = _ds(
+    "prov:meta-llama-model-card",
+    "Meta Llama model card / Hugging Face model documentation",
+    "https://github.com/meta-llama/llama-models",
+)
+
+HE_RESNET = _lit(
+    "prov:he-resnet-2016",
+    "He et al. (2016), Deep Residual Learning for Image Recognition",
+    url="https://arxiv.org/abs/1512.03385",
+)
+
+SANDLER_MOBILENETV2 = _lit(
+    "prov:sandler-mobilenetv2-2018",
+    "Sandler et al. (2018), MobileNetV2: Inverted Residuals and Linear Bottlenecks",
+    url="https://arxiv.org/abs/1801.04381",
+)
+
+YOLOV8 = _ds(
+    "prov:ultralytics-yolov8",
+    "Ultralytics YOLOv8 documentation (nano variant parameter count)",
+    "https://docs.ultralytics.com/models/yolov8/",
+)
+
+Krizhevsky_ALEXNET = _lit(
+    "prov:krizhevsky-alexnet-2012",
+    "Krizhevsky et al. (2012), ImageNet Classification with Deep Convolutional Neural Networks",
+    url="https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks",
+)
+
+MLPERF_TINY_KWS = _lit(
+    "prov:mlperf-tiny-kws",
+    "MLPerf Tiny keyword spotting reference (DS-CNN profile)",
+    url="https://github.com/mlcommons/tiny",
+    notes="Parameter and FLOP counts aligned to TinyMLPerf KWS reference model scale.",
+)
+
+WAKE_VISION = _ds(
+    "prov:wake-vision-dataset",
+    "Wake Vision / doorbell-classifier TinyML reference",
+    "https://github.com/TI-malaria/wake-vision",
+)
+
+BOOK_ANOMALY_MLP = _conv(
+    "prov:book-tiny-anomaly-mlp",
+    "MLSysBook TinyML anomaly-detector reference MLP (~270k parameters)",
+)
+
+NAUMOV_DLRM = _lit(
+    "prov:naumov-dlrm-2019",
+    "Naumov et al. (2019), Deep Learning Recommendation Model (DLRM)",
+    url="https://arxiv.org/abs/1906.00091",
+)
+
+GU_GUARDRAILS_MAMBA = _lit(
+    "prov:gu-mamba-2023",
+    "Gu & Dao (2023), Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+    url="https://arxiv.org/abs/2312.00752",
+)
+
+ROMBACH_STABLE_DIFFUSION = _lit(
+    "prov:rombach-stable-diffusion-2022",
+    "Rombach et al. (2022), High-Resolution Image Synthesis with Latent Diffusion Models",
+    url="https://arxiv.org/abs/2112.10752",
+)
+
+CHINCHILLA = _lit(
+    "prov:hoffmann-chinchilla-2022",
+    "Hoffmann et al. (2022), Training Compute-Optimal Large Language Models",
+    url="https://arxiv.org/abs/2203.15556",
+)
+
+PALM_MFU = _lit(
+    "prov:chowdhery-palm-2022",
+    "Chowdhery et al. (2022), PaLM: Scaling Language Modeling with Pathways",
+    url="https://arxiv.org/abs/2204.02311",
+)
+
+POPE_INFERENCE = _lit(
+    "prov:pope-inference-2023",
+    "Pope et al. (2023), Efficiently Scaling Transformer Inference",
+    url="https://proceedings.mlsys.org/paper_files/paper/2023/hash/c4be71ab8d24cdfb45e3d06dbfca2780-Abstract-mlsys2023.html",
+)
+
+MEGASCALE = _lit(
+    "prov:jiang-megascale-2024",
+    "Jiang et al. (2024), MegaScale: Scaling Large Language Model Training",
+    url="https://arxiv.org/abs/2404.02054",
+)
+
+MEGATRON_OVERLAP = _lit(
+    "prov:shoeybi-megatron-2019",
+    "Shoeybi et al. (2019), Megatron-LM: Training Multi-Billion Parameter Language Models",
+    url="https://arxiv.org/abs/1909.08053",
+)
+
+BOOK_SCALING_RULE_OF_THUMB = _conv(
+    "prov:book-scaling-efficiency-rule-of-thumb",
+    "Common industry rule-of-thumb (~90% parallel efficiency on well-tuned clusters)",
 )

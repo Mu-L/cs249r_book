@@ -1,6 +1,10 @@
 import unittest
 
-from mlsysim.tools.audit_provenance import audit_defaults_traceable, audit_registries
+from mlsysim.tools.audit_provenance import (
+    audit_defaults_traceable,
+    audit_infra_grids,
+    audit_registries,
+)
 
 
 class TestProvenanceAudit(unittest.TestCase):
@@ -8,11 +12,13 @@ class TestProvenanceAudit(unittest.TestCase):
         issues = audit_defaults_traceable()
         self.assertEqual(issues, [], "\n".join(issues))
 
-    def test_cloud_hardware_strict_reports_gaps(self):
-        """Document gap count; strict CI can be enabled when backfill completes."""
-        issues = audit_registries(scope_cloud=True)
-        # Known: many Cloud nodes still lack metadata.provenance.
-        self.assertIsInstance(issues, list)
+    def test_all_registries_have_provenance(self):
+        issues = audit_registries(scope_cloud=False)
+        self.assertEqual(issues, [], "\n".join(issues))
+
+    def test_infra_grids_have_provenance(self):
+        issues = audit_infra_grids()
+        self.assertEqual(issues, [], "\n".join(issues))
 
 
 if __name__ == "__main__":

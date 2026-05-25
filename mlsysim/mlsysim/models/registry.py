@@ -3,6 +3,7 @@ from ..core.registry import Registry
 from ..core.constants import (flop, param, ureg, count, day)
 from ..core.types import Metadata
 from ..core.provenance import Provenance, ProvenanceKind
+from ..core import provenance_catalog as pc
 
 class LanguageModels(Registry):
     GPT2 = TransformerWorkload(
@@ -12,7 +13,8 @@ class LanguageModels(Registry):
         layers=48,
         hidden_dim=1600,
         heads=25,
-        inference_flops=2 * 1.5e9 * ureg.flop
+        inference_flops=2 * 1.5e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.RADFOR_GPT2),
     )
     GPT3 = TransformerWorkload(
         name="GPT-3 (175B)",
@@ -67,7 +69,8 @@ class LanguageModels(Registry):
         layers=12,
         hidden_dim=768,
         heads=12,
-        inference_flops=22e9 * ureg.flop
+        inference_flops=22e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.DEVLIN_BERT),
     )
     BERT_Large = TransformerWorkload(
         name="BERT-Large",
@@ -76,7 +79,8 @@ class LanguageModels(Registry):
         layers=24,
         hidden_dim=1024,
         heads=16,
-        inference_flops=72e9 * ureg.flop
+        inference_flops=72e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.DEVLIN_BERT),
     )
     Llama2_7B = TransformerWorkload(
         name="Llama-2-7B",
@@ -85,7 +89,8 @@ class LanguageModels(Registry):
         layers=32,
         hidden_dim=4096,
         heads=32,
-        inference_flops=2 * 7e9 * ureg.flop
+        inference_flops=2 * 7e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama2_70B = TransformerWorkload(
         name="Llama-2-70B",
@@ -95,7 +100,8 @@ class LanguageModels(Registry):
         hidden_dim=8192,
         heads=64,
         kv_heads=8,
-        inference_flops=2 * 70e9 * ureg.flop
+        inference_flops=2 * 70e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama3_8B = TransformerWorkload(
         name="Llama-3.1-8B",
@@ -105,7 +111,8 @@ class LanguageModels(Registry):
         hidden_dim=4096,
         heads=32,
         kv_heads=8,
-        inference_flops=2 * 8.03e9 * ureg.flop
+        inference_flops=2 * 8.03e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama3_70B = TransformerWorkload(
         name="Llama-3.1-70B",
@@ -115,7 +122,8 @@ class LanguageModels(Registry):
         hidden_dim=8192,
         heads=64,
         kv_heads=8,
-        inference_flops=2 * 70.6e9 * ureg.flop
+        inference_flops=2 * 70.6e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
     Llama3_405B = TransformerWorkload(
         name="Llama-3.1-405B",
@@ -126,6 +134,7 @@ class LanguageModels(Registry):
         heads=128,
         kv_heads=8,
         inference_flops=2 * 405e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.META_LLAMA),
     )
 
 class VisionModels(Registry):
@@ -135,34 +144,39 @@ class VisionModels(Registry):
         parameters=11.7e6 * param,
         inference_flops=1.8e9 * ureg.flop,
         layers=18,
+        metadata=Metadata(provenance=pc.HE_RESNET),
     )
     ResNet50 = CNNWorkload(
         name="ResNet-50",
         architecture="CNN",
         parameters=25.6e6 * param,
         inference_flops=4.1e9 * ureg.flop,
-        layers=50
+        layers=50,
+        metadata=Metadata(provenance=pc.HE_RESNET),
     )
     MobileNetV2 = CNNWorkload(
         name="MobileNetV2",
         architecture="CNN",
         parameters=3.5e6 * param,
         inference_flops=0.3e9 * ureg.flop,
-        layers=54
+        layers=54,
+        metadata=Metadata(provenance=pc.SANDLER_MOBILENETV2),
     )
     YOLOv8_Nano = CNNWorkload(
         name="YOLOv8-Nano",
         architecture="CNN",
         parameters=3.2e6 * param,
         inference_flops=8.7e9 * ureg.flop,
-        layers=225
+        layers=225,
+        metadata=Metadata(provenance=pc.YOLOV8),
     )
     AlexNet = CNNWorkload(
         name="AlexNet",
         architecture="CNN",
         parameters=60e6 * param,
         inference_flops=1.5e9 * ureg.flop,
-        layers=8
+        layers=8,
+        metadata=Metadata(provenance=pc.Krizhevsky_ALEXNET),
     )
 
 class TinyModels(Registry):
@@ -170,19 +184,22 @@ class TinyModels(Registry):
         name="DS-CNN (KWS)",
         architecture="CNN",
         parameters=200e3 * param,
-        inference_flops=20e6 * ureg.flop
+        inference_flops=20e6 * ureg.flop,
+        metadata=Metadata(provenance=pc.MLPERF_TINY_KWS),
     )
     WakeVision = CNNWorkload(
         name="Wake Vision (Doorbell)",
         architecture="CNN",
         parameters=0.25e6 * param,
-        inference_flops=25e6 * ureg.flop
+        inference_flops=25e6 * ureg.flop,
+        metadata=Metadata(provenance=pc.WAKE_VISION),
     )
     AnomalyDetector = Workload(
         name="Anomaly Detector",
         architecture="MLP",
         parameters=270e3 * param,
-        inference_flops=2 * 270e3 * ureg.flop
+        inference_flops=2 * 270e3 * ureg.flop,
+        metadata=Metadata(provenance=pc.BOOK_ANOMALY_MLP),
     )
 
 class RecommendationModels(Registry):
@@ -191,6 +208,7 @@ class RecommendationModels(Registry):
         architecture="DLRM",
         model_size=100 * ureg.GB,
         embedding_entries=25e9 * count,
+        metadata=Metadata(provenance=pc.NAUMOV_DLRM),
     )
 
 class StateSpaceModels(Registry):
@@ -201,7 +219,8 @@ class StateSpaceModels(Registry):
         layers=24,
         hidden_dim=768,
         state_size=16,
-        inference_flops=2 * 130e6 * ureg.flop
+        inference_flops=2 * 130e6 * ureg.flop,
+        metadata=Metadata(provenance=pc.GU_GUARDRAILS_MAMBA),
     )
     Mamba_2_8B = SSMWorkload(
         name="Mamba-2.8B",
@@ -210,7 +229,8 @@ class StateSpaceModels(Registry):
         layers=64,
         hidden_dim=2560,
         state_size=16,
-        inference_flops=2 * 2.8e9 * ureg.flop
+        inference_flops=2 * 2.8e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.GU_GUARDRAILS_MAMBA),
     )
 
 class GenerativeVisionModels(Registry):
@@ -220,7 +240,8 @@ class GenerativeVisionModels(Registry):
         parameters=860e6 * param,
         resolution=512,
         denoising_steps=50,
-        inference_flops=20e9 * ureg.flop
+        inference_flops=20e9 * ureg.flop,
+        metadata=Metadata(provenance=pc.ROMBACH_STABLE_DIFFUSION),
     )
 
 class Models(Registry):

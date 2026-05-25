@@ -1,6 +1,7 @@
 from .types import HardwareNode, ComputeCore, MemoryHierarchy, StorageHierarchy, IOInterconnect
 from ..core.registry import Registry
 from ..core.provenance import Provenance, ProvenanceKind
+from ..core import provenance_catalog as pc
 from ..core.constants import (
     GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt, count,
     LATENCY_NVLINK,
@@ -94,7 +95,8 @@ class CloudHardware(Registry):
         nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=LATENCY_NVLINK),
         tdp=700 * watt,
         unit_cost=35000 * USD,
-        dispatch_tax=0.01 * ureg.ms
+        dispatch_tax=0.01 * ureg.ms,
+        metadata={"provenance": pc.NVIDIA_H200},
     )
 
     B200 = HardwareNode(
@@ -136,7 +138,7 @@ class CloudHardware(Registry):
         unit_cost=3000000 * USD,
         accelerator_count=72,
         dispatch_tax=0.005 * ureg.ms,
-        metadata={"source_url": "https://www.nvidia.com/en-us/data-center/gb200-nvl72/"}
+        metadata={"provenance": pc.NVIDIA_GB200_NVL72},
     )
 
     MI300X = HardwareNode(
@@ -164,7 +166,8 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=383 * TFLOPs / second, precision_flops={"fp32": 47.9 * TFLOPs / second, "int8": 383 * TOPS}),
         memory=MemoryHierarchy(capacity=128 * GiB, bandwidth=3.2 * TB / second),
         tdp=500 * watt,
-        dispatch_tax=0.015 * ureg.ms
+        dispatch_tax=0.015 * ureg.ms,
+        metadata={"provenance": pc.AMD_MI250X},
     )
 
     Gaudi2 = HardwareNode(
@@ -173,7 +176,8 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=432 * TFLOPs / second, precision_flops={"fp8": 865 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=96 * GiB, bandwidth=2.45 * TB / second),
         tdp=600 * watt,
-        dispatch_tax=0.02 * ureg.ms
+        dispatch_tax=0.02 * ureg.ms,
+        metadata={"provenance": pc.INTEL_GAUDI2},
     )
 
     Gaudi3 = HardwareNode(
@@ -182,7 +186,8 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=1835 * TFLOPs / second, precision_flops={"fp8": 3670 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=128 * GiB, bandwidth=3.7 * TB / second),
         tdp=900 * watt,
-        dispatch_tax=0.01 * ureg.ms
+        dispatch_tax=0.01 * ureg.ms,
+        metadata={"provenance": pc.INTEL_GAUDI3},
     )
 
     Trainium2 = HardwareNode(
@@ -191,7 +196,8 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=380 * TFLOPs / second, precision_flops={"fp8": 760 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=96 * GiB, bandwidth=2.4 * TB / second),
         tdp=500 * watt,
-        dispatch_tax=0.02 * ureg.ms
+        dispatch_tax=0.02 * ureg.ms,
+        metadata={"provenance": pc.AWS_TRAINIUM2},
     )
 
     TPUv6 = HardwareNode(
@@ -200,7 +206,8 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=918 * TFLOPs / second),
         memory=MemoryHierarchy(capacity=32 * GiB, bandwidth=1600 * GB / second),
         tdp=300 * ureg.W,
-        dispatch_tax=0.04 * ureg.ms
+        dispatch_tax=0.04 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_TPU_V6},
     )
 
     TPUv5p = HardwareNode(
@@ -214,7 +221,8 @@ class CloudHardware(Registry):
         ),
         nvlink=IOInterconnect(name="ICI", bandwidth=1200 * GB / second),
         tdp=300 * watt,
-        dispatch_tax=0.04 * ureg.ms
+        dispatch_tax=0.04 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_TPU_V5P},
     )
 
     TPUv1 = HardwareNode(
@@ -224,6 +232,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=8 * GiB, bandwidth=34 * GB / second),
         tdp=75 * watt,
         dispatch_tax=0.05 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_TPU_V1},
     )
 
     TPUv2 = HardwareNode(
@@ -233,6 +242,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=16 * GiB, bandwidth=700 * GB / second),
         tdp=200 * watt,
         dispatch_tax=0.04 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_TPU_V2_V3},
     )
 
     TPUv3 = HardwareNode(
@@ -242,6 +252,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=32 * GiB, bandwidth=900 * GB / second),
         tdp=250 * watt,
         dispatch_tax=0.04 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_TPU_V2_V3},
     )
 
     TPUv4 = HardwareNode(
@@ -251,6 +262,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=32 * ureg.GiB, bandwidth=1200 * GB / second),
         tdp=200 * ureg.W,
         dispatch_tax=0.04 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_TPU_V4},
     )
 
     ReferenceCPU = HardwareNode(
@@ -263,6 +275,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=64 * GiB, bandwidth=50 * GB / second),
         tdp=150 * watt,
         dispatch_tax=0.1 * ureg.ms,
+        metadata={"provenance": pc.BOOK_REFERENCE_CPU},
     )
 
     IntelSGX = HardwareNode(
@@ -275,6 +288,7 @@ class CloudHardware(Registry):
             sram_capacity=_SGX_EPC_CAPACITY,
         ),
         dispatch_tax=_SGX_BASE_LATENCY,
+        metadata={"provenance": pc.INTEL_SGX},
     )
 
     T4 = HardwareNode(
@@ -308,7 +322,7 @@ class CloudHardware(Registry):
         tdp=23000 * watt,
         unit_cost=2000000 * USD,
         dispatch_tax=0.001 * ureg.ms,
-        metadata={"source_url": "https://www.cerebras.net/product-system/"}
+        metadata={"provenance": pc.CEREBRAS_CS3},
     )
 
 class WorkstationHardware(Registry):
@@ -325,7 +339,8 @@ class WorkstationHardware(Registry):
         tdp=200 * watt,
         unit_cost=3000 * USD,
         unit_cost_max=5000 * USD,
-        dispatch_tax=0.01 * ureg.ms
+        dispatch_tax=0.01 * ureg.ms,
+        metadata={"provenance": pc.NVIDIA_DGX_SPARK},
     )
 
     MacBookM3Max = HardwareNode(
@@ -334,7 +349,8 @@ class WorkstationHardware(Registry):
         compute=ComputeCore(peak_flops=14.2 * ureg.TFLOPs/ureg.s),
         memory=MemoryHierarchy(capacity=128 * ureg.GB, bandwidth=400 * ureg.GB/ureg.s),
         tdp=100 * ureg.W,
-        dispatch_tax=0.05 * ureg.ms
+        dispatch_tax=0.05 * ureg.ms,
+        metadata={"provenance": pc.APPLE_M3_MAX},
     )
 
 class MobileHardware(Registry):
@@ -346,7 +362,8 @@ class MobileHardware(Registry):
         memory=MemoryHierarchy(capacity=8 * ureg.GB, bandwidth=100 * ureg.GB/ureg.s),
         tdp=5 * ureg.W,
         battery_capacity=15 * ureg.Wh,
-        dispatch_tax=1.0 * ureg.ms
+        dispatch_tax=1.0 * ureg.ms,
+        metadata={"provenance": pc.MOBILE_SOC_ESTIMATE},
     )
 
     Pixel8 = HardwareNode(
@@ -355,7 +372,8 @@ class MobileHardware(Registry):
         compute=ComputeCore(peak_flops=15 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=8 * ureg.GB, bandwidth=60 * ureg.GB/ureg.s),
         tdp=5 * ureg.W,
-        dispatch_tax=1.2 * ureg.ms
+        dispatch_tax=1.2 * ureg.ms,
+        metadata={"provenance": pc.MOBILE_SOC_ESTIMATE},
     )
 
     Snapdragon8Gen3 = HardwareNode(
@@ -364,7 +382,8 @@ class MobileHardware(Registry):
         compute=ComputeCore(peak_flops=45 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=12 * ureg.GB, bandwidth=77 * ureg.GB/ureg.s),
         tdp=5 * ureg.W,
-        dispatch_tax=1.5 * ureg.ms
+        dispatch_tax=1.5 * ureg.ms,
+        metadata={"provenance": pc.MOBILE_SOC_ESTIMATE},
     )
 
 class EdgeHardware(Registry):
@@ -378,6 +397,7 @@ class EdgeHardware(Registry):
         tdp_min=15 * watt,
         tdp_max=60 * watt,
         dispatch_tax=0.2 * ureg.ms,
+        metadata={"provenance": pc.NVIDIA_JETSON_AGX_ORIN},
     )
     JetsonOrinNX = HardwareNode(
         name="NVIDIA Jetson Orin NX",
@@ -385,7 +405,8 @@ class EdgeHardware(Registry):
         compute=ComputeCore(peak_flops=25 * ureg.TFLOPs/ureg.s, precision_flops={"int8": 100 * ureg.TOPS}),
         memory=MemoryHierarchy(capacity=16 * ureg.GB, bandwidth=102 * ureg.GB/ureg.s),
         tdp=25 * ureg.W,
-        dispatch_tax=0.2 * ureg.ms
+        dispatch_tax=0.2 * ureg.ms,
+        metadata={"provenance": pc.NVIDIA_JETSON_ORIN_NX},
     )
 
     Coral = HardwareNode(
@@ -394,7 +415,8 @@ class EdgeHardware(Registry):
         compute=ComputeCore(peak_flops=4 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=1 * ureg.GB, bandwidth=8 * ureg.GB/ureg.s),
         tdp=2 * ureg.W,
-        dispatch_tax=1.0 * ureg.ms
+        dispatch_tax=1.0 * ureg.ms,
+        metadata={"provenance": pc.GOOGLE_CORAL},
     )
 
     NUC_Movidius = HardwareNode(
@@ -403,7 +425,8 @@ class EdgeHardware(Registry):
         compute=ComputeCore(peak_flops=1 * ureg.TOPS),
         memory=MemoryHierarchy(capacity=16 * ureg.GB, bandwidth=25 * ureg.GB/ureg.s),
         tdp=15 * ureg.W,
-        dispatch_tax=2.0 * ureg.ms
+        dispatch_tax=2.0 * ureg.ms,
+        metadata={"provenance": pc.INTEL_NUC_MOVIDIUS},
     )
 
     GenericServer = HardwareNode(
@@ -412,7 +435,8 @@ class EdgeHardware(Registry):
         compute=ComputeCore(peak_flops=1 * ureg.TFLOPs/ureg.s),
         memory=MemoryHierarchy(capacity=128 * ureg.GB, bandwidth=100 * ureg.GB/ureg.s),
         tdp=300 * ureg.W,
-        dispatch_tax=0.1 * ureg.ms
+        dispatch_tax=0.1 * ureg.ms,
+        metadata={"provenance": pc.BOOK_EDGE_SERVER},
     )
 
 class TinyHardware(Registry):
@@ -442,6 +466,7 @@ class TinyHardware(Registry):
         tdp_max=1.2 * watt,
         embodied_carbon_kg=5.0,
         dispatch_tax=1.0 * ureg.ms,
+        metadata={"provenance": pc.ESP32_S3},
     )
 
     nRF52840 = HardwareNode(
@@ -461,7 +486,8 @@ class TinyHardware(Registry):
             flash_bandwidth=0.064 * ureg.GB/ureg.s,   # Flash read ~64 MB/s
         ),
         tdp=0.015 * ureg.W,            # ~15 mW active inference
-        dispatch_tax=0.5 * ureg.ms
+        dispatch_tax=0.5 * ureg.ms,
+        metadata={"provenance": pc.NORDIC_NRF52840},
     )
 
     HimaxWE1 = HardwareNode(
@@ -470,7 +496,8 @@ class TinyHardware(Registry):
         compute=ComputeCore(peak_flops=0.0002 * ureg.TFLOPs/ureg.s),
         memory=MemoryHierarchy(capacity=2 * ureg.MB, bandwidth=0.1 * ureg.GB/ureg.s),
         tdp=0.005 * ureg.W,
-        dispatch_tax=2.0 * ureg.ms
+        dispatch_tax=2.0 * ureg.ms,
+        metadata={"provenance": pc.HIMAX_WE1},
     )
 
 class Hardware(Registry):
