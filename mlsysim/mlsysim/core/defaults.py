@@ -6,16 +6,33 @@ for your specific scenario. Every value cites its source.
 
 from .units import USD, ureg, GB, TB, hour, count, day
 from .provenance import TraceableConstant, fleet_mttf_hours
+from . import appendix_lineage
 from .provenance_catalog import (
     BOOK_CLUSTER_TIERS,
+    BOOK_CLOUD_PRICING_2024,
+    BOOK_DGX_GPUS_PER_HOST,
+    BOOK_FABRIC_LATENCY,
     BOOK_ILLUSTRATIVE_IOWA_CARBON,
-    CHINCHILLA,
-    IEA_WEO_2023,
-    MEGASCALE,
+    BOOK_OVERHEAD_BUDGETS,
+    BOOK_RACK_POWER,
+    BOOK_RECOVERY_ASSUMPTIONS,
+    BOOK_SCALING_EFFICIENCY_TIERS,
     BOOK_SCALING_RULE_OF_THUMB,
+    BOOK_WUE_ANCHORS,
+    CHINCHILLA,
+    ETHERNET_400G_GBS,
+    ETHERNET_800G_GBS,
+    GIBIANSKY_ALLREDUCE,
+    IEA_WEO_2023,
+    INFINIBAND_HDR_GBS,
+    INFINIBAND_NDR_GBS,
+    INFINIBAND_XDR_GBS,
+    MEGASCALE,
+    MFU_INFERENCE_BATCHED_LIT,
     MEGATRON_OVERLAP,
     PALM_MFU,
     POPE_INFERENCE,
+    ROCE_100G_GBS,
     UPTIME_PUE_2022,
 )
 
@@ -32,10 +49,31 @@ HBM_MTTF_HOURS = fleet_mttf_hours(200_000, component="HBM", failure_mode="bit-fl
 # Silent Data Corruption (SDC) Assumptions
 P_SDC_PER_GPU_HR = 1e-6
 
-# Recovery time assumptions (seconds)
-HEARTBEAT_TIMEOUT_S = 30            # Failure detection latency
-RESCHEDULE_TIME_S = 60              # Time to allocate replacement node
-CHECKPOINT_WRITE_BW_GBS = 100       # Aggregate storage write BW for checkpoints (GB/s)
+# Recovery time assumptions (seconds) — appendix-facing
+HEARTBEAT_TIMEOUT_S = TraceableConstant(
+    30,
+    name="Heartbeat timeout",
+    description="Failure detection latency before reschedule.",
+    source=BOOK_RECOVERY_ASSUMPTIONS.ref,
+    provenance=BOOK_RECOVERY_ASSUMPTIONS,
+    kind=BOOK_RECOVERY_ASSUMPTIONS.kind,
+)
+RESCHEDULE_TIME_S = TraceableConstant(
+    60,
+    name="Reschedule time",
+    description="Time to allocate a replacement node after failure detection.",
+    source=BOOK_RECOVERY_ASSUMPTIONS.ref,
+    provenance=BOOK_RECOVERY_ASSUMPTIONS,
+    kind=BOOK_RECOVERY_ASSUMPTIONS.kind,
+)
+CHECKPOINT_WRITE_BW_GBS = TraceableConstant(
+    100,
+    name="Checkpoint write bandwidth",
+    description="Aggregate checkpoint write bandwidth to storage (GB/s).",
+    source=BOOK_RECOVERY_ASSUMPTIONS.ref,
+    provenance=BOOK_RECOVERY_ASSUMPTIONS,
+    kind=BOOK_RECOVERY_ASSUMPTIONS.kind,
+)
 
 # --- Cluster Scale References ---
 # Editorial tier sizes for Volume II worked examples (not from a single deployment).
@@ -73,8 +111,23 @@ CLUSTER_MEGA_GPUS = TraceableConstant(
 )
 
 # Fleet topology assumptions (override for non-DGX node counts).
-GPUS_PER_HOST = 8
-ALLREDUCE_FACTOR = 2
+GPUS_PER_HOST = TraceableConstant(
+    8,
+    name="GPUs per host",
+    description="Accelerators per DGX-class training node.",
+    source=BOOK_DGX_GPUS_PER_HOST.ref,
+    provenance=BOOK_DGX_GPUS_PER_HOST,
+    kind=BOOK_DGX_GPUS_PER_HOST.kind,
+)
+ALLREDUCE_FACTOR = TraceableConstant(
+    2,
+    name="AllReduce factor",
+    description="Ring AllReduce communication multiplier (2×).",
+    source=GIBIANSKY_ALLREDUCE.ref,
+    url=GIBIANSKY_ALLREDUCE.url,
+    provenance=GIBIANSKY_ALLREDUCE,
+    kind=GIBIANSKY_ALLREDUCE.kind,
+)
 
 # --- Cloud TPU Pod (reference fleet envelope) ---
 TPU_POD_CHIPS = 4096
@@ -84,18 +137,91 @@ TPU_POD_POWER = 3 * ureg.megawatt
 # --- Inter-Node Network (Fleet-Scale Byte Rates) ---
 # Byte-per-second equivalents for bandwidth calculations.
 # These complement the Gbps values defined in units.py for bit-rate contexts.
-INFINIBAND_NDR_BW_GBS = 50         # 400 Gbps / 8 = 50 GB/s per port
-INFINIBAND_HDR_BW_GBS = 25         # 200 Gbps / 8 = 25 GB/s per port
-INFINIBAND_XDR_BW_GBS = 100        # 800 Gbps / 8 = 100 GB/s per port (2025)
-ETHERNET_400G_BW_GBS = 50          # 400 GbE = 50 GB/s
-ETHERNET_800G_BW_GBS = 100         # 800 GbE = 100 GB/s (2025)
-ROCE_100G_BW_GBS = 12.5            # 100 GbE RoCE = 12.5 GB/s
+INFINIBAND_NDR_BW_GBS = TraceableConstant(
+    50,
+    name="InfiniBand NDR bandwidth (GB/s)",
+    description="Per-port byte bandwidth for NDR.",
+    source=INFINIBAND_NDR_GBS.ref,
+    url=INFINIBAND_NDR_GBS.url,
+    provenance=INFINIBAND_NDR_GBS,
+    kind=INFINIBAND_NDR_GBS.kind,
+)
+INFINIBAND_HDR_BW_GBS = TraceableConstant(
+    25,
+    name="InfiniBand HDR bandwidth (GB/s)",
+    description="Per-port byte bandwidth for HDR.",
+    source=INFINIBAND_HDR_GBS.ref,
+    url=INFINIBAND_HDR_GBS.url,
+    provenance=INFINIBAND_HDR_GBS,
+    kind=INFINIBAND_HDR_GBS.kind,
+)
+INFINIBAND_XDR_BW_GBS = TraceableConstant(
+    100,
+    name="InfiniBand XDR bandwidth (GB/s)",
+    description="Per-port byte bandwidth for XDR.",
+    source=INFINIBAND_XDR_GBS.ref,
+    url=INFINIBAND_XDR_GBS.url,
+    provenance=INFINIBAND_XDR_GBS,
+    kind=INFINIBAND_XDR_GBS.kind,
+)
+ETHERNET_400G_BW_GBS = TraceableConstant(
+    50,
+    name="400 GbE bandwidth (GB/s)",
+    description="Byte bandwidth for 400 GbE.",
+    source=ETHERNET_400G_GBS.ref,
+    provenance=ETHERNET_400G_GBS,
+    kind=ETHERNET_400G_GBS.kind,
+)
+ETHERNET_800G_BW_GBS = TraceableConstant(
+    100,
+    name="800 GbE bandwidth (GB/s)",
+    description="Byte bandwidth for 800 GbE.",
+    source=ETHERNET_800G_GBS.ref,
+    provenance=ETHERNET_800G_GBS,
+    kind=ETHERNET_800G_GBS.kind,
+)
+ROCE_100G_BW_GBS = TraceableConstant(
+    12.5,
+    name="100 GbE RoCE bandwidth (GB/s)",
+    description="Byte bandwidth for 100 GbE RoCE.",
+    source=ROCE_100G_GBS.ref,
+    provenance=ROCE_100G_GBS,
+    kind=ROCE_100G_GBS.kind,
+)
 
-# Communication model parameters (α-β model)
-IB_NDR_LATENCY_US = 5              # InfiniBand NDR one-way latency (μs)
-IB_HDR_LATENCY_US = 7              # InfiniBand HDR one-way latency (μs)
-ROCE_LATENCY_US = 10               # RoCE v2 one-way latency (μs)
-TCP_LATENCY_US = 50                # TCP/IP over Ethernet one-way latency (μs)
+# Communication model parameters (α-β model) — appendix-facing
+IB_NDR_LATENCY_US = TraceableConstant(
+    5,
+    name="InfiniBand NDR latency (μs)",
+    description="One-way α latency for NDR fabrics.",
+    source=BOOK_FABRIC_LATENCY.ref,
+    provenance=BOOK_FABRIC_LATENCY,
+    kind=BOOK_FABRIC_LATENCY.kind,
+)
+IB_HDR_LATENCY_US = TraceableConstant(
+    7,
+    name="InfiniBand HDR latency (μs)",
+    description="One-way α latency for HDR fabrics.",
+    source=BOOK_FABRIC_LATENCY.ref,
+    provenance=BOOK_FABRIC_LATENCY,
+    kind=BOOK_FABRIC_LATENCY.kind,
+)
+ROCE_LATENCY_US = TraceableConstant(
+    10,
+    name="RoCE latency (μs)",
+    description="One-way α latency for RoCE v2.",
+    source=BOOK_FABRIC_LATENCY.ref,
+    provenance=BOOK_FABRIC_LATENCY,
+    kind=BOOK_FABRIC_LATENCY.kind,
+)
+TCP_LATENCY_US = TraceableConstant(
+    50,
+    name="TCP latency (μs)",
+    description="One-way α latency for TCP over Ethernet.",
+    source=BOOK_FABRIC_LATENCY.ref,
+    provenance=BOOK_FABRIC_LATENCY,
+    kind=BOOK_FABRIC_LATENCY.kind,
+)
 
 # --- Sustainability ---
 # Power Usage Effectiveness (PUE) — total facility power / IT equipment power
@@ -133,10 +259,31 @@ PUE_LEGACY = TraceableConstant(
 )
 PUE_STATE_OF_ART = 1.10            # Modern highly optimized datacenter benchmark
 
-# Water Usage Effectiveness (WUE) — liters per kWh
-WUE_AIR_COOLED = 0.5               # Air-cooled (minimal water)
-WUE_EVAPORATIVE = 1.8              # Evaporative cooling towers
-WUE_LIQUID = 0.0                   # Closed-loop liquid cooling (near zero)
+# Water Usage Effectiveness (WUE) — liters per kWh — appendix-facing
+WUE_AIR_COOLED = TraceableConstant(
+    0.5,
+    name="WUE (air-cooled)",
+    description="Water usage effectiveness for air-cooled facilities.",
+    source=BOOK_WUE_ANCHORS.ref,
+    provenance=BOOK_WUE_ANCHORS,
+    kind=BOOK_WUE_ANCHORS.kind,
+)
+WUE_EVAPORATIVE = TraceableConstant(
+    1.8,
+    name="WUE (evaporative)",
+    description="Water usage effectiveness for evaporative cooling.",
+    source=BOOK_WUE_ANCHORS.ref,
+    provenance=BOOK_WUE_ANCHORS,
+    kind=BOOK_WUE_ANCHORS.kind,
+)
+WUE_LIQUID = TraceableConstant(
+    0.0,
+    name="WUE (liquid-cooled)",
+    description="Closed-loop liquid cooling (near-zero WUE).",
+    source=BOOK_WUE_ANCHORS.ref,
+    provenance=BOOK_WUE_ANCHORS,
+    kind=BOOK_WUE_ANCHORS.kind,
+)
 
 # Regional carbon intensity (gCO2 per kWh) — IEA WEO 2023 unless noted
 CARBON_US_AVG_GCO2_KWH = TraceableConstant(
@@ -202,11 +349,39 @@ CARBON_NORWAY_GCO2_KWH = TraceableConstant(
     kind=IEA_WEO_2023.kind,
 )
 
-# Power density
-RACK_POWER_TRADITIONAL_KW = 12     # Traditional datacenter rack (kW)
-RACK_POWER_AI_TYPICAL_KW = 70      # AI cluster rack, current generation (kW)
-RACK_POWER_AI_HIGH_KW = 100        # AI cluster rack, high-density (kW)
-AIR_COOLING_LIMIT_KW = 30          # Approximate rack power where air cooling fails (kW)
+# Power density — appendix-facing
+RACK_POWER_TRADITIONAL_KW = TraceableConstant(
+    12,
+    name="Rack power (traditional)",
+    description="Traditional enterprise rack power (kW).",
+    source=BOOK_RACK_POWER.ref,
+    provenance=BOOK_RACK_POWER,
+    kind=BOOK_RACK_POWER.kind,
+)
+RACK_POWER_AI_TYPICAL_KW = TraceableConstant(
+    70,
+    name="Rack power (AI typical)",
+    description="Typical AI cluster rack power (kW).",
+    source=BOOK_RACK_POWER.ref,
+    provenance=BOOK_RACK_POWER,
+    kind=BOOK_RACK_POWER.kind,
+)
+RACK_POWER_AI_HIGH_KW = TraceableConstant(
+    100,
+    name="Rack power (AI high)",
+    description="High-density AI rack power (kW).",
+    source=BOOK_RACK_POWER.ref,
+    provenance=BOOK_RACK_POWER,
+    kind=BOOK_RACK_POWER.kind,
+)
+AIR_COOLING_LIMIT_KW = TraceableConstant(
+    30,
+    name="Air cooling limit (kW)",
+    description="Approximate rack power where air cooling becomes impractical.",
+    source=BOOK_RACK_POWER.ref,
+    provenance=BOOK_RACK_POWER,
+    kind=BOOK_RACK_POWER.kind,
+)
 
 # --- MFU and Scaling Efficiency References ---
 # Model FLOPS Utilization (MFU) — actual FLOPS / peak FLOPS
@@ -237,7 +412,15 @@ MFU_INFERENCE_BATCH1 = TraceableConstant(
     provenance=POPE_INFERENCE,
     kind=POPE_INFERENCE.kind,
 )
-MFU_INFERENCE_BATCHED = 0.40       # Inference at large batch size
+MFU_INFERENCE_BATCHED = TraceableConstant(
+    0.40,
+    name="MFU Inference (Batched)",
+    description="Illustrative MFU upper bound for large-batch inference.",
+    source=MFU_INFERENCE_BATCHED_LIT.ref,
+    url=MFU_INFERENCE_BATCHED_LIT.url,
+    provenance=MFU_INFERENCE_BATCHED_LIT,
+    kind=MFU_INFERENCE_BATCHED_LIT.kind,
+)
 
 # --- Software Tax ---
 # Latency overhead for a single kernel launch on a modern GPU.
@@ -246,9 +429,30 @@ KERNEL_LAUNCH_LATENCY_US = 15.0    # 15 μs typical launch overhead
 FRAMEWORK_LAYER_TAX_MS = 0.01      # 10 μs typical framework tax per model layer (assumes graph compilation/fused kernels)
 
 # Scaling efficiency η = T_1 / (N × T_N)
-SCALING_EFF_32GPU = 0.90           # Near-linear regime
-SCALING_EFF_256GPU = 0.70          # Communication starts to bite
-SCALING_EFF_1024GPU = 0.50         # Significant overhead
+SCALING_EFF_32GPU = TraceableConstant(
+    0.90,
+    name="Scaling Efficiency (32 GPUs)",
+    description="Near-linear scaling regime.",
+    source=BOOK_SCALING_EFFICIENCY_TIERS.ref,
+    provenance=BOOK_SCALING_EFFICIENCY_TIERS,
+    kind=BOOK_SCALING_EFFICIENCY_TIERS.kind,
+)
+SCALING_EFF_256GPU = TraceableConstant(
+    0.70,
+    name="Scaling Efficiency (256 GPUs)",
+    description="Communication begins to reduce scaling efficiency.",
+    source=BOOK_SCALING_EFFICIENCY_TIERS.ref,
+    provenance=BOOK_SCALING_EFFICIENCY_TIERS,
+    kind=BOOK_SCALING_EFFICIENCY_TIERS.kind,
+)
+SCALING_EFF_1024GPU = TraceableConstant(
+    0.50,
+    name="Scaling Efficiency (1024 GPUs)",
+    description="Significant communication overhead at 1k GPUs.",
+    source=BOOK_SCALING_EFFICIENCY_TIERS.ref,
+    provenance=BOOK_SCALING_EFFICIENCY_TIERS,
+    kind=BOOK_SCALING_EFFICIENCY_TIERS.kind,
+)
 SCALING_EFF_8192GPU = TraceableConstant(
     0.35,
     name="Scaling Efficiency (8192 GPUs)",
@@ -258,11 +462,39 @@ SCALING_EFF_8192GPU = TraceableConstant(
     kind=MEGASCALE.kind,
 )
 
-# Overhead budgets (fraction of wall time)
-OVERHEAD_PIPELINE_BUBBLE = 0.05    # ~5% for well-tuned pipeline parallelism
-OVERHEAD_CHECKPOINT = 0.03         # ~3% for optimized async checkpointing
-OVERHEAD_FAILURE_RECOVERY = 0.10   # ~10% for failure and restart at 10K+ scale
-OVERHEAD_MAINTENANCE = 0.05        # ~5% for rolling upgrades, maintenance windows
+# Overhead budgets (fraction of wall time) — appendix-facing
+OVERHEAD_PIPELINE_BUBBLE = TraceableConstant(
+    0.05,
+    name="Pipeline bubble overhead",
+    description="Pipeline-parallel bubble overhead (well-tuned).",
+    source=BOOK_OVERHEAD_BUDGETS.ref,
+    provenance=BOOK_OVERHEAD_BUDGETS,
+    kind=BOOK_OVERHEAD_BUDGETS.kind,
+)
+OVERHEAD_CHECKPOINT = TraceableConstant(
+    0.03,
+    name="Checkpoint overhead",
+    description="Async checkpointing overhead fraction.",
+    source=BOOK_OVERHEAD_BUDGETS.ref,
+    provenance=BOOK_OVERHEAD_BUDGETS,
+    kind=BOOK_OVERHEAD_BUDGETS.kind,
+)
+OVERHEAD_FAILURE_RECOVERY = TraceableConstant(
+    0.10,
+    name="Failure recovery overhead",
+    description="Failure and restart overhead at 10k+ GPU scale.",
+    source=BOOK_OVERHEAD_BUDGETS.ref,
+    provenance=BOOK_OVERHEAD_BUDGETS,
+    kind=BOOK_OVERHEAD_BUDGETS.kind,
+)
+OVERHEAD_MAINTENANCE = TraceableConstant(
+    0.05,
+    name="Maintenance overhead",
+    description="Rolling upgrade and maintenance windows.",
+    source=BOOK_OVERHEAD_BUDGETS.ref,
+    provenance=BOOK_OVERHEAD_BUDGETS,
+    kind=BOOK_OVERHEAD_BUDGETS.kind,
+)
 
 # --- Scaling Laws (Chinchilla Physics) ---
 # Source: Hoffmann et al. (2022), "Training Compute-Optimal Large Language Models"
@@ -310,10 +542,19 @@ GPU_UNIT_COST_B200 = 40000 * USD     # NVIDIA B200 (2025 estimated)
 DEFAULT_KWH_PRICE = 0.12             # USD per kWh
 CLOUD_ELECTRICITY_PER_KWH = 0.12 * USD / ureg.kilowatt_hour
 
-# Cloud pricing (2024 baselines)
+# Cloud pricing (2024 baselines) — magnitudes are appendix-facing
 CLOUD_EGRESS_PER_GB = 0.09 * USD / GB
 CLOUD_GPU_TRAINING_PER_HOUR = 4.0 * USD / hour
 CLOUD_GPU_INFERENCE_PER_HOUR = 2.5 * USD / hour
+
+appendix_lineage.register_quantity_provenance(
+    {
+        "CLOUD_EGRESS_PER_GB": BOOK_CLOUD_PRICING_2024,
+        "CLOUD_GPU_TRAINING_PER_HOUR": BOOK_CLOUD_PRICING_2024,
+        "CLOUD_GPU_INFERENCE_PER_HOUR": BOOK_CLOUD_PRICING_2024,
+        "CLOUD_ELECTRICITY_PER_KWH": BOOK_CLOUD_PRICING_2024,
+    }
+)
 TPU_V4_PER_HOUR = 4.0 * USD / hour
 
 # Fleet economics references

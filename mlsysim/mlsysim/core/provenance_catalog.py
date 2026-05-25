@@ -374,3 +374,121 @@ BOOK_SCALING_RULE_OF_THUMB = _conv(
     "prov:book-scaling-efficiency-rule-of-thumb",
     "Common industry rule-of-thumb (~90% parallel efficiency on well-tuned clusters)",
 )
+
+BOOK_DGX_GPUS_PER_HOST = _conv(
+    "prov:book-dgx-gpus-per-host",
+    "NVIDIA DGX H100/H200 node envelope (8 GPUs per host)",
+    notes="Used for cluster tier node counts in fleet appendices.",
+)
+
+GIBIANSKY_ALLREDUCE = _lit(
+    "prov:gibiansky-allreduce-factor",
+    "Gibiansky (2017), Ring AllReduce communication identity (2× factor)",
+    url="https://arxiv.org/abs/1707.05077",
+)
+
+INFINIBAND_SPEC = _ds(
+    "prov:infiniband-trade-association-spec",
+    "InfiniBand Trade Association link-speed specifications",
+    "https://www.infinibandta.org/",
+)
+
+INFINIBAND_NDR_GBS = Provenance(
+    id="prov:infiniband-ndr-gbs-derived",
+    kind=ProvenanceKind.DERIVED,
+    ref="InfiniBand NDR 400 Gbps per port → 50 GB/s",
+    url="https://www.infinibandta.org/",
+    notes="Byte rate = line rate ÷ 8.",
+    verified="2025-03-06",
+)
+
+INFINIBAND_HDR_GBS = Provenance(
+    id="prov:infiniband-hdr-gbs-derived",
+    kind=ProvenanceKind.DERIVED,
+    ref="InfiniBand HDR 200 Gbps per port → 25 GB/s",
+    url="https://www.infinibandta.org/",
+    notes="Byte rate = line rate ÷ 8.",
+    verified="2025-03-06",
+)
+
+INFINIBAND_XDR_GBS = Provenance(
+    id="prov:infiniband-xdr-gbs-derived",
+    kind=ProvenanceKind.DERIVED,
+    ref="InfiniBand XDR 800 Gbps per port → 100 GB/s",
+    url="https://www.infinibandta.org/",
+    notes="Byte rate = line rate ÷ 8 (2025 generation).",
+    verified="2025-03-06",
+)
+
+ETHERNET_400G_GBS = Provenance(
+    id="prov:ethernet-400g-gbs-derived",
+    kind=ProvenanceKind.DERIVED,
+    ref="400 GbE → 50 GB/s",
+    notes="Byte rate = 400 Gb/s ÷ 8.",
+    verified="2025-03-06",
+)
+
+ETHERNET_800G_GBS = Provenance(
+    id="prov:ethernet-800g-gbs-derived",
+    kind=ProvenanceKind.DERIVED,
+    ref="800 GbE → 100 GB/s",
+    notes="Byte rate = 800 Gb/s ÷ 8.",
+    verified="2025-03-06",
+)
+
+ROCE_100G_GBS = Provenance(
+    id="prov:roce-100g-gbs-derived",
+    kind=ProvenanceKind.DERIVED,
+    ref="100 GbE RoCE → 12.5 GB/s",
+    notes="Byte rate = 100 Gb/s ÷ 8.",
+    verified="2025-03-06",
+)
+
+BOOK_FABRIC_LATENCY = _conv(
+    "prov:book-fabric-latency-assumptions",
+    "MLSysBook α-model one-way latency anchors (InfiniBand NDR/HDR, RoCE, TCP)",
+    notes="Order-of-magnitude μs values for napkin math; not vendor QoS guarantees.",
+)
+
+BOOK_RECOVERY_ASSUMPTIONS = _conv(
+    "prov:book-recovery-time-assumptions",
+    "MLSysBook fleet recovery design assumptions (heartbeat, reschedule, checkpoint BW)",
+    notes="Engineering targets for appendix reliability tables; see Young/Daly in book prose.",
+)
+
+BOOK_OVERHEAD_BUDGETS = _conv(
+    "prov:book-overhead-budgets",
+    "MLSysBook combined overhead budgets (pipeline, checkpoint, failure, maintenance)",
+    notes="Fractions of wall time for 10k+ GPU training scenarios.",
+)
+
+BOOK_SCALING_EFFICIENCY_TIERS = _conv(
+    "prov:book-scaling-efficiency-tiers",
+    "MLSysBook illustrative scaling efficiency vs GPU count (32→1024 GPUs)",
+    notes="8192-GPU tier uses MEGASCALE literature anchor separately.",
+)
+
+BOOK_WUE_ANCHORS = _conv(
+    "prov:book-wue-anchors",
+    "MLSysBook water-usage effectiveness (WUE) tiers for sustainability examples",
+)
+
+BOOK_RACK_POWER = _conv(
+    "prov:book-rack-power-tiers",
+    "MLSysBook rack power tiers (traditional vs AI cluster, air-cooling limit)",
+)
+
+BOOK_CLOUD_PRICING_2024 = Provenance(
+    id="prov:book-cloud-pricing-2024",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Illustrative US cloud list prices (2024–2025 order of magnitude)",
+    notes="GPU-hour, egress, and electricity rates for worked examples—not a specific vendor quote.",
+    verified="2025-03-06",
+)
+
+MFU_INFERENCE_BATCHED_LIT = _lit(
+    "prov:mfu-inference-batched",
+    "Pope et al. (2023); batched inference MFU upper illustrative bound",
+    url="https://proceedings.mlsys.org/paper_files/paper/2023/hash/c4be71ab8d24cdfb45e3d06dbfca2780-Abstract-mlsys2023.html",
+    notes="0.40 is an upper illustrative bound for large-batch inference, not batch-1.",
+)

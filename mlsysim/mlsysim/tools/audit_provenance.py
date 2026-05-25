@@ -8,7 +8,8 @@ import sys
 from typing import Any, Iterable
 
 from mlsysim.core import defaults
-from mlsysim.core.provenance import Provenance, Sourced, TraceableConstant
+from mlsysim.core.appendix_lineage import audit_appendix_defaults
+from mlsysim.core.provenance import Provenance, ProvenanceKind, Sourced, TraceableConstant
 from mlsysim.hardware.registry import (
     CloudHardware,
     EdgeHardware,
@@ -33,16 +34,28 @@ def _registry_nodes(registry_cls: type) -> Iterable[Any]:
     return registry_cls.list()
 
 
-def _check_node(path: str, node: Any) -> list[str]:
+def _validate_provenance_record(path: str, prov: Provenance | None) -> list[str]:
+    if prov is None:
+        return [f"{path}: missing provenance"]
     issues: list[str] = []
+    if not prov.ref.strip():
+        issues.append(f"{path}: empty provenance.ref")
+    if prov.kind == ProvenanceKind.DATASHEET and not prov.url:
+        issues.append(f"{path}: datasheet without url")
+    if prov.kind == ProvenanceKind.ESTIMATE and not prov.notes:
+        issues.append(f"{path}: estimate without notes")
+    if prov.kind == ProvenanceKind.DERIVED and not prov.notes:
+        issues.append(f"{path}: derived without notes")
+    if prov.verified and len(prov.verified) != 10:
+        issues.append(f"{path}: verified date must be YYYY-MM-DD")
+    return issues
+
+
+def _check_node(path: str, node: Any) -> list[str]:
     meta = getattr(node, "metadata", None)
     if meta is None:
-        issues.append(f"{path}: no metadata")
-        return issues
-    prov = getattr(meta, "provenance", None)
-    if prov is None:
-        issues.append(f"{path}: missing provenance")
-    return issues
+        return [f"{path}: no metadata"]
+    return _validate_provenance_record(path, getattr(meta, "provenance", None))
 
 
 def audit_registries(*, scope_cloud: bool = False) -> list[str]:
@@ -86,11 +99,11 @@ def audit_defaults_traceable() -> list[str]:
             continue
         val = getattr(defaults, name)
         if isinstance(val, TraceableConstant):
-            if not getattr(val, "provenance", None):
-                issues.append(f"defaults.{name}: TraceableConstant without provenance")
+            issues.extend(
+                _validate_provenance_record(f"defaults.{name}", getattr(val, "provenance", None))
+            )
         elif isinstance(val, Sourced):
-            if not val.provenance:
-                issues.append(f"defaults.{name}: Sourced without provenance")
+            issues.extend(_validate_provenance_record(f"defaults.{name}", val.provenance))
     return issues
 
 
@@ -98,9 +111,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scope",
-        choices=("defaults", "cloud", "all"),
+        choices=("defaults", "cloud", "all", "textbook"),
         default="defaults",
-        help="What to scan (default: traceable defaults only)",
+        help="What to scan (textbook = full gates for assumption appendices)",
     )
     parser.add_argument(
         "--strict",
@@ -114,10 +127,12 @@ def main(argv: list[str] | None = None) -> int:
         issues.extend(audit_defaults_traceable())
     if args.scope == "cloud":
         issues.extend(audit_registries(scope_cloud=True))
-    if args.scope == "all":
+    if args.scope in ("all", "textbook"):
         issues.extend(audit_defaults_traceable())
         issues.extend(audit_registries(scope_cloud=False))
         issues.extend(audit_infra_grids())
+    if args.scope == "textbook":
+        issues.extend(audit_appendix_defaults())
 
     if issues:
         print(f"Provenance audit ({args.scope}): {len(issues)} issue(s)")
