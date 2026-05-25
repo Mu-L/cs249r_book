@@ -52,16 +52,11 @@ async def _():
     import numpy as np
 
     # WASM bootstrap
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     # plotly must be imported AFTER micropip install, since it's installed at runtime on WASM
     from plotly.subplots import make_subplots
@@ -70,10 +65,11 @@ async def _():
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
     import mlsysim
-    from mlsysim import Hardware
-    from mlsysim import Systems
+    from mlsysim import Hardware, Models, Systems
 
     INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    GPT3 = Models.Language.GPT3
+    GPT3_PARAMS_B = GPT3.parameters.m_as("count") / 1e9
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100
@@ -89,8 +85,8 @@ async def _():
     T4_TFLOPS_FP16    = T4.compute.peak_flops.m_as("TFLOPs/s")
     NVLINK4_BW_GBS    = H100.nvlink.bandwidth.m_as("GB/s")
     IB_NDR_BW_GBS     = INFINIBAND_NDR_BW_GBS  # 50 GB/s, alias for consistent naming
-    IB_HDR_BW_GBS     = 25.0      # GB/s InfiniBand HDR per port
-    ETH_100G_BW_GBS   = 12.5      # GB/s 100GbE
+    IB_HDR_BW_GBS     = Systems.Fabrics.InfiniBand_HDR.bandwidth.m_as("GB/s")
+    ETH_100G_BW_GBS   = Systems.Fabrics.Ethernet_100G.bandwidth.m_as("GB/s")
     GPUS_PER_NODE     = Systems.Nodes.DGX_H100.accelerators_per_node
 
     ledger = DesignLedger()
@@ -102,6 +98,7 @@ async def _():
         H100_TFLOPS_FP16, H100_BW_GBS, H100_RAM_GB, A100_RAM_GB,
         A100_TFLOPS_FP16, T4_TFLOPS_FP16,
         NVLINK4_BW_GBS, IB_NDR_BW_GBS, IB_HDR_BW_GBS, ETH_100G_BW_GBS,
+        GPT3_PARAMS_B,
         GPUS_PER_NODE,
     )
 

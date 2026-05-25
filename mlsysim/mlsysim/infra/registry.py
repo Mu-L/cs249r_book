@@ -102,6 +102,61 @@ class Grids(Registry):
         renewable_pct=17.0,
         metadata=Metadata(provenance=pc.IEA_WEO_2023),
     )
+    Iceland = GridProfile(
+        name="Iceland (Geothermal)",
+        carbon_intensity_g_kwh=sourced(28, pc.IEA_WEO_2023, name="Carbon Intensity (Iceland)", description="Iceland grid carbon intensity in gCO2/kWh."),
+        pue=PUE_LIQUID_COOLED,
+        wue=WUE_LIQUID,
+        primary_source="geothermal",
+        lat=64.9631,
+        lon=-19.0208,
+        renewable_pct=100.0,
+        metadata=Metadata(provenance=pc.IEA_WEO_2023),
+    )
+    Texas = GridProfile(
+        name="Texas (ERCOT)",
+        carbon_intensity_g_kwh=sourced(400, pc.IEA_WEO_2023, name="Carbon Intensity (Texas)", description="Texas grid carbon intensity in gCO2/kWh (EPA eGRID South Central)."),
+        pue=PUE_BEST_AIR,
+        wue=WUE_EVAPORATIVE,
+        primary_source="mixed",
+        lat=31.9686,
+        lon=-99.9018,
+        renewable_pct=28.0,
+        metadata=Metadata(provenance=pc.IEA_WEO_2023),
+    )
+    Germany = GridProfile(
+        name="Germany (Coal+Wind)",
+        carbon_intensity_g_kwh=sourced(385, pc.IEA_WEO_2023, name="Carbon Intensity (Germany)", description="Germany grid carbon intensity in gCO2/kWh."),
+        pue=PUE_BEST_AIR,
+        wue=WUE_EVAPORATIVE,
+        primary_source="mixed",
+        lat=51.1657,
+        lon=10.4515,
+        renewable_pct=46.0,
+        metadata=Metadata(provenance=pc.IEA_WEO_2023),
+    )
+    China_Avg = GridProfile(
+        name="China Average",
+        carbon_intensity_g_kwh=sourced(555, pc.IEA_WEO_2023, name="Carbon Intensity (China Average)", description="China national average grid carbon intensity in gCO2/kWh."),
+        pue=PUE_TYPICAL,
+        wue=WUE_EVAPORATIVE,
+        primary_source="coal",
+        lat=35.8617,
+        lon=104.1954,
+        renewable_pct=30.0,
+        metadata=Metadata(provenance=pc.IEA_WEO_2023),
+    )
+    India_Avg = GridProfile(
+        name="India Average",
+        carbon_intensity_g_kwh=sourced(720, pc.IEA_WEO_2023, name="Carbon Intensity (India Average)", description="India national average grid carbon intensity in gCO2/kWh."),
+        pue=PUE_LEGACY,
+        wue=WUE_EVAPORATIVE,
+        primary_source="coal",
+        lat=20.5937,
+        lon=78.9629,
+        renewable_pct=22.0,
+        metadata=Metadata(provenance=pc.IEA_WEO_2023),
+    )
 
 
 class Datacenters(Registry):

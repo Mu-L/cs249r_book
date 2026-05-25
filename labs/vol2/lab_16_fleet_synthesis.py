@@ -40,22 +40,18 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
     from mlsysim import Hardware, Models, Systems
+    from mlsysim.physics import calc_young_daly_interval
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -84,8 +80,9 @@ async def _():
     H100_TDP_W          = _cloud.tdp.m_as("W")                        # 700 W
     NVLINK_BW_GBS       = _cloud.nvlink.bandwidth.m_as("GB/s")
     IB_BW_GBPS          = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("Gbps")
-    MTBF_GPU_HOURS      = 2000    # Mean time between failures per GPU (hours)
+    MTBF_GPU_HOURS      = float(Systems.Reliability.Gpu.mttf_hours)
     CHECKPOINT_COST_S   = 120     # Seconds per checkpoint
+    GPT3_PARAMS_B       = Models.Language.GPT3.parameters.m_as("count") / 1e9
 
     # Edge tier — for fleet heterogeneity comparison
     EDGE_TFLOPS_FP16    = _edge.compute.peak_flops.m_as("TFLOPs/s")  # 25
@@ -105,7 +102,7 @@ async def _():
         EDGE_TFLOPS_FP16, EDGE_RAM_GB, EDGE_TDP_W,
         NVLINK_BW_GBS, IB_BW_GBPS, MTBF_GPU_HOURS, CHECKPOINT_COST_S,
         ALLREDUCE_RING_EFF, GRADIENT_COMPRESS,
-        DecisionLog,
+        DecisionLog, calc_young_daly_interval, GPT3_PARAMS_B,
     )
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────
@@ -329,6 +326,7 @@ def _(
     FAIRNESS_METRIC, FAIRNESS_OVERHEAD_MS, FAIRNESS_THRESHOLD, H100_TFLOPS_FP16,
     H100_RAM_GB, H100_TDP_W, NVLINK_BW_GBS, IB_BW_GBPS,
     MTBF_GPU_HOURS, CHECKPOINT_COST_S, ALLREDUCE_RING_EFF, GRADIENT_COMPRESS,
+    calc_young_daly_interval,
     ledger, partA_fleet_toggle, partA_pred, partB_ckpt_slider,
     partB_fleet_slider, partB_mtbf_slider, partB_pred, partC_comm,
     partC_compute, partC_fair, partC_fault, partC_pred,
@@ -561,7 +559,7 @@ set by bandwidth.
 
         # Goodput: Young-Daly model
         _T_ckpt_min = CHECKPOINT_COST_S / 60  # minutes
-        _T_optimal = math.sqrt(2 * _T_ckpt_min * _mtbf_cluster_min) if _mtbf_cluster_min > 0 else 10
+        _T_optimal = calc_young_daly_interval(_T_ckpt_min * 60, _mtbf_cluster_min * 60).m_as("minute") if _mtbf_cluster_min > 0 else 10
 
         # Goodput at chosen interval
         _ckpt_overhead = _T_ckpt_min / _ckpt_min if _ckpt_min > 0 else 1
@@ -943,7 +941,7 @@ No configuration achieves 100% on all six axes simultaneously. The effective gai
         # ── Fault Tolerance axis ────────────────────────────────────────────
         _mtbf_cluster = MTBF_GPU_HOURS / _N
         _T_ckpt_min = CHECKPOINT_COST_S / 60
-        _T_optimal = math.sqrt(2 * _T_ckpt_min * _mtbf_cluster * 60) if _mtbf_cluster > 0 else 10
+        _T_optimal = calc_young_daly_interval(_T_ckpt_min * 60, _mtbf_cluster * 3600).m_as("minute") if _mtbf_cluster > 0 else 10
         _ckpt_overhead = _T_ckpt_min / _ckpt if _ckpt > 0 else 1
         _failure_waste = _ckpt / (2 * _mtbf_cluster * 60) if _mtbf_cluster > 0 else 1
         _goodput = max(0, 1 - _ckpt_overhead - _failure_waste)

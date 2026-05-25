@@ -40,29 +40,24 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim import Hardware
+    from mlsysim import Hardware, Systems, Infrastructure
 
     # ── Hardware registry ─────────────────────────────────────────────────
     H100 = Hardware.Cloud.H100
     T4 = Hardware.Cloud.T4
     EDGE = Hardware.Edge.JetsonOrinNX
-    GPUS_PER_NODE = 8
-    GPU_COST_HR = 3.0
+    GPUS_PER_NODE = Systems.Nodes.DGX_H100.accelerators_per_node
+    GPU_COST_HR = Infrastructure.Pricing.Fleet.GpuHourRef.rate.m_as("USD/hour")
     EDGE_TFLOPS = EDGE.compute.peak_flops.m_as("TFLOPs/s")
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):

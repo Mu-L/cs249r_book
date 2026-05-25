@@ -56,22 +56,17 @@ async def _():
     import numpy as np
 
     # WASM bootstrap
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim import Hardware, Models
+    from mlsysim import Hardware, Models, Engine
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -106,11 +101,14 @@ async def _():
     EDGE_BW_GBS      = _edge.memory.bandwidth.m_as("GB/s")          # 102
     EDGE_RIDGE       = EDGE_TFLOPS_FP16 * 1e12 / (EDGE_BW_GBS * 1e9)
 
-    # ── Transformer workload constants (70B LLM) ─────────────────────────────
-    HEAD_DIM     = 128
-    NUM_HEADS    = 64
-    NUM_LAYERS   = 80
-    HIDDEN_DIM   = 8192
+    _llama70b = Models.Language.Llama2_70B
+    LLAMA2_70B = _llama70b
+    H100_NODE = _h100
+    GPU_NODES = {"h100": _h100, "a100": _a100, "v100": _v100, "b200": _b200}
+    HEAD_DIM     = _llama70b.hidden_dim // _llama70b.heads
+    NUM_HEADS    = _llama70b.heads
+    NUM_LAYERS   = _llama70b.layers
+    HIDDEN_DIM   = _llama70b.hidden_dim
     BYTES_FP16   = 2
 
     # ── Fusion constants ─────────────────────────────────────────────────────
@@ -142,6 +140,7 @@ async def _():
         ELEM_FUSION_SAVE_MB,
         PPL_FP16, PPL_INT8_NAIVE, PPL_INT8_OUTLIER,
         PPL_INT4_NAIVE, PPL_INT4_OUTLIER,
+        Engine, H100_NODE, LLAMA2_70B, GPU_NODES,
     )
 
 # ─── CELL 1: HEADER ─────────────────────────────────────────────────────────
@@ -445,6 +444,7 @@ def _(
     pA_batch, pA_gpu, pA_op, pA_pred,
     pB_pred, pB_seqlen, pC_pred, pD_precision,
     pD_pred, pE_optim, pE_pred, pE_workload,
+    Engine, H100_NODE, LLAMA2_70B, GPU_NODES,
 ):
     # ═════════════════════════════════════════════════════════════════════════
     # PART A: THE ROOFLINE DIAGNOSTIC
@@ -524,6 +524,17 @@ def _(
         _achievable = min(_peak, (_bw / 1e3) * _ai)
         _util_pct = (_achievable / _peak) * 100.0
         _is_mem_bound = _ai < _ridge
+
+        if pA_op.value == "decode":
+            _prof = Engine.solve(
+                LLAMA2_70B, GPU_NODES[pA_gpu.value], batch_size=_batch,
+                precision="fp16", efficiency=0.5,
+            )
+            _engine_util = _prof.mfu * 100
+            _engine_bn = _prof.bottleneck
+            _engine_lat_ms = _prof.latency.m_as("ms")
+        else:
+            _engine_util = _engine_bn = _engine_lat_ms = None
 
         # Build figure
         _ai_range = np.logspace(-1, 4, 400)
@@ -605,6 +616,13 @@ def _(
 
         items.append(mo.as_html(_fig))
         items.append(mo.Html(_cards))
+        _engine_line = ""
+        if _engine_util is not None:
+            _engine_line = (
+                f"\nEngine.solve (70B decode) = {_engine_lat_ms:.2f} ms/token, "
+                f"MFU {_engine_util:.2f}%, bottleneck: {_engine_bn}"
+            )
+
         items.append(mo.md(f"""
 **Roofline Calculation**
 
@@ -613,7 +631,7 @@ Arithmetic Intensity  = {_ai:.1f} FLOP/byte
 Ridge Point ({_gpu_name})    = {_ridge:.0f} FLOP/byte
 AI / Ridge            = {_ai:.1f} / {_ridge:.0f} = {_ai/_ridge:.4f}
 Achievable TFLOPS     = min({_peak:.0f}, {_bw/1e3:.1f} x {_ai:.1f}) = {_achievable:.1f} TFLOPS
-Utilization           = {_achievable:.1f} / {_peak:.0f} = {_util_pct:.2f}%
+Utilization           = {_achievable:.1f} / {_peak:.0f} = {_util_pct:.2f}%{_engine_line}
 ```
 *Source: @sec-performance-engineering, roofline model*
 """))

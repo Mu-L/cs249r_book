@@ -15,38 +15,33 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim import Systems
+    from mlsysim import Hardware, Models, Systems
     from mlsysim.core import calibration
-    from mlsysim.systems.registry import IB_NDR_LATENCY_US, IB_HDR_LATENCY_US
-
-    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
-    INFINIBAND_HDR_BW_GBS = Systems.Fabrics.InfiniBand_HDR.bandwidth.m_as("GB/s")
-    DEFAULT_OVERLAP_EFFICIENCY = calibration.DEFAULT_OVERLAP_EFFICIENCY
+    from mlsysim import ureg
     from mlsysim.physics import (
         calc_ring_allreduce_time,
         calc_tree_allreduce_time,
         calc_hierarchical_allreduce_time,
     )
-    from mlsysim.core.constants import ureg
+
+    IB_NDR_LATENCY_US = Systems.Fabrics.InfiniBand_NDR.latency.m_as("microsecond")
+    IB_HDR_LATENCY_US = Systems.Fabrics.InfiniBand_HDR.latency.m_as("microsecond")
+    INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
+    INFINIBAND_HDR_BW_GBS = Systems.Fabrics.InfiniBand_HDR.bandwidth.m_as("GB/s")
+    DEFAULT_OVERLAP_EFFICIENCY = calibration.DEFAULT_OVERLAP_EFFICIENCY
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    _H100_REG = mlsysim.Hardware.Cloud.H100
-    _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
+    _H100_REG = Hardware.Cloud.H100
+    _EDGE_REG = Hardware.Edge.JetsonOrinNX
 
     H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
     H100_BW_GBS = _H100_REG.memory.bandwidth.m_as("GB/s")
@@ -56,8 +51,8 @@ async def _():
     NVLINK_GBS = _H100_REG.nvlink.bandwidth.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.Language.GPT2
-    GPT2_PARAMS = GPT2.parameters.m_as("dimensionless")
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS = GPT2.parameters.m_as("count")
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):

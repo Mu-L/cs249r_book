@@ -15,37 +15,28 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim import Systems
+    from mlsysim import Hardware, Models, Systems
+    from mlsysim import ureg, NVME_SEQUENTIAL_BW
+    from mlsysim.physics import calc_young_daly_interval, calc_mtbf_cluster
 
     GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
-    from mlsysim.physics import calc_young_daly_interval, calc_mtbf_cluster
-    from mlsysim.core.constants import (
-        ureg,
-        NVME_SEQUENTIAL_BW,
-    )
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    _H100_REG = mlsysim.Hardware.Cloud.H100
-    _A100_REG = mlsysim.Hardware.Cloud.A100
-    _B200_REG = mlsysim.Hardware.Cloud.B200
-    _V100_REG = mlsysim.Hardware.Cloud.V100
-    _T4_REG = mlsysim.Hardware.Cloud.T4
-    _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
+    _H100_REG = Hardware.Cloud.H100
+    _A100_REG = Hardware.Cloud.A100
+    _B200_REG = Hardware.Cloud.B200
+    _V100_REG = Hardware.Cloud.V100
+    _T4_REG = Hardware.Cloud.T4
+    _EDGE_REG = Hardware.Edge.JetsonOrinNX
 
     # Scalar extraction
     H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
@@ -60,8 +51,8 @@ async def _():
     EDGE_TFLOPS = _EDGE_REG.compute.peak_flops.m_as("TFLOPs/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.Language.GPT2
-    GPT2_PARAMS_B = GPT2.parameters.m_as("dimensionless") / 1e9  # billions
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS_B = GPT2.parameters.m_as("count") / 1e9  # billions
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):

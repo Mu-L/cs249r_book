@@ -15,40 +15,31 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-    from mlsysim import Systems, Literature, Infrastructure
+    from mlsysim import Hardware, Models, Systems, Literature, Infrastructure, Engine
+    from mlsysim import ureg, NVME_SEQUENTIAL_BW
 
     GPU_MTTF_HOURS = Systems.Reliability.Gpu.mttf_hours
     INFINIBAND_NDR_BW_GBS = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as("GB/s")
-    PUE_BEST_AIR = Infrastructure.FacilityCooling.BestAir.pue
+    PUE_BEST_AIR = float(Infrastructure.FacilityCooling.BestAir.pue)
     DEFAULT_KWH_PRICE = Infrastructure.Pricing.Cloud.ElectricityPerKwh.rate.m_as("USD/kWh")
     ANNUAL_MAINTENANCE_RATIO = float(Infrastructure.Pricing.Capital.AnnualMaintenanceRatio.rate)
     MFU_INFERENCE_BATCH1 = Literature.Training.MfuInferenceBatch1
-    from mlsysim.core.constants import (
-        ureg,
-        NVME_SEQUENTIAL_BW,
-    )
 
     # ── Hardware registry ─────────────────────────────────────────────────────
-    _H100_REG = mlsysim.Hardware.Cloud.H100
-    _A100_REG = mlsysim.Hardware.Cloud.A100
-    _B200_REG = mlsysim.Hardware.Cloud.B200
-    _V100_REG = mlsysim.Hardware.Cloud.V100
-    _EDGE_REG = mlsysim.Hardware.Edge.JetsonOrinNX
+    _H100_REG = Hardware.Cloud.H100
+    _A100_REG = Hardware.Cloud.A100
+    _B200_REG = Hardware.Cloud.B200
+    _V100_REG = Hardware.Cloud.V100
+    _EDGE_REG = Hardware.Edge.JetsonOrinNX
 
     # Extract scalar values for chart use
     H100_TFLOPS = _H100_REG.compute.peak_flops.m_as("TFLOPs/s")
@@ -75,8 +66,14 @@ async def _():
     NVME_GBS = NVME_SEQUENTIAL_BW.m_as("GB/s")
 
     # ── Model registry ────────────────────────────────────────────────────────
-    GPT2 = mlsysim.Models.Language.GPT2
-    GPT2_PARAMS_B = GPT2.parameters.m_as("dimensionless") / 1e9  # billions
+    GPT2 = Models.Language.GPT2
+    GPT2_PARAMS_B = GPT2.parameters.m_as("count") / 1e9  # billions
+    DECODE_MODELS = {
+        7: Models.Language.Llama3_8B,
+        70: Models.Language.Llama2_70B,
+        175: Models.Language.GPT3,
+    }
+    H100 = _H100_REG
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -90,6 +87,7 @@ async def _():
         GPT2_PARAMS_B,
         NVLINK_GBS, PCIE_GBS, IB_NDR_GBS, NVME_GBS,
         PUE_BEST_AIR, DEFAULT_KWH_PRICE, ANNUAL_MAINTENANCE_RATIO,
+        Engine, H100, DECODE_MODELS, MFU_INFERENCE_BATCH1,
     )
 
 @app.cell(hide_code=True)
@@ -331,6 +329,7 @@ def _(
     pB_hw, pB_pred, pC_pred, pC_size,
     pD_gpus, pD_model_b, pD_pred, pD_zero,
     pE_pred, pE_n_gpus, pE_pue, pE_util,
+    Engine, H100, DECODE_MODELS, MFU_INFERENCE_BATCH1,
 ):
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -387,6 +386,20 @@ def _(
         _mfu = (_t_comp_ms / _t_total) * 100 if _t_total > 0 else 0
         _ai = _batch  # AI = (2 * batch * params) / (2 bytes * params) = batch FLOPs/Byte
 
+        _decode_model = DECODE_MODELS.get(_params_b)
+        if _decode_model is not None:
+            _profile = Engine.solve(
+                _decode_model, H100, batch_size=_batch,
+                precision="fp16", efficiency=float(MFU_INFERENCE_BATCH1),
+            )
+            _engine_mem_ms = _profile.latency_memory.m_as("ms")
+            _engine_comp_ms = _profile.latency_compute.m_as("ms")
+            _engine_mfu_pct = _profile.mfu * 100
+            _engine_bn = _profile.bottleneck
+        else:
+            _engine_mem_ms = _engine_comp_ms = _engine_mfu_pct = None
+            _engine_bn = "n/a"
+
         # Waterfall chart
         _fig = go.Figure()
         _fig.add_trace(go.Bar(name="Memory (HBM load)", x=["Latency"], y=[_t_mem_ms],
@@ -436,6 +449,7 @@ Weight load  = {_weight_gb:.0f} GB / {H100_BW_GBS:,.0f} GB/s = {_t_mem_ms:.2f} m
 Compute      = 2 * {_params:.0e} * {_batch} / {H100_TFLOPS:.0f} TFLOPS = {_t_comp_ms:.4f} ms
 GPU idle     = {_t_mem_ms:.2f} / {_t_total:.2f} = {_idle_pct:.1f}%
 AI           = {_ai:.0f} FLOPs/Byte  (ridge = {H100_RIDGE:.0f})
+Engine.solve = mem {_engine_mem_ms:.2f} ms + comp {_engine_comp_ms:.4f} ms → MFU {_engine_mfu_pct:.1f}% ({_engine_bn})
 ```
 *Source: Vol II Ch 2 -- The Memory Wall*
         """))

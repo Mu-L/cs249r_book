@@ -17,23 +17,17 @@ async def _():
     import numpy as np
 
     # WASM bootstrap: install mlsysim from hosted wheel when running in browser
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    import mlsysim
-    from mlsysim import Engine, Models, Hardware
+    from mlsysim import Engine, Hardware, Models
 
     # ── Hardware constants from registry ──────────────────────────────────
     H100 = Hardware.Cloud.H100

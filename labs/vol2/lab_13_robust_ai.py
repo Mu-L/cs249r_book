@@ -39,22 +39,17 @@ async def _():
     import numpy as np
 
     # WASM bootstrap
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
     from mlsysim.labs.components import DecisionLog
-    from mlsysim import Hardware, Models
+    from mlsysim import Hardware, calc_population_stability_index
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -102,7 +97,7 @@ async def _():
         SDC_RATE_PER_HOUR, ACC_AFTER_BITFLIP,
         DRIFT_RATE_MODERATE, PSI_THRESHOLD,
         FP32_ADV_ACC_EPS4, INT8_ADV_ACC_EPS4, INT8_CLEAN_DELTA,
-        DecisionLog,
+        DecisionLog, calc_population_stability_index,
     )
 
 # ─── CELL 1: HEADER ────────────────────────────────────────────────────────
@@ -365,6 +360,7 @@ def _(
     ADV_TRAINED_CLEAN_ACC, ADV_TRAINED_ROBUST_ACC, ROBUST_TAX_PP, PGD_STEPS,
     PGD_COMPUTE_MULT, SMOOTHING_INFERENCE_MULT, FEATURE_SQUEEZE_CLEAN, FEATURE_SQUEEZE_ROBUST,
     SDC_RATE_PER_HOUR, ACC_AFTER_BITFLIP, DRIFT_RATE_MODERATE, PSI_THRESHOLD,
+    calc_population_stability_index,
     FP32_ADV_ACC_EPS4, INT8_ADV_ACC_EPS4, INT8_CLEAN_DELTA, partA_eps_slider,
     partA_pred, partA_refl, partB_cluster_slider, partB_pred,
     partC_drift_rate, partC_monitoring, partC_pred, partC_sample_rate,
@@ -725,6 +721,19 @@ ECC and redundancy are not optional at scale; they are mathematically mandatory.
 
         months = np.arange(0, 13, 0.1)
 
+        # PSI on a representative input feature (10-bin histogram)
+        _ref_bins = np.array([0.08, 0.10, 0.12, 0.14, 0.14, 0.14, 0.12, 0.10, 0.08, 0.08])
+        _psi_curve = []
+        for m in months:
+            _prod = _ref_bins.copy()
+            _shift = _drift * m
+            _prod[6:] *= (1 + _shift * 8)
+            _prod[:6] *= max(0.05, 1 - _shift * 2)
+            _prod = _prod / _prod.sum()
+            _psi_curve.append(calc_population_stability_index(_ref_bins.tolist(), _prod.tolist()))
+        _psi_6m = _psi_curve[int(6 / 0.1)]
+        _psi_alert = _psi_6m >= PSI_THRESHOLD
+
         # Unmonitored trajectory
         acc_unmon = CLEAN_ACC_BASELINE * (1 - _drift) ** months
 
@@ -773,6 +782,22 @@ ECC and redundancy are not optional at scale; they are mathematically mandatory.
         )
         apply_plotly_theme(fig_drift)
 
+        fig_psi = go.Figure()
+        fig_psi.add_trace(go.Scatter(
+            x=months, y=_psi_curve, name="PSI (feature histogram)",
+            line=dict(color=COLORS["OrangeLine"], width=2.5),
+        ))
+        fig_psi.add_hline(
+            y=PSI_THRESHOLD, line_dash="dot", line_color=COLORS["RedLine"],
+            annotation_text=f"Alert threshold ({PSI_THRESHOLD})", annotation_position="top right",
+        )
+        fig_psi.update_layout(
+            height=260,
+            xaxis=dict(title="Months After Deployment"),
+            yaxis=dict(title="Population Stability Index"),
+        )
+        apply_plotly_theme(fig_psi)
+
         # Detection latency calculation
         # N_samples = (Z_a + Z_b)^2 * (p1*q1 + p2*q2) / (p1-p2)^2
         # For 2% accuracy drop detection with 95% confidence (Z=1.96)
@@ -784,6 +809,13 @@ ECC and redundancy are not optional at scale; they are mathematically mandatory.
 
         items.append(mo.md(f"### Drift Timeline (drift = {_drift*100:.1f}%/month, monitoring = {partC_monitoring.value})"))
         items.append(mo.as_html(fig_drift))
+        items.append(mo.md(f"### PSI Monitor (6-month PSI = {_psi_6m:.3f}, threshold = {PSI_THRESHOLD})"))
+        items.append(mo.as_html(fig_psi))
+        if _psi_alert:
+            items.append(mo.callout(mo.md(
+                f"**PSI alert.** At 6 months PSI = {_psi_6m:.3f} exceeds the {PSI_THRESHOLD} threshold — "
+                "feature distributions have shifted enough to warrant retraining even before accuracy collapses."
+            ), kind="danger"))
         items.append(mo.Html(f"""
         <div style="display: flex; gap: 16px; justify-content: center; margin-top: 12px; flex-wrap: wrap;">
             <div style="padding: 14px 20px; border: 1px solid {COLORS['Border']}; border-radius: 10px;
@@ -850,6 +882,9 @@ $$N_{{\\text{{samples}}}} = \\frac{{(Z_\\alpha + Z_\\beta)^2 \\cdot (p_1 q_1 + p
 
 At {partC_sample_rate.value:,} labeled samples/hour, detection takes **{_hours_detect:.1f} hours**.
 Without monitoring, drift is invisible until users complain.
+
+**Population Stability Index (PSI)** compares production feature histograms to the training baseline.
+PSI(6 mo) = {_psi_6m:.3f}. Values above {PSI_THRESHOLD} trigger an alert before accuracy metrics move.
 """),
         }))
 

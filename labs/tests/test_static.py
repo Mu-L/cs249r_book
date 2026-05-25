@@ -76,7 +76,11 @@ class TestMarimoStructure:
     def test_wasm_bootstrap(self, lab_path):
         """WASM bootstrap for browser deployment."""
         source = read_source(lab_path)
-        assert 'sys.platform == "emscripten"' in source, "Missing WASM bootstrap"
+        has_bootstrap = (
+            'sys.platform == "emscripten"' in source
+            or "from bootstrap import setup_lab" in source
+        )
+        assert has_bootstrap, "Missing WASM bootstrap (emscripten guard or labs/bootstrap.py)"
 
     def test_has_tabs(self, lab_path):
         """Labs should use mo.ui.tabs() for Part navigation."""
@@ -204,14 +208,27 @@ class TestWheelConsistency:
         source = read_source(lab_path)
         expected_fragment = f"../../wheels/mlsysim-{version}-py3-none-any.whl"
         bad_depth = f"../../../wheels/mlsysim-{version}-py3-none-any.whl"
+        uses_shared_bootstrap = "from bootstrap import setup_lab" in source
         assert bad_depth not in source, (
             f"Micropip wheel path has one too many '../' segments (found '{bad_depth}'). "
             f"From labs/volN/ the repo root is two levels up; use '{expected_fragment}'."
         )
-        assert expected_fragment in source, (
-            f"Wheel version mismatch or not relative. Expected '{expected_fragment}' in micropip URL "
-            f"but not found. Update the micropip.install() URL in this lab."
-        )
+        if uses_shared_bootstrap:
+            import sys
+            labs_dir = str(REPO_ROOT / "labs")
+            if labs_dir not in sys.path:
+                sys.path.insert(0, labs_dir)
+            from bootstrap import wheel_relpath
+            sample_lab = str(REPO_ROOT / "labs" / "vol1" / "lab_01_ml_intro.py")
+            assert wheel_relpath(sample_lab) == expected_fragment, (
+                f"labs/bootstrap.py wheel path mismatch: got {wheel_relpath(sample_lab)!r}, "
+                f"expected {expected_fragment!r} from mlsysim/pyproject.toml."
+            )
+        else:
+            assert expected_fragment in source, (
+                f"Wheel version mismatch or not relative. Expected '{expected_fragment}' in micropip URL "
+                f"but not found. Update the micropip.install() URL in this lab."
+            )
 
     def test_no_absolute_wheel_url(self, lab_path):
         """Labs must use relative URLs for the wheel, not absolute mlsysbook.ai URLs."""
@@ -298,17 +315,16 @@ RUNTIME_INSTALLED_PACKAGES = frozenset({
 })
 
 
-def _find_micropip_install_line(cell_body):
-    """Return the line number of the `await micropip.install(...)` call
-    in this cell's body, or None if not found."""
+def _find_runtime_bootstrap_line(cell_body):
+    """Return the line number of runtime package install in the setup cell."""
     for stmt in ast.walk(ast.Module(body=cell_body, type_ignores=[])):
-        # Match `await micropip.install(...)` — an Await wrapping a Call
         if isinstance(stmt, ast.Await) and isinstance(stmt.value, ast.Call):
             call = stmt.value
-            if (isinstance(call.func, ast.Attribute)
-                and call.func.attr == "install"
-                and isinstance(call.func.value, ast.Name)
-                and call.func.value.id == "micropip"):
+            if isinstance(call.func, ast.Attribute) and call.func.attr == "install":
+                if (isinstance(call.func.value, ast.Name)
+                    and call.func.value.id == "micropip"):
+                    return stmt.lineno
+            if isinstance(call.func, ast.Name) and call.func.id == "setup_lab":
                 return stmt.lineno
     return None
 
@@ -351,13 +367,13 @@ class TestWASMRuntimeImportOrder:
             if not has_cell_dec:
                 continue
 
-            # Does this cell have a micropip.install call?
-            install_line = _find_micropip_install_line(node.body)
+            # Does this cell install runtime packages (micropip or shared bootstrap)?
+            install_line = _find_runtime_bootstrap_line(node.body)
             if install_line is None:
                 continue
 
             # Scan cell body for runtime-installed package imports
-            # that appear BEFORE the micropip install line.
+            # that appear BEFORE the bootstrap install line.
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Import):
                     for alias in sub.names:

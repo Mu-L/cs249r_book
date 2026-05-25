@@ -15,32 +15,30 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
+    from mlsysim import Hardware, Infrastructure
 
-    H100_TDP_W = mlsysim.Hardware.Cloud.H100.tdp.m_as("W")
+    H100_TDP_W = Hardware.Cloud.H100.tdp.m_as("W")
+    JETSON_TDP_W = Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
 
-    # Edge tier — carbon comparison: much lower TDP changes the sustainability calculus
-    JETSON_TDP_W = mlsysim.Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
+    _grids = Infrastructure.Grids
+    CI_CLEAN = float(_grids.Quebec.carbon_intensity_g_kwh)
+    CI_MIXED = float(_grids.US_Avg.carbon_intensity_g_kwh)
+    CI_COAL = float(_grids.Poland.carbon_intensity_g_kwh)
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
         _ = await ledger.load_async()
     return (
-        COLORS, H100_TDP_W, JETSON_TDP_W, LAB_CSS,
+        COLORS, H100_TDP_W, JETSON_TDP_W, CI_CLEAN, CI_COAL, CI_MIXED, LAB_CSS,
         apply_plotly_theme, go, ledger, math, mo, np,
     )
 
@@ -242,16 +240,19 @@ def _(mo):
 
 # ─── widget cell: extracted from tabs cell body (#1332 polish) ────
 @app.cell(hide_code=True)
-def _(mo):
+def _(CI_CLEAN, CI_COAL, CI_MIXED, mo):
     partD_retrain_freq = mo.ui.dropdown(
         options={"Weekly": 52, "Monthly": 12, "Quarterly": 4, "Once": 1},
         value="Weekly", label="Retraining frequency")
     partD_explain_pct = mo.ui.slider(start=0, stop=100, value=10, step=5,
                                       label="Explanation coverage (%)")
     partD_grid_mix = mo.ui.dropdown(
-        options={"Clean (hydro, 20 gCO2/kWh)": 20, "Mixed (400 gCO2/kWh)": 400,
-                 "Coal-heavy (800 gCO2/kWh)": 800},
-        value="Mixed (400 gCO2/kWh)", label="Grid carbon intensity")
+        options={
+            f"Clean (hydro, {CI_CLEAN:.0f} gCO2/kWh)": CI_CLEAN,
+            f"Mixed ({CI_MIXED:.0f} gCO2/kWh)": CI_MIXED,
+            f"Coal-heavy ({CI_COAL:.0f} gCO2/kWh)": CI_COAL,
+        },
+        value=f"Mixed ({CI_MIXED:.0f} gCO2/kWh)", label="Grid carbon intensity")
     return (partD_explain_pct, partD_grid_mix, partD_retrain_freq)
 
 @app.cell(hide_code=True)

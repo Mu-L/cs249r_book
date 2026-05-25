@@ -15,46 +15,46 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    if sys.platform == "emscripten":
-        import micropip
-        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
-        await micropip.install(
-            "../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False
-        )
-    elif "mlsysim" not in sys.modules:
-        _root = Path(__file__).resolve().parents[2]
-        if str(_root) not in sys.path:
-            sys.path.insert(0, str(_root))
+    _labs_dir = Path(__file__).resolve().parents[1]
+    if str(_labs_dir) not in sys.path:
+        sys.path.insert(0, str(_labs_dir))
+    from bootstrap import setup_lab
+    await setup_lab(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
     from mlsysim.labs.style import COLORS, LAB_CSS, apply_plotly_theme
-    import mlsysim
-
-    H100_TFLOPS_FP16 = mlsysim.Hardware.Cloud.H100.compute.peak_flops.m_as("TFLOPs/s")
-    H100_BW_GBS      = mlsysim.Hardware.Cloud.H100.memory.bandwidth.m_as("GB/s")
-    H100_RAM_GB      = mlsysim.Hardware.Cloud.H100.memory.capacity.m_as("GB")
-    H100_TDP_W       = mlsysim.Hardware.Cloud.H100.tdp.m_as("W")
-
-    # Edge tier — contrast serving constraints: limited memory, lower bandwidth
-    JETSON_TFLOPS    = mlsysim.Hardware.Edge.JetsonOrinNX.compute.peak_flops.m_as("TFLOPs/s")
-    JETSON_BW_GBS    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.bandwidth.m_as("GB/s")
-    JETSON_RAM_GB    = mlsysim.Hardware.Edge.JetsonOrinNX.memory.capacity.m_as("GB")
-    JETSON_TDP_W     = mlsysim.Hardware.Edge.JetsonOrinNX.tdp.m_as("W")
-
-    PCIE_GEN5_GBS = mlsysim.Hardware.Cloud.H100.interconnect.bandwidth.m_as("GB/s")
-    PCIE_GEN4_GBS = mlsysim.Hardware.Cloud.A100.interconnect.bandwidth.m_as("GB/s")
+    from mlsysim import Hardware, Models, calc_kv_cache_size
     from mlsysim.core.constants import NVME_SEQUENTIAL_BW
+
+    H100 = Hardware.Cloud.H100
+    A100 = Hardware.Cloud.A100
+    JETSON = Hardware.Edge.JetsonOrinNX
+    LLAMA2_70B = Models.Language.Llama2_70B
+    RESNET50 = Models.Vision.ResNet50
+
+    H100_TFLOPS_FP16 = H100.compute.peak_flops.m_as("TFLOPs/s")
+    H100_BW_GBS      = H100.memory.bandwidth.m_as("GB/s")
+    H100_RAM_GB      = H100.memory.capacity.m_as("GB")
+    H100_TDP_W       = H100.tdp.m_as("W")
+
+    JETSON_TFLOPS    = JETSON.compute.peak_flops.m_as("TFLOPs/s")
+    JETSON_BW_GBS    = JETSON.memory.bandwidth.m_as("GB/s")
+    JETSON_RAM_GB    = JETSON.memory.capacity.m_as("GB")
+    JETSON_TDP_W     = JETSON.tdp.m_as("W")
+
+    PCIE_GEN5_GBS = H100.interconnect.bandwidth.m_as("GB/s")
+    PCIE_GEN4_GBS = A100.interconnect.bandwidth.m_as("GB/s")
     NVME_SEQ_GBS  = NVME_SEQUENTIAL_BW.m_as("GB/s")
     NET_FS_GBS    = 1.25
 
-    RESNET50_PARAMS = mlsysim.Models.Vision.ResNet50.parameters.m_as("count")
-    RESNET50_FLOPS  = mlsysim.Models.Vision.ResNet50.inference_flops.m_as("flop")
+    RESNET50_PARAMS = RESNET50.parameters.m_as("count")
+    RESNET50_FLOPS  = RESNET50.inference_flops.m_as("flop")
 
-    LLAMA2_70B_PARAMS = mlsysim.Models.Language.Llama2_70B.parameters.m_as("count")
-    LLAMA2_70B_LAYERS = mlsysim.Models.Language.Llama2_70B.layers
-    LLAMA2_70B_HIDDEN = mlsysim.Models.Language.Llama2_70B.hidden_dim
-    LLAMA2_70B_HEADS  = mlsysim.Models.Language.Llama2_70B.heads
+    LLAMA2_70B_PARAMS = LLAMA2_70B.parameters.m_as("count")
+    LLAMA2_70B_LAYERS = LLAMA2_70B.layers
+    LLAMA2_70B_HIDDEN = LLAMA2_70B.hidden_dim
+    LLAMA2_70B_HEADS  = LLAMA2_70B.heads
 
     ledger = DesignLedger()
     if getattr(ledger, "is_wasm", False):
@@ -65,7 +65,7 @@ async def _():
         LAB_CSS, LLAMA2_70B_HEADS, LLAMA2_70B_HIDDEN, LLAMA2_70B_LAYERS,
         LLAMA2_70B_PARAMS, NET_FS_GBS, NVME_SEQ_GBS, PCIE_GEN4_GBS,
         PCIE_GEN5_GBS, RESNET50_FLOPS, RESNET50_PARAMS,
-        apply_plotly_theme, go, ledger, math, mo, np,
+        apply_plotly_theme, calc_kv_cache_size, go, ledger, math, mo, np,
     )
 
 @app.cell(hide_code=True)
@@ -283,11 +283,15 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(
-    mo, partA_pred, partA_rho, partA_slo,
+    COLORS, H100_BW_GBS, H100_RAM_GB, apply_plotly_theme, calc_kv_cache_size, go, math, mo, np,
+    partA_pred, partA_rho, partA_slo,
     partA_svc, partB_arr, partB_batch, partB_pred,
     partB_slo, partC_ctx, partC_gpus, partC_model,
     partC_prec, partC_pred, partD_pred, partD_model,
     partD_pcie, partD_stor,
+    LLAMA2_70B_HEADS, LLAMA2_70B_HIDDEN, LLAMA2_70B_LAYERS,
+    NET_FS_GBS, NVME_SEQ_GBS, PCIE_GEN4_GBS, PCIE_GEN5_GBS,
+    JETSON_BW_GBS, JETSON_RAM_GB,
 ):
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -639,7 +643,9 @@ when memory capacity is the binding constraint.
         _layers, _heads, _hidden = _cfgs[_pb]
         _hdim = _hidden // _heads
         _w_gb = _pb * 1e9 * _bpp / (1024**3)
-        _kv_gb = (2 * _layers * _heads * _hdim * _ctx * _bpp) / (1024**3)
+        _kv_gb = calc_kv_cache_size(
+            _layers, _heads, _hdim, _ctx, 1, bytes_per_elem=_bpp,
+        ).m_as("GB")
         _hbm = _ng * H100_RAM_GB
         _avail = _hbm - _w_gb
         _max_b = max(0, int(_avail / _kv_gb)) if _kv_gb > 0 else 0
