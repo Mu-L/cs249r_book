@@ -1,13 +1,12 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union
 from .constants import Q_
 from .types import Quantity
-from ..models.types import Workload, TransformerWorkload
+from ..models.types import Workload
 from ..hardware.types import HardwareNode
 from ..systems.types import Fleet
 from .exceptions import OOMError, SLAViolation
 from .evaluation import SystemEvaluation, EvaluationLevel
-from typing import ClassVar
 
 class Scenario(BaseModel):
     """

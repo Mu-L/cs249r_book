@@ -1,7 +1,7 @@
 from .types import Node, Fleet, NetworkFabric, PodEnvelope
 from .reliability import Reliability
 from .orchestration import Orchestration
-from ..core.units import ureg, Q_, Gbps, GB, TB
+from ..core.units import ureg, Q_, Gbps, TB
 from ..core.constants import (
     NETWORK_10G_BW, NETWORK_100G_BW, ETHERNET_400G_BW, ETHERNET_800G_BW,
 )

@@ -88,7 +88,7 @@ class Grids(Registry):
         primary_source="coal_gas",
         lat=42.0329,
         lon=-93.5815,
-        renewable_pct=64.0,
+        renewable_pct=12.0,
         metadata=Metadata(provenance=pc.BOOK_ILLUSTRATIVE_IOWA_CARBON),
     )
     Poland = GridProfile(

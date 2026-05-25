@@ -14,7 +14,6 @@ from mlsysim.core.appendix_lineage import (
     audit_appendix_reliability,
 )
 from mlsysim.core.provenance import Provenance, ProvenanceKind, Sourced
-from mlsysim.core.registry import Registry
 from mlsysim.hardware.registry import (
     CloudHardware,
     EdgeHardware,

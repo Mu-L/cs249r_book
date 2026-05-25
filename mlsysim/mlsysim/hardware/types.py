@@ -1,8 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from ..core.constants import Q_
 from ..core.types import Quantity, Metadata
-from typing import ClassVar
 
 class ComputeCore(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)

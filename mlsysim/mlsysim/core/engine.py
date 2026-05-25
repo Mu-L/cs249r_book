@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
 from .constants import ureg, Q_, BYTES_FP16, PRECISION_MAP
-from .calibration import HFU_MFU_RATIO, FRAMEWORK_LAYER_TAX_MS
+from . import calibration as cal
 from ..physics import calc_bottleneck
 from .exceptions import OOMError
 from ._validation import validate_range, validate_at_least
@@ -252,7 +252,7 @@ class Engine:
         num_layers = getattr(model, 'layers', 1) or 1
         # Training has ~3x the launches of inference (Fwd, GradW, GradA)
         launch_multiplier = 3 if is_training else 1
-        layer_tax = Q_(num_layers * FRAMEWORK_LAYER_TAX_MS * launch_multiplier, "ms")
+        layer_tax = Q_(num_layers * cal.FRAMEWORK_LAYER_TAX_MS * launch_multiplier, "ms")
         
         latency = max(compute_time.to("ms").magnitude, memory_time.to("ms").magnitude) * ureg.ms + dispatch_tax + layer_tax
 
@@ -273,13 +273,13 @@ class Engine:
             mfu = max(0.0, min(mfu, 1.0))  # Clamp to [0, 1]
         else:
             mfu = 0.0
-        hfu = min(mfu * HFU_MFU_RATIO, 1.0)  # Source: PaLM (Chowdhery et al. 2022)
+        hfu = min(mfu * cal.HFU_MFU_RATIO, 1.0)  # Source: PaLM (Chowdhery et al. 2022)
 
         # Energy estimate (energy-proportional model)
         # Consistent with SustainabilityModel: 30% idle + 70% * utilization
         # Source: Barroso & Hölzle (2007), "The Case for Energy-Proportional Computing"
         if hardware.tdp is not None:
-            avg_power = hardware.tdp * (0.3 + 0.7 * mfu)
+            avg_power = hardware.tdp * (cal.ENERGY_IDLE_FRACTION + cal.ENERGY_DYNAMIC_FRACTION * mfu)
             energy = (avg_power * latency.to("s")).to("J")
         else:
             energy = Q_("0 J")

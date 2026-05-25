@@ -631,16 +631,16 @@ class CheckpointModel(BaseModel):
         # Mixed-precision Adam: 14 bytes/param (FP32 master + FP32 momentum + FP32 variance + FP16 weights)
         # Gradients are ephemeral and not checkpointed.
         if optimizer.lower() == "adam":
-            bytes_per_param = 14
+            bytes_per_param = cal.CHECKPOINT_BYTES_PER_PARAM_ADAM
         else:
-            bytes_per_param = 4  # e.g., SGD
+            bytes_per_param = cal.CHECKPOINT_BYTES_PER_PARAM_SGD  # e.g., SGD
 
         ckpt_size = calc_checkpoint_size(model.parameters, bytes_per_param=bytes_per_param)
 
-        storage_bw = getattr(hardware.storage, 'bandwidth', Q_("0 GB/s")) if hardware.storage else Q_("0 GB/s")
+        storage_bw = getattr(hardware.storage, 'bandwidth', Q_(cal.FALLBACK_STORAGE_BANDWIDTH_GB_S, "GB/s")) if hardware.storage else Q_(cal.FALLBACK_STORAGE_BANDWIDTH_GB_S, "GB/s")
         # Fallback to network or standard disk speed if undefined
         if storage_bw.magnitude == 0:
-            storage_bw = Q_("1 GB/s")
+            storage_bw = Q_(cal.FALLBACK_STORAGE_BANDWIDTH_GB_S, "GB/s")
 
         # Distributed writing: scale bandwidth by n_writers, capped by filesystem limit
         fs_limit = Q_(filesystem_limit_gbs, "GB/s")
@@ -709,8 +709,8 @@ class SustainabilityModel(BaseModel):
         # 2. Power
         base_tdp = fleet.node.accelerator.tdp if fleet.node.accelerator.tdp else (700 * ureg.watt)
         # Energy proportionality: Idle power is ~30% of TDP. Dynamic power scales with compute utilization (MFU).
-        idle_power = base_tdp * 0.3
-        dynamic_power = base_tdp * 0.7 * mfu
+        idle_power = base_tdp * cal.ENERGY_IDLE_FRACTION
+        dynamic_power = base_tdp * cal.ENERGY_DYNAMIC_FRACTION * mfu
         effective_power_per_chip = idle_power + dynamic_power
         it_power_w = effective_power_per_chip * fleet.total_accelerators
             
@@ -906,7 +906,7 @@ class ServingModel(BaseModel):
             t_draft_token = ((draft_weights_bytes + draft_kv_cache) / decode_hw.memory.bandwidth).to("ms")
             
             # Speculative decoding batches K draft tokens (e.g., K=4)
-            K = 4
+            K = cal.SPECULATIVE_GAMMA
             t_draft_phase = t_draft_token * K
             
             # Verification phase: Target model verifies K tokens in parallel (compute-bound or memory-bound)
@@ -1482,9 +1482,9 @@ class WeightStreamingModel(BaseModel):
         layer_weight_bytes = layer_params.to(ureg.count).magnitude * bpp.magnitude * ureg.byte
 
         # Injection time (MemoryX -> WSE)
-        inj_bw = hardware.interconnect.bandwidth if hardware.interconnect else Q_("100 GB/s")
+        inj_bw = hardware.interconnect.bandwidth if hardware.interconnect else Q_(cal.FALLBACK_INTERCONNECT_BANDWIDTH_GB_S, "GB/s")
         if inj_bw.magnitude == 0:
-            inj_bw = Q_("100 GB/s")
+            inj_bw = Q_(cal.FALLBACK_INTERCONNECT_BANDWIDTH_GB_S, "GB/s")
 
         layer_injection_time = (layer_weight_bytes / inj_bw).to("ms")
 
@@ -1627,7 +1627,7 @@ class EconomicsModel(BaseModel):
         "Cloud is always more expensive than on-prem": "Reality: for bursty or short-duration workloads, cloud spot instances can be 3-10x cheaper than amortized on-prem hardware sitting idle.",
     }
 
-    def solve(self, fleet: Fleet, duration_days: float, kwh_price: Optional[float] = None, datacenter: Optional[Any] = None, grid: Optional[Any] = None, mfu: float = 1.0, amortization_years: float = 3.0, infrastructure_multiplier: float = 1.0) -> EconomicsResult:
+    def solve(self, fleet: Fleet, duration_days: float, kwh_price: Optional[float] = None, datacenter: Optional[Any] = None, grid: Optional[Any] = None, mfu: float = 1.0, amortization_years: float = 3.0, infrastructure_multiplier: float = cal.DEFAULT_INFRASTRUCTURE_MULTIPLIER) -> EconomicsResult:
         """
         Calculates the TCO for a fleet over a specified duration.
 
@@ -1798,7 +1798,7 @@ class ScalingModel(BaseModel):
         if compute_budget.dimensionality == ureg.day.dimensionality:
             # Convert GPU-days to FLOPs using H100 SXM reference
             # Source: NVIDIA H100 datasheet (989 TFLOPs FP16 dense)
-            c_flops = (compute_budget * (989 * ureg.TFLOPs / ureg.second) * cal.REFERENCE_MFU_SUSTAINED).to(ureg.flop)
+            c_flops = (compute_budget * (cal.REFERENCE_HARDWARE_TFLOPS * ureg.TFLOPs / ureg.second) * cal.REFERENCE_MFU_SUSTAINED).to(ureg.flop)
 
         if target_model_size:
             p_opt = target_model_size.to(ureg.count).magnitude
@@ -1944,7 +1944,7 @@ class CompressionModel(BaseModel):
             elif target_bitwidth >= 4:
                 accuracy_delta = cal.QUANT_ACCURACY_DELTA_INT4
             else:
-                accuracy_delta = -0.05   # Sub-INT4: significant degradation
+                accuracy_delta = cal.QUANT_ACCURACY_DELTA_SUB_INT4   # Sub-INT4: significant degradation
 
             # Inference speedup depends on compute vs memory boundedness
             # Memory-bound workloads: speedup ≈ compression_ratio (less data to move)

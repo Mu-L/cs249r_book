@@ -3,7 +3,7 @@ from ..core.registry import Registry
 from ..core.provenance import Provenance, ProvenanceKind
 from ..core import provenance_catalog as pc
 from ..core.constants import (
-    GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt, count,
+    GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
     LATENCY_NVLINK,
 )
 
