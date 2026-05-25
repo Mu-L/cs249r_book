@@ -133,6 +133,15 @@ HARDCODED_GRID = re.compile(
     re.I,
 )
 
+# Canonical dataset sizes belong in Datasets.*, not inline literals.
+HARDCODED_DATASET = re.compile(
+    r"\b(?:mnist_train_examples|training_examples)\s*=\s*60_000\b|"
+    r"\bcifar10_full_labels\s*=\s*50_?000\b|"
+    r"\bcifar10_num_classes\s*=\s*10\b|"
+    r"\b(?:imagenet|mnist|cifar).*(?:size|examples|labels)\s*=\s*(?:1_?281_?167|1281167|50_?000|60_?000)\b",
+    re.I,
+)
+
 
 def _parse_imported_names(import_clause: str) -> set[str]:
     names: set[str] = set()
@@ -213,6 +222,10 @@ def check_file(path: Path) -> list[str]:
         if HARDCODED_GRID.search(block):
             issues.append(
                 f"cell {idx}: hardcoded grid carbon intensity — use Infrastructure.Grids.*"
+            )
+        if HARDCODED_DATASET.search(block):
+            issues.append(
+                f"cell {idx}: hardcoded dataset size — use Datasets.ImageNet/CIFAR10/MNIST.*"
             )
     return issues
 
