@@ -87,6 +87,7 @@ class Workload(BaseModel):
         raise NotImplementedError("Workload must define either parameters or model_size to calculate size in bytes.")
 
 class TransformerWorkload(Workload):
+    """Workload representation of an autoregressive Transformer (e.g., LLMs)."""
     parameters: Quantity
     layers: int
     hidden_dim: Optional[int] = None
@@ -200,6 +201,7 @@ class TransformerWorkload(Workload):
         )
 
 class SparseTransformerWorkload(TransformerWorkload):
+    """Workload representation of a Mixture-of-Experts (MoE) Transformer."""
     active_parameters: Quantity
     experts: int
     active_experts_per_token: int = 1
@@ -219,6 +221,7 @@ class SparseTransformerWorkload(TransformerWorkload):
         )
 
 class CNNWorkload(Workload):
+    """Workload representation of a Convolutional Neural Network (e.g., Vision)."""
     parameters: Quantity
     inference_flops: Quantity
     layers: Optional[int] = None
@@ -240,6 +243,7 @@ class CNNWorkload(Workload):
         )
 
 class SSMWorkload(Workload):
+    """Workload representation of a State Space Model (e.g., Mamba)."""
     parameters: Quantity
     layers: int
     state_size: int
@@ -273,6 +277,7 @@ class SSMWorkload(Workload):
 
 
 class DiffusionWorkload(Workload):
+    """Workload representation of a Diffusion generative model."""
     parameters: Quantity
     denoising_steps: int
     resolution: int
