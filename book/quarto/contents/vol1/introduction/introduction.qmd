@@ -1379,7 +1379,7 @@ from mlsysim.core.constants import *
 # │ Imports: mlsysim.core.constants (Models.Vision.ResNet50.inference_flops, Models.Vision.ResNet50.parameters,
 # │          Hardware.Cloud.A100.compute.peak_flops, Hardware.Cloud.A100.memory.bandwidth, param, byte, MB, TB, GFLOPs, TFLOPs, US)
 # │ Imports: mlsysim.fmt (fmt, check)
-# │ Exports: ResNet50DamExample.weight_mb_str, a100_hbm_tbs_str,
+# │ Exports: ResNet50DamExample.weight_mb_str, memory_traffic_mb_str, a100_hbm_tbs_str,
 # │          memory_time_us_str, resnet_gflops_str, a100_peak_tflops_str,
 # │          compute_time_us_str, a100_ridge_str, workload_ai_str
 # └─────────────────────────────────────────────────────────────────────────────
@@ -1403,6 +1403,7 @@ class ResNet50DamExample:
 
     weight_mb = p.memory_footprint.m_as(MB)
     a100_hbm_tbs = p.peak_bw_actual.m_as(TB/second)
+    memory_traffic = p.latency_memory * p.peak_bw_actual
     memory_time_us = p.latency_memory.m_as(US)
 
     resnet_gflops = m.inference_flops.m_as(GFLOPs)
@@ -1415,12 +1416,17 @@ class ResNet50DamExample:
 
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(45 <= weight_mb <= 60, f"ResNet-50 FP16 weights should be about 50 MB, got {weight_mb:.1f} MB.")
+    check(
+        abs(memory_traffic.m_as(MB) - weight_mb * 1.1) < 1,
+        f"Batch-one memory traffic should be weights plus ~10% activations, got {memory_traffic.m_as(MB):.1f} MB.",
+    )
     check(memory_time_us > compute_time_us, "Small-batch ResNet-50 example should be memory-side.")
     check(workload_ai < a100_ridge, "Example should fall below the A100 FP16 ridge point.")
     check(1.5 <= memory_compute_ratio <= 2.5, "Expected memory/compute ratio should be about 2x.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     weight_mb_str = fmt_qty(p.memory_footprint, MB, precision=1, commas=False)
+    memory_traffic_mb_str = fmt_qty(memory_traffic, MB, precision=1, commas=False)
     a100_hbm_tbs_str = fmt_qty(p.peak_bw_actual, TB/second, precision=1, commas=False)
     memory_time_us_str = fmt(p.latency_memory.m_as(US), precision=1, commas=False, suffix=" µs")
     resnet_gflops_str = fmt_qty(m.inference_flops, GFLOPs, precision=1, commas=False)
@@ -1434,7 +1440,7 @@ class ResNet50DamExample:
 
 ***D·A·M Taxonomy***\index{D·A·M Taxonomy!definition} is a diagnostic framework that classifies any machine learning system performance bottleneck along three axes: Data\index{Data!as source code} ($D_{\text{vol}}$, $\text{BW}$), Algorithm ($O$, model architecture), and Machine ($R_{\text{peak}}$, memory capacity). The goal is to identify which axis is the binding constraint.
 
-1.  **Significance (quantitative)**: The diagnostic power is concrete. A ResNet-50 inference run at batch size one on an A100 is on the memory-bound side of the roofline before activation traffic and framework overhead are included: moving **`{python} ResNet50DamExample.weight_mb_str`** across **`{python} ResNet50DamExample.a100_hbm_tbs_str`** of HBM takes about **`{python} ResNet50DamExample.memory_time_us_str`**, while **`{python} ResNet50DamExample.resnet_gflops_str`** at a **`{python} ResNet50DamExample.a100_peak_tflops_str`** tensor-core peak takes about **`{python} ResNet50DamExample.compute_time_us_str`**. The workload's arithmetic intensity is about **`{python} ResNet50DamExample.workload_ai_str`**, below the A100 FP16 ridge point of about **`{python} ResNet50DamExample.a100_ridge_str`**. The lesson is not a precise latency prediction; it is that small-batch inference cannot be optimized by buying peak FLOP/s alone. The binding axis is the Machine axis, especially data reuse, memory bandwidth, and utilization.
+1.  **Significance (quantitative)**: The diagnostic power is concrete. A ResNet-50 inference run at batch size one on an A100 is on the memory-bound side of the roofline before framework overhead is included: FP16 weights alone are **`{python} ResNet50DamExample.weight_mb_str`**, and loading about **`{python} ResNet50DamExample.memory_traffic_mb_str`** (weights plus batch-one activations) across **`{python} ResNet50DamExample.a100_hbm_tbs_str`** of HBM takes about **`{python} ResNet50DamExample.memory_time_us_str`**, while **`{python} ResNet50DamExample.resnet_gflops_str`** at a **`{python} ResNet50DamExample.a100_peak_tflops_str`** tensor-core peak takes about **`{python} ResNet50DamExample.compute_time_us_str`**. The workload's arithmetic intensity is about **`{python} ResNet50DamExample.workload_ai_str`**, below the A100 FP16 ridge point of about **`{python} ResNet50DamExample.a100_ridge_str`**. The lesson is not a precise latency prediction; it is that small-batch inference cannot be optimized by buying peak FLOP/s alone. The binding axis is the Machine axis, especially data reuse, memory bandwidth, and utilization.
 2.  **Distinction (durable)**: Unlike traditional software performance analysis, which treats code and data as separate concerns, the D·A·M taxonomy recognizes that algorithm choice directly determines both the training dataset size required (a transformer needs orders of magnitude more data than a linear model to generalize) and the machine required to run it.
 3.  **Common pitfall**: A frequent misconception is that the three axes are independent. Changing the algorithm (for example, switching from a CNN to a transformer) typically mandates a different machine (more memory for $\mathcal{O}(S^2)$ attention) and a different data distribution (more diverse training data to avoid overfitting the flexible hypothesis space).
 
@@ -1687,7 +1693,7 @@ The machine learning systems landscape spans roughly `{python} DeploymentSystems
 
 | **Archetype** | **Example System** |                **RAM/Memory**               |                 **Peak Compute**                |                **Power Budget**               |
 |:--------------|:-------------------|:-------------------------------------------:|:-----------------------------------------------:|:---------------------------------------------:|
-| **Cloud**     | H100 Cluster       |  `{python} DeploymentSystems.cloud_mem_str` |  `{python} DeploymentSystems.cloud_compute_str` |  `{python} DeploymentSystems.cloud_power_str` |
+| **Cloud**     | H100 GPU           |  `{python} DeploymentSystems.cloud_mem_str` |  `{python} DeploymentSystems.cloud_compute_str` |  `{python} DeploymentSystems.cloud_power_str` |
 | **Edge**      | Jetson Robotics    |  `{python} DeploymentSystems.edge_mem_str`  |  `{python} DeploymentSystems.edge_compute_str`  |  `{python} DeploymentSystems.edge_power_str`  |
 | **Mobile**    | Smartphone         | `{python} DeploymentSystems.mobile_mem_str` | `{python} DeploymentSystems.mobile_compute_str` | `{python} DeploymentSystems.mobile_power_str` |
 | **TinyML**    | ESP32-S3           |  `{python} DeploymentSystems.tiny_mem_str`  |  `{python} DeploymentSystems.tiny_compute_str`  |  `{python} DeploymentSystems.tiny_power_str`  |
@@ -3029,12 +3035,16 @@ class ScenarioRegistry:
     check(doorbell_power_mw is not None or doorbell_latency_ms > 0, "Doorbell scenario needs a power or latency constraint.")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_limit_str = MarkdownStr(f"SLA: {fmt(frontier_latency_ms, precision=0)} ms latency")
-    drive_limit_str    = MarkdownStr(f"SLA: {fmt(drive_latency_ms, precision=0)} ms latency")
+    frontier_limit_str = MarkdownStr(
+        f"Target: {fmt(frontier_latency_ms, precision=0, commas=False, suffix=' ms/step')}"
+    )
+    drive_limit_str = MarkdownStr(
+        f"SLA: {fmt(drive_latency_ms, precision=0, commas=False, suffix=' ms latency')}"
+    )
     doorbell_limit_str = MarkdownStr(
         f"Power: {fmt(doorbell_power_mw, precision=0)} mW"
         if doorbell_power_mw is not None
-        else f"SLA: {fmt(doorbell_latency_ms, precision=0)} ms latency"
+        else f"SLA: {fmt(doorbell_latency_ms, precision=0, commas=False, suffix=' ms latency')}"
     )
 ```
 
