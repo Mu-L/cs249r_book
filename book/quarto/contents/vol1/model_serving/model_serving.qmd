@@ -1019,14 +1019,14 @@ The same ResNet-50 architecture requires dramatically different serving strategi
 
 - Model format: TensorRT FP16 engine (`{python} ResNetServingSpectrum.cloud_model_mb_str`)
 - Inference: `{python} ResNetServingSpectrum.cloud_inf_b1_ms_str` at batch-1, `{python} ResNetServingSpectrum.cloud_inf_b16_ms_str` at batch-16
-- Throughput: `{python} ResNetServingSpectrum.cloud_throughput_str` images/second (batched)
+- Throughput: `{python} ResNetServingSpectrum.cloud_throughput_str`/second (batched)
 - Memory: `{python} ResNetServingSpectrum.cloud_vram_gb_str` VRAM (model + activations for batch-32)
 
 **`{python} ResNetServingSpectrum.mobile_name_str`**:
 
 - Model format: TensorFlow Lite INT8 (`{python} ResNetServingSpectrum.mobile_model_mb_str`)
 - Inference: `{python} ResNetServingSpectrum.mobile_inf_npu_ms_str` at batch-1 (NPU), `{python} ResNetServingSpectrum.mobile_inf_cpu_ms_str` (CPU fallback)
-- Throughput: ~`{python} ResNetServingSpectrum.mobile_throughput_str` images/second (single-stream)
+- Throughput: ~`{python} ResNetServingSpectrum.mobile_throughput_str`/second (single-stream)
 - Memory: `{python} ResNetServingSpectrum.mobile_mem_mb_str` peak (shared with app)
 - Energy: `{python} ResNetServingSpectrum.mobile_energy_npu_mj_str` mJ per inference (NPU), `{python} ResNetServingSpectrum.mobile_energy_cpu_mj_str` mJ (CPU)
 
@@ -1035,7 +1035,7 @@ The same ResNet-50 architecture requires dramatically different serving strategi
 - Model format: Not feasible; ResNet-50 requires `{python} ResNetServingSpectrum.tiny_model_mb_str` weights
 - Alternative: MobileNetV2-0.35 quantized to INT8 (`{python} ResNetServingSpectrum.tiny_alt_mb_str`)
 - Inference: `{python} ResNetServingSpectrum.tiny_inf_ms_str` at batch-1
-- Throughput: ~`{python} ResNetServingSpectrum.tiny_throughput_str` images/second
+- Throughput: ~`{python} ResNetServingSpectrum.tiny_throughput_str`/second
 - Memory: `{python} ResNetServingSpectrum.tiny_arena_kb_str` tensor arena (fits in `{python} ResNetServingSpectrum.tiny_sram_kb_str` SRAM)
 - Energy: `{python} ResNetServingSpectrum.tiny_energy_mj_str` mJ per inference
 
@@ -2417,7 +2417,7 @@ from mlsysim.core.constants import *
 # │ Exports: cp_* and mm1_* formatted strings
 # └─────────────────────────────────────────────────────────────────────────────
 import math
-from mlsysim.fmt import fmt_int,  fmt, fmt_math
+from mlsysim.fmt import fmt_int, fmt, fmt_math, check
 
 class CapacityPlanningCalc:
     """ResNet-50 capacity planning: GPUs needed for 5000 QPS at 50 ms p99 with N+1 redundancy."""
@@ -2447,9 +2447,15 @@ class CapacityPlanningCalc:
     cp_precision_ratio_value = cp_fp32_bits_value // cp_int8_bits_value
     mm1_wait_factor_value = mm1_p99_factor_value / (1 - mm1_rho_example_value)
 
+    check(
+        abs(cp_gpus_raw_value - 8.1) < 0.05,
+        f"GPU count before rounding should be about 8.1, got {cp_gpus_raw_value:.2f}",
+    )
+    check(cp_gpus_ceil_value == 9, f"9259 / 1143 should ceil to 9 GPUs, got {cp_gpus_ceil_value}")
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     cp_mu_required_str = fmt(cp_mu_required_value, precision=1, commas=False)
-    cp_gpus_raw_str = fmt_int(cp_gpus_raw_value, commas=False)
+    cp_gpus_raw_str = fmt(cp_gpus_raw_value, precision=1, commas=False)
     cp_gpus_ceil_str = fmt(cp_gpus_ceil_value, precision=0, commas=False)
     cp_final_raw_str = fmt(cp_final_raw_value, precision=1, commas=False)
     cp_final_ceil_str = fmt(cp_final_ceil_value, precision=0, commas=False)
@@ -2494,7 +2500,7 @@ From @eq-p99-latency, $T_{\text{lat},\text{p99}} \approx$ `{python} CapacityPlan
 `{python} CapacityPlanningCalc.cp_mu_required_math`
 
 **Step 3**: Determine GPU count.
-Single V100 throughput at $B = 16$: `{python} CapacityPlanningCalc.cp_v100_throughput_str` images/second
+Single V100 throughput at $B = 16$: `{python} CapacityPlanningCalc.cp_v100_throughput_str`/second
 
 GPUs needed = `{python} CapacityPlanningCalc.cp_mu_required_str` / `{python} CapacityPlanningCalc.cp_v100_throughput_str` = `{python} CapacityPlanningCalc.cp_gpus_raw_str` → `{python} CapacityPlanningCalc.cp_gpus_ceil_str`
 
@@ -2767,7 +2773,7 @@ class ModelSwapCalc:
     )
 ```
 
-For a `{python} ModelSwapCalc.model_size_gb_str` model on PCIe Gen4 x16 (`{python} ModelSwapCalc.pcie_bw_gbs_str` GB/s theoretical bandwidth), loading takes at least:
+For a `{python} ModelSwapCalc.model_size_gb_str` model on PCIe Gen4 x16 (`{python} ModelSwapCalc.pcie_bw_gbs_str`/s theoretical bandwidth), loading takes at least:
 `{python} ModelSwapCalc.swap_calc_math`
 
 To mitigate this, systems use *pinned memory*\index{Pinned Memory!DMA transfer} (page-locked host memory). By default, the operating system can move ("page") any memory region to disk when RAM is under pressure. This creates a problem for GPU transfers: if the GPU's DMA (Direct Memory Access) engine begins reading a memory region that gets paged out mid-transfer, the transfer fails or stalls. To avoid this, the CPU must first copy data to a temporary pinned buffer before the GPU can safely read it, adding both latency and CPU overhead.
@@ -2888,36 +2894,45 @@ from mlsysim.core.constants import *
 # │ How: Model throughput and latency for small batches (1 to 8).
 # │
 # │ Imports: mlsysim.core.constants (ms, second), mlsysim.book (fmt)
-# │ Exports: batch1_ms_str, batch1_imgs_str, batch8_* strings, latency_increase_str
+# │ Exports: batch1_ms_str, batch1_imgs_str, batch8_* strings,
+# │          latency_increase_str, throughput_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt
+from mlsysim.fmt import fmt, fmt_int, fmt_qty, check
 
 class BatchingSweetspotCalc:
     """Demonstrates that batch-8 yields ~3× throughput within a 20 ms SLO budget."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    batch1_ms_value = 5.0                 # batch-1 inference (ms)
-    batch1_imgs_value = 200               # batch-1 throughput (img/s)
-    batch8_wait_ms_value = 5.0            # batch-8 wait time (ms)
-    batch8_inference_ms_value = 9.0       # batch-8 inference time (ms)
+    batch1_ms = 5.0 * ms
+    batch1_imgs = 200 * count / second
+    batch8_wait_ms = 5.0 * ms
+    batch8_inference_ms = 9.0 * ms
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    batch8_user_latency_ms_value = batch8_wait_ms_value + batch8_inference_ms_value
-    batch8_throughput_value = 8 / (batch8_user_latency_ms_value * ms).m_as(second)
-    latency_increase_value = batch8_user_latency_ms_value/batch1_ms_value
+    batch8_user_latency_ms = batch8_wait_ms + batch8_inference_ms
+    batch8_throughput = (8 * count) / batch8_user_latency_ms.to(second)
+    latency_increase_value = batch8_user_latency_ms / batch1_ms
+    throughput_ratio_value = batch8_throughput / batch1_imgs
     batch1_util_pct_value = 15
     latency_budget_ms_value = 20
 
+    check(batch8_user_latency_ms.m_as(ms) == 14, "Batch-8 user latency should be 14 ms")
+    check(
+        abs(throughput_ratio_value - 40 / 14) < 0.01,
+        f"Batch-8 throughput gain should be about 2.9×, got {throughput_ratio_value:.2f}×",
+    )
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    batch1_ms_str = fmt(batch1_ms_value, precision=0, commas=False)
-    batch1_imgs_str = fmt(batch1_imgs_value, precision=0, commas=False)
-    batch8_wait_ms_str = fmt(batch8_wait_ms_value, precision=0, commas=False)
-    batch8_inference_ms_str = fmt(batch8_inference_ms_value, precision=0, commas=False)
-    batch8_user_latency_str = fmt(batch8_user_latency_ms_value, precision=0, commas=False)
-    batch8_throughput_str = fmt(batch8_throughput_value, precision=1, commas=False)
-    latency_increase_str = fmt(latency_increase_value, precision=1, commas=False)
+    batch1_ms_str = fmt_qty(batch1_ms, ms, precision=0, commas=False)
+    batch1_imgs_str = fmt_int(round(batch1_imgs.m_as(count / second)), commas=False, suffix=" img/s")
+    batch8_wait_ms_str = fmt_qty(batch8_wait_ms, ms, precision=0, commas=False)
+    batch8_inference_ms_str = fmt_qty(batch8_inference_ms, ms, precision=0, commas=False)
+    batch8_user_latency_str = fmt_qty(batch8_user_latency_ms, ms, precision=0, commas=False)
+    batch8_throughput_str = fmt_int(round(batch8_throughput.m_as(count / second)), commas=False, suffix=" img/s")
+    latency_increase_str = fmt(latency_increase_value, precision=1, commas=False, suffix="×")
+    throughput_ratio_str = fmt(throughput_ratio_value, precision=1, commas=False, suffix="×")
     batch1_util_pct_str = fmt(batch1_util_pct_value, precision=0, commas=False)
-    latency_budget_ms_str = fmt(latency_budget_ms_value, precision=0, commas=False)
+    latency_budget_ms_str = fmt(latency_budget_ms_value, precision=0, commas=False, suffix=" ms")
 ```
 
 ::: {#nbk-model-serving-batching-sweet-spot .callout-notebook title="The batching sweet spot"}
@@ -2926,14 +2941,14 @@ class BatchingSweetspotCalc:
 
 **Math**:
 
-1.  **Baseline (Batch 1)**: Inference = **`{python} BatchingSweetspotCalc.batch1_ms_str`**. Throughput = **`{python} BatchingSweetspotCalc.batch1_imgs_str` img/s**.
+1.  **Baseline (Batch 1)**: Inference = **`{python} BatchingSweetspotCalc.batch1_ms_str`**. Throughput = **`{python} BatchingSweetspotCalc.batch1_imgs_str`**.
 2.  **Optimized (Batch 8)**:
     - **Wait time**: A **`{python} BatchingSweetspotCalc.batch8_wait_ms_str`** batching window collects requests.
     - **Inference time**: Batch 8 inference takes **`{python} BatchingSweetspotCalc.batch8_inference_ms_str`**.
     - **User latency**: `{python} BatchingSweetspotCalc.batch8_wait_ms_str` (wait) + `{python} BatchingSweetspotCalc.batch8_inference_ms_str` (compute) = **`{python} BatchingSweetspotCalc.batch8_user_latency_str`**.
-    - **Throughput**: eight img / `{python} BatchingSweetspotCalc.batch8_user_latency_str` ≈ **`{python} BatchingSweetspotCalc.batch8_throughput_str` img/s**.
+    - **Throughput**: eight img / `{python} BatchingSweetspotCalc.batch8_user_latency_str` ≈ **`{python} BatchingSweetspotCalc.batch8_throughput_str`**.
 
-**Systems insight**: By accepting a **`{python} BatchingSweetspotCalc.latency_increase_str`$\times$ increase in latency** (`{python} BatchingSweetspotCalc.batch1_ms_str` → `{python} BatchingSweetspotCalc.batch8_user_latency_str`), the system achieves nearly **`{python} BatchingSweetspotCalc.latency_increase_str`$\times$ higher throughput** on the same hardware. As long as `{python} BatchingSweetspotCalc.batch8_user_latency_str` remains under the 20 ms budget, this is "free" capacity. This trade-off is the primary lever of serving economics.
+**Systems insight**: By accepting a **`{python} BatchingSweetspotCalc.latency_increase_str` increase in latency** (`{python} BatchingSweetspotCalc.batch1_ms_str` → `{python} BatchingSweetspotCalc.batch8_user_latency_str`), the system achieves nearly **`{python} BatchingSweetspotCalc.throughput_ratio_str` higher throughput** on the same hardware. As long as `{python} BatchingSweetspotCalc.batch8_user_latency_str` remains under the `{python} BatchingSweetspotCalc.latency_budget_ms_str` budget, this is "free" capacity. This trade-off is the primary lever of serving economics.
 
 :::
 
@@ -3992,44 +4007,47 @@ from mlsysim.core.constants import *
 # │          cc_response_tokens_str, cc_response_joules_str, cc_smartphone_str,
 # │          cc_boiling_str, cc_low_util_str, cc_idle_power_str, cc_low_util_joules_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_int,  fmt
+from mlsysim.fmt import fmt_int, fmt, fmt_qty, check
 
 class CarbonCostCalc:
     """Energy cost per LLM token: poor utilization causes about 3× higher J/token."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     cc_concurrent_req_value = 114                     # concurrent requests per H100
-    cc_tokens_per_sec_req_value = 7.5                 # tokens/s per request (decode phase)
-    cc_host_overhead_w_value = 300                    # host server power overhead (W)
+    cc_tokens_per_sec_req_value = 8                     # tokens/s per request (decode phase)
+    cc_host_overhead = 300 * watt                       # host server power overhead
     cc_response_tokens_value = 500                    # typical response length
     cc_low_util_pct_value = 10                        # poor utilization scenario (%)
-    cc_idle_power_w_value = 300                       # GPU idle power (W)
+    cc_idle_power = 300 * watt                        # GPU idle power
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    _h100_tdp_w = Hardware.Cloud.H100.tdp.m_as(watt)
-    cc_total_tokens_sec_value = cc_concurrent_req_value * cc_tokens_per_sec_req_value
-    cc_total_power_w_value = _h100_tdp_w + cc_host_overhead_w_value
-    cc_joules_per_token_value = cc_total_power_w_value/cc_total_tokens_sec_value
-    cc_response_joules_value = cc_joules_per_token_value * cc_response_tokens_value
-    _smartphone_joules = ENERGY_SMARTPHONE_CHARGE_J.m_as(joule)
-    _boiling_joules = ENERGY_BOILING_WATER_J.m_as(joule)
-    cc_low_util_tokens_sec_value = cc_total_tokens_sec_value * (cc_low_util_pct_value / 100)
-    cc_low_util_joules_value = cc_idle_power_w_value/cc_low_util_tokens_sec_value
+    _h100_tdp = Hardware.Cloud.H100.tdp
+    cc_total_tokens_sec = cc_concurrent_req_value * cc_tokens_per_sec_req_value * count / second
+    cc_total_power = _h100_tdp + cc_host_overhead
+    cc_joules_per_token = cc_total_power / cc_total_tokens_sec
+    cc_response_joules = cc_joules_per_token * cc_response_tokens_value * count
+    cc_low_util_tokens_sec = cc_total_tokens_sec * (cc_low_util_pct_value / 100)
+    cc_low_util_joules = cc_idle_power / cc_low_util_tokens_sec
+
+    check(
+        cc_total_tokens_sec.m_as(count / second) == 912,
+        f"114 concurrent requests × 8 tokens/s should be 912 tokens/s, got {cc_total_tokens_sec.m_as(count / second):.0f}",
+    )
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     cc_concurrent_str = fmt(cc_concurrent_req_value, precision=0, commas=False)
-    cc_tokens_req_str = fmt_int(cc_tokens_per_sec_req_value, commas=False)
-    cc_total_tokens_str = fmt(cc_total_tokens_sec_value, precision=0, commas=False)
-    cc_host_overhead_str = fmt(cc_host_overhead_w_value, precision=0, commas=False)
-    cc_total_power_str = fmt(cc_total_power_w_value, precision=0, commas=False)
-    cc_joules_token_str = fmt(cc_joules_per_token_value, precision=2, commas=False)
+    cc_tokens_req_str = fmt(cc_tokens_per_sec_req_value, precision=0, commas=False, suffix="/s")
+    cc_total_tokens_str = fmt_int(round(cc_total_tokens_sec.m_as(count / second)), commas=False, suffix=" tokens/s")
+    cc_host_overhead_str = fmt_qty(cc_host_overhead, watt, precision=0, commas=False)
+    cc_total_power_str = fmt_qty(cc_total_power, watt, precision=0, commas=False)
+    cc_joules_token_str = fmt(cc_joules_per_token.m_as(joule), precision=2, commas=False, suffix=" J/token")
     cc_response_tokens_str = fmt(cc_response_tokens_value, precision=0, commas=False)
-    cc_response_joules_str = fmt(cc_response_joules_value, precision=1, commas=False)
-    cc_smartphone_str = fmt(_smartphone_joules, precision=0)
-    cc_boiling_str = fmt(_boiling_joules, precision=0)
+    cc_response_joules_str = fmt(cc_response_joules.m_as(joule), precision=1, commas=False, suffix=" J")
+    cc_smartphone_str = fmt_qty(ENERGY_SMARTPHONE_CHARGE_J, joule, precision=0)
+    cc_boiling_str = fmt_qty(ENERGY_BOILING_WATER_J, joule, precision=0)
     cc_low_util_str = fmt(cc_low_util_pct_value, precision=0, commas=False)
-    cc_idle_power_str = fmt(cc_idle_power_w_value, precision=0, commas=False)
-    cc_low_util_joules_str = fmt(cc_low_util_joules_value, precision=1, commas=False)
+    cc_idle_power_str = fmt_qty(cc_idle_power, watt, precision=0, commas=False)
+    cc_low_util_joules_str = fmt(cc_low_util_joules.m_as(joule), precision=1, commas=False, suffix=" J/token")
 ```
 
 ::: {#nbk-carbon-chat .callout-notebook title="The carbon cost of a chat"}
@@ -4037,18 +4055,18 @@ class CarbonCostCalc:
 **J per token: The Green Metric**:
 As LLMs scale, energy efficiency becomes a first-class operational metric alongside latency. For an H100 GPU (`{python} CarbonCostH100Tdp.h100_tdp_str` W TDP), we can quantify the energy footprint of serving:
 
-1.  **Throughput**: `{python} CarbonCostCalc.cc_concurrent_str` concurrent requests $\times$ `{python} CarbonCostCalc.cc_tokens_req_str` tokens/s/req ≈ **`{python} CarbonCostCalc.cc_total_tokens_str` tokens/s**.
-2.  **Power**: `{python} CarbonCostH100Tdp.h100_tdp_str` W (GPU) + `{python} CarbonCostCalc.cc_host_overhead_str` W (Host/Overhead) = **`{python} CarbonCostCalc.cc_total_power_str` W**.
+1.  **Throughput**: `{python} CarbonCostCalc.cc_concurrent_str` concurrent requests $\times$ `{python} CarbonCostCalc.cc_tokens_req_str`/req ≈ **`{python} CarbonCostCalc.cc_total_tokens_str`**.
+2.  **Power**: `{python} CarbonCostH100Tdp.h100_tdp_str` W (GPU) + `{python} CarbonCostCalc.cc_host_overhead_str` (Host/Overhead) = **`{python} CarbonCostCalc.cc_total_power_str`**.
 3.  **Energy per Token**:
 
-    `{python} CarbonCostCalc.cc_total_power_str` J/s / `{python} CarbonCostCalc.cc_total_tokens_str` tokens/s ≈ **`{python} CarbonCostCalc.cc_joules_token_str` J/token**
+    `{python} CarbonCostCalc.cc_total_power_str` / `{python} CarbonCostCalc.cc_total_tokens_str` ≈ **`{python} CarbonCostCalc.cc_joules_token_str`**
 
-**Systems insight**: A typical `{python} CarbonCostCalc.cc_response_tokens_str`-token response consumes ≈ **`{python} CarbonCostCalc.cc_response_joules_str` J**.
+**Systems insight**: A typical `{python} CarbonCostCalc.cc_response_tokens_str`-token response consumes ≈ **`{python} CarbonCostCalc.cc_response_joules_str`**.
 
-- For comparison, charging a smartphone consumes ≈ `{python} CarbonCostCalc.cc_smartphone_str` J.
-- Boiling a cup of water consumes ≈ `{python} CarbonCostCalc.cc_boiling_str` J.
+- For comparison, charging a smartphone consumes ≈ `{python} CarbonCostCalc.cc_smartphone_str`.
+- Boiling a cup of water consumes ≈ `{python} CarbonCostCalc.cc_boiling_str`.
 
-**The engineering lever**: The primary way to reduce J/token is to **increase hardware utilization** and **eliminate redundant compute**. If the GPU sits at `{python} CarbonCostCalc.cc_low_util_str` utilization due to poor batching, the "Idle Power" is still ~`{python} CarbonCostCalc.cc_idle_power_str` W, causing the energy-per-token to skyrocket to **>`{python} CarbonCostCalc.cc_low_util_joules_str` J**. Furthermore, architectural optimizations like **Prefix Caching** skip the energy-intensive prefill phase for shared context, directly reducing the energy footprint of RAG and chat applications. MLOps is not just about speed; it is about sustainability through efficiency.
+**The engineering lever**: The primary way to reduce J/token is to **increase hardware utilization** and **eliminate redundant compute**. If the GPU sits at `{python} CarbonCostCalc.cc_low_util_str` utilization due to poor batching, the "Idle Power" is still ~`{python} CarbonCostCalc.cc_idle_power_str`, causing the energy-per-token to skyrocket to **>`{python} CarbonCostCalc.cc_low_util_joules_str`**. Furthermore, architectural optimizations like **Prefix Caching** skip the energy-intensive prefill phase for shared context, directly reducing the energy footprint of RAG and chat applications. MLOps is not just about speed; it is about sustainability through efficiency.
 
 :::
 
@@ -4125,7 +4143,7 @@ class LayerFusionH100Bw:
 
 Layer fusion[^fn-layer-fusion-serving]\index{Layer Fusion!kernel optimization} combines multiple sequential operations into a single GPU kernel. Consider a common pattern: convolution → batch normalization → rectified linear unit (ReLU) activation. Without fusion, this requires three kernel launches, three round-trips to GPU memory (write conv output, read for batchnorm, write batchnorm output, read for ReLU), and three sets of intermediate tensors. Fusion combines all three into one kernel that reads inputs once, computes the combined result in registers, and writes final outputs once. This eliminates kernel launch overhead (15–60 μs saved per fusion) and reduces memory traffic by 2--3$\times$. TensorRT automatically detects and fuses common patterns; a typical ResNet-50 reduces from ~50 kernels to ~15 after fusion.
 
-[^fn-layer-fusion-serving]: **Layer Fusion**: Analogous to loop fusion in compiler optimization, where adjacent loops over the same array are combined to reduce memory traffic. Kernel fusion applies the identical principle to GPU operations: sequential kernels that write and re-read intermediate tensors from HBM are merged into a single kernel that keeps data in registers. The savings compound---a typical ResNet-50 has ~35 fusible operation pairs, and each eliminated HBM round-trip saves 1--3 $\mu$s at `{python} LayerFusionH100Bw.h100_bw_tbs_str` TB/s bandwidth, converting memory-bound chains into compute-bound fused kernels. \index{Layer Fusion!compiler analogy}
+[^fn-layer-fusion-serving]: **Layer Fusion**: Analogous to loop fusion in compiler optimization, where adjacent loops over the same array are combined to reduce memory traffic. Kernel fusion applies the identical principle to GPU operations: sequential kernels that write and re-read intermediate tensors from HBM are merged into a single kernel that keeps data in registers. The savings compound---a typical ResNet-50 has ~35 fusible operation pairs, and each eliminated HBM round-trip saves 1--3 $\mu$s at `{python} LayerFusionH100Bw.h100_bw_tbs_str`/s bandwidth, converting memory-bound chains into compute-bound fused kernels. \index{Layer Fusion!compiler analogy}
 
 Kernel auto-tuning\index{Kernel Auto-Tuning!algorithm selection} selects the fastest algorithm for each operation on the specific GPU. A single convolution can be implemented using dozens of algorithms such as direct, fast Fourier transform (FFT) based, Winograd, and various tiling strategies, each optimal for different input sizes and GPU architectures. Auto-tuning benchmarks each candidate and caches the winner, trading compilation time for runtime performance.
 
@@ -4801,7 +4819,7 @@ class LlmCaseStudyH100BwRecap:
 #### Workload profile {#sec-model-serving-workload-profile-a380}
 
 *   **Model**: 8-billion-parameter Llama 3 (quantized to 4-bit using activation-aware weight quantization (AWQ); see @sec-model-compression for quantization techniques).
-*   **Hardware**: 1$\times$ NVIDIA H100 SXM5 GPU (`{python} LlmCaseStudyHwSpecs.h100_mem_str` HBM3, `{python} LlmCaseStudyH100BwRecap.h100_bw_tbs_str` TB/s bandwidth).
+*   **Hardware**: 1$\times$ NVIDIA H100 SXM5 GPU (`{python} LlmCaseStudyHwSpecs.h100_mem_str` HBM3, `{python} LlmCaseStudyH100BwRecap.h100_bw_tbs_str`/s bandwidth).
 *   **Request characteristics**: 1,000-token input prompt (Prefill), 256-token generated response (Decode).
 *   **Target SLOs**: TTFT $<$ 200 ms, TPOT $<$ 20 ms.
 
@@ -4827,7 +4845,7 @@ Recall the energy-movement invariant\index{Energy-Movement Invariant!decode phas
 $$ T_{\text{token}} \approx \frac{D_{\text{vol}}}{\text{BW}_{\text{memory}}} $$ {#eq-token-generation-time}
 
 **The engineering implication**:
-Every token generation pays a massive "energy tax" to move the model's logic from HBM into compute registers. For comparison, on an A100 `{python} LlmCaseStudyHwSpecs.a100_mem_str` (`{python} LlmCaseStudyHwSpecs.a100_bw_tbs_str` TB/s HBM2e), an 8-billion-parameter Llama 3 model (`{python} LlmCaseStudyHwSpecs.case_study_model_weight_gb_str` INT4) generates tokens at $\approx$ `{python} LlmCaseStudyHwSpecs.a100_token_ms_str` ms/token. Adding more *compute cores* yields **zero** latency improvement; only *faster memory* (Physics) or *smaller models* (Algorithm) can speed up generation.
+Every token generation pays a massive "energy tax" to move the model's logic from HBM into compute registers. For comparison, on an A100 `{python} LlmCaseStudyHwSpecs.a100_mem_str` (`{python} LlmCaseStudyHwSpecs.a100_bw_tbs_str`/s HBM2e), an 8-billion-parameter Llama 3 model (`{python} LlmCaseStudyHwSpecs.case_study_model_weight_gb_str` INT4) generates tokens at $\approx$ `{python} LlmCaseStudyHwSpecs.a100_token_ms_str`/token. Adding more *compute cores* yields **zero** latency improvement; only *faster memory* (Physics) or *smaller models* (Algorithm) can speed up generation.
 
 :::
 
@@ -4860,7 +4878,7 @@ from mlsysim.core.constants import *
 # │          hourly_cost_str, tokens_per_hour_m_str,
 # │          cost_per_m_tokens_str, remaining_vram_gb_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_int,  check, fmt
+from mlsysim.fmt import fmt_int, check, fmt, fmt_qty
 
 # ┌── LEGO ───────────────────────────────────────────────
 class LlmServingCalc:
@@ -4889,7 +4907,8 @@ class LlmServingCalc:
     )
 
     model_weight_gb_value = res.total_memory_required.m_as(GB)
-    realized_tpot_ms_value = res.itl.m_as(ms)
+    realized_tpot = res.itl
+    realized_tpot_ms_value = realized_tpot.m_as(ms)
 
     _h100_bw_tb = h.memory.bandwidth.m_as(TB/second)
     _h100_bw_gbs = h.memory.bandwidth.m_as(GB/second)
@@ -4897,15 +4916,18 @@ class LlmServingCalc:
     # Theoretical floor (100% BW efficiency)
     token_time_theoretical_ms_value = (model_weight_gb_value / _h100_bw_gbs * 1000)
 
-    total_decode_s_value = (decode_tokens_value * realized_tpot_ms_value / 1000)
+    total_decode = decode_tokens_value * count * realized_tpot
+    total_decode_s = total_decode.to(second)
 
     # KV Cache Sizing using library results
-    kv_cache_gb_value = 72 # Reserved for KV
-    kv_per_token_mb_value = res.kv_cache_size.m_as(MB) / total_tokens
-    kv_capacity_tokens_value = int((kv_cache_gb_value * 1024) / kv_per_token_mb_value)
+    kv_cache_reserved = 72 * GB
+    kv_per_token = m.get_kv_cache_size(seq_len=1, batch_size=1, precision=BYTES_INT4)
+    kv_capacity_tokens_value = int(round((kv_cache_reserved / kv_per_token).m_as(count)))
+    kv_cache_gb_value = kv_cache_reserved.m_as(GB)
 
     concurrent_batch_value = int(kv_capacity_tokens_value / total_tokens)
-    req_time_s_value = res.ttft.m_as(second) + total_decode_s_value
+    req_time_s = res.ttft + total_decode_s
+    req_time_s_value = req_time_s.m_as(second)
 
     # Throughput scaling
     prefill_tokens_per_s_value = 10_000 # H100 prefill rate
@@ -4920,19 +4942,28 @@ class LlmServingCalc:
     cost_per_m_tokens_value = hourly_cost_value / (tokens_per_hour_value / 1e6)
     remaining_vram_gb_value = int(80 - model_weight_gb_value)
 
+    check(
+        abs(decode_tokens_value * realized_tpot_ms_value / 1000 - total_decode_s.m_as(second)) < 1e-6,
+        "Decode latency must equal tokens × TPOT",
+    )
+    check(
+        2_190_000 <= kv_capacity_tokens_value <= 2_200_000,
+        f"72 GB / per-token KV should hold about 2.20M tokens, got {kv_capacity_tokens_value:,}",
+    )
+
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    model_weight_gb_str = fmt(model_weight_gb_value, precision=1, commas=False)
+    model_weight_gb_str = fmt_qty(res.total_memory_required, GB, precision=1, commas=False)
     h100_bw_tb_str = fmt(_h100_bw_tb, precision=1, commas=False)
-    token_time_theoretical_ms_str = fmt(token_time_theoretical_ms_value, precision=1, commas=False)
-    realized_tpot_ms_str = fmt(realized_tpot_ms_value, precision=1, commas=False)
+    token_time_theoretical_ms_str = fmt(token_time_theoretical_ms_value, precision=1, commas=False, suffix=" ms")
+    realized_tpot_ms_str = fmt_qty(realized_tpot, ms, precision=2, commas=False)
     decode_tokens_str = fmt(decode_tokens_value, precision=0, commas=False)
-    total_decode_s_str = fmt(total_decode_s_value, precision=2, commas=False)
-    kv_cache_gb_str = fmt(kv_cache_gb_value, precision=0, commas=False)
-    kv_per_token_mb_str = fmt(kv_per_token_mb_value, precision=3, commas=False)
-    kv_capacity_tokens_str = fmt(kv_capacity_tokens_value, precision=0)
+    total_decode_s_str = fmt_qty(total_decode_s, second, precision=2, commas=False)
+    kv_cache_gb_str = fmt_qty(kv_cache_reserved, GB, precision=0, commas=False)
+    kv_per_token_mb_str = fmt_qty(kv_per_token, MB, precision=5, commas=False)
+    kv_capacity_tokens_str = fmt_int(kv_capacity_tokens_value, commas=True)
     tokens_per_req_str = fmt(total_tokens, precision=0)
     concurrent_batch_str = fmt(concurrent_batch_value, precision=0, commas=False)
-    req_time_s_str = fmt(req_time_s_value, precision=2, commas=False)
+    req_time_s_str = fmt_qty(req_time_s, second, precision=2, commas=False)
     prompt_tokens_str = fmt(prompt_tokens_value, precision=0, commas=True)
     sec_per_hr_str = fmt_int(sec_per_hr, commas=True)
     prefill_tokens_per_s_str = fmt(prefill_tokens_per_s_value, precision=0)
@@ -4941,27 +4972,27 @@ class LlmServingCalc:
     hourly_cost_str = fmt(hourly_cost_value, precision=0, commas=False)
     tokens_per_hour_m_str = fmt(tokens_per_hour_value/MILLION, precision=1, commas=False)
     cost_per_m_tokens_str = fmt(cost_per_m_tokens_value, precision=3, commas=False)
-    remaining_vram_gb_str = fmt(remaining_vram_gb_value, precision=0, commas=False)
+    remaining_vram_gb_str = fmt_int(remaining_vram_gb_value, commas=False, suffix=" GB")
 ```
 
-*   $T_{\text{token}} \approx$ `{python} LlmServingCalc.model_weight_gb_str` / `{python} LlmCaseStudyH100BwRecap.h100_bw_tbs_str` TB/s ≈ `{python} LlmServingCalc.token_time_theoretical_ms_str` (theoretical limit).
+*   $T_{\text{token}} \approx$ `{python} LlmServingCalc.model_weight_gb_str` / `{python} LlmCaseStudyH100BwRecap.h100_bw_tbs_str`/s ≈ `{python} LlmServingCalc.token_time_theoretical_ms_str` (theoretical limit).
 *   Accounting for kernel launch overhead, attention computation, and a conservative production safety margin, realized $T_{\text{token}}$ is approximately `{python} LlmServingCalc.realized_tpot_ms_str`.
-*   Total decode time: `{python} LlmServingCalc.decode_tokens_str` $\times$ `{python} LlmServingCalc.realized_tpot_ms_str` ms/token = `{python} LlmServingCalc.total_decode_s_str`.
+*   Total decode time: `{python} LlmServingCalc.decode_tokens_str` $\times$ `{python} LlmServingCalc.realized_tpot_ms_str` = **`{python} LlmServingCalc.total_decode_s_str`**.
 *   **TPOT is `{python} LlmServingCalc.realized_tpot_ms_str`**, well within the 20 ms "fluidity" SLO.
 
 #### Memory and throughput {#sec-model-serving-memory-throughput-63dd}
 
-With 4-bit weights occupying `{python} LlmServingCalc.model_weight_gb_str`, the remaining ~`{python} LlmServingCalc.remaining_vram_gb_str` of VRAM is available for the KV Cache. Using PagedAttention, we can allocate this memory with near-zero fragmentation.
+With 4-bit weights occupying `{python} LlmServingCalc.model_weight_gb_str`, the remaining ~`{python} LlmServingCalc.remaining_vram_gb_str` is available for the KV Cache. Using PagedAttention, we can allocate this memory with near-zero fragmentation.
 
 *   Each token requires approximately `{python} LlmServingCalc.kv_per_token_mb_str` of KV cache after accounting for Llama 3-style Grouped Query Attention in the 8-billion-parameter configuration (standard multi-head attention would be about 32 layers $\times$ 4096 dim $\times$ 2 vectors $\times$ 2-byte precision $\approx 0.5$ MB/token, and GQA reduces the KV-head count by about 4$\times$).
-*   Total cache capacity ≈ `{python} LlmServingCalc.kv_cache_gb_str` / `{python} LlmServingCalc.kv_per_token_mb_str` MB/token ≈ `{python} LlmServingCalc.kv_capacity_tokens_str`.
+*   Total cache capacity ≈ `{python} LlmServingCalc.kv_cache_gb_str` / `{python} LlmServingCalc.kv_per_token_mb_str` ≈ **`{python} LlmServingCalc.kv_capacity_tokens_str`** tokens.
 *   At `{python} LlmServingCalc.tokens_per_req_str` per request (input + output), the GPU can handle a concurrent batch size of ~`{python} LlmServingCalc.concurrent_batch_str` requests.
 
 #### Unit economics {#sec-model-serving-unit-economics-b685}
 
 For an H100 SXM5 instance at approximately USD `{python} LlmServingCalc.hourly_cost_str` per hour (specialized cloud providers; major hyperscaler on-demand rates were in the USD 2--13 per hour range in 2026):
 
-*   Prefill-limited admissions: `{python} LlmServingCalc.prefill_tokens_per_s_str` prompt tokens/s divided by `{python} LlmServingCalc.prompt_tokens_str` prompt tokens/req = `{python} LlmServingCalc.prefill_req_per_s_str` requests/s. This is below the KV-residency limit of `{python} LlmServingCalc.concurrent_batch_str` batch / `{python} LlmServingCalc.req_time_s_str` s/req ≈ `{python} LlmServingCalc.decode_req_capacity_str` requests/s, so full-request throughput is `{python} LlmServingCalc.prefill_req_per_s_str` req/s $\times$ `{python} LlmServingCalc.sec_per_hr_str` s/hr $\times$ `{python} LlmServingCalc.tokens_per_req_str` tokens/req ≈ `{python} LlmServingCalc.tokens_per_hour_m_str` million tokens/hour.
+*   Prefill-limited admissions: `{python} LlmServingCalc.prefill_tokens_per_s_str` prompt tokens/s divided by `{python} LlmServingCalc.prompt_tokens_str` prompt tokens/req = `{python} LlmServingCalc.prefill_req_per_s_str` requests/s. This is below the KV-residency limit of `{python} LlmServingCalc.concurrent_batch_str` batch / `{python} LlmServingCalc.req_time_s_str` s/req ≈ `{python} LlmServingCalc.decode_req_capacity_str` requests/s, so full-request throughput is `{python} LlmServingCalc.prefill_req_per_s_str` req/s $\times$ `{python} LlmServingCalc.sec_per_hr_str` s/hr $\times$ `{python} LlmServingCalc.tokens_per_req_str`/req ≈ `{python} LlmServingCalc.tokens_per_hour_m_str` million tokens/hour.
 *   **Cost per million tokens**: USD `{python} LlmServingCalc.hourly_cost_str` / `{python} LlmServingCalc.tokens_per_hour_m_str` ≈ **USD `{python} LlmServingCalc.cost_per_m_tokens_str`**.
 
 This analysis highlights that for LLMs, memory capacity\index{Memory!capacity, LLM throughput}\index{KV Cache!memory capacity} (the size of the KV cache) determines the maximum concurrent residency, while prefill compute and decode bandwidth determine realized token throughput and cost under a specific traffic mix. Memory bandwidth\index{Memory Bandwidth!LLM latency}\index{HBM!memory bandwidth} remains the primary determinant of decode latency.
