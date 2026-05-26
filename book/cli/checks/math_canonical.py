@@ -125,6 +125,11 @@ MLSYSIM_STAR_FMT_NAMES = frozenset({
     "fmt_frac", "fmt_math", "MarkdownStr", "check", "sci_latex",
 })
 
+# Pattern: fmt_percent(..., suffix=...) — fmt_percent does not accept suffix=.
+# This would raise a TypeError at render time.
+FMT_PERCENT_SUFFIX = re.compile(
+    r"\bfmt_percent\([^)]*\bsuffix\s*="
+)
 
 
 @dataclass
@@ -553,6 +558,43 @@ def _audit_missing_fmt_imports(qmd_path: Path) -> list[Violation]:
     return out
 
 
+def _audit_fmt_percent_suffix(qmd_path: Path) -> list[Violation]:
+    """Flag ``fmt_percent(..., suffix=...)`` calls.
+
+    ``fmt_percent()`` does not accept a ``suffix=`` keyword argument — it
+    returns the bare percentage number.  Passing ``suffix=`` raises
+    ``TypeError`` at render time.  Use ``fmt(x * 100, precision=N,
+    suffix=...)`` instead.
+    """
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            continue
+        if not in_cell:
+            continue
+        if FMT_PERCENT_SUFFIX.search(line):
+            out.append(
+                Violation(
+                    file=rel,
+                    line=i,
+                    code="fmt_percent_suffix",
+                    message=(
+                        "fmt_percent() does not accept suffix=; "
+                        "use fmt(x * 100, precision=N, suffix=...) instead"
+                    ),
+                    context=line.strip()[:160],
+                )
+            )
+    return out
+
+
 def audit(paths: list[Path]) -> list[Violation]:
     all_violations: list[Violation] = []
     for p in paths:
@@ -568,6 +610,7 @@ def audit(paths: list[Path]) -> list[Violation]:
             all_violations.extend(_audit_spurious_decimal_precision(f))
             all_violations.extend(_audit_implicit_int_cast_precision_zero(f))
             all_violations.extend(_audit_missing_fmt_imports(f))
+            all_violations.extend(_audit_fmt_percent_suffix(f))
     return all_violations
 
 

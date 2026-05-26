@@ -101,15 +101,29 @@ def _parse_lego_cells(qmd: Path) -> list[dict]:
     return cells
 
 
-def _exec_with_cell_errors(qmd: Path) -> tuple[dict, set[str], dict[str, str]]:
-    """Exec cells; attribute exec failures to the cell line that failed."""
+def _exec_with_cell_errors(
+    qmd: Path,
+) -> tuple[dict, set[str], dict[str, str], list[tuple[str, str]]]:
+    """Exec cells; attribute exec failures to the cell line that failed.
+
+    Returns ``(namespace, lego_classes, errors, cell_warnings)`` where
+    ``cell_warnings`` is a list of ``(class_or_cell_key, warning_message)``
+    tuples captured during execution.
+    """
+    import warnings as _warnings
+
     lines = qmd.read_text(encoding="utf-8").splitlines()
     ns = make_exec_namespace()
     lego: set[str] = set()
     errors: dict[str, str] = {}
+    cell_warnings: list[tuple[str, str]] = []
     in_cell = False
     buf: list[str] = []
     start_line = 0
+
+    # Warning categories worth flagging during cell exec
+    _WARN_KEYWORDS = ("Precision", "not found", "deprecated", "Deprecated")
+
     for i, line in enumerate(lines, 1):
         if CELL_START.match(line):
             in_cell = True
@@ -122,18 +136,26 @@ def _exec_with_cell_errors(qmd: Path) -> tuple[dict, set[str], dict[str, str]]:
             is_lego = bool(LEGO_MARK.search(code)) or "Exports:" in code
             m = CLASS.search(code)
             cls = m.group(1) if m else None
+            key = cls or f"cell@{start_line}"
             try:
-                exec_cell_code(code, ns)
+                with _warnings.catch_warnings(record=True) as caught:
+                    _warnings.simplefilter("always")
+                    exec_cell_code(code, ns)
+                    for w in caught:
+                        msg = str(w.message)
+                        if w.category is UserWarning and any(
+                            kw in msg for kw in _WARN_KEYWORDS
+                        ):
+                            cell_warnings.append((key, msg))
             except Exception as exc:
-                key = cls or f"cell@{start_line}"
                 errors[key] = str(exc)
-                return ns, lego, errors
+                return ns, lego, errors, cell_warnings
             if is_lego:
                 lego.update(_classes_in_code(code))
             continue
         if in_cell:
             buf.append(line)
-    return ns, lego, errors
+    return ns, lego, errors, cell_warnings
 
 
 def audit_chapter(vol: str, name: str, qmd: Path, html: Path) -> dict:
@@ -152,7 +174,11 @@ def audit_chapter(vol: str, name: str, qmd: Path, html: Path) -> dict:
         return row
 
     parsed = _parse_lego_cells(qmd)
-    ns, lego_classes, exec_errors = _exec_with_cell_errors(qmd)
+    ns, lego_classes, exec_errors, cell_warnings = _exec_with_cell_errors(qmd)
+    if cell_warnings:
+        row["cell_warnings"] = [
+            {"class": ckey, "message": wmsg} for ckey, wmsg in cell_warnings
+        ]
     if exec_errors:
         row["status"] = "EXEC_FAIL"
         row["exec_error"] = exec_errors
@@ -278,6 +304,13 @@ def main() -> int:
 
     failed = False
     for r in report:
+        # Surface any cell-execution warnings (e.g. Precision, deprecated)
+        for cw in r.get("cell_warnings", []):
+            print(
+                f"WARN {r['vol']}/{r['chapter']}: "
+                f"{cw['class']} emitted UserWarning: {cw['message']}"
+            )
+
         if r["status"] == "PASS":
             print(
                 f"PASS {r['vol']}/{r['chapter']}: "

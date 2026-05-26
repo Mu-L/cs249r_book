@@ -378,6 +378,10 @@ class ValidateCommand:
                   note="LaTeX in title=/fig-cap/tbl-cap/fig-alt/tbl-alt"),
             Scope("canonical", "_run_math_canonical",
                   note="fmt-family + _str/_math/_eq/_frac suffix discipline (LEGO)"),
+            # Added 2026-05-26: blocklist for banned suffix= values in fmt()
+            # calls (wrong unit conventions like TFLOPS, Gbps, etc.).
+            Scope("suffix-consistency", "_run_suffix_consistency",
+                  note='banned suffix= values (TFLOPS, Gbps, etc.)'),
             # render-audit builds every chapter (~10 min). Manual stage only;
             # default=False ensures `binder check math` stays under 1s.
             Scope("render-audit", "_run_math_render_audit", default=False),
@@ -406,6 +410,15 @@ class ValidateCommand:
                   note="physical *_value assignments must use ureg/registry", default=False),
             Scope("lego-equations", "_run_lego_equations",
                   note="A/B=C prose lines must match computed values", default=False),
+            # Added 2026-05-26: \\${python} collision — escaped dollar before
+            # {python} silently fails to render; correct form is \\$\\`{python}.
+            Scope("python-dollar-collision", "_run_python_dollar_collision",
+                  note="\\${python} collision — escaped dollar silently kills inline expr"),
+            # Added 2026-05-26: scan built HTML for literal {python} text that
+            # leaked through Quarto (expression failed to evaluate). Requires
+            # a prior html-audit build. Default=False (opt-in audit).
+            Scope("rendered-python-leak", "_run_rendered_python_leak",
+                  note="literal {python} leaked into rendered HTML", default=False),
         ],
         "tables": [
             Scope("grid-tables", "_run_grid_tables",
@@ -486,6 +499,10 @@ class ValidateCommand:
             # Scans _build/pdf-vol*/ artifact via pdftotext. Requires
             # --vol1 or --vol2 (or run both explicitly).
             Scope("verify", "_run_pdf_verify"),
+            # Added 2026-05-26: scan PDF text for "UserWarning" strings that
+            # may indicate a Python warning leaked into the rendered output.
+            # Default=False — post-build audit, not a pre-commit gate.
+            Scope("pdf-warnings", "_run_pdf_warnings", default=False),
         ],
         "registry": [
             Scope("sources", "_run_registry_sources",
@@ -8174,6 +8191,303 @@ class ValidateCommand:
             name="lego-equations",
             description=f"LEGO equation coherence ({qmd_count} files)",
             files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 1: \${python} collision detector  (code group)
+    # ------------------------------------------------------------------
+    #
+    # An escaped dollar immediately before {python} — i.e. \${python} —
+    # silently fails to render as an inline expression. The correct form
+    # is \$\`{python}  (backtick between \$ and {python}).
+    # Zero violations expected on the current corpus; this prevents
+    # regression.
+
+    # Pattern: backslash-dollar immediately before {python} WITHOUT a
+    # preceding backtick.  The negative lookbehind ensures we skip the
+    # correct form \$`{python}.
+    _DOLLAR_PYTHON_COLLISION = re.compile(
+        r"(?<!`)"           # not preceded by backtick (the correct form)
+        r"\\\$\{python\}"   # literal \${python}
+    )
+
+    def _run_python_dollar_collision(self, root: Path) -> ValidationRunResult:
+        r"""Flag \${python} in QMD prose — silently fails to render."""
+        start = time.time()
+        files = self._qmd_files(root)
+        issues: List[ValidationIssue] = []
+
+        block_start = re.compile(r"^```")
+        raw_latex_start = re.compile(r"^\\\[|^\$\$|^\\begin\{")
+        raw_latex_end = re.compile(r"^\\\]|^\$\$|^\\end\{")
+
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            in_code = False
+            in_raw_latex = False
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                # Toggle code fences
+                if stripped.startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    continue
+                # Skip raw LaTeX blocks (display math, \begin{} environments)
+                if raw_latex_start.match(stripped):
+                    in_raw_latex = True
+                    continue
+                if in_raw_latex:
+                    if raw_latex_end.match(stripped):
+                        in_raw_latex = False
+                    continue
+
+                for m in self._DOLLAR_PYTHON_COLLISION.finditer(line):
+                    context = line[max(0, m.start() - 10): min(len(line), m.end() + 20)].strip()
+                    issues.append(
+                        ValidationIssue(
+                            file=self._relative_file(file),
+                            line=idx,
+                            code="python_dollar_collision",
+                            message=(
+                                r"\${python} silently fails to render — "
+                                r"use \$\`{python} (backtick between \$ and {python})"
+                            ),
+                            severity="error",
+                            context=context,
+                        )
+                    )
+
+        return ValidationRunResult(
+            name="python-dollar-collision",
+            description=r"\${python} collision detector (prevents silent render failure)",
+            files_checked=len(files),
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 2: suffix-consistency blocklist  (math group)
+    # ------------------------------------------------------------------
+    #
+    # Scans suffix="..." values in fmt() calls inside {python} cells for
+    # banned unit conventions. This is a blocklist, not an allowlist:
+    # everything is allowed except the explicitly banned patterns.
+
+    _SUFFIX_VALUE = re.compile(r"""suffix\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+
+    # Banned patterns: wrong unit conventions for rate/throughput suffixes.
+    _BANNED_SUFFIXES: Set[str] = {
+        # Wrong pluralization of /s rate units
+        " TFLOPS/s", " GFLOPS/s",
+        # Wrong conventions — should use slash-s form
+        " TFLOPS", " TFLOPs",
+        " Gbps", " Mbps", " GBps", " TBps",
+    }
+
+    def _run_suffix_consistency(self, root: Path) -> ValidationRunResult:
+        """Flag banned suffix= values in fmt() calls (wrong unit conventions)."""
+        start = time.time()
+        files = self._qmd_files(root)
+        issues: List[ValidationIssue] = []
+
+        block_start = re.compile(r"^```\{python\}")
+        block_end = re.compile(r"^```\s*$")
+
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            in_python = False
+            for idx, line in enumerate(lines, 1):
+                if block_start.match(line):
+                    in_python = True
+                    continue
+                if block_end.match(line):
+                    in_python = False
+                    continue
+                if not in_python:
+                    continue
+
+                for m in self._SUFFIX_VALUE.finditer(line):
+                    val = m.group(1) if m.group(1) is not None else m.group(2)
+                    if val in self._BANNED_SUFFIXES:
+                        issues.append(
+                            ValidationIssue(
+                                file=self._relative_file(file),
+                                line=idx,
+                                code="suffix_banned_convention",
+                                message=(
+                                    f'suffix="{val}" uses a banned unit convention. '
+                                    f"Rate units should use TFLOP/s, PFLOP/s, GB/s, etc. "
+                                    f"(slash-s form, no trailing S pluralization)."
+                                ),
+                                severity="error",
+                                context=line.strip()[:160],
+                            )
+                        )
+
+        return ValidationRunResult(
+            name="suffix-consistency",
+            description="Blocklist for banned suffix= unit conventions in fmt() calls",
+            files_checked=len(files),
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 3: PDF UserWarning check  (pdf group, default=False)
+    # ------------------------------------------------------------------
+    #
+    # Post-build: scan extracted PDF text for "UserWarning" strings that
+    # may indicate a Python warning leaked into the rendered output.
+
+    def _run_pdf_warnings(
+        self,
+        root: Path,
+        *,
+        vol1: bool = False,
+        vol2: bool = False,
+        log_path: Optional[str] = None,
+    ) -> ValidationRunResult:
+        """Scan PDF text for UserWarning strings (post-build audit)."""
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        quarto_dir = repo_root / "book" / "quarto"
+        issues: List[ValidationIssue] = []
+
+        volumes: List[str] = []
+        if vol1:
+            volumes.append("vol1")
+        if vol2:
+            volumes.append("vol2")
+        if not volumes:
+            volumes = ["vol1", "vol2"]
+
+        import shutil
+        if shutil.which("pdftotext") is None:
+            issues.append(ValidationIssue(
+                file="", line=0, code="pdftotext_missing",
+                message="pdftotext not installed; install poppler (e.g. brew install poppler)",
+                severity="warning",
+            ))
+            return ValidationRunResult(
+                name="pdf-warnings",
+                description="PDF UserWarning scan",
+                files_checked=0,
+                issues=issues,
+                elapsed_ms=int((time.time() - t0) * 1000),
+            )
+
+        from cli.commands._pdf_checks import PDF_BY_VOLUME
+
+        checked = 0
+        for vol in volumes:
+            pdf_name = PDF_BY_VOLUME.get(vol)
+            if not pdf_name:
+                continue
+            pdf_path = quarto_dir / "_build" / f"pdf-{vol}" / pdf_name
+            if not pdf_path.is_file():
+                continue
+            checked += 1
+            try:
+                proc = subprocess.run(
+                    ["pdftotext", "-layout", str(pdf_path), "-"],
+                    capture_output=True, text=True,
+                )
+                body = proc.stdout or ""
+            except Exception:
+                continue
+
+            for line_num, line in enumerate(body.splitlines(), 1):
+                if "UserWarning" in line:
+                    context = line.strip()[:200]
+                    issues.append(ValidationIssue(
+                        file=str(pdf_path.relative_to(repo_root)),
+                        line=line_num,
+                        code="pdf_userwarning",
+                        message=f"UserWarning text found in {vol} PDF output",
+                        severity="warning",
+                        context=context,
+                    ))
+
+        return ValidationRunResult(
+            name="pdf-warnings",
+            description=f"PDF UserWarning scan ({', '.join(volumes)})",
+            files_checked=checked,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 6: rendered {python} leak check  (code group, default=False)
+    # ------------------------------------------------------------------
+    #
+    # Post-render: scan all HTML files in _build/html-audit/ for literal
+    # {python} text that escaped Quarto inline-expression evaluation.
+    # Excludes {python} inside <code> tags (legitimate code listings).
+
+    _RENDERED_PYTHON_LEAK = re.compile(r"\{python\}")
+    # Match {python} inside <code>...</code> — these are legitimate.
+    _CODE_TAG_PYTHON = re.compile(r"<code[^>]*>.*?\{python\}.*?</code>", re.DOTALL)
+
+    def _run_rendered_python_leak(self, root: Path) -> ValidationRunResult:
+        """Scan built HTML for literal {python} that leaked through Quarto."""
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        html_audit_dir = repo_root / "book" / "quarto" / "_build" / "html-audit"
+        issues: List[ValidationIssue] = []
+
+        if not html_audit_dir.is_dir():
+            issues.append(ValidationIssue(
+                file="", line=0, code="html_audit_missing",
+                message=(
+                    "html-audit build directory not found at "
+                    f"{html_audit_dir.relative_to(repo_root)}. "
+                    "Run a build first."
+                ),
+                severity="warning",
+            ))
+            return ValidationRunResult(
+                name="rendered-python-leak",
+                description="Literal {python} leak scan (no build found)",
+                files_checked=0,
+                issues=issues,
+                elapsed_ms=int((time.time() - t0) * 1000),
+            )
+
+        html_files = sorted(html_audit_dir.rglob("*.html"))
+        for html_file in html_files:
+            try:
+                content = html_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+            # Remove {python} occurrences inside <code> tags (legitimate)
+            cleaned = self._CODE_TAG_PYTHON.sub("", content)
+
+            for m in self._RENDERED_PYTHON_LEAK.finditer(cleaned):
+                # Find approximate line number
+                line_num = content[:m.start()].count("\n") + 1
+                start_ctx = max(0, m.start() - 40)
+                end_ctx = min(len(cleaned), m.end() + 40)
+                context = cleaned[start_ctx:end_ctx].replace("\n", " ").strip()[:120]
+                issues.append(ValidationIssue(
+                    file=str(html_file.relative_to(repo_root)),
+                    line=line_num,
+                    code="rendered_python_leak",
+                    message=(
+                        "Literal {python} found in rendered HTML — "
+                        "Quarto failed to evaluate an inline expression"
+                    ),
+                    severity="error",
+                    context=context,
+                ))
+
+        return ValidationRunResult(
+            name="rendered-python-leak",
+            description=f"Literal {{python}} leak scan ({len(html_files)} HTML files)",
+            files_checked=len(html_files),
             issues=issues,
             elapsed_ms=int((time.time() - t0) * 1000),
         )
