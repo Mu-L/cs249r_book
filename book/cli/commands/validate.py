@@ -416,6 +416,8 @@ class ValidateCommand:
                   note="body-prose pipe tables need : caption {#tbl-X}"),
             Scope("caption-orphan", "_run_table_caption_orphan",
                   note="caption between two `:::` closes breaks EPUB"),
+            Scope("caption-detached", "_run_table_caption_detached",
+                  note="prose between pipe table and its `: caption {#tbl-}` breaks xref"),
         ],
         "listings": [
             # Listings in this book always use ::: {#lst-X lst-cap="..."} divs.
@@ -3231,6 +3233,82 @@ class ValidateCommand:
             description=(
                 "Captions must not sit between two `:::` close fences "
                 "(EPUB build integrity)"
+            ),
+            files_checked=len(files),
+            issues=raw_issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    _TABLE_CAPTION_RE = re.compile(
+        r"^:\s+\*?\*?.*\{#tbl-[\w-]+",
+    )
+    _PIPE_ROW_LOOSE_RE = re.compile(r"^\s*\|.+\|")
+
+    def _run_table_caption_detached(self, root: Path) -> ValidationRunResult:
+        """Flag pipe tables whose `: caption {#tbl-}` is separated by prose.
+
+        Quarto only binds a pipe-table caption to the table when the
+        `: Caption {#tbl-X}` line is the first non-blank line after the
+        last data row.  Intervening prose breaks the binding and the
+        cross-reference renders as ``?@tbl-X`` in the PDF.
+        """
+        start = time.time()
+        files = self._qmd_files(root)
+        raw_issues: List[ValidationIssue] = []
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            n = len(lines)
+            in_code = False
+            i = 0
+            while i < n:
+                line = lines[i]
+                if re.match(r"^\s*```", line):
+                    in_code = not in_code
+                    i += 1
+                    continue
+                if in_code:
+                    i += 1
+                    continue
+                if (self._PIPE_ROW_RE.match(line)
+                        and i + 1 < n
+                        and self._PIPE_SEP_RE.match(lines[i + 1])):
+                    j = i + 2
+                    while j < n and self._PIPE_ROW_LOOSE_RE.match(lines[j]):
+                        j += 1
+                    table_end = j - 1
+                    k = j
+                    while k < n and not lines[k].strip():
+                        k += 1
+                    if k < n and self._TABLE_CAPTION_RE.match(lines[k]):
+                        i = k + 1
+                        continue
+                    cap_k = k
+                    while cap_k < n and cap_k < j + 8:
+                        if self._TABLE_CAPTION_RE.match(lines[cap_k]):
+                            raw_issues.append(ValidationIssue(
+                                file=self._relative_file(file),
+                                line=cap_k + 1,
+                                code="table_caption_detached",
+                                message=(
+                                    f"Caption with #tbl- label is separated "
+                                    f"from its pipe table (table ends line "
+                                    f"{table_end + 1}) by intervening prose. "
+                                    f"Move the caption immediately after the "
+                                    f"table or merge the prose into the caption."
+                                ),
+                                severity="error",
+                                context=lines[cap_k].strip()[:120],
+                            ))
+                            break
+                        cap_k += 1
+                    i = max(j, cap_k + 1)
+                else:
+                    i += 1
+        return ValidationRunResult(
+            name="table-caption-detached",
+            description=(
+                "Pipe-table captions must immediately follow the table "
+                "(no intervening prose)"
             ),
             files_checked=len(files),
             issues=raw_issues,
