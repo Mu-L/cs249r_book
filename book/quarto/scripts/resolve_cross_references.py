@@ -102,10 +102,10 @@ def _fallback_label(ref_id: str) -> str:
     """Human-readable fallback when a label has no caption or title attribute."""
     prefix = ref_id.split("-", 1)[0]
     return {
-        "eq": "Equation",
-        "lst": "Listing",
-        "fig": "Figure",
-        "tbl": "Table",
+        "eq": "equation",
+        "lst": "listing",
+        "fig": "figure",
+        "tbl": "table",
         "nb": "Notebook",
         "thm": "Theorem",
         "lem": "Lemma",
