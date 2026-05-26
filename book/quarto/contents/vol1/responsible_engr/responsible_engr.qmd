@@ -1750,48 +1750,35 @@ from mlsysim.core.constants import *
 # │ Exports: CarbonFactor.gpu_power_w_str, CarbonFactor.gpu_power_kw_str,
 # │          CarbonFactor.carbon_intensity_str, CarbonFactor.carbon_per_gpu_hr_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_int, fmt, check
-from types import SimpleNamespace
+from mlsysim.fmt import fmt, check
 
 # ┌── LEGO ───────────────────────────────────────────────
 class CarbonFactor:
     """Scenario baseline for converting GPU-hours into carbon emissions."""
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    from mlsysim import Hardware, Systems, Infrastructure
-    from mlsysim.core.solver import SustainabilityModel
-    from types import SimpleNamespace
+    from mlsysim import Hardware, Infrastructure
 
-    h = Hardware.Cloud.A100
     baseline_grid = Infrastructure.Grids.US_Avg
-    # Create a minimal fleet for a single GPU-hour analysis
-
-    class DummyFleet:
-        node = SimpleNamespace(accelerator=Hardware.Cloud.A100)
-        total_accelerators = 1
-        effective_pue = 1.0 # analysis uses IT power directly
-
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    # 1 hour = 1/24 days
-    res = SustainabilityModel().solve(
-        fleet=DummyFleet(),
-        datacenter=baseline_grid,
-        duration_days=1/24.0,
-        mfu=1.0 # peak analysis
-    )
-
-    gpu_power_kw = Hardware.Cloud.A100.tdp.m_as("kilowatt")
-    carbon_per_gpu_hr_kg = res.it_energy_kwh.magnitude * baseline_grid.carbon_intensity_kg_kwh
     carbon_intensity_kg_kwh = baseline_grid.carbon_intensity_kg_kwh
 
+    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
+    gpu_power_kw = Hardware.Cloud.A100.tdp.to("kilowatt")
+    gpu_power_w = Hardware.Cloud.A100.tdp.to(watt)
+    scenario_hours = 1 * hour
+    it_energy_kwh = (gpu_power_kw * scenario_hours).to(kilowatt * hour)
+    carbon_per_gpu_hr_kg = it_energy_kwh.magnitude * carbon_intensity_kg_kwh
+
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    check(abs(Hardware.Cloud.A100.tdp.m_as(watt) - 400) < 1e-9, "A100 baseline power should be 400 W.")
+    check(abs(gpu_power_w.magnitude - 400) < 1e-9, "A100 baseline power should be 400 W.")
+    check(abs(carbon_per_gpu_hr_kg - gpu_power_kw.magnitude * carbon_intensity_kg_kwh) < 0.005,
+          "Per-GPU-hour carbon must equal kW × h × grid intensity.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    gpu_power_w_str = fmt(Hardware.Cloud.A100.tdp.m_as(watt), precision=0, commas=False)
-    gpu_power_kw_str = fmt(gpu_power_kw, precision=1, commas=False)
-    carbon_intensity_str = fmt(carbon_intensity_kg_kwh, precision=1, commas=False)
-    carbon_per_gpu_hr_str = fmt(carbon_per_gpu_hr_kg, precision=2, commas=False)
-    scenario_hr_str = fmt(1, precision=0, commas=False)
+    gpu_power_w_str = fmt(gpu_power_w.magnitude, precision=0, commas=False, suffix=" W")
+    gpu_power_kw_str = fmt(gpu_power_kw.magnitude, precision=1, commas=False, suffix=" kW")
+    carbon_intensity_str = fmt(carbon_intensity_kg_kwh, precision=2, suffix=" kg/kWh")
+    carbon_per_gpu_hr_str = fmt(carbon_per_gpu_hr_kg, precision=2, suffix=" kg")
+    scenario_hr_str = fmt(1, precision=0, commas=False, suffix=" h")
 ```
 
 ::: {#psp-responsible-engr-carbon-cost-compute .callout-perspective title="The carbon cost of compute"}
@@ -1801,9 +1788,9 @@ $$ \text{Carbon} = \text{Energy (kWh)} \times \text{Carbon Intensity (kg/kWh)} $
 
 For the following TCO examples, we use these baseline assumptions:
 
-*   **Power**: `{python} CarbonFactor.gpu_power_w_str` W per GPU-hour (scenario baseline).
-*   **Intensity**: `{python} CarbonFactor.carbon_intensity_str` kg CO~2~eq/kWh (rounded grid baseline).
-*   **Conversion factor**: (`{python} CarbonFactor.gpu_power_kw_str` $\times$ `{python} CarbonFactor.scenario_hr_str`) $\times$ `{python} CarbonFactor.carbon_intensity_str` kg/kWh = **`{python} CarbonFactor.carbon_per_gpu_hr_str` kg CO~2~eq per GPU-hour**.
+*   **Power**: `{python} CarbonFactor.gpu_power_w_str` TDP per GPU (scenario baseline).
+*   **Intensity**: `{python} CarbonFactor.carbon_intensity_str` CO~2~eq/kWh (US-average grid baseline).
+*   **Conversion factor**: (`{python} CarbonFactor.gpu_power_kw_str` $\times$ `{python} CarbonFactor.scenario_hr_str`) $\times$ `{python} CarbonFactor.carbon_intensity_str` = **`{python} CarbonFactor.carbon_per_gpu_hr_str` CO~2~eq per GPU-hour**.
 
 The conversion factor allows us to track "Carbon Cost" alongside "Dollar Cost" in our ledgers.
 

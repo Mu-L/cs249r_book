@@ -6122,7 +6122,7 @@ from mlsysim.core.constants import *
 # │          CarbonRoiCalc.cpu_energy_day_str, CarbonRoiCalc.npu_energy_day_str,
 # │          CarbonRoiCalc.carbon_intensity_str, CarbonRoiCalc.co2_saved_str
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_int, fmt_percent, fmt, check
+from mlsysim.fmt import fmt_int, fmt_percent, fmt, check, MarkdownStr
 
 class CarbonRoiCalc:
     """Carbon ROI of specialized NPU silicon vs generic CPU inference fleets."""
@@ -6136,8 +6136,10 @@ class CarbonRoiCalc:
     npu_chips          = 100    # Same throughput class as 1000 CPUs
     inferences_per_day = 1 * BILLION    # 1 billion inferences/day
     carbon_kg_per_kwh  = Infrastructure.Grids.US_Avg.carbon_intensity_kg_kwh
-    cpu_energy_kwh_day = (cpu_servers * cpu_power_w * watt).m_as(kilowatt) * HOURS_PER_DAY
-    npu_energy_kwh_day = (npu_chips * npu_power_w * watt).m_as(kilowatt) * HOURS_PER_DAY
+    cpu_power_total    = cpu_servers * cpu_power_w * watt
+    npu_power_total    = npu_chips * npu_power_w * watt
+    cpu_energy_kwh_day = (cpu_power_total * HOURS_PER_DAY * hour).to(kilowatt * hour).magnitude
+    npu_energy_kwh_day = (npu_power_total * HOURS_PER_DAY * hour).to(kilowatt * hour).magnitude
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     cpu_eff = cpu_tflops/cpu_power_w
@@ -6145,27 +6147,30 @@ class CarbonRoiCalc:
     eff_gap = npu_eff/cpu_eff
 
     energy_savings_kwh_day = cpu_energy_kwh_day - npu_energy_kwh_day
+    cpu_co2_metric_tons_year = cpu_energy_kwh_day * DAYS_PER_YEAR * carbon_kg_per_kwh / THOUSAND
     co2_saved_kg_year      = energy_savings_kwh_day * DAYS_PER_YEAR * carbon_kg_per_kwh
     co2_saved_metric_tons  = co2_saved_kg_year / THOUSAND   # kg → metric ton (1 t = 1000 kg)
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(eff_gap == 200, f"Efficiency gap should be 200×, got {eff_gap}×")
     check(co2_saved_metric_tons > 300, f"CO2e savings should exceed 300 tons, got {co2_saved_metric_tons}")
+    check(co2_saved_metric_tons < cpu_co2_metric_tons_year,
+          "Annual savings cannot exceed total CPU fleet emissions.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    cpu_power_str      = fmt(cpu_power_w, precision=0)
-    npu_power_str      = fmt(npu_power_w, precision=0)
+    cpu_power_str      = fmt(cpu_power_w, precision=0, suffix=" W")
+    npu_power_str      = fmt(npu_power_w, precision=0, suffix=" W")
     cpu_servers_str    = fmt(cpu_servers, precision=0)
     npu_chips_str      = fmt(npu_chips, precision=0)
-    cpu_tflops_str     = fmt(cpu_tflops, precision=0)
-    npu_tflops_str     = fmt(npu_tflops, precision=0)
+    cpu_tflops_str     = fmt(cpu_tflops, precision=0, suffix=" TFLOP/s")
+    npu_tflops_str     = fmt(npu_tflops, precision=0, suffix=" TFLOP/s")
     cpu_eff_str        = fmt(cpu_eff, precision=2)
     npu_eff_str        = fmt(npu_eff, precision=0)
     eff_gap_str        = fmt(eff_gap, precision=0)
     workload_str       = fmt(inferences_per_day / BILLION, precision=0)
-    cpu_energy_day_str = fmt(cpu_energy_kwh_day, precision=0)
-    npu_energy_day_str = fmt(npu_energy_kwh_day, precision=0)
-    carbon_intensity_str = fmt(carbon_kg_per_kwh, precision=1)
+    cpu_energy_day_str = fmt(cpu_energy_kwh_day, precision=0, commas=True, suffix=" kWh")
+    npu_energy_day_str = fmt(npu_energy_kwh_day, precision=0, commas=True, suffix=" kWh")
+    carbon_intensity_str = fmt(carbon_kg_per_kwh, precision=2, suffix=" kg/kWh")
     co2_saved_str      = fmt(co2_saved_metric_tons, precision=1)
 ```
 
@@ -6175,16 +6180,16 @@ class CarbonRoiCalc:
 
 **Physics**: Specialized hardware achieves higher arithmetic intensity while using fewer transistors for control logic.
 
-*   **CPU inference**: `{python} CarbonRoiCalc.cpu_power_str` W for `{python} CarbonRoiCalc.cpu_tflops_str` (efficiency = `{python} CarbonRoiCalc.cpu_eff_str` per W).
-*   **NPU inference**: `{python} CarbonRoiCalc.npu_power_str` W for `{python} CarbonRoiCalc.npu_tflops_str` (efficiency = `{python} CarbonRoiCalc.npu_eff_str` per W).
+*   **CPU inference**: `{python} CarbonRoiCalc.cpu_power_str` for `{python} CarbonRoiCalc.cpu_tflops_str` (efficiency = `{python} CarbonRoiCalc.cpu_eff_str` TFLOP/s per W).
+*   **NPU inference**: `{python} CarbonRoiCalc.npu_power_str` for `{python} CarbonRoiCalc.npu_tflops_str` (efficiency = `{python} CarbonRoiCalc.npu_eff_str` TFLOP/s per W).
 *   **The gap**: The NPU is **`{python} CarbonRoiCalc.eff_gap_str`$\times$ more energy-efficient** per operation.
 
 **Math**:
 
 1.  **Workload**: `{python} CarbonRoiCalc.workload_str` Billion inferences per day.
-2.  **CPU fleet energy**: `{python} CarbonRoiCalc.cpu_servers_str` CPU servers $\times$ `{python} CarbonRoiCalc.cpu_power_str` W $\times$ 24 h $\approx$ `{python} CarbonRoiCalc.cpu_energy_day_str` kWh/day.
-3.  **NPU fleet energy**: `{python} CarbonRoiCalc.npu_chips_str` NPU chips $\times$ `{python} CarbonRoiCalc.npu_power_str` W $\times$ 24 h $\approx$ `{python} CarbonRoiCalc.npu_energy_day_str` kWh/day.
-4.  **Carbon savings**: At `{python} CarbonRoiCalc.carbon_intensity_str` kg CO~2~/kWh, switching to NPUs saves **~`{python} CarbonRoiCalc.co2_saved_str` metric tons of CO~2~ per year**.
+2.  **CPU fleet energy**: `{python} CarbonRoiCalc.cpu_servers_str` CPU servers $\times$ `{python} CarbonRoiCalc.cpu_power_str` $\times$ 24 h $\approx$ `{python} CarbonRoiCalc.cpu_energy_day_str`/day.
+3.  **NPU fleet energy**: `{python} CarbonRoiCalc.npu_chips_str` NPU chips $\times$ `{python} CarbonRoiCalc.npu_power_str` $\times$ 24 h $\approx$ `{python} CarbonRoiCalc.npu_energy_day_str`/day.
+4.  **Carbon savings**: At `{python} CarbonRoiCalc.carbon_intensity_str`, switching to NPUs saves **~`{python} CarbonRoiCalc.co2_saved_str` metric tons of CO~2~ per year**.
 
 **Systems insight**: Specialized accelerators can materially reduce the energy use of matched inference workloads. For workloads with stable arithmetic patterns and high deployment volume, the per-operation energy gains compound into substantial reductions in operational carbon footprint relative to general-purpose hardware.
 

@@ -784,20 +784,28 @@ class BertRoofline:
     bert_flops_b = m_bert.inference_flops.m_as(Bparam)
     bert_weight_mb = p_b1.memory_footprint.m_as(MB)
 
-    ai_b1 = p_b1.arithmetic_intensity.m_as("flop/byte")
+    ai_b1 = (m_bert.inference_flops / p_b1.memory_footprint).m_as("flop/byte")
     # Realized TFLOP/s = throughput * flops_per_inference
     perf_b1 = (p_b1.throughput * m_bert.inference_flops).m_as(TFLOPs/second)
     util_b1 = p_b1.mfu * 100.0
 
     flops_b32 = bert_flops_b * batch_32
-    ai_b32 = p_b32.arithmetic_intensity.m_as("flop/byte")
+    ai_b32 = (m_bert.inference_flops * batch_32 / p_b1.memory_footprint).m_as("flop/byte")
 
     # Is it compute bound now?
     is_compute_bound_b32 = p_b32.bottleneck == "Compute"
     perf_b32 = (p_b32.throughput * m_bert.inference_flops).m_as(TFLOPs/second)
 
+    peak_flops = h_a100.compute.peak_flops.m_as(TFLOPs/second)
+    peak_bw = h_a100.memory.bandwidth.m_as(TB/second)
+    ridge_point = h_a100.ridge_point().m_as("flop/byte")
+
     # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
     check(ai_b32 > ai_b1, "Batching must increase Arithmetic Intensity.")
+    check(140 <= ridge_point <= 160,
+          f"A100 FP16 ridge should be ~153 FLOP/byte, got {ridge_point:.0f}.")
+    check(abs(ai_b1 - bert_flops_b * 1e9 / (bert_weight_mb * 1e6)) < 1.0,
+          "Weights-only AI must match FLOPs ÷ weight bytes.")
 
     # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
     bert_params_m_str = fmt(bert_params_m, precision=0, commas=False)
@@ -805,29 +813,29 @@ class BertRoofline:
     bert_weight_mb_str = fmt(bert_weight_mb, precision=0, commas=False)
 
     bert_ai_b1_str = fmt_int(round(ai_b1), commas=False)
-    bert_perf_b1_str = fmt(perf_b1, precision=1, commas=False)
+    bert_perf_b1_str = fmt(perf_b1, precision=1, commas=False, suffix=" TFLOP/s")
     bert_util_b1_str = fmt(util_b1, precision=1, commas=False)
 
     bert_batch32_flops_str = fmt(flops_b32, precision=0, commas=False)
     bert_ai_b32_str = fmt_int(round(ai_b32), commas=False)
 
     # Wrap mixed prose+math in MarkdownStr()
-    bert_ai_eq_str = MarkdownStr(f"{bert_flops_b_str} $\\times$ $10^{{9}}$ ÷ {bert_weight_mb} $\\times$ $10^{{6}}$")
+    bert_ai_eq_str = MarkdownStr(
+        f"({bert_flops_b_str} $\\times$ $10^{{9}}$) ÷ ({bert_weight_mb_str} $\\times$ $10^{{6}}$)"
+    )
     bert_b32_flops_eq_str = MarkdownStr(f"{bert_flops_b_str} $\\times$ $10^{{9}}$ $\\times$ {batch_32}")
+    bert_ai_b32_eq_str = MarkdownStr(
+        f"({bert_batch32_flops_str} $\\times$ $10^{{9}}$) ÷ ({bert_weight_mb_str} $\\times$ $10^{{6}}$)"
+    )
 
-    bert_perf_b32_str = fmt(perf_b32, precision=1, commas=False)
+    bert_perf_b32_str = fmt(perf_b32, precision=1, commas=False, suffix=" TFLOP/s")
     batch32_str = MarkdownStr(str(batch_32))
     util_peak = 0.85
     utilization_peak_str = fmt(util_peak * 100, precision=0, commas=False)
     utilization_peak_pct_str = fmt_percent(util_peak, precision=0, commas=False)
 
-    # Re-export A100 constants for this cell context
-    peak_flops = h_a100.compute.peak_flops.m_as(TFLOPs/second)
-    peak_bw = h_a100.memory.bandwidth.m_as(TB/second)
-    ridge_point = h_a100.ridge_point("fp32").m_as("flop/byte")
-
     a100_tflops_fp16_str = fmt(peak_flops, precision=0, commas=False)
-    a100_bw_tbs_str = fmt(peak_bw, precision=2, commas=False)
+    a100_bw_tbs_str = fmt(peak_bw, precision=2, commas=False, suffix=" TB/s")
     a100_ridge_str = fmt_int(round(ridge_point), commas=False)
 ```
 
@@ -838,7 +846,7 @@ class BertRoofline:
 **Step 1**: Hardware limits.
 
 - Peak compute: `{python} BertRoofline.a100_tflops_fp16_str` (FP16 Tensor Core)
-- Memory bandwidth: `{python} BertRoofline.a100_bw_tbs_str` TB/s
+- Memory bandwidth: `{python} BertRoofline.a100_bw_tbs_str`
 - Ridge point: `{python} BertRoofline.a100_tflops_fp16_str` ÷ `{python} BertRoofline.a100_bw_tbs_str` = `{python} BertRoofline.a100_ridge_str` FLOP/byte
 
 Any workload with arithmetic intensity below `{python} BertRoofline.a100_ridge_str` FLOP/byte is memory bound; above is compute bound.
@@ -853,7 +861,7 @@ Any workload with arithmetic intensity below `{python} BertRoofline.a100_ridge_s
 **Step 3**: Performance prediction.
 Since `{python} BertRoofline.bert_ai_b1_str` < `{python} BertRoofline.a100_ridge_str`, BERT at batch = 1 is memory-bound:
 
-Achievable perf = `{python} BertRoofline.bert_ai_b1_str` FLOP/byte $\times$ `{python} BertRoofline.a100_bw_tbs_str` TB/s = **`{python} BertRoofline.bert_perf_b1_str`**
+Achievable perf = `{python} BertRoofline.bert_ai_b1_str` FLOP/byte $\times$ `{python} BertRoofline.a100_bw_tbs_str` = **`{python} BertRoofline.bert_perf_b1_str`**
 
 GPU utilization = `{python} BertRoofline.bert_perf_b1_str` ÷ `{python} BertRoofline.a100_tflops_fp16_str` = **`{python} BertRoofline.bert_util_b1_str`**
 
@@ -862,7 +870,7 @@ Increase batch size to `{python} BertRoofline.batch32_str`:
 
 - Same `{python} BertRoofline.bert_weight_mb_str` of weights, but `{python} BertRoofline.batch32_str`$\times$ more compute
 - New FLOPs: `{python} BertRoofline.bert_b32_flops_eq_str` = `{python} BertRoofline.bert_batch32_flops_str`$\times 10^{9}$
-- New intensity: `{python} BertRoofline.bert_batch32_flops_str`$\times 10^{9}$ ÷ `{python} BertRoofline.bert_weight_mb_str`$\times 10^{6}$ = `{python} BertRoofline.bert_ai_b32_str` FLOP/byte
+- New intensity: `{python} BertRoofline.bert_ai_b32_eq_str` = `{python} BertRoofline.bert_ai_b32_str` FLOP/byte
 
 Since `{python} BertRoofline.bert_ai_b32_str` > `{python} BertRoofline.a100_ridge_str`, batch = 32 is compute-bound:
 

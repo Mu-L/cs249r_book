@@ -12,13 +12,13 @@ CONTENTS = REPO_ROOT / "book" / "quarto" / "contents"
 
 # Same pattern as book_check_lego_prose_units.PROSE_UNIT_AFTER_REF
 STRIP_AFTER_REF = re.compile(
-    r"(`\{python\}\s+[A-Za-z_][\w.]*_str`)\s+"
+    r"(`\{python\}\s+[A-Za-z_][\w.]*_str`)\s*\**\s*"
     r"(ms|mW|MW|GW|kW|Wh|kWh|MWh|GWh|"
-    r"GB|MB|KB|GiB|TiB|TB|"
+    r"GB|MB|KB|GiB|TiB|TB|Gb|"
     r"seconds?|secs?|minutes?|mins?|hours?|hrs?|weeks?|months?|years?|"
     r"percent|GPUs?|QPS|FLOPS|TFLOP/?s|PFLOP/?s|"
     r"flights?|tokens?|images?|nodes?|servers?|"
-    r"USD|\$|%)(?=\s|[,.;:\)]|$|\*\*)",
+    r"USD|\$|%)(?=\s|[,.;:\)\]|$|\*\*|/|\|)",
     re.I,
 )
 
