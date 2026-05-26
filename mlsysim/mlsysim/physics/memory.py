@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-
 import pint
 
 from mlsysim.core.constants import ureg, MB
@@ -220,3 +219,11 @@ def calc_paged_kv_cache_size(
         - size (Quantity): Total allocated KV cache size in bytes.
         - frag_pct (float): Internal memory fragmentation (0.0 to 1.0).
     """
+    bpe = _ensure_unit(bytes_per_elem, ureg.byte, "bytes_per_elem")
+    padded_seq_len = math.ceil(seq_len / page_size_tokens) * page_size_tokens
+    internal_frag = max(0, padded_seq_len - seq_len)
+    frag_pct = internal_frag / padded_seq_len if padded_seq_len > 0 else 0.0
+    size = (
+        2 * n_layers * n_heads * head_dim * padded_seq_len * batch_size * bpe
+    ).to(ureg.byte)
+    return size, frag_pct
