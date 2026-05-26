@@ -15,16 +15,16 @@
 | vol1/ml_systems | PASS | ✓ 37/37 | ✅ | 41a232b431 |
 | vol1/ml_workflow | PASS | ✓ | ✅ | 5b7c5bd738 |
 | vol1/data_engineering | PASS | ✓ | ✅ | 43c9567823 |
-| vol1/model_serving | PASS 46/46 | ✓ 46/46 | ✅ | (committing) |
-| vol1/nn_computation | PASS 30/30 | ✓ 30/30 | ✅ | (committing) |
-| vol1/nn_architectures | PASS 34/34 | ✓ 34/34 | ✅ | (committing) |
-| vol1/frameworks | PASS 30/30 | ✓ 30/30 | ✅ | (committing) |
+| vol1/model_serving | PASS 46/46 | ✓ 46/46 | ✅ | (pending SHA) |
+| vol1/nn_computation | PASS 30/30 | ✓ 30/30 | ✅ | 3b6c7e60cf |
+| vol1/nn_architectures | PASS 34/34 | ✓ 34/34 | ✅ | d4553a442e |
+| vol1/frameworks | PASS 30/30 | ✓ 30/30 | ✅ | a67ffeb8cc |
 | vol1/training | WIP | — | ⬜ | LLM fixes in progress |
 | vol1 ch 09–21 | pending | — | ⬜ | prose-units green |
 | vol2 ch 01–23 | pending | — | ⬜ | prose-units green |
 
-**Signed off:** 7 / 44 (training + vol1 ch 09–21 pending)
-**Committed this session:** 4 chapters queued (nn_computation, nn_architectures, frameworks, model_serving)
+**Signed off:** 8 / 44 (training + vol1 ch 09–21 pending)
+**Committed this session:** nn_computation, nn_architectures, frameworks, model_serving (pending SHA)
 
 ## Recent fixes
 
