@@ -706,43 +706,68 @@ class BuildCommand:
         config_name = self.config_manager.setup_symlink(format_type, volume)
         console.print(f"[dim]🔗 Linked _quarto.yml → {config_name}[/dim]")
 
-        # Determine render target
-        render_targets = {
-            "html": "html",
-            "pdf": "titlepage-pdf",
-            "epub": "epub"
-        }
+        # Full volume PDF/EPUB builds must uncomment every chapter in the
+        # volume config (fast-build configs ship with most chapters commented).
+        if format_type in ("pdf", "epub"):
+            console.print(
+                "[yellow]📝 Uncommenting all chapter files for full volume build...[/yellow]"
+            )
+            self._uncomment_all_chapters(config_file)
 
-        if format_type not in render_targets:
-            raise ValueError(f"Unknown format type: {format_type}")
+        self._config_restored = False
 
-        render_to = render_targets[format_type]
-        render_cmd = ["quarto", "render", f"--to={render_to}"]
+        def signal_handler(signum, frame):
+            if not self._config_restored and format_type in ("pdf", "epub"):
+                console.print("\n[yellow]🛡️ Ctrl+C detected - restoring config...[/yellow]")
+                self._restore_config(config_file)
+                self._config_restored = True
+                console.print("[green]✅ Config restored[/green]")
+            sys.exit(0)
 
-        # Show the command being executed
-        cmd_str = " ".join(render_cmd)
-        console.print(f"[blue]💻 Command: {cmd_str}[/blue]")
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
-        # Execute build
-        success = self._run_command(
-            render_cmd,
-            cwd=self.config_manager.book_dir,
-            description=f"Building {volume_name} ({format_type.upper()})"
-        )
+        try:
+            # Determine render target
+            render_targets = {
+                "html": "html",
+                "pdf": "titlepage-pdf",
+                "epub": "epub"
+            }
 
-        if success:
-            console.print(f"[green]✅ {volume_name} {format_type.upper()} build completed: {output_dir}/[/green]")
-            self._open_output(output_dir, format_type)
-            if format_type == "epub":
-                if not self._postflight_epub_validation(skip=skip_validate):
-                    return False
-            elif format_type == "pdf":
-                if not self._postflight_pdf_validation(volume, skip=skip_validate):
-                    return False
-        else:
-            console.print(f"[red]❌ {volume_name} {format_type.upper()} build failed[/red]")
+            if format_type not in render_targets:
+                raise ValueError(f"Unknown format type: {format_type}")
 
-        return success
+            render_to = render_targets[format_type]
+            render_cmd = ["quarto", "render", f"--to={render_to}"]
+
+            # Show the command being executed
+            cmd_str = " ".join(render_cmd)
+            console.print(f"[blue]💻 Command: {cmd_str}[/blue]")
+
+            # Execute build
+            success = self._run_command(
+                render_cmd,
+                cwd=self.config_manager.book_dir,
+                description=f"Building {volume_name} ({format_type.upper()})"
+            )
+
+            if success:
+                console.print(f"[green]✅ {volume_name} {format_type.upper()} build completed: {output_dir}/[/green]")
+                self._open_output(output_dir, format_type)
+                if format_type == "epub":
+                    if not self._postflight_epub_validation(skip=skip_validate):
+                        return False
+                elif format_type == "pdf":
+                    if not self._postflight_pdf_validation(volume, skip=skip_validate):
+                        return False
+            else:
+                console.print(f"[red]❌ {volume_name} {format_type.upper()} build failed[/red]")
+
+            return success
+        finally:
+            if format_type in ("pdf", "epub") and not self._config_restored:
+                self._restore_config(config_file)
 
     def _build_both_formats(self) -> bool:
         """Build both HTML and PDF formats sequentially."""
