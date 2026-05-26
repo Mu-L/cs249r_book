@@ -858,7 +858,7 @@ Consider classifying $28{\times}28$ MNIST digits (784 input pixels, 10 output cl
 - Architecture: Conv(32, $3{\times}3$) → Pool → Conv(64, $3{\times}3$) → Pool → FC(128) → 10
 - Parameters: ($3{\times}3{\times}1{\times}32$) + ($3{\times}3{\times}32{\times}64$) + ($64{\times}7{\times}7{\times}128$) + ($128{\times}10$) ≈ `{python} MLPvsCNN.cnn_params_str` parameters
 - Training: `{python} MLPvsCNN.mnist_train_examples_str` examples (same data)
-- Test Accuracy: ~`{python} MLPvsCNN.cnn_test_acc_pct_str` percent+
+- Test Accuracy: ~`{python} MLPvsCNN.cnn_test_acc_pct_str`+
 - Rationale: Embeds locality bias (nearby pixels are related) and translation invariance (digit patterns are meaningful regardless of position). These structural assumptions reduce parameter count and improve generalization.
 
 **Comparison**:
@@ -3431,13 +3431,13 @@ class GPT2BandwidthProfile:
 
 **Why it matters**: GPT-2 XL exemplifies **memory-bandwidth-bound** workloads. During autoregressive inference, the model must load all `{python} GPT2BandwidthProfile.gpt2_fp32_gb_str` of FP32 weights from HBM for *every generated token*, while performing only a single matrix-vector multiply per layer. The arithmetic intensity is about `{python} GPT2BandwidthProfile.intensity_fp32_str` FLOP/byte with FP32 weights in @tbl-workload-signatures, or about `{python} GPT2BandwidthProfile.intensity_fp16_str` FLOP/byte with FP16 weights, leaving compute cores idle while waiting for memory. This contrasts with ResNet-50 (compute bound, high weight reuse) and DLRM (capacity-bound, random access). @tbl-nn-architectures-gpt2-profile summarizes the bandwidth lighthouse's quantitative properties:
 
-| **Property**   | **Value**                                                              | **System Implication**                                                                                       |
-|:---------------|:-----------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------|
-| **Parameters** | `{python} GPT2BandwidthProfile.gpt2_params_b_str` billion              | Weight loading dominates inference latency.                                                                  |
-| **Model Size** | `{python} GPT2BandwidthProfile.gpt2_fp32_gb_str` (FP32)                | Fits on one GPU but saturates HBM bandwidth.                                                                 |
-| **Compute**    | `{python} GPT2BandwidthProfile.gpt2_gflops_per_token_str` GFLOPs/token | Low per-token compute; bottleneck is data movement, not math.                                                |
-| **Constraint** | Memory Bandwidth                                                       | tokens/s $\propto$ HBM bandwidth (for example, H100's `{python} GPT2BandwidthProfile.h100_bw_tbs_str` TB/s). |
-| **Profile**    | Bandwidth-Bound (inference)                                            | Training is compute bound; inference is bandwidth bound.                                                     |
+| **Property**   | **Value**                                                              | **System Implication**                                                                                    |
+|:---------------|:-----------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------|
+| **Parameters** | `{python} GPT2BandwidthProfile.gpt2_params_b_str` billion              | Weight loading dominates inference latency.                                                               |
+| **Model Size** | `{python} GPT2BandwidthProfile.gpt2_fp32_gb_str` (FP32)                | Fits on one GPU but saturates HBM bandwidth.                                                              |
+| **Compute**    | `{python} GPT2BandwidthProfile.gpt2_gflops_per_token_str` GFLOPs/token | Low per-token compute; bottleneck is data movement, not math.                                             |
+| **Constraint** | Memory Bandwidth                                                       | tokens/s $\propto$ HBM bandwidth (for example, H100's `{python} GPT2BandwidthProfile.h100_bw_tbs_str`/s). |
+| **Profile**    | Bandwidth-Bound (inference)                                            | Training is compute bound; inference is bandwidth bound.                                                  |
 
 : **GPT-2 XL Systems Profile**: Quantitative properties of the bandwidth lighthouse and their system consequences. Autoregressive decoding reloads the full weight set per token at roughly 0.5--1 FLOP/byte, so generation throughput tracks HBM bandwidth almost linearly while compute units sit underutilized. {#tbl-nn-architectures-gpt2-profile tbl-colwidths="[12,30,58]"}
 
@@ -3524,9 +3524,9 @@ class KVCacheSizing:
 ```
 
 \index{KV Cache!linear growth}
-The **KV Cache**[^fn-kv-cache-depth] grows linearly with sequence length ($\mathcal{O}(N_L \times 2 \times N_{\text{heads}} \times S \times d_{\text{head}})$ per request, distinct from the $\mathcal{O}(S^2)$ attention score matrix during training), storing the Key and Value vectors for all previous tokens to avoid recomputing them. For long contexts, this cache becomes massive (for example, 100+ GB), forcing the system to fetch the full cache from HBM for every generated token. As the GPT-2 Lighthouse quantified earlier, the arithmetic intensity is about `{python} GPT2BandwidthProfile.intensity_fp32_str` FLOP/byte with FP32 weights or about `{python} GPT2BandwidthProfile.intensity_fp16_str` FLOP/byte with FP16 weights, explaining why serving LLMs requires massive HBM bandwidth (for example, H100's `{python} GPT2BandwidthProfile.h100_bw_tbs_str` TB/s) rather than raw FLOP/s.
+The **KV Cache**[^fn-kv-cache-depth] grows linearly with sequence length ($\mathcal{O}(N_L \times 2 \times N_{\text{heads}} \times S \times d_{\text{head}})$ per request, distinct from the $\mathcal{O}(S^2)$ attention score matrix during training), storing the Key and Value vectors for all previous tokens to avoid recomputing them. For long contexts, this cache becomes massive (for example, 100+ GB), forcing the system to fetch the full cache from HBM for every generated token. As the GPT-2 Lighthouse quantified earlier, the arithmetic intensity is about `{python} GPT2BandwidthProfile.intensity_fp32_str` FLOP/byte with FP32 weights or about `{python} GPT2BandwidthProfile.intensity_fp16_str` FLOP/byte with FP16 weights, explaining why serving LLMs requires massive HBM bandwidth (for example, H100's `{python} GPT2BandwidthProfile.h100_bw_tbs_str`/s) rather than raw FLOP/s.
 
-[^fn-kv-cache-depth]: **KV Cache Memory Scaling**: For a 7-billion-parameter transformer in FP16, model weights consume ~14 GB. A single concurrent request's KV cache requires: `{python} KVCacheSizing.layers_str` layers × 2 (K,V) × `{python} KVCacheSizing.heads_str` heads × `{python} KVCacheSizing.seq_len_str` × `{python} KVCacheSizing.head_dim_str`-dim head × 2 bytes ≈ `{python} KVCacheSizing.per_request_gb_str`. At 8 concurrent users, KV cache alone (~`{python} KVCacheSizing.concurrent_8_gb_str`) rivals the model weights—and grows linearly with both context length and concurrent users. Scaling serving throughput therefore requires grouped-query attention (fewer KV heads), shorter context windows, or KV offloading strategies. This is a memory systems constraint, not a model quality trade-off: the model is identical regardless of which memory strategy is chosen. \index{KV Cache!memory scaling}
+[^fn-kv-cache-depth]: **KV Cache Memory Scaling**: For a 7-billion-parameter transformer in FP16, model weights consume ~14 GB. A single concurrent request's KV cache requires: `{python} KVCacheSizing.layers_str` layers × 2 (K,V) × `{python} KVCacheSizing.heads_str` heads × `{python} KVCacheSizing.seq_len_str` positions at `{python} KVCacheSizing.head_dim_str` dimensions per head × 2 bytes ≈ `{python} KVCacheSizing.per_request_gb_str`. At 8 concurrent users, KV cache alone (~`{python} KVCacheSizing.concurrent_8_gb_str`) rivals the model weights—and grows linearly with both context length and concurrent users. Scaling serving throughput therefore requires grouped-query attention (fewer KV heads), shorter context windows, or KV offloading strategies. This is a memory systems constraint, not a model quality trade-off: the model is identical regardless of which memory strategy is chosen. \index{KV Cache!memory scaling}
 
 This implementation reveals three key computational characteristics. Self-attention enables parallel processing across all positions in the sequence, mapping efficiently to modern hardware during training. The quadratic complexity, however, creates a training bottleneck for long sequences. The autoregressive nature of inference creates a third constraint: a bandwidth bottleneck where memory speed, not compute speed, is the primary determinant of generation latency.
 
@@ -3887,7 +3887,7 @@ A quick calculation shows how fast embedding tables exceed single-GPU memory.
 3.  **Precision**: FP32 (4 bytes per element).
 4.  **Table size**: `{python} CapacityWall.cw_num_items_str` Million$\times$ `{python} CapacityWall.cw_embed_dim_str`$\times$ 4 bytes ≈ **`{python} CapacityWall.cw_table_gb_str`**.
 
-**Systems insight**: A single embedding table for one feature (Items) already consumes **`{python} CapacityWall.cw_utilization_pct_str`** of an `{python} CapacityWall.a100_mem_gb_str` A100 GPU. Adding a User table of the same size means the embedding tables no longer fit on a single `{python} CapacityWall.a100_mem_gb_str` GPU, motivating sharding or CPU/off-device memory strategies. DLRM is **Capacity-Bound**, necessitating the "scale-out" distributed memory systems discussed in @sec-model-training.
+**Systems insight**: A single embedding table for one feature (Items) already consumes **`{python} CapacityWall.cw_utilization_pct_str`** of an `{python} CapacityWall.a100_mem_gb_str` A100 GPU. Adding a User table of the same size means the embedding tables no longer fit on a single `{python} CapacityWall.a100_mem_gb_str`, motivating sharding or CPU/off-device memory strategies. DLRM is **Capacity-Bound**, necessitating the "scale-out" distributed memory systems discussed in @sec-model-training.
 
 :::
 
@@ -5187,7 +5187,7 @@ class WildlifeModelSizing:
     width_mult_str = fmt(width_mult, precision=2, commas=False)
 ```
 
-**Problem statement**: Design an ML system to identify wildlife species from camera trap images in a national park. The system must process images locally (no cloud connectivity), operate on battery power for six months, and achieve `{python} WildlifeModelSizing.accuracy_target_pct_str` percent+ accuracy on `{python} WildlifeModelSizing.species_count_str` target species.
+**Problem statement**: Design an ML system to identify wildlife species from camera trap images in a national park. The system must process images locally (no cloud connectivity), operate on battery power for six months, and achieve `{python} WildlifeModelSizing.accuracy_target_pct_str`+ accuracy on `{python} WildlifeModelSizing.species_count_str` target species.
 
 **Step 1**: Data characterization.
 The input is spatial data (images from camera traps, typically $1920{\times}1080$ resolution, downsampled to $224{\times}224$ for processing). The task requires recognizing visual patterns (fur textures, body shapes, distinctive markings) that are:
@@ -5420,7 +5420,7 @@ class A100ClusterMemory:
 
 **Pitfall**: *Optimizing architectural decisions for training hardware without considering deployment constraints.*
 
-Teams design for high-end GPU clusters, then discover deployment failures on target hardware. An architecture exploiting 8$\times$ A100 GPUs (`{python} A100ClusterMemory.a100_8x_mem_str` total memory) cannot deploy to edge devices with `{python} A100ClusterMemory.edge_mem_str` GB—the `{python} A100ClusterMemory.memory_reduction_str`$\times$ reduction requires architectural changes, not just quantization. As @sec-network-architectures-decision-framework-a889 emphasizes, architecture selection must analyze the full system stack. Edge deployment compounds constraints: models must fit 10–100 MB storage, execute in 50–200 ms, and operate within 2–5 W power. Organizations deferring deployment considerations to "optimize later" encounter mismatches requiring costly redesigns that delay products by months.
+Teams design for high-end GPU clusters, then discover deployment failures on target hardware. An architecture exploiting 8$\times$ A100 GPUs (`{python} A100ClusterMemory.a100_8x_mem_str` total memory) cannot deploy to edge devices with `{python} A100ClusterMemory.edge_mem_str`—the `{python} A100ClusterMemory.memory_reduction_str`$\times$ reduction requires architectural changes, not just quantization. As @sec-network-architectures-decision-framework-a889 emphasizes, architecture selection must analyze the full system stack. Edge deployment compounds constraints: models must fit 10–100 MB storage, execute in 50–200 ms, and operate within 2–5 W power. Organizations deferring deployment considerations to "optimize later" encounter mismatches requiring costly redesigns that delay products by months.
 
 **Pitfall**: *Ignoring KV cache growth when estimating transformer serving costs.*
 
