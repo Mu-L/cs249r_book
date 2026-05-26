@@ -216,19 +216,24 @@ def fmt_unit(quantity, default="-"):
     return out
 
 
-def fmt_percent(ratio, precision=1, commas=False):
+def fmt_percent(ratio, precision=1, commas=False, suffix=""):
     """
     Format a ratio (0.0 to 1.0) as a percentage string for display.
+
     Use this for compound fractions (e.g. effective utilization) to avoid
     display bugs from Quantity or wrong scaling.
     Accepts Pint Quantity (uses magnitude) or plain float.
+
+    suffix=" percent" for body prose (MIT Press: spell out "percent").
+    suffix="%" for tables, equations, and constrained captions.
+    No suffix (default) when the prose context carries the meaning
+    (e.g., "50 MFU", "85 goodput").
     """
     if isinstance(ratio, ureg.Quantity):
-        # Crucial: convert to dimensionless first so units like flop/TFLOP cancel out!
         ratio = float(ratio.m_as(''))
     else:
         ratio = float(ratio)
-    return fmt(ratio * 100, precision=precision, commas=commas)
+    return fmt(ratio * 100, precision=precision, commas=commas, suffix=suffix)
 
 
 def fmt_sci(val, precision=2):
