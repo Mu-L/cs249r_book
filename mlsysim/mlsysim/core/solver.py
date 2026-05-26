@@ -64,6 +64,12 @@ class BaseResolver(ABC):
 
     @abstractmethod
     def solve(self, *args, **kwargs) -> Any:
+        """
+        Executes the analytical solver.
+        
+        Subclasses must implement this method to provide the mathematical 
+        resolution of the constraints they govern.
+        """
         pass
 
     @classmethod
@@ -2594,7 +2600,9 @@ class BatchingOptimizer(BaseOptimizer):
               seq_len: int, sla_latency_ms: float, arrival_rate_qps: float,
               num_replicas: int = 1, precision: str = "fp16", 
               efficiency: float = 0.5, max_search_batch: int = 256) -> BatchingOptimizerResult:
-        
+        """
+        Determines the maximum batch size that satisfies a P99 tail latency SLA.
+        """
         from .optimization.registry import OptimizationRegistry
         serving_model = ServingModel()
         tail_model = TailLatencyModel()
@@ -2660,7 +2668,9 @@ class PlacementOptimizer(BaseOptimizer):
     def solve(self, fleet: Fleet, duration_days: float, 
               regions: List[str] = ["US_Avg", "Quebec", "Iowa"], 
               carbon_tax_per_ton: float = 100.0, mfu: float = 1.0) -> PlacementOptimizerResult:
-        
+        """
+        Determines the optimal data center location to minimize TCO and carbon taxes.
+        """
         from ..infra.registry import Infrastructure
         econ_model = EconomicsModel()
         
