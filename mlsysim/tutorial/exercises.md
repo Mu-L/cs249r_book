@@ -482,7 +482,7 @@ hw = HardwareNode(
     release_year=2018,
     compute=ComputeCore(
         peak_flops=0.000064 * ureg.TFLOPs / ureg.s,
-        precision_flops={"int8": 0.000128 * ureg.TFLOPs / ureg.s},
+        precision_flops={"int8": 0.000128 * ureg.TOPS},
     ),
     memory=MemoryHierarchy(
         capacity=1 * ureg.MB,

@@ -26,7 +26,7 @@ from pathlib import Path
 # Tolerance is fractional (0.02 = 2%) to allow for rounding and unit conversions.
 # Names are *fragments* — we substring-match against variable identifiers in QMDs.
 CANONICAL = [
-    # GPU compute (TFLOPS)
+    # GPU compute (TFLOP/s and TOPS)
     ("v100_fp16",      125,   0.02, "V100_FLOPS_FP16_TENSOR"),
     ("v100_tflops",    125,   0.02, "V100_FLOPS_FP16_TENSOR"),
     ("v100_fp32",      15.7,  0.05, "V100_FLOPS_FP32"),
@@ -34,13 +34,13 @@ CANONICAL = [
     ("a100_tflops",    312,   0.02, "A100_FLOPS_FP16_TENSOR"),
     ("a100_tf32",      156,   0.02, "A100_FLOPS_TF32"),
     ("a100_fp32",      19.5,  0.05, "A100_FLOPS_FP32"),
-    ("a100_int8",      624,   0.02, "A100_FLOPS_INT8"),
+    ("a100_int8",      624,   0.02, "A100_TOPS_INT8"),
     ("a100_sparse",    624,   0.02, "A100_FLOPS_FP16_SPARSE"),
     ("h100_fp16",      989,   0.02, "H100_FLOPS_FP16_TENSOR"),
     ("h100_tflops",    989,   0.02, "H100_FLOPS_FP16_TENSOR"),
     ("h100_fp8",       1979,  0.02, "H100_FLOPS_FP8_TENSOR"),
     ("h100_tf32",      494,   0.02, "H100_FLOPS_TF32"),
-    ("h100_int8",      1979,  0.02, "H100_FLOPS_INT8"),
+    ("h100_int8",      1979,  0.02, "H100_TOPS_INT8"),
     ("b200_fp16",      2250,  0.02, "B200_FLOPS_FP16_TENSOR"),
     ("b200_fp8",       4500,  0.02, "B200_FLOPS_FP8_TENSOR"),
     ("mi300x_fp16",    1307,  0.02, "MI300X_FLOPS_FP16_TENSOR"),
