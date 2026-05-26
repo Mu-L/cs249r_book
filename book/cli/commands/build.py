@@ -1694,8 +1694,14 @@ class BuildCommand:
         for line in lines:
             stripped = line.strip()
 
-            # Check if this is a commented line with a .qmd file or a commented structural key
-            if stripped.startswith('#') and '.qmd' in line:
+            # Only uncomment chapter-list entries (`# - path.qmd`), not free-form
+            # comments that mention `.qmd` (e.g. index.qmd symlink notes).
+            is_commented_chapter_entry = (
+                stripped.startswith('#')
+                and '.qmd' in line
+                and ('# -' in line or '#-' in line)
+            )
+            if is_commented_chapter_entry:
                 # Uncomment the line while preserving indentation
                 # Handle both "# - " and "#- " patterns
                 if '# -' in line:
