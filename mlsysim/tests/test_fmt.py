@@ -2,7 +2,8 @@
 
 import pytest
 
-from mlsysim.fmt import MarkdownStr, fmt, fmt_int, fmt_percent
+from mlsysim.core.constants import ureg
+from mlsysim.fmt import MarkdownStr, fmt, fmt_int, fmt_percent, fmt_qty
 
 
 class TestFmtPrecisionGuards:
@@ -53,6 +54,32 @@ class TestFmtInt:
 
     def test_accepts_prefix_and_suffix(self):
         assert fmt_int(175, commas=False, suffix=" billion") == "175 billion"
+
+
+class TestFmtQty:
+    def test_mj_over_ms_to_mw(self):
+        energy = 66 * ureg.millijoule
+        time = 1000 * ureg.millisecond
+        power = energy / time
+        out = fmt_qty(power, ureg.mW, precision=0, commas=False)
+        assert out == "66 mW"
+
+    def test_gb_display(self):
+        mem = 140 * ureg.GB
+        out = fmt_qty(mem, ureg.GB, precision=0, commas=False)
+        assert out == "140 GB"
+
+    def test_usd_prefix(self):
+        from mlsysim.core.units import USD
+
+        price = 2.5 * USD
+        out = fmt_qty(price, USD, precision=2, commas=False, prefix="$")
+        assert out == "$2.50 USD"
+
+    def test_returns_markdown_str(self):
+        out = fmt_qty(5 * ureg.millisecond, ureg.millisecond, precision=0, commas=False)
+        assert isinstance(out, MarkdownStr)
+        assert out == "5 ms"
 
 
 class TestFmtPercentGuards:

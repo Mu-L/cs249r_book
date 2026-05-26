@@ -279,6 +279,45 @@ def fmt_frac(numerator, denominator, result=None, unit=None):
     return out
 
 
+def _compact_unit_suffix(display_unit) -> str:
+    """Derive a leading-space compact unit label from a pint display unit."""
+    from .core.units import USD
+
+    if display_unit is USD:
+        return " USD"
+    try:
+        one = 1 * display_unit
+        formatted = f"{one:~P}"
+    except Exception:
+        return f" {display_unit}"
+    parts = formatted.split(None, 1)
+    if len(parts) == 2:
+        return f" {parts[1]}"
+    return f" {display_unit}"
+
+
+def fmt_qty(
+    quantity,
+    display_unit,
+    *,
+    precision=1,
+    commas=False,
+    prefix="",
+    extra_suffix="",
+):
+    """Format a pint Quantity in ``display_unit`` with a canonical unit suffix.
+
+    Required OUTPUT path for physical quantities in LEGO cells.
+    """
+    if isinstance(quantity, ureg.Quantity):
+        q = quantity.to(display_unit)
+        val = q.magnitude
+    else:
+        val = _numeric_magnitude(quantity)
+    suffix = _compact_unit_suffix(display_unit) + extra_suffix
+    return fmt(val, precision=precision, commas=commas, prefix=prefix, suffix=suffix)
+
+
 def check(condition, message):
     """
     Invariant guard for narrative logic.

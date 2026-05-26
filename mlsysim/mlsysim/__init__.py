@@ -49,7 +49,7 @@ from .core.constants import *  # noqa: F401,F403
 from .physics import *  # noqa: F401,F403
 
 # AUTHORITATIVE FORMATTING
-from .fmt import fmt, fmt_int, check, MarkdownStr
+from .fmt import fmt, fmt_int, fmt_qty, check, MarkdownStr
 
 
 def plot_evaluation_scorecard(*args, **kwargs):
