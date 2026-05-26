@@ -1898,10 +1898,15 @@ class FaultToleranceCheckpointRecap:
     gpt3_ckpt_bytes = mem_res.total_memory
     gpt3_adam_bytes = mem_res.optimizer_state
     n_workers = Systems.Clusters.Training_1K.total_accelerators
+    aggregate_ckpt_bw = 100 * GB / second
+    ckpt_write_s = (gpt3_ckpt_bytes / aggregate_ckpt_bw).to(second).magnitude
+    check(34 < ckpt_write_s < 38, f"GPT-3 checkpoint write should be ~36 s, got {ckpt_write_s:.1f}")
     gpt3_params_b_str = fmt(m.parameters.m_as(param) / BILLION, precision=0, commas=False)
     gpt3_ckpt_tb_str = fmt(gpt3_ckpt_bytes.m_as(TB), precision=1, commas=False)
     gpt3_adam_tb_str = fmt(gpt3_adam_bytes.m_as(TB), precision=1, commas=False)
     gpt3_shard_gb_str = fmt(gpt3_ckpt_bytes.m_as(GB) / n_workers, precision=1, commas=False)
+    ckpt_write_s_str = fmt(ckpt_write_s, precision=0, commas=False)
+    aggregate_read_gbs_str = fmt(aggregate_ckpt_bw.m_as(GB / second), precision=0, commas=False)
 ```
 
 [^fn-adam-state-memory]: **Adam Optimizer State**\index{Adam Optimizer!state}: Adaptive Moment Estimation (Adam) maintains per-parameter first-moment ($m$) and second-moment ($v$) estimates, tripling memory requirements compared to vanilla SGD (3$\times$: parameters + two state vectors). For a `{python} FaultToleranceCheckpointRecap.gpt3_params_b_str`B parameter model, optimizer state alone reaches `{python} FaultToleranceCheckpointRecap.gpt3_adam_tb_str`, which typically dominates checkpoint size and recovery time, making optimizer state the primary bottleneck in checkpoint I/O design. \index{Adam Optimizer!checkpoint memory}
@@ -2052,7 +2057,7 @@ plt.close()
 
 The U-shaped cost curve in @fig-young-daly visualizes this trade-off: checkpoint overhead decreases as intervals lengthen, while rework cost from failures increases linearly. The optimal point minimizes their sum.
 
-For our 10,000-GPU cluster with calculated system MTBF of 3.69 hours (from @sec-fault-tolerance-reliability-reliability-worked-example-cluster-mtbf-calculation-9255) and checkpoint time of 21 seconds (from `{python} FaultToleranceCheckpointRecap.gpt3_ckpt_tb_str` checkpoint at 100 GB/s), the Young-Daly formula computes the optimal interval.
+For our 10,000-GPU cluster with calculated system MTBF of 3.69 hours (from @sec-fault-tolerance-reliability-reliability-worked-example-cluster-mtbf-calculation-9255) and checkpoint time of `{python} FaultToleranceCheckpointRecap.ckpt_write_s_str` (from `{python} FaultToleranceCheckpointRecap.gpt3_ckpt_tb_str` checkpoint at `{python} FaultToleranceCheckpointRecap.aggregate_read_gbs_str`/s), the Young-Daly formula computes the optimal interval.
 
 ```{python}
 #| echo: false
@@ -2080,7 +2085,9 @@ import math
 
 class YoungDalyOptimal:
     # ┌── 1. LOAD ──────────────────────────────────────────
-    t_write_s = 21
+    from mlsysim.core.solver import TrainingMemoryModel
+    _mem = TrainingMemoryModel().solve(Models.Language.GPT3, Hardware.Cloud.A100, batch_size=1, precision="fp32")
+    t_write_s = (_mem.total_memory / (100 * GB / second)).to(second).magnitude
     mtbf_h = 3.69
     # ┌── 2. EXECUTE ───────────────────────────────────────
     mtbf_s = mtbf_h * SEC_PER_HOUR
@@ -2091,7 +2098,7 @@ class YoungDalyOptimal:
     hourly_interval_s = SEC_PER_HOUR
     hourly_overhead_pct = (t_write_s/hourly_interval_s + hourly_interval_s / (2 * mtbf_s)) * 100
     # ┌── 3. GUARD ─────────────────────────────────────────
-    check(10 < tau_opt_min < 15, f"Interval {tau_opt_min:.1f}m outside expected range")
+    check(14 < tau_opt_min < 18, f"Interval {tau_opt_min:.1f}m outside expected range")
     check(hourly_overhead_pct > overhead_pct, "Hourly checkpointing should waste more than optimal")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     t_write_s_str = fmt(t_write_s, precision=0, commas=False)
@@ -2310,8 +2317,8 @@ Analysis begins at the bottom of the stack, examining the hardware constraints:
 
 - **Model state size**\index{Model State Size}: `{python} CheckpointDebug.params_b_str` parameters $\times$ `{python} CheckpointDebug.bytes_per_param_weights_str` bytes (BF16) = `{python} CheckpointDebug.weights_gb_str` for weights, plus `{python} CheckpointDebug.optimizer_gb_str` for FP32 Adam optimizer states (first and second moments), totaling approximately `{python} CheckpointDebug.total_ckpt_gb_str` per checkpoint before gradients, master weights, metadata, or framework overhead
 - **Storage system**\index{Storage!system}: Shared NFS filer with 10 Gbps network attachment
-- **Theoretical bandwidth**\index{Bandwidth!theoretical}: 10 Gbps = `{python} CheckpointDebug.nfs_gbs_str` GB/s maximum throughput
-- **Minimum write time**\index{Minimum Write Time}: `{python} CheckpointDebug.total_ckpt_gb_str` GB/`{python} CheckpointDebug.nfs_gbs_str` GB/s = `{python} CheckpointDebug.min_write_s_str` (`{python} CheckpointDebug.min_write_min_str`)
+- **Theoretical bandwidth**\index{Bandwidth!theoretical}: 10 Gbps = `{python} CheckpointDebug.nfs_gbs_str`/s maximum throughput
+- **Minimum write time**\index{Minimum Write Time}: `{python} CheckpointDebug.total_ckpt_gb_str`/`{python} CheckpointDebug.nfs_gbs_str`/s = `{python} CheckpointDebug.min_write_s_str` (`{python} CheckpointDebug.min_write_min_str`)
 
 The infrastructure layer reveals our first insight: even with perfect efficiency, the NFS bandwidth cannot achieve a 2-minute checkpoint for this model size.
 
@@ -2323,7 +2330,7 @@ The middle layer shifts the diagnosis from raw bandwidth to checkpoint coordinat
 - **Write pattern**\index{Write Pattern}: All `{python} CheckpointDebug.n_nodes_str` writing simultaneously to shared NFS
 - **Observed behavior**\index{Observed Behavior}: `{python} CheckpointDebug.observed_write_min_str`-minute writes instead of the `{python} CheckpointDebug.min_write_min_str`-minute theoretical minimum
 
-The Distribution Layer reveals the shared-storage bottleneck. With `{python} CheckpointDebug.n_nodes_str` competing for 10 Gbps, each node effectively receives only `{python} CheckpointDebug.per_node_mbs_str` MB/s (10 Gbps/`{python} CheckpointDebug.n_nodes_str`). If the checkpoint is sharded evenly, each node writes about `{python} CheckpointDebug.per_node_shard_gb_str`, so the write still lands near `{python} CheckpointDebug.per_node_write_min_str`. The observed `{python} CheckpointDebug.observed_write_min_str` is therefore close to the bandwidth floor, not something more simultaneous NFS writers can solve.
+The Distribution Layer reveals the shared-storage bottleneck. With `{python} CheckpointDebug.n_nodes_str` competing for 10 Gbps, each node effectively receives only `{python} CheckpointDebug.per_node_mbs_str`/s (10 Gbps/`{python} CheckpointDebug.n_nodes_str`). If the checkpoint is sharded evenly, each node writes about `{python} CheckpointDebug.per_node_shard_gb_str`, so the write still lands near `{python} CheckpointDebug.per_node_write_min_str`. The observed `{python} CheckpointDebug.observed_write_min_str` is therefore close to the bandwidth floor, not something more simultaneous NFS writers can solve.
 
 **Governance Layer Analysis (Control Plane)**
 
@@ -2337,12 +2344,12 @@ At the top layer, organizational constraints are considered:
 
 Understanding all three layers enables a targeted solution:
 
-1. **infrastructure layer**\index{Infrastructure Layer}: Install local Non-Volatile Memory Express (NVMe) staging drives (`{python} CheckpointDebug.nvme_bw_gbs_str` GB/s per node)
+1. **infrastructure layer**\index{Infrastructure Layer}: Install local Non-Volatile Memory Express (NVMe) staging drives (`{python} CheckpointDebug.nvme_bw_gbs_str`/s per node)
 2. **Distribution Layer**\index{Distribution Layer}: Implement asynchronous checkpointing:
-   - Phase 1: GPU $\rightarrow$ CPU memory copy (fast, `{python} CheckpointDebug.pcie_gbs_str` GB/s PCIe)
-   - Phase 2: CPU $\rightarrow$ local NVMe (`{python} CheckpointDebug.nvme_bw_gbs_str` GB/s, training resumes)
+   - Phase 1: GPU $\rightarrow$ CPU memory copy (fast, `{python} CheckpointDebug.pcie_gbs_str`/s PCIe)
+   - Phase 2: CPU $\rightarrow$ local NVMe (`{python} CheckpointDebug.nvme_bw_gbs_str`/s, training resumes)
    - Phase 3: Background NVMe $\rightarrow$ NFS copy (overlapped with training)
-3. **Validation**\index{Validation}: The critical-path data copy drops to approximately `{python} CheckpointDebug.gpu_cpu_parallel_s_str` if GPU-to-CPU staging proceeds in parallel across `{python} CheckpointDebug.n_nodes_str` (or `{python} CheckpointDebug.gpu_cpu_single_path_s_str` if serialized through one `{python} CheckpointDebug.pcie_gbs_str` GB/s path), reducing training impact from `{python} CheckpointDebug.overhead_pct_str` to under `{python} CheckpointDebug.residual_overhead_pct_str` once background NVMe and NFS copies are overlapped
+3. **Validation**\index{Validation}: The critical-path data copy drops to approximately `{python} CheckpointDebug.gpu_cpu_parallel_s_str` if GPU-to-CPU staging proceeds in parallel across `{python} CheckpointDebug.n_nodes_str` (or `{python} CheckpointDebug.gpu_cpu_single_path_s_str` if serialized through one `{python} CheckpointDebug.pcie_gbs_str`/s path), reducing training impact from `{python} CheckpointDebug.overhead_pct_str` to under `{python} CheckpointDebug.residual_overhead_pct_str` once background NVMe and NFS copies are overlapped
 
 This example illustrates the fleet stack principle: diagnosing distributed systems failures requires examining all layers. A purely algorithmic fix (Distribution Layer) would fail because the physical bandwidth was insufficient. A purely hardware fix (infrastructure layer) would be wasteful without understanding the coordination pattern. The solution required changes at multiple layers working in concert.
 
@@ -2535,11 +2542,14 @@ from mlsysim.fmt import fmt, check, fmt_int
 
 class RecoveryBudget:
     # ┌── 1. LOAD ──────────────────────────────────────────
+    from mlsysim.core.solver import TrainingMemoryModel
+    _mem = TrainingMemoryModel().solve(Models.Language.GPT3, Hardware.Cloud.A100, batch_size=1, precision="fp32")
     t_detect_s = 60
     t_restart_min = 3
-    t_load_s = 21
-    t_warmup_min = 2
     aggregate_read_gbs = 100
+    aggregate_ckpt_bw = aggregate_read_gbs * GB / second
+    t_load_s = (_mem.total_memory / aggregate_ckpt_bw).to(second).magnitude
+    t_warmup_min = 2
     shard_read_gbs = 5
     n_gpus_1k = Systems.Clusters.Training_1K.total_accelerators
     n_gpus_10k = Systems.Clusters.Training_10K.total_accelerators
@@ -2562,7 +2572,8 @@ class RecoveryBudget:
     check(t_total_min > 0, "Recovery time must be positive")
     check(t_total_min < 30, "Recovery time should be under 30 min")
     check(abs(daily_loss_min_1k - 3.0) < 0.5, f"1k daily loss ({daily_loss_min_1k:.1f} min)")
-    check(abs(daily_loss_min_10k - 31.0) < 1.0, f"10k daily loss ({daily_loss_min_10k:.1f} min)")
+    check(34 < t_load_s < 38, f"Aggregate checkpoint load should be ~36 s, got {t_load_s:.1f}")
+    check(abs(daily_loss_min_10k - 31.0) < 2.0, f"10k daily loss ({daily_loss_min_10k:.1f} min)")
 
     # ┌── 4. OUTPUT ────────────────────────────────────────
     t_total_str = fmt(t_total_min, precision=1, commas=False)
@@ -2613,12 +2624,12 @@ Consider our `{python} FaultToleranceRecoveryRecap.params_b_str`B parameter mode
 
 1. **$T_{\text{detect}}$**: `{python} RecoveryBudget.t_detect_s_str` (conservative heartbeat timeout with verification retries)
 2. **$T_{\text{restart}}$**: `{python} RecoveryBudget.t_restart_min_str` (scheduler queue time + container launch + Python import overhead + NCCL initialization)
-3. **$T_{\text{load}}$**: `{python} RecoveryBudget.t_load_s_str` (this is the aggregate-shared-storage read of the full `{python} FaultToleranceRecoveryRecap.gpt3_ckpt_tb_str` checkpoint at `{python} RecoveryBudget.aggregate_read_gbs_str` GB/s aggregate; with sharded local-NVMe reads at `{python} RecoveryBudget.shard_read_gbs_str` GB/s, each `{python} FaultToleranceRecoveryRecap.gpt3_shard_gb_str` shard loads in well under one second)
+3. **$T_{\text{load}}$**: `{python} RecoveryBudget.t_load_s_str` (this is the aggregate-shared-storage read of the full `{python} FaultToleranceRecoveryRecap.gpt3_ckpt_tb_str` checkpoint at `{python} RecoveryBudget.aggregate_read_gbs_str`/s aggregate; with sharded local-NVMe reads at `{python} RecoveryBudget.shard_read_gbs_str`/s, each `{python} FaultToleranceRecoveryRecap.gpt3_shard_gb_str` shard loads in well under one second)
 4. **$T_{\text{warmup}}$**: `{python} RecoveryBudget.t_warmup_min_str` (JIT kernel compilation, data pipeline buffer fill, TCP connection re-establishment)
 
 **Total**: $T_{\text{recovery}} = T_{\text{detect}} + T_{\text{restart}} + T_{\text{load}} + T_{\text{warmup}} \approx$ **`{python} RecoveryBudget.t_total_str`** minutes per failure event.
 
-**Impact at scale**\index{Recovery Time!scale impact}: With the GPU-only baseline from @tbl-cluster-mtbf-scaling, a `{python} RecoveryBudget.n_gpus_1k_str`-GPU cluster has MTBF of `{python} RecoveryBudget.mtbf_1k_hrs_str` and experiences about `{python} RecoveryBudget.failures_per_day_1k_str` failures per day, losing about `{python} RecoveryBudget.daily_loss_min_1k_str` daily, a modest `{python} RecoveryBudget.overhead_pct_1k_str` overhead. However, a `{python} RecoveryBudget.n_gpus_10k_str`-GPU cluster has GPU-only MTBF of `{python} RecoveryBudget.mtbf_10k_hrs_str` and experiences about `{python} RecoveryBudget.failures_per_day_10k_str` failures per day, losing about `{python} RecoveryBudget.daily_loss_min_10k_str` daily—a `{python} RecoveryBudget.overhead_pct_10k_str` overhead equivalent to wasting roughly `{python} RecoveryBudget.waste_gpu_hours_10k_str` GPU-hours every day (`{python} RecoveryBudget.daily_loss_min_10k_str` $\times$ `{python} RecoveryBudget.n_gpus_10k_str` ÷ 60). This is why recovery time optimization matters more as clusters grow.
+**Impact at scale**\index{Recovery Time!scale impact}: With the GPU-only baseline from @tbl-cluster-mtbf-scaling, a `{python} RecoveryBudget.n_gpus_1k_str`-GPU cluster has MTBF of `{python} RecoveryBudget.mtbf_1k_hrs_str` and experiences about `{python} RecoveryBudget.failures_per_day_1k_str` failures per day, losing about `{python} RecoveryBudget.daily_loss_min_1k_str` daily, a modest `{python} RecoveryBudget.overhead_pct_1k_str` overhead. However, a `{python} RecoveryBudget.n_gpus_10k_str`-GPU cluster has GPU-only MTBF of `{python} RecoveryBudget.mtbf_10k_hrs_str` and experiences about `{python} RecoveryBudget.failures_per_day_10k_str` failures per day, losing about `{python} RecoveryBudget.daily_loss_min_10k_str` daily—a `{python} RecoveryBudget.overhead_pct_10k_str` overhead equivalent to wasting roughly `{python} RecoveryBudget.waste_gpu_hours_10k_str`-hours every day (`{python} RecoveryBudget.daily_loss_min_10k_str` $\times$ `{python} RecoveryBudget.n_gpus_10k_str` ÷ 60). This is why recovery time optimization matters more as clusters grow.
 
 :::
 
@@ -2628,7 +2639,7 @@ The standard recovery procedure described earlier is a **cold restart**\index{Co
 
 A **warm restart**\index{Warm Restart} preserves the state of surviving workers. When a rank fails, surviving ranks detect the failure but do not exit. They enter a waiting state, preserving loaded model weights and optimizer states in GPU memory. The scheduler replaces only the failed node. The new node joins, loads its partition of the state from disk (or receives it via broadcast from a peer), and the communicator is rebuilt. Training resumes with minimal disruption.
 
-Warm restarts can reduce $T_{\text{load}}$ and $T_{\text{warmup}}$ to near-zero for 99.9 percent of the cluster, cutting total recovery time from minutes to seconds. For our 1,000-GPU example, a warm restart avoids reloading `{python} FaultToleranceRecoveryRecap.gpt3_ckpt_tb_str` from storage, saving the 21-second $T_{\text{load}}$ and 2-minute $T_{\text{warmup}}$ for all but the replacement node.
+Warm restarts can reduce $T_{\text{load}}$ and $T_{\text{warmup}}$ to near-zero for 99.9 percent of the cluster, cutting total recovery time from minutes to seconds. For our 1,000-GPU example, a warm restart avoids reloading `{python} FaultToleranceRecoveryRecap.gpt3_ckpt_tb_str` from storage, saving the `{python} RecoveryBudget.t_load_s_str`-second $T_{\text{load}}$ and 2-minute $T_{\text{warmup}}$ for all but the replacement node.
 
 The trade-off is software complexity. Warm restarts require the application to handle dynamic membership changes without leaking CUDA memory, corrupting shared state, or deadlocking during communicator reconstruction. Frameworks like TorchElastic and DeepSpeed provide this capability, but the failure modes during warm restart itself (a crash during communicator rebuild, for instance) must be handled by falling back to cold restart. Production systems implement warm restart as the fast path with cold restart as the safety net. @tbl-cold-vs-warm-restart contrasts the two strategies:
 

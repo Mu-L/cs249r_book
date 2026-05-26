@@ -875,7 +875,7 @@ class LifecycleCarbonEstimate:
     # Define Fleet and Region
     class DummyFleet:
         node = type('obj', (object,), {'accelerator': Hardware.Cloud.H100})
-        total_accelerators = 8
+        total_accelerators = n_gpus
         effective_pue = Infrastructure.Grids.US_Avg.pue
 
     # Amortization details
@@ -898,9 +898,14 @@ class LifecycleCarbonEstimate:
     gpu_tdp_kw = h_h100.tdp.m_as(kilowatt)
     hours_per_day = HOURS_PER_DAY
     total_facility_energy_kwh = res.total_energy_kwh.magnitude
+    facility_power_kw = n_gpus * gpu_tdp_kw * DummyFleet.effective_pue
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
-    check(1.0 < operational_tonnes < 600, f"Unexpected operational carbon: {operational_tonnes:.1f} t")
+    check(450 < operational_tonnes < 550, f"Unexpected operational carbon: {operational_tonnes:.1f} t")
+    check(
+        abs(total_facility_energy_kwh - facility_power_kw * hours_per_day * training_days) < 1.0,
+        "Facility energy must match power × hours × days",
+    )
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
     n_gpus_str = fmt(n_gpus, precision=0)
@@ -911,8 +916,8 @@ class LifecycleCarbonEstimate:
     pue_str = fmt(DummyFleet.effective_pue, precision=1, commas=False)
     grid_ci_str = fmt(baseline_grid.carbon_intensity_g_kwh, precision=0, commas=False)
     it_power_kw_str = fmt(n_gpus * h_h100.tdp.m_as("kW"), precision=1)
-    facility_power_kw_str = fmt(n_gpus * h_h100.tdp.m_as("kW") * DummyFleet.effective_pue, precision=1)
-    facility_energy_kwh_str = fmt_int(total_facility_energy_kwh, commas=True)
+    facility_power_kw_str = fmt(facility_power_kw, precision=1)
+    facility_energy_kwh_str = fmt_int(round(total_facility_energy_kwh), commas=True)
     amortization_months_str = fmt(amortization_months, precision=0, commas=False)
     amortization_window_months_str = fmt(amortization_window_months, precision=0, commas=False)
     lifecycle_years_str = fmt(lifecycle_years, precision=0, commas=False)
@@ -1484,8 +1489,8 @@ class TrainingEmissions:
     hours_per_day = HOURS_PER_DAY
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    gpu_energy_wh = n_gpus * gpu_power_w * training_hours
-    gpu_energy_kwh = (gpu_energy_wh * watt * hour).m_as(ureg.kilowatt_hour)
+    gpu_energy = n_gpus * gpu_power_w * watt * training_hours * hour
+    gpu_energy_kwh = gpu_energy.to(ureg.kilowatt_hour).magnitude
     facility_energy_kwh = gpu_energy_kwh * pue
     # g CO2 → kg, then kg → metric tons. mlsysim does not export mass pint units yet.
     emissions_kg = facility_energy_kwh * grid_ci_g_per_kwh / THOUSAND
@@ -1499,6 +1504,7 @@ class TrainingEmissions:
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     check(gpu_power_w == 400, f"Expected 400 W for A100, got {gpu_power_w}")
+    check(abs(facility_energy_kwh - gpu_energy_kwh * pue) < 0.05, "Facility energy must equal GPU energy × PUE")
     check(100 < embodied_training_kg < 102, f"Unexpected embodied training kg: {embodied_training_kg:.1f}")
 
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
@@ -1506,10 +1512,10 @@ class TrainingEmissions:
     training_days_str = fmt(training_days, precision=0, commas=False)
     hours_per_day_str = fmt(hours_per_day, precision=0, commas=False)
     n_gpus_str = fmt(n_gpus, precision=0, commas=False)
-    pue_str = fmt(pue, precision=1, commas=False)
+    pue_str = fmt(pue, precision=2, commas=False)
     grid_ci_g_per_kwh_str = fmt(grid_ci_g_per_kwh, precision=0, commas=False)
     quebec_ci_str = fmt(quebec_ci, precision=0, commas=False)
-    gpu_energy_wh_str = fmt(gpu_energy_wh, precision=0)
+    gpu_energy_wh_str = fmt(gpu_energy.to(ureg.watt_hour).magnitude, precision=0)
     gpu_energy_kwh_str = fmt(gpu_energy_kwh, precision=1)
     facility_energy_kwh_str = fmt(facility_energy_kwh, precision=1)
     emissions_kg_str = fmt(emissions_kg, precision=1)

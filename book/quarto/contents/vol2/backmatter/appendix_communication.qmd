@@ -106,14 +106,14 @@ The model decomposes every transfer into exactly two costs: a per-message tax ($
 
 @tbl-alpha-beta-params lists the $\alpha$ and $\beta$ values for interconnects commonly found in ML training clusters. These numbers are the starting point for every communication cost estimate in this appendix.
 
-| **Interconnect**              | **$\alpha$ (Latency)**                              | **$\beta$ (Bandwidth)**                           | **Typical Role**                 |
-|:------------------------------|:----------------------------------------------------|:--------------------------------------------------|:---------------------------------|
-| **NVLink 4.0 (H100)**         | `{python} CommAlphaBeta.nvlink_lat_str` ns          | `{python} CommAlphaBeta.nvlink_bw_str` GB/s       | Intra-node GPU-to-GPU            |
-| **PCIe Gen5**                 | `{python} CommAlphaBeta.pcie_lat_str` ns            | `{python} CommAlphaBeta.pcie_bw_str` GB/s         | CPU-GPU, NIC-GPU                 |
-| **InfiniBand NDR (400 Gbps)** | `{python} CommAlphaBeta.ib_ndr_alpha_us_str` $\mu$s | `{python} CommAlphaBeta.ib_ndr_beta_gbs_str` GB/s | Inter-node (high-end clusters)   |
-| **InfiniBand HDR (200 Gbps)** | `{python} CommAlphaBeta.ib_hdr_alpha_us_str` $\mu$s | `{python} CommAlphaBeta.ib_hdr_beta_gbs_str` GB/s | Inter-node (previous generation) |
-| **RoCE v2 (100 GbE)**         | `{python} CommAlphaBeta.roce_alpha_us_str` $\mu$s   | `{python} CommAlphaBeta.roce_beta_gbs_str` GB/s   | Inter-node (Ethernet clusters)   |
-| **TCP/IP (Ethernet)**         | `{python} CommAlphaBeta.tcp_alpha_us_str` $\mu$s    | Varies                                            | Control plane, non-RDMA fallback |
+| **Interconnect**              | **$\alpha$ (Latency)**                              | **$\beta$ (Bandwidth)**                        | **Typical Role**                 |
+|:------------------------------|:----------------------------------------------------|:-----------------------------------------------|:---------------------------------|
+| **NVLink 4.0 (H100)**         | `{python} CommAlphaBeta.nvlink_lat_str` ns          | `{python} CommAlphaBeta.nvlink_bw_str`/s       | Intra-node GPU-to-GPU            |
+| **PCIe Gen5**                 | `{python} CommAlphaBeta.pcie_lat_str` ns            | `{python} CommAlphaBeta.pcie_bw_str`/s         | CPU-GPU, NIC-GPU                 |
+| **InfiniBand NDR (400 Gbps)** | `{python} CommAlphaBeta.ib_ndr_alpha_us_str` $\mu$s | `{python} CommAlphaBeta.ib_ndr_beta_gbs_str`/s | Inter-node (high-end clusters)   |
+| **InfiniBand HDR (200 Gbps)** | `{python} CommAlphaBeta.ib_hdr_alpha_us_str` $\mu$s | `{python} CommAlphaBeta.ib_hdr_beta_gbs_str`/s | Inter-node (previous generation) |
+| **RoCE v2 (100 GbE)**         | `{python} CommAlphaBeta.roce_alpha_us_str` $\mu$s   | `{python} CommAlphaBeta.roce_beta_gbs_str`/s   | Inter-node (Ethernet clusters)   |
+| **TCP/IP (Ethernet)**         | `{python} CommAlphaBeta.tcp_alpha_us_str` $\mu$s    | Varies                                         | Control plane, non-RDMA fallback |
 
 : **$\alpha$-$\beta$ Parameters by Interconnect**: Startup latency and sustained bandwidth for interconnects used in ML clusters. NVLink and PCIe operate within a node; InfiniBand and RoCE operate between nodes. TCP latency is dominated by kernel software stack overhead. {#tbl-alpha-beta-params}
 
@@ -129,7 +129,7 @@ Below $n^*$, communication is **latency-dominated**: sending more small messages
 
 ::: {#nbk-appendix-communication-crossover-infiniband-ndr .callout-notebook title="Worked example: Crossover on InfiniBand NDR"}
 
-**Setup**: InfiniBand NDR has $\alpha$ = `{python} CommAlphaBeta.ib_ndr_alpha_us_str` $\mu$s and $\beta$ = `{python} CommAlphaBeta.ib_ndr_beta_gbs_str` GB/s.
+**Setup**: InfiniBand NDR has $\alpha$ = `{python} CommAlphaBeta.ib_ndr_alpha_us_str` $\mu$s and $\beta$ = `{python} CommAlphaBeta.ib_ndr_beta_gbs_str`/s.
 
 **Question**: At what message size does the bandwidth term equal the latency term?
 
@@ -193,35 +193,37 @@ from mlsysim.core.constants import *
 # │ Context: ## Collective Operation Complexity — ring vs. tree callout
 # │ Goal: Ring vs. tree AllReduce worked example for 1 GB gradient.
 # │ Exports: CommCollectives.*_str
-from mlsysim.fmt import fmt_int, fmt, check
+from mlsysim.fmt import fmt_int, fmt, check, fmt_qty
 
-from mlsysim.core.constants import GB, byte, ureg
+from mlsysim.core.constants import GB, ureg
 from mlsysim.physics import calc_ring_allreduce_time, calc_tree_allreduce_time
 
 class CommCollectives:
     from mlsysim import Hardware
     ib_ndr = Systems.Fabrics.InfiniBand_NDR
     ring_n_gpus = 256
-    ring_msg_bytes = 1 * GB
+    ring_msg = 1 * GB
     ib_ndr_alpha_us = Systems.Fabrics.InfiniBand_NDR.latency_us
     ib_ndr_beta_gbs = int(ib_ndr.bandwidth.m_as(GB/second))
 
     ring_time_ms = calc_ring_allreduce_time(
-        ring_msg_bytes, ring_n_gpus, ib_ndr.bandwidth, ib_ndr_alpha_us * ureg.microsecond
+        ring_msg, ring_n_gpus, ib_ndr.bandwidth, ib_ndr_alpha_us * ureg.microsecond
     ).m_as("ms")
     tree_time_ms = calc_tree_allreduce_time(
-        ring_msg_bytes, ring_n_gpus, ib_ndr.bandwidth, ib_ndr_alpha_us * ureg.microsecond
+        ring_msg, ring_n_gpus, ib_ndr.bandwidth, ib_ndr_alpha_us * ureg.microsecond
     ).m_as("ms")
 
     check(ring_time_ms < tree_time_ms, "Ring should be faster than tree for 1 GB message")
+    min_transfer_ms = (ring_msg / ib_ndr.bandwidth).to("ms").magnitude
+    check(ring_time_ms >= min_transfer_ms, "Ring time must cover link transfer floor")
 
     # ┌── 4. OUTPUT (Formatting) ───────────────────────────
     ring_n_str = fmt(ring_n_gpus, precision=0, commas=False)
     ib_ndr_alpha_us_str = fmt_int(ib_ndr_alpha_us, commas=False)
     ib_ndr_beta_gbs_str = fmt_int(ib_ndr_beta_gbs, commas=False)
-    ring_msg_gb_str = fmt((ring_msg_bytes * byte).m_as(GB), precision=0, commas=False)
+    ring_msg_gb_str = fmt_qty(ring_msg, GB, precision=0, commas=False)
     ring_msg_params_m_str = fmt_int(
-        int((ring_msg_bytes * byte).m_as(GB) * BILLION / 2 / MILLION),
+        int(ring_msg.m_as(GB) * BILLION / 2 / MILLION),
         commas=False,
     )
     ring_time_ms_str = fmt(ring_time_ms, precision=1, commas=False)
@@ -230,7 +232,7 @@ class CommCollectives:
 
 ::: {#nbk-appendix-communication-ring-vs-tree-allreduce .callout-notebook title="Worked example: Ring vs. tree AllReduce"}
 
-**Setup**: `{python} CommCollectives.ring_n_str` H100 GPUs connected via InfiniBand NDR ($\alpha$ = `{python} CommCollectives.ib_ndr_alpha_us_str` $\mu$s, $\beta$ = `{python} CommCollectives.ib_ndr_beta_gbs_str` GB/s). The gradient tensor is `{python} CommCollectives.ring_msg_gb_str` (a `{python} CommCollectives.ring_msg_params_m_str`M-parameter model in FP16).
+**Setup**: `{python} CommCollectives.ring_n_str` H100 GPUs connected via InfiniBand NDR ($\alpha$ = `{python} CommCollectives.ib_ndr_alpha_us_str` $\mu$s, $\beta$ = `{python} CommCollectives.ib_ndr_beta_gbs_str`/s). The gradient tensor is `{python} CommCollectives.ring_msg_gb_str` (a `{python} CommCollectives.ring_msg_params_m_str`M-parameter model in FP16).
 
 **Question**: *How* long does AllReduce take with ring vs. tree?
 
@@ -242,7 +244,7 @@ $T_{\text{ring}} \approx$ **`{python} CommCollectives.ring_time_ms_str`**
 
 $T_{\text{tree}} \approx$ **`{python} CommCollectives.tree_time_ms_str`**
 
-**Interpretation**: For this `{python} CommCollectives.ring_msg_gb_str` message, ring AllReduce takes `{python} CommCollectives.ring_time_ms_str` while tree takes `{python} CommCollectives.tree_time_ms_str` ms---the ring is significantly faster because it distributes the bandwidth load across all links. The tree's logarithmic latency advantage is negligible compared to its bandwidth penalty for large messages.
+**Interpretation**: For this `{python} CommCollectives.ring_msg_gb_str` message, ring AllReduce takes `{python} CommCollectives.ring_time_ms_str` while tree takes `{python} CommCollectives.tree_time_ms_str`---the ring is significantly faster because it distributes the bandwidth load across all links. The tree's logarithmic latency advantage is negligible compared to its bandwidth penalty for large messages.
 
 **Systems insight**: For the large gradient tensors typical of data-parallel training, ring (or ring-based) algorithms dominate. Tree algorithms are useful only for small messages or when latency---not bandwidth---is the bottleneck.
 
@@ -364,9 +366,9 @@ class CommAlgorithmSelection:
     nvlink_to_ndr_ratio_str = fmt(nvlink_to_ndr_ratio, precision=0, commas=False)
 ```
 
-Modern clusters have a two-level topology: GPUs within a node are connected by NVLink (`{python} CommAlgorithmSelection.nvlink_bw_str` GB/s), while nodes are connected by InfiniBand (`{python} CommAlgorithmSelection.ib_ndr_beta_gbs_str` GB/s). Hierarchical AllReduce exploits this asymmetry in three phases:
+Modern clusters have a two-level topology: GPUs within a node are connected by NVLink (`{python} CommAlgorithmSelection.nvlink_bw_str`/s), while nodes are connected by InfiniBand (`{python} CommAlgorithmSelection.ib_ndr_beta_gbs_str`/s). Hierarchical AllReduce exploits this asymmetry in three phases:
 
-1. **Intra-node reduce** (NVLink): Each node reduces its `{python} CommAlgorithmSelection.gpus_per_host_str` local GPUs to a single result using NVLink's `{python} CommAlgorithmSelection.nvlink_bw_str` GB/s bandwidth. This is fast because NVLink is `{python} CommAlgorithmSelection.nvlink_to_ndr_ratio_str`$\times$ faster than InfiniBand NDR.
+1. **Intra-node reduce** (NVLink): Each node reduces its `{python} CommAlgorithmSelection.gpus_per_host_str` local GPUs to a single result using NVLink's `{python} CommAlgorithmSelection.nvlink_bw_str`/s bandwidth. This is fast because NVLink is `{python} CommAlgorithmSelection.nvlink_to_ndr_ratio_str`$\times$ faster than InfiniBand NDR.
 2. **Inter-node AllReduce** (InfiniBand): The per-node results are all-reduced across nodes. Only one representative per `{python} CommAlgorithmSelection.gpus_per_host_str` local GPUs participates, so the inter-node ring has one-eighth as many participants as a flat GPU-level ring.
 3. **Intra-node broadcast** (NVLink): Each node broadcasts the global result to its `{python} CommAlgorithmSelection.gpus_per_host_str` local GPUs.
 
@@ -488,25 +490,27 @@ from mlsysim.core.constants import *
 # │ Context: ## Compression Economics — break-even callout and table
 # │ Goal: Top-k compression worked example and break-even thresholds.
 # │ Exports: CommCompression.*_str
-from mlsysim.fmt import fmt_int, fmt, check
+from mlsysim.fmt import fmt_int, fmt, check, fmt_qty
 
-from mlsysim.core.constants import GB, byte, ureg
+from mlsysim.core.constants import GB, ureg
 from mlsysim.physics import calc_ring_allreduce_time
 
 class CommCompression:
     from mlsysim import Hardware
     ib_ndr = Systems.Fabrics.InfiniBand_NDR
     ring_n_gpus = 256
-    ring_msg_bytes = 1 * GB
+    ring_msg = 1 * GB
     compress_ratio = 64
     compress_overhead_ms = 2.0
 
     ring_time_ms = calc_ring_allreduce_time(
-        ring_msg_bytes, ring_n_gpus, ib_ndr.bandwidth, Systems.Fabrics.InfiniBand_NDR.latency_us * ureg.microsecond
+        ring_msg, ring_n_gpus, ib_ndr.bandwidth, Systems.Fabrics.InfiniBand_NDR.latency_us * ureg.microsecond
     ).m_as("ms")
     compressed_comm_ms = ring_time_ms / compress_ratio
     compressed_total_ms = compressed_comm_ms + compress_overhead_ms
     compress_speedup = ring_time_ms / compressed_total_ms
+    min_transfer_ms = (ring_msg / ib_ndr.bandwidth).to("ms").magnitude
+    check(ring_time_ms >= min_transfer_ms, "Uncompressed time must cover link transfer floor")
 
     @staticmethod
     def breakeven_ms(comm_ms, compression_ratio):
@@ -514,7 +518,7 @@ class CommCompression:
 
     # ┌── 4. OUTPUT (Formatting) ───────────────────────────
     ring_n_str = fmt(ring_n_gpus, precision=0, commas=False)
-    ring_msg_gb_str = fmt((ring_msg_bytes * byte).m_as(GB), precision=0, commas=False)
+    ring_msg_gb_str = fmt_qty(ring_msg, GB, precision=0, commas=False)
     compress_ratio_str = fmt_int(compress_ratio, commas=False)
     compress_overhead_ms_str = fmt(compress_overhead_ms, precision=0, commas=False)
     uncompressed_ms_str = fmt(ring_time_ms, precision=1, commas=False)
