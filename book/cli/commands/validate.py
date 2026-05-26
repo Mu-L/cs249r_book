@@ -400,6 +400,12 @@ class ValidateCommand:
                   note="LEGO variables defined but never referenced"),
             Scope("lego-prose-literals", "_run_lego_prose_literals",
                   note="hardcoded numbers in callout walkthroughs that share {python} refs"),
+            Scope("lego-prose-units", "_run_lego_prose_units",
+                  note="unit/currency tokens after {python} *_str refs"),
+            Scope("lego-load-pint", "_run_lego_load_pint",
+                  note="physical *_value assignments must use ureg/registry"),
+            Scope("lego-equations", "_run_lego_equations",
+                  note="A/B=C prose lines must match computed values"),
         ],
         "tables": [
             Scope("grid-tables", "_run_grid_tables",
@@ -8020,6 +8026,75 @@ class ValidateCommand:
         return ValidationRunResult(
             name="lego-prose-literals",
             description=f"LEGO walkthrough prose literal scan ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_lego_prose_units(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-prose-units: units after {python} *_str in prose."""
+        from cli.commands._registry_checks import check_lego_prose_units, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_prose_units(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-prose-units",
+            description=f"LEGO prose unit-after-_str scan ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_lego_load_pint(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-load-pint: physical *_value must use ureg/registry."""
+        from cli.commands._registry_checks import check_lego_load_pint, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_load_pint(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-load-pint",
+            description=f"LEGO pint LOAD lint ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_lego_equations(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-equations: numeric A/B=C coherence in prose."""
+        from cli.commands._registry_checks import check_lego_equations, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_equations(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-equations",
+            description=f"LEGO equation coherence ({qmd_count} files)",
             files_checked=qmd_count,
             issues=issues,
             elapsed_ms=int((time.time() - t0) * 1000),

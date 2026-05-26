@@ -94,6 +94,73 @@ def check_lego_prose_literals(root: Path, paths: list[Path] | None = None) -> li
     return issues
 
 
+def _load_check_module(name: str, root: Path):
+    return _load_script_module(name, root / "book" / "tools" / "audit" / f"{name}.py")
+
+
+def check_lego_prose_units(root: Path, paths: list[Path] | None = None) -> list[RegistryIssue]:
+    """Flag unit/currency tokens immediately after {python} *_str refs."""
+    mod = _load_check_module("book_check_lego_prose_units", root)
+    if paths is None:
+        paths = sorted((root / "book" / "quarto" / "contents").rglob("*.qmd"))
+    issues: list[RegistryIssue] = []
+    for path in paths:
+        p = path if path.is_absolute() else root / path
+        if not p.exists() or p.suffix != ".qmd":
+            continue
+        for lineno, snippet, labels in mod.check_file(p):
+            uniq = ", ".join(dict.fromkeys(labels))
+            issues.append(RegistryIssue(
+                code="lego_prose_unit",
+                message=f"L{lineno}: {uniq} — {snippet}",
+                file=str(p.relative_to(root)),
+                line=lineno,
+            ))
+    return issues
+
+
+def check_lego_load_pint(root: Path, paths: list[Path] | None = None) -> list[RegistryIssue]:
+    """Static lint: physical *_value must use ureg/registry."""
+    mod = _load_check_module("book_check_lego_load_pint", root)
+    if paths is None:
+        paths = sorted((root / "book" / "quarto" / "contents").rglob("*.qmd"))
+    issues: list[RegistryIssue] = []
+    for path in paths:
+        p = path if path.is_absolute() else root / path
+        if not p.exists() or p.suffix != ".qmd":
+            continue
+        for lineno, snippet, labels in mod.check_file(p):
+            uniq = ", ".join(dict.fromkeys(labels))
+            issues.append(RegistryIssue(
+                code="lego_load_pint",
+                message=f"L{lineno}: {uniq} — {snippet}",
+                file=str(p.relative_to(root)),
+                line=lineno,
+            ))
+    return issues
+
+
+def check_lego_equations(root: Path, paths: list[Path] | None = None) -> list[RegistryIssue]:
+    """Verify A/B=C prose lines numerically."""
+    mod = _load_check_module("book_check_lego_equations", root)
+    if paths is None:
+        paths = sorted((root / "book" / "quarto" / "contents").rglob("*.qmd"))
+    issues: list[RegistryIssue] = []
+    for path in paths:
+        p = path if path.is_absolute() else root / path
+        if not p.exists() or p.suffix != ".qmd":
+            continue
+        for lineno, snippet, labels in mod.check_file(p):
+            uniq = ", ".join(dict.fromkeys(labels))
+            issues.append(RegistryIssue(
+                code="lego_equation",
+                message=f"L{lineno}: {uniq} — {snippet}",
+                file=str(p.relative_to(root)),
+                line=lineno,
+            ))
+    return issues
+
+
 def run_registry_pytest(root: Path) -> list[RegistryIssue]:
     """Run mlsysim registry gate tests."""
     tests = [
