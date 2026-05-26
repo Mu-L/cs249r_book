@@ -174,16 +174,18 @@ class DataGravity:
 
     # ┌── 4. OUTPUT (Formatting) ───────────────────────────────────────────
     transfer_seconds_str = fmt(transfer_seconds, precision=0, commas=True)
-    transfer_hours_str = fmt_int(transfer_hours, commas=False)
-    transfer_days_10g_str = fmt(transfer_days_10g, precision=1, commas=False)
-    transfer_time_10g_math = fmt_math(f"T = D_{{\\text{{vol}}}}/\\text{{BW}} \\approx {transfer_days_10g_str} \\text{{ days}}")
-    transfer_cost_str = fmt(transfer_cost, precision=0, commas=True)
-    tpu_hours_str = fmt(equiv_tpu_hours, precision=0, commas=True)
-    network_gbs_str = fmt(network_bw.m_as(GB/second), precision=1, commas=False)
-    dataset_gb_str = fmt(dataset_gb, precision=0)
-    network_gbps_str = fmt(network_bw.m_as(Gbps), precision=0, commas=False)
-    egress_cost_per_gb_str = fmt(egress_cost_gb, precision=2, commas=False)
-    tpu_cost_per_hour_str = fmt(tpu_hourly_cost, precision=0, commas=False)
+    transfer_hours_str = fmt_int(round(transfer_hours), commas=False, suffix=" h")
+    transfer_days_10g_str = fmt(transfer_days_10g, precision=1, commas=False, suffix=" days")
+    transfer_time_10g_math = fmt_math(
+        f"T = D_{{\\text{{vol}}}}/\\text{{BW}} \\approx {transfer_days_10g:.1f} \\text{{ days}}"
+    )
+    transfer_cost_str = fmt(transfer_cost, precision=0, commas=True, prefix="USD ")
+    tpu_hours_str = fmt(equiv_tpu_hours, precision=0, commas=True, suffix=" TPUv4-hours")
+    network_gbs_str = fmt(network_bw.m_as(GB/second), precision=1, commas=False, suffix=" GB/s")
+    dataset_gb_str = fmt(dataset_gb, precision=0, suffix=" GB")
+    network_gbps_str = fmt(network_bw.m_as(Gbps), precision=0, commas=False, suffix=" Gbps")
+    egress_cost_per_gb_str = fmt(egress_cost_gb, precision=2, commas=False, prefix="USD ", suffix="/GB")
+    tpu_cost_per_hour_str = fmt(tpu_hourly_cost, precision=0, commas=False, prefix="USD ", suffix="/hour")
 ```
 
 **Data gravity**\index{Data Gravity!physics of} is the cost of movement. It is a function of volume $(D_{\text{vol}})$ and network bandwidth $(\text{BW})$. The time to move a petabyte dataset across a 10 Gbps link is fixed by physics (`{python} DataGravity.transfer_time_10g_math`); even a 100 Gbps dedicated link leaves transfer time and egress cost large enough to shape the architecture. This gravity dictates architecture: because moving 1 PB to the compute is slow and expensive, the compute often must move to the data. This explains the rise of "Data Lakehouse" architectures[^fn-lakehouse-gravity]\index{Data Lakehouse!architecture} [@zaharia2021lakehouse] where processing engines (Spark, Presto) run directly on storage nodes. In contrast, **Data Mesh**\index{Data Mesh!decentralized ownership} [@dehghani2022datamesh] proposes decentralizing ownership to manage this scale organizationally, treating data as a product owned by domain teams.
@@ -263,7 +265,7 @@ class FeedingProblem:
 
 Data gravity establishes the cost of moving the entire mass; **The Feeding Problem**\index{Feeding Problem!data pipeline throughput} establishes the cost of delivering it. In the Hennessy & Patterson tradition, we analyze this as a **Flow Rate**\index{Flow Rate!data pipeline} problem: the struggle to saturate a high-throughput "Machine" from a low-bandwidth "Data" source.
 
-According to the iron law, the system is only as fast as its slowest term. If a modern accelerator can process `{python} FeedingProblem.img_per_sec_str` samples per second, but the storage pipeline delivers only `{python} FeedingProblem.disk_bw_mbs_str` MB/s, the expensive silicon sits idle. We quantify this as **The Feeding Tax**\index{Feeding Tax!I/O wait cost}: the wall-clock time lost to I/O wait, which directly reduces the system efficiency $(\eta_{\text{hw}})$\index{System Efficiency!feeding tax} term. For a standard cloud volume, the feeding tax can exceed **`{python} FeedingProblem.feeding_tax_pct_str`**, meaning the GPU spends the majority of its time waiting for bits. This tax transforms the Data Pipeline from a simple storage concern into the primary regulator of the system's Duty Cycle. To saturate a 300 TFLOP/s processor, the pipeline must often sustain **`{python} FeedingProblem.req_bw_gbs_str` GB/s** transfer rates—a requirement that forces the shift from traditional file systems to the specialized storage architectures we examine in @sec-data-engineering-ml-storage-systems-architecture-options-67fa.
+According to the iron law, the system is only as fast as its slowest term. If a modern accelerator can process `{python} FeedingProblem.img_per_sec_str` samples per second, but the storage pipeline delivers only `{python} FeedingProblem.disk_bw_mbs_str`/s, the expensive silicon sits idle. We quantify this as **The Feeding Tax**\index{Feeding Tax!I/O wait cost}: the wall-clock time lost to I/O wait, which directly reduces the system efficiency $(\eta_{\text{hw}})$\index{System Efficiency!feeding tax} term. For a standard cloud volume, the feeding tax can exceed **`{python} FeedingProblem.feeding_tax_pct_str`**, meaning the GPU spends the majority of its time waiting for bits. This tax transforms the Data Pipeline from a simple storage concern into the primary regulator of the system's Duty Cycle. To saturate a 300 TFLOP/s processor, the pipeline must often sustain **`{python} FeedingProblem.req_bw_gbs_str`/s** transfer rates—a requirement that forces the shift from traditional file systems to the specialized storage architectures we examine in @sec-data-engineering-ml-storage-systems-architecture-options-67fa.
 
 These physical properties also carry an energy cost: as data moves farther from the processor, movement increasingly dominates the budget.
 
@@ -341,13 +343,13 @@ Effective data engineering maximizes the Data Selection Gain defined in @eq-data
 
 **Physics**:
 
-1.  **Network bandwidth**: A dedicated `{python} DataGravity.network_gbps_str` Gbps line = `{python} DataGravity.network_gbs_str` GB/s.
-2.  **Transfer time**: `{python} DataGravity.dataset_gb_str` / `{python} DataGravity.network_gbs_str` GB/s = `{python} DataGravity.transfer_seconds_str` ≈ **`{python} DataGravity.transfer_hours_str`**.
-3.  **Cost**: At USD `{python} DataGravity.egress_cost_per_gb_str`/GB egress, moving 1 PB costs **USD `{python} DataGravity.transfer_cost_str`**. (Baseline: AWS data transfer out pricing, 2024.)
+1.  **Network bandwidth**: A dedicated **`{python} DataGravity.network_gbps_str`** line = **`{python} DataGravity.network_gbs_str`**.
+2.  **Transfer time**: **`{python} DataGravity.dataset_gb_str`** / **`{python} DataGravity.network_gbs_str`** = **`{python} DataGravity.transfer_seconds_str`** ≈ **`{python} DataGravity.transfer_hours_str`**.
+3.  **Cost**: At **`{python} DataGravity.egress_cost_per_gb_str`** egress, moving 1 PB costs **`{python} DataGravity.transfer_cost_str`**. (Baseline: AWS data transfer out pricing, 2024.)
 
 **Systems insight**:
-If training takes < `{python} DataGravity.transfer_hours_str`, data transfer takes longer than training.
-If training costs < USD `{python} DataGravity.transfer_cost_str` (approximately `{python} DataGravity.tpu_hours_str` TPUv4-hours), bandwidth costs more than compute.
+If training takes < **`{python} DataGravity.transfer_hours_str`**, data transfer takes longer than training.
+If training costs < **`{python} DataGravity.transfer_cost_str`** (approximately **`{python} DataGravity.tpu_hours_str`**), bandwidth costs more than compute.
 
 **Rule of Thumb**: For petabyte-scale data, **Code moves to Data**\index{Data Locality!code-to-data}. For gigabyte-scale data, **Data moves to Code**\index{Data Locality!data-to-code}.
 
@@ -897,7 +899,7 @@ class FalsePositiveTarget:
 
 **Operational Parameters**
 
-- **Duty Cycle**: Always-on (`{python} FalsePositiveTarget.hr_str` hours/day).
+- **Duty Cycle**: Always-on (`{python} FalsePositiveTarget.hr_str`/day).
 - **Window size**: One-second classification windows.
 - **Windows per Month**: `{python} FalsePositiveTarget.sec_str` $\times$ `{python} FalsePositiveTarget.min_str` $\times$ `{python} FalsePositiveTarget.hr_str` $\times$ `{python} FalsePositiveTarget.day_str` = `{python} FalsePositiveTarget.windows_per_month_str` windows.
 
@@ -2610,9 +2612,9 @@ class RealtimeCost:
 
 **Physics**:
 
-1.  **Throughput**: `{python} RealtimeCost.events_per_sec_str` events/sec $\times$ `{python} RealtimeCost.event_size_kb_str` KB/event = **`{python} RealtimeCost.throughput_str` GB/s**.
-2.  **Stream requirements**: To sustain `{python} RealtimeCost.throughput_str` GB/s with < 100 ms latency, the system needs ~50 primary cores plus ~50 redundant cores, or `{python} RealtimeCost.stream_cores_str` always-on cores total. Cost: `{python} RealtimeCost.stream_cores_str` cores $\times$ `{python} RealtimeCost.stream_hours_str` $\times$ USD `{python} RealtimeCost.stream_cost_per_hr_str`/hr = **USD `{python} RealtimeCost.stream_cost_str`/day**.
-3.  **Batch requirements**: Process `{python} RealtimeCost.hourly_tb_str` (`{python} RealtimeCost.batch_window_hr_str` data) in `{python} RealtimeCost.batch_window_min_str`. High throughput (sequential I/O) is efficient. The batch design needs `{python} RealtimeCost.batch_cores_str` cores for `{python} RealtimeCost.batch_window_min_str` mins/hour $\times$ `{python} RealtimeCost.hours_per_day_str` = `{python} RealtimeCost.batch_core_hours_str` core-hours/day. Cost: `{python} RealtimeCost.batch_core_hours_str` $\times$ USD `{python} RealtimeCost.stream_cost_per_hr_str` = **USD `{python} RealtimeCost.batch_cost_str`/day**.
+1.  **Throughput**: `{python} RealtimeCost.events_per_sec_str` events/sec $\times$ `{python} RealtimeCost.event_size_kb_str`/event = **`{python} RealtimeCost.throughput_str`/s**.
+2.  **Stream requirements**: To sustain `{python} RealtimeCost.throughput_str`/s with < 100 ms latency, the system needs ~50 primary cores plus ~50 redundant cores, or `{python} RealtimeCost.stream_cores_str` always-on cores total. Cost: `{python} RealtimeCost.stream_cores_str` cores $\times$ `{python} RealtimeCost.stream_hours_str` $\times$ USD `{python} RealtimeCost.stream_cost_per_hr_str`/hr = **USD `{python} RealtimeCost.stream_cost_str`/day**.
+3.  **Batch requirements**: Process `{python} RealtimeCost.hourly_tb_str` (`{python} RealtimeCost.batch_window_hr_str` data) in `{python} RealtimeCost.batch_window_min_str`. High throughput (sequential I/O) is efficient. The batch design needs `{python} RealtimeCost.batch_cores_str` cores for `{python} RealtimeCost.batch_window_min_str`/hour $\times$ `{python} RealtimeCost.hours_per_day_str` = `{python} RealtimeCost.batch_core_hours_str` core-hours/day. Cost: `{python} RealtimeCost.batch_core_hours_str` $\times$ USD `{python} RealtimeCost.stream_cost_per_hr_str` = **USD `{python} RealtimeCost.batch_cost_str`/day**.
 
 **Systems insight**: Real-time is **~`{python} RealtimeCost.cost_ratio_str`$\times$ more expensive** for the same data volume. This tax is justified only when the value of < 1 s latency exceeds the added cost.
 
@@ -3814,7 +3816,7 @@ class StorageLoading:
     nvme_bw_gbs_str = fmt(nvme_bw_gbs, precision=0, commas=False)
 ```
 
-The performance difference directly impacts iteration velocity. Training that loads data at `{python} StorageLoading.nvme_bw_gbs_str` GB/s completes dataset loading in `{python} StorageLoading.nvme_load_str`, compared to `{python} StorageLoading.obj_load_str` at typical object storage speeds. This `{python} StorageLoading.load_speedup_str`$\times$ difference determines whether teams can iterate multiple times daily or must wait hours between experiments.
+The performance difference directly impacts iteration velocity. Training that loads data at `{python} StorageLoading.nvme_bw_gbs_str`/s completes dataset loading in `{python} StorageLoading.nvme_load_str`, compared to `{python} StorageLoading.obj_load_str` at typical object storage speeds. This `{python} StorageLoading.load_speedup_str`$\times$ difference determines whether teams can iterate multiple times daily or must wait hours between experiments.
 
 To build engineering judgment, practitioners must internalize the orders of magnitude separating these tiers. @tbl-ml-latencies translates these disparities into human-scale analogies that build intuition for system design: if a CPU cycle were one second, fetching from local SSD would take two days, while a cross-country network request would span six years. Internalizing these ratios (three orders of magnitude between L1 cache and DRAM, another three between DRAM and SSD) explains why seemingly small architectural choices cascade into large performance differences.
 
@@ -3992,26 +3994,26 @@ Designing for high-throughput training starts by matching storage throughput to 
 *   **Hardware peak**: NVIDIA A100 = `{python} StorageBandwidth.a100_flops_t_str` (FP16 Tensor Core, dense operations).
 *   **Model cost**: ResNet-50 requires approximately four GFLOPs for the forward pass per image; including the backward pass, total is approximately `{python} StorageBandwidth.resnet_flops_g_str` GFLOPs per training step.
 *   **Maximum theoretical throughput**:
-    `{python} StorageBandwidth.a100_flops_t_str` $\times 10^{12}$ FLOP/s / `{python} StorageBandwidth.resnet_flops_g_str` $\times 10^{9}$ FLOPs/img = **`{python} StorageBandwidth.max_img_per_sec_str` images/sec**
+    `{python} StorageBandwidth.a100_flops_t_str` $\times 10^{12}$ FLOP/s / `{python} StorageBandwidth.resnet_flops_g_str` $\times 10^{9}$ FLOPs/img = **`{python} StorageBandwidth.max_img_per_sec_str`/sec**
 
 **The data term (bandwidth requirement)**
 
 *   **Image size**: `{python} StorageBandwidth.image_size_kb_str` (JPEG compressed).
 *   **Required bandwidth**:
-    `{python} StorageBandwidth.max_img_per_sec_str` img/sec $\times$ `{python} StorageBandwidth.image_size_kb_str` KB/img ≈ **`{python} StorageBandwidth.required_bw_gbs_str` GB/s**
+    `{python} StorageBandwidth.max_img_per_sec_str` img/sec $\times$ `{python} StorageBandwidth.image_size_kb_str`/img ≈ **`{python} StorageBandwidth.required_bw_gbs_str`/s**
 
 **Storage options**:
-To saturate a single A100, storage must deliver **`{python} StorageBandwidth.required_bw_gbs_str` GB/s**.
+To saturate a single A100, storage must deliver **`{python} StorageBandwidth.required_bw_gbs_str`/s**.
 
-*   **S3 Standard**: ~`{python} StorageBandwidth.s3_bw_mbs_str` MB/s per thread. The pipeline needs **`{python} StorageBandwidth.s3_workers_str` concurrent worker threads**.
-*   **SATA SSD**: ~`{python} StorageBandwidth.sata_bw_mbs_str` MB/s sequential. Totally insufficient (bottleneck).
-*   **NVMe SSD**\index{NVMe SSD!data pipeline}: approximately `{python} StorageBandwidth.nvme_bw_low_gbs_str`–`{python} StorageBandwidth.nvme_bw_high_gbs_str` GB/s. **Required.**
+*   **S3 Standard**: ~`{python} StorageBandwidth.s3_bw_mbs_str`/s per thread. The pipeline needs **`{python} StorageBandwidth.s3_workers_str` concurrent worker threads**.
+*   **SATA SSD**: ~`{python} StorageBandwidth.sata_bw_mbs_str`/s sequential. Totally insufficient (bottleneck).
+*   **NVMe SSD**\index{NVMe SSD!data pipeline}: approximately `{python} StorageBandwidth.nvme_bw_low_gbs_str`–`{python} StorageBandwidth.nvme_bw_high_gbs_str`/s. **Required.**
 
-**Systems insight**: With SATA SSDs, maximum throughput is capped at `{python} StorageBandwidth.sata_bw_mbs_str` MB/s / `{python} StorageBandwidth.image_size_kb_str` ≈ `{python} StorageBandwidth.sata_max_img_sec_str` img/s. The USD 15,000 GPU will run at **`{python} StorageBandwidth.sata_utilization_pct_str` utilization** (`{python} StorageBandwidth.sata_max_img_sec_str`/`{python} StorageBandwidth.max_img_per_sec_str`). Storage physics dictates training speed.
+**Systems insight**: With SATA SSDs, maximum throughput is capped at `{python} StorageBandwidth.sata_bw_mbs_str`/s / `{python} StorageBandwidth.image_size_kb_str` ≈ `{python} StorageBandwidth.sata_max_img_sec_str` img/s. The USD 15,000 GPU will run at **`{python} StorageBandwidth.sata_utilization_pct_str` utilization** (`{python} StorageBandwidth.sata_max_img_sec_str`/`{python} StorageBandwidth.max_img_per_sec_str`). Storage physics dictates training speed.
 
 :::
 
-The `{python} StorageBandwidth.sata_bw_mbs_str` MB/s figure represents SATA III sequential read throughput (the interface maximum is 600 MB/s). Real-world random read performance with small files can be significantly lower.
+The `{python} StorageBandwidth.sata_bw_mbs_str`/s figure represents SATA III sequential read throughput (the interface maximum is 600 MB/s). Real-world random read performance with small files can be significantly lower.
 
 This calculation illustrates the general principle governing data pipelines: training throughput is bounded by the lower of compute capacity and the data supply rate. The bottleneck relation in @eq-training-throughput captures this limit, with the data supply rate defined in @eq-data-supply.
 $$\text{Training Throughput} = \min(\text{Compute Capacity}, \text{Data Supply Rate})$$ {#eq-training-throughput}\index{Throughput!training, compute vs. data}
@@ -4225,7 +4227,7 @@ class LifecycleStorageRequirements:
     random_reads_per_sec_str = fmt(random_reads_per_sec, precision=0, commas=True)
 ```
 
-Training phase requirements shift dramatically toward throughput. Modern deep learning processes massive datasets repeatedly across dozens or hundreds of epochs, making I/O efficiency critical. Training ResNet-50 on ImageNet across eight GPUs at `{python} LifecycleStorageRequirements.train_img_per_sec_str` per second would require roughly `{python} LifecycleStorageRequirements.training_bw_gbs_str` GB/s for `{python} LifecycleStorageRequirements.image_size_kb_str` compressed images, and substantially more if decoded FP32 tensors are staged. Storage unable to sustain this throughput idles GPUs, directly increasing infrastructure costs. The feature computation placement trade-off (@sec-data-engineering-feature-computation-placement-a998) is especially acute here: precomputing features achieves `{python} LifecycleStorageRequirements.storage_reduction_str`-fold storage reduction (`{python} LifecycleStorageRequirements.image_size_kb_str` images to `{python} LifecycleStorageRequirements.feature_vector_kb_str` vectors) but introduces staleness risk when extraction logic changes.
+Training phase requirements shift dramatically toward throughput. Modern deep learning processes massive datasets repeatedly across dozens or hundreds of epochs, making I/O efficiency critical. Training ResNet-50 on ImageNet across eight GPUs at `{python} LifecycleStorageRequirements.train_img_per_sec_str` per second would require roughly `{python} LifecycleStorageRequirements.training_bw_gbs_str`/s for `{python} LifecycleStorageRequirements.image_size_kb_str` compressed images, and substantially more if decoded FP32 tensors are staged. Storage unable to sustain this throughput idles GPUs, directly increasing infrastructure costs. The feature computation placement trade-off (@sec-data-engineering-feature-computation-placement-a998) is especially acute here: precomputing features achieves `{python} LifecycleStorageRequirements.storage_reduction_str`-fold storage reduction (`{python} LifecycleStorageRequirements.image_size_kb_str` to `{python} LifecycleStorageRequirements.feature_vector_kb_str` vectors) but introduces staleness risk when extraction logic changes.
 
 Deployment and serving requirements prioritize low-latency random access.\index{Inference!real-time, storage requirements} A recommendation system serving `{python} LifecycleStorageRequirements.serving_rps_str` requests per second with 10 ms latency budgets and `{python} LifecycleStorageRequirements.feature_reads_per_request_str` feature reads per request requires `{python} LifecycleStorageRequirements.random_reads_per_sec_str` random reads per second, achievable only through in-memory databases like Redis\index{In-memory Database!feature serving}\index{In-memory Database!ML serving} or aggressive caching. Edge deployment\index{Edge Deployment!storage} adds further constraints: limited device storage, intermittent connectivity, and the need for model updates without disrupting inference, typically addressed through tiered storage\index{Tiered Storage!edge deployment} where models cache locally while reference data pulls from the cloud. Model versioning\index{Model Versioning!deployment patterns} must support smooth transitions between versions, rapid rollback, and serving multiple versions simultaneously for A/B testing, operational patterns examined in @sec-ml-operations.
 
@@ -4766,7 +4768,7 @@ class StorageLoadingRecap:
 * **Training-serving consistency is nonnegotiable**: Any transformation applied during training must be applied identically during serving. This is a mathematical requirement, not a best practice.
 * **Pipeline architecture choices have large cost implications**: Real-time streaming increases operational cost and complexity relative to batch, while ETL reduces storage footprint at the expense of higher engineering overhead during schema changes. Select ingestion patterns based on the value of latency, not the appeal of real-time.
 * **Labeling costs dominate and require substantial resource allocation**: Labeling can cost hundreds to more than a thousand times one optimized training run; in the reference calculation above, the ratio is `{python} DataEngineeringSummaryRecap.ratio_low_str`--`{python} DataEngineeringSummaryRecap.ratio_high_str`$\times$. Labeling is the serial bottleneck that parallelization cannot solve.
-* **Storage hierarchy determines iteration speed**: The `{python} StorageLoadingRecap.load_speedup_str`$\times$ throughput gap between local NVMe (`{python} StorageLoadingRecap.nvme_bw_gbs_str` GB/s) and cloud object storage (100 MB/s) determines whether iterations occur daily or weekly.
+* **Storage hierarchy determines iteration speed**: The `{python} StorageLoadingRecap.load_speedup_str`$\times$ throughput gap between local NVMe (`{python} StorageLoadingRecap.nvme_bw_gbs_str`/s) and cloud object storage (100 MB/s) determines whether iterations occur daily or weekly.
 * **Data debt compounds and requires continuous remediation**: Documentation, schema, quality, and freshness debt accumulate with compound interest. Allocate sustained engineering capacity to prevent remediation from overwhelming new feature work.
 * **The degradation equation becomes actionable through drift detection**: The divergence term $\mathcal{D}(P_t \lVert P_0)$ from the Introduction is exactly what PSI and KL divergence measure. Data engineering operationalizes this theoretical equation into monitoring infrastructure that catches silent model degradation before users are affected.
 
