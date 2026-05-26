@@ -15,7 +15,7 @@
 | vol1/ml_systems | PASS | ✓ 37/37 | ✅ | 41a232b431 |
 | vol1/ml_workflow | PASS | ✓ | ✅ | 5b7c5bd738 |
 | vol1/data_engineering | PASS | ✓ | ✅ | 43c9567823 |
-| vol1/model_serving | PASS 46/46 | ✓ 46/46 | ✅ | (pending SHA) |
+| vol1/model_serving | PASS 46/46 | ✓ 46/46 | ✅ | 2afd342f1f |
 | vol1/nn_computation | PASS 30/30 | ✓ 30/30 | ✅ | 3b6c7e60cf |
 | vol1/nn_architectures | PASS 34/34 | ✓ 34/34 | ✅ | d4553a442e |
 | vol1/frameworks | PASS 30/30 | ✓ 30/30 | ✅ | a67ffeb8cc |
