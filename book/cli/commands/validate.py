@@ -133,9 +133,12 @@ LABEL_DEF_PATTERNS = {
         re.compile(r"#\|\s*label:\s*(lst-[\w-]+)"),  # #| label: lst-xyz
     ],
 }
-LABEL_REF_PATTERN = re.compile(r"@((?:fig|tbl|sec|eq|lst)-[\w-]+)")
+LABEL_REF_PATTERN = re.compile(r"@((?:[Ff]ig|[Tt]bl|[Ss]ec|[Ee]q|[Ll]st)-[\w-]+)")
 
-EXCLUDED_CITATION_PREFIXES = ("fig-", "tbl-", "sec-", "eq-", "lst-", "ch-", "nb-")
+EXCLUDED_CITATION_PREFIXES = (
+    "fig-", "tbl-", "sec-", "eq-", "lst-", "ch-", "nb-",
+    "Fig-", "Tbl-", "Sec-", "Eq-", "Lst-",
+)
 
 # Captionless float baseline: per-file counts of pre-existing violations
 # grandfathered when the caption-required / label-required scopes landed.
@@ -1663,7 +1666,7 @@ class ValidateCommand:
         # "word[@cite]" — no space before the cite. A parenthetical citation
         # always takes a leading space in body prose. Excludes footnote
         # markers and reference labels.
-        no_space_before_bracket = re.compile(r"[a-zA-Z]\[@(?!sec-|fig-|tbl-|eq-|lst-|exr-|exm-|thm-|cor-|cnj-|def-|prp-|rem-|prf-|alg-)[A-Za-z]")
+        no_space_before_bracket = re.compile(r"[a-zA-Z]\[@(?![Ss]ec-|[Ff]ig-|[Tt]bl-|[Ee]q-|[Ll]st-|exr-|exm-|thm-|cor-|cnj-|def-|prp-|rem-|prf-|alg-)[A-Za-z]")
         # "[@a, @b]" — comma-separated multi-cite. Pandoc's citation syntax
         # requires semicolons: "[@a; @b]".
         comma_multicite = re.compile(r"\[@[A-Za-z][\w:.-]+,\s*@[A-Za-z]")
@@ -1712,7 +1715,7 @@ class ValidateCommand:
         # (@sec-, @fig-, etc.) so those are not mistaken for bibkeys.
         bracket_cite = re.compile(r"\[@[A-Za-z]")
         narrative_cite = re.compile(
-            r"@(?!sec-|fig-|tbl-|eq-|lst-|exr-|exm-|thm-|cor-|cnj-|"
+            r"@(?![Ss]ec-|[Ff]ig-|[Tt]bl-|[Ee]q-|[Ll]st-|exr-|exm-|thm-|cor-|cnj-|"
             r"def-|prp-|rem-|prf-|alg-)[A-Za-z][\w:-]*"
         )
 
@@ -2194,6 +2197,8 @@ class ValidateCommand:
 
                 for match in LABEL_REF_PATTERN.finditer(line):
                     label = match.group(1)
+                    # Normalize capitalized Quarto prefix (@Fig- -> fig-)
+                    label = label[0].lower() + label[1:]
                     references.setdefault(label, []).append((file, idx))
 
         # unreferenced definitions (skip section defaults, consistent with legacy behavior)
