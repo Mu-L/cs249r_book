@@ -146,11 +146,16 @@ export default function InterviewPage() {
     } as never);
 
     // Hydrate first question and get AI's opening
+    let q: Question | null = null;
     if (newSession.currentQuestionId) {
-      const q = await getQuestionFullDetail(newSession.currentQuestionId);
-      setCurrentQuestion(q ?? null);
-      await sendTurn(newSession, "", q ?? null, false);
+      try {
+        q = (await getQuestionFullDetail(newSession.currentQuestionId)) ?? null;
+      } catch {
+        // Vault worker may be unavailable; proceed without full question details
+      }
     }
+    setCurrentQuestion(q);
+    await sendTurn(newSession, "", q, false);
   }, [selectedTrack, selectedLevel, selectedDuration, focusAreas]);
 
   const handleResume = useCallback(() => {
@@ -187,33 +192,33 @@ export default function InterviewPage() {
       let nextSession = updated;
       let nextQuestion = question;
 
+      const tryHydrate = async (id: string): Promise<Question | null> => {
+        try { return (await getQuestionFullDetail(id)) ?? null; } catch { return null; }
+      };
+
       if (response.meta.nextAction === "advance_chain") {
         const advanced = advanceInChain(updated);
         if (advanced) {
           nextSession = advanced;
-          const q = await getQuestionFullDetail(advanced.currentQuestionId!);
-          nextQuestion = q ?? null;
+          nextQuestion = await tryHydrate(advanced.currentQuestionId!);
         } else {
           const next = selectNextChain(updated);
           if (next) {
             nextSession = { ...updated, currentChainId: next.chainId, currentQuestionId: next.questionId, currentChainPosition: next.position };
-            const q = await getQuestionFullDetail(next.questionId);
-            nextQuestion = q ?? null;
+            nextQuestion = await tryHydrate(next.questionId);
           }
         }
       } else if (response.meta.nextAction === "retreat_chain") {
         const retreated = retreatInChain(updated);
         if (retreated) {
           nextSession = retreated;
-          const q = await getQuestionFullDetail(retreated.currentQuestionId!);
-          nextQuestion = q ?? null;
+          nextQuestion = await tryHydrate(retreated.currentQuestionId!);
         }
       } else if (response.meta.nextAction === "switch_area") {
         const next = selectNextChain(updated);
         if (next) {
           nextSession = { ...updated, currentChainId: next.chainId, currentQuestionId: next.questionId, currentChainPosition: next.position };
-          const q = await getQuestionFullDetail(next.questionId);
-          nextQuestion = q ?? null;
+          nextQuestion = await tryHydrate(next.questionId);
         }
       } else if (response.meta.nextAction === "conclude") {
         nextSession = { ...updated, status: "completed" };
@@ -314,8 +319,8 @@ export default function InterviewPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main className={clsx("bg-background", phase === "active" ? "h-screen overflow-hidden" : "min-h-screen")}>
+      <div className={clsx("max-w-4xl mx-auto px-4 sm:px-6 lg:px-8", phase === "active" ? "pt-2 pb-0 h-full" : "py-8")}>
         <AnimatePresence mode="wait">
           {phase === "setup" && (
             <motion.div key="setup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -335,7 +340,7 @@ export default function InterviewPage() {
 
           {phase === "active" && session && (
             <motion.div key="active" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="flex flex-col h-[calc(100vh-6rem)]">
+              className="flex flex-col h-full min-h-0">
               {/* Status bar */}
               <div className="flex items-center justify-between py-3 border-b border-border mb-4 shrink-0">
                 <div className="flex items-center gap-4">
