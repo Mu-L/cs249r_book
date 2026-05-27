@@ -41,8 +41,8 @@ CANONICAL = [
     ("h100_fp8",       1979,  0.02, 'Hardware.Cloud.H100.compute.precision_flops["fp8"]'),
     ("h100_tf32",      494,   0.02, 'Hardware.Cloud.H100.compute.precision_flops["tf32"]'),
     ("h100_int8",      1979,  0.02, 'Hardware.Cloud.H100.compute.precision_flops["int8"]'),
-    ("b200_fp16",      2250,  0.02, "Hardware.Cloud.B200.compute.peak_flops"),
-    ("b200_fp8",       4500,  0.02, 'Hardware.Cloud.B200.compute.precision_flops["fp8"]'),
+    ("b200_fp16",      4500,  0.02, "Hardware.Cloud.B200.compute.peak_flops"),
+    ("b200_fp8",       9000,  0.02, 'Hardware.Cloud.B200.compute.precision_flops["fp8"]'),
     ("mi300x_fp16",    1307,  0.02, "Hardware.Cloud.MI300X.compute.peak_flops"),
 
     # GPU memory (GiB, GB/s, TB/s)
