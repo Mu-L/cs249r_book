@@ -74,13 +74,23 @@ def plot_roofline(*args, **kwargs):
 def __getattr__(name):
     """Lazy import for datasets (avoids circular import on all Python versions)."""
     if name in ("datasets", "Datasets"):
-        # Direct submodule import — bypasses __init__ re-entry because
-        # we import the leaf module, not the package.
-        import mlsysim.datasets.registry as _reg
-        import mlsysim.datasets as _mod
+        import importlib.util, sys, pathlib
+        # On installed packages, mlsysim.datasets isn't auto-discoverable
+        # without 'from . import datasets' in __init__.py. Load it manually.
+        if "mlsysim.datasets" not in sys.modules:
+            ds_init = pathlib.Path(__file__).parent / "datasets" / "__init__.py"
+            spec = importlib.util.spec_from_file_location(
+                "mlsysim.datasets", str(ds_init),
+                submodule_search_locations=[str(ds_init.parent)])
+            _mod = importlib.util.module_from_spec(spec)
+            _mod.__package__ = "mlsysim.datasets"
+            sys.modules["mlsysim.datasets"] = _mod
+            spec.loader.exec_module(_mod)
+        else:
+            _mod = sys.modules["mlsysim.datasets"]
         globals()["datasets"] = _mod
-        globals()["Datasets"] = _reg.Datasets
-        return _mod if name == "datasets" else _reg.Datasets
+        globals()["Datasets"] = _mod.Datasets
+        return _mod if name == "datasets" else _mod.Datasets
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
