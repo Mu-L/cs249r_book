@@ -1081,7 +1081,7 @@ These checks are additive: each new registry entry or physics module automatical
 \section{Usage \& Case Studies}
 \label{sec:usage}
 
-\mlsysim is designed for three audiences: students developing quantitative reasoning skills, instructors preparing demonstrations, and researchers evaluating design trade-offs. We present two representative use cases per persona, each illustrating how solvers compose to answer questions that span multiple walls. For concrete code examples of how users define hardware and invoke these solvers programmatically in Python, see the Appendix (Listings~\ref{lst:speculative},~\ref{lst:appendix-sweep},~\ref{lst:appendix-compose},~\ref{lst:appendix-data}, and~\ref{lst:appendix-synthesis}).
+\mlsysim is designed for three audiences: students developing quantitative reasoning skills, instructors preparing demonstrations, and researchers evaluating design trade-offs. We present two representative use cases per persona, each illustrating how solvers compose to answer questions that span multiple walls. For a "Cookbook" of exciting, runnable code examples demonstrating how users define hardware, perform algebraic design-space sweeps, and invoke SLA-driven hardware synthesis programmatically in Python, see the Appendix (Listings~\ref{lst:speculative},~\ref{lst:appendix-sweep},~\ref{lst:appendix-compose},~\ref{lst:appendix-data}, and~\ref{lst:appendix-synthesis}).
 
 \subsection{Student Use Cases}
 
@@ -1487,7 +1487,10 @@ Beneath the resolvers lies the Physics Engine, which contains the dimensioned ma
 
 \subsection{Code Examples Cookbook}
 
-To demonstrate how the theoretical 3-tier architecture from \Cref{sec:solver-formalism} is exposed in Python, we provide four complete, runnable examples. These listings illustrate how users can leverage \mlsysim for design-space sweeps, cross-domain composition, data pipeline analysis, and SLA-driven hardware synthesis.
+To demonstrate how the theoretical 3-tier architecture from \Cref{sec:solver-formalism} is exposed in Python, we provide five complete, runnable examples. These scenarios illustrate how users can leverage \mlsysim to answer practical engineering questions spanning design-space sweeps, cross-domain composition, data pipeline analysis, SLA-driven hardware synthesis, and speculative decoding optimizations.
+
+\subsubsection{Scenario A: Rapid Parametric Sweeps (Tier 1)}
+\emph{Scenario:} You need to determine at what exact batch size an LLM transitions from being memory-bound to compute-bound on an H100 GPU. Instead of running hours of empirical profiling, you can use the core \texttt{Engine} to sweep the hardware constraints algebraically in under a millisecond per point.
 
 \begin{figure}[!ht]
 \begin{lstlisting}[language=Python]
@@ -1518,6 +1521,9 @@ print(df)
 \caption{\textbf{Programmatic Sweeps (Tier 1).} Using the \texttt{Engine} to sweep a workload across a hardware constraint space (batch size). Because execution takes $<$1\,ms per point, sweeping hundreds of configurations is trivial.}
 \label{lst:appendix-sweep}
 \end{figure}
+
+\subsubsection{Scenario B: Cross-Domain Carbon Accounting (Tier 1 Composition)}
+\emph{Scenario:} You have been tasked with estimating the carbon footprint of training a 70B parameter model. Training time depends on the distributed scaling efficiency (Performance Domain), while carbon footprint depends on the datacenter's geographic grid (Sustainability Domain). \mlsysim allows you to pipe the typed output of one solver directly into the next.
 
 \begin{figure}[!ht]
 \begin{lstlisting}[language=Python]
@@ -1551,6 +1557,9 @@ print(f"Total Carbon: {sust.carbon_footprint:.1f} tonnes CO2e")
 \label{lst:appendix-compose}
 \end{figure}
 
+\subsubsection{Scenario C: Uncovering the Data Wall (Tier 1)}
+\emph{Scenario:} Your GPU utilization is mysteriously low during a computer vision training job. You suspect the CPU preprocessing pipeline cannot decode and augment JPEGs fast enough to saturate the PCIe bus. You can decouple these sub-systems using the \texttt{DataModel} and \texttt{TransformationModel}.
+
 \begin{figure}[!ht]
 \begin{lstlisting}[language=Python]
 from mlsysim.solvers import DataModel, TransformationModel
@@ -1580,6 +1589,9 @@ print(f"CPU Stalled: {transform_result.is_bottleneck}") # True
 \label{lst:appendix-data}
 \end{figure}
 
+\subsubsection{Scenario D: SLA-Driven Hardware Synthesis (Tier 2)}
+\emph{Scenario:} You are provisioning hardware for a new LLM application. You don't know what GPUs to buy, but you know the business requirement: the application must generate tokens every 30 milliseconds. You can invert the Roofline equations using the \texttt{SynthesisSolver} to output the exact memory bandwidth required to hit your SLA.
+
 \begin{figure}[!ht]
 \begin{lstlisting}[language=Python]
 from mlsysim.solvers import SynthesisSolver
@@ -1604,6 +1616,39 @@ print(f"Required Compute:       {requirements.required_flops.to('TFLOPs/s'):.1f}
 \end{lstlisting}
 \caption{\textbf{SLA-Driven Hardware Synthesis (Tier 2).} Instead of evaluating a known piece of hardware, the \texttt{SynthesisSolver} works backward. Given a strict latency SLA, it algebraically inverts the Roofline equations to output the minimum memory bandwidth and compute throughput required to purchase or provision.}
 \label{lst:appendix-synthesis}
+\end{figure}
+
+\subsubsection{Scenario E: Speculative Decoding Speedup (Tier 1)}
+\emph{Scenario:} You are serving a large frontier model and want to know how much faster inference would be if you used a smaller, cheaper draft model to speculatively decode tokens. You can model this instantaneously by supplying the draft model to the \texttt{ServingModel}.
+
+\begin{figure}[!ht]
+\begin{lstlisting}[language=Python]
+from mlsysim.solvers import ServingModel
+from mlsysim.hardware.registry import Hardware
+from mlsysim.models.registry import Models
+
+# Serve Llama 3.1 70B using Llama 3.1 8B as a draft model
+target_model = Models.Language.Llama3_70B
+draft_model = Models.Language.Llama3_8B
+hardware = Hardware.Cloud.H100
+
+solver = ServingModel()
+
+# Standard Autoregressive Decoding
+base_result = solver.solve(target_model, hardware, seq_len=2048, batch_size=1)
+print(f"Standard ITL: {base_result.itl.to('ms'):.2f}")
+
+# Speculative Decoding
+spec_result = solver.solve(
+    target_model, hardware, seq_len=2048, batch_size=1,
+    draft_model=draft_model,
+    draft_acceptance_rate=0.75
+)
+print(f"Speculative ITL: {spec_result.itl.to('ms'):.2f}")
+print(f"Speedup: {base_result.itl / spec_result.itl:.2f}x")
+\end{lstlisting}
+\caption{\textbf{Speculative Decoding Analysis (Tier 1).} The \texttt{ServingModel} natively supports algorithmic optimizations like speculative decoding. By providing a draft model and an expected acceptance rate, the solver calculates the effective inter-token latency (ITL) by modeling the compute-bound draft phase and the memory-bound verification phase.}
+\label{lst:appendix-speculative}
 \end{figure}
 
 \end{document}
