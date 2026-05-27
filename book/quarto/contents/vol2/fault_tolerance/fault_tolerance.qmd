@@ -2883,7 +2883,7 @@ A single failing device (`{python} StragglerTax.straggler_frac_str` of the hardw
 
 :::
 
-However, killing a slow node and restarting the job implies we must wait for a replacement node to become available to maintain the original GPU count. To avoid this rigid dependency and keep the cluster productive even when operating below peak capacity, the training framework must adapt to changing hardware availability through elastic training.
+However, killing a slow node and restarting the job implies waiting for a replacement to maintain the original GPU count. The previous sections assumed that recovery means restoring the *same* resource allocation: checkpoint, wait for a replacement, restart. Elastic recovery breaks that assumption by allowing the job to continue with *fewer* workers rather than idling the entire cluster until the original count is restored.
 
 ## Elastic Recovery {#sec-fault-tolerance-reliability-reliability-elastic-training-4f87}
 
@@ -2891,13 +2891,13 @@ However, killing a slow node and restarting the job implies we must wait for a r
 
 ***Elastic Training***\index{Training!elastic, definition} is the capability of a distributed training job to dynamically adjust its worker count during execution without requiring a full restart.
 
-1.  **Significance (quantitative)**: It maximizes the system duty cycle by allowing training to continue through node failures and by absorbing idle capacity in the cluster. It requires learning rate recalibration and gradient accumulation adjustment to maintain mathematical consistency as the global batch size changes.
-2.  **Distinction (durable)**: Unlike standard fault tolerance (which relies on checkpoint-restart), elastic training is always-live: the optimization loop never stops, it only changes its parallel width.
-3.  **Common pitfall**: A frequent misconception is that elasticity is "automatic." In reality, it is a distributed coordination problem: the training framework, the data loader, and the orchestrator must all synchronize their state to ensure that no data samples are lost or double-counted during worker scaling.
+1.  **Significance (quantitative)**: It converts hard failures into throughput degradations rather than full stops. A 1,024-GPU job that loses 8 GPUs continues at 99.2 percent capacity instead of dropping to zero. It requires learning rate recalibration and gradient accumulation adjustment to maintain mathematical consistency as the global batch size changes.
+2.  **Distinction (durable)**: Unlike checkpoint-restart recovery (which halts the job, waits for replacement hardware, and reloads state), elastic recovery is always-live: the optimization loop never stops, it only changes its parallel width.
+3.  **Common pitfall**: A frequent misconception is that elasticity is "automatic." In reality, recovery requires coordinated adaptation: the training framework, the data loader, and the orchestrator must all synchronize their state to ensure that no data samples are lost or double-counted during the resize.
 
 :::
 
-Suppose a 1,024-GPU training job loses an 8-GPU node to a hardware fault, but the cluster has no spare nodes available. Without elastic training, the remaining 1,016 GPUs sit idle for hours waiting for a repair; elastic training instead allows the job to dynamically resize and continue with slightly less compute, breaking the rigid assumption of a fixed worker count. @Fig-elastic-flow traces the recovery sequence that makes this possible: detect the failure, pause, rescale across the surviving workers, and resume.
+Suppose a 1,024-GPU training job loses an 8-GPU node to a hardware fault, but the cluster has no spare nodes available. Under checkpoint-restart recovery, the remaining 1,016 GPUs sit idle for hours waiting for a repair. Elastic recovery instead allows the job to dynamically resize and continue with slightly less compute, breaking the rigid assumption of a fixed worker count. @Fig-elastic-flow traces the recovery sequence: detect the failure, pause, rescale across the surviving workers, and resume.
 
 ::: {#fig-elastic-flow fig-env="figure" fig-pos="htb" fig-cap="**Elastic Training Recovery**: Unlike static training which aborts on failure, elastic training adapts. When a worker fails, the job pauses, redistributes the dataset and model shards across the remaining $N-1$ workers, and resumes training from the last consistent state. This capability transforms hard failures into temporary throughput degradations." fig-alt="Flowchart with 5 steps and decision diamond. Training on N workers flows to monitor alert diamond. On failure: pause training, rescale batch and learning rate to N-1 workers, resume training. Loop returns to monitoring. Annotation highlights key step."}
 
@@ -2905,62 +2905,62 @@ Suppose a 1,024-GPU training job loses an 8-GPU node to a hardware fault, but th
 
 :::
 
-As @fig-elastic-flow illustrates, elastic training converts what would otherwise be hard failures into graceful capacity adjustments: a lost worker reduces the active count rather than aborting the job, the running step adapts to the smaller resource allocation, and preemption in shared clusters becomes a routine rebalancing event rather than a full restart.
+As @fig-elastic-flow illustrates, elastic recovery converts what would otherwise be hard failures into graceful capacity adjustments: a lost worker reduces the active count rather than aborting the job, the running step adapts to the smaller resource allocation, and the cluster resumes productive work within seconds rather than waiting minutes to hours for replacement hardware.
 
-### Elastic training mechanisms {#sec-fault-tolerance-reliability-reliability-elastic-training-mechanisms-49b1}
+### Recovery adaptation mechanisms {#sec-fault-tolerance-reliability-reliability-elastic-training-mechanisms-49b1}
 
-Implementing elastic training requires adapting several training components:
+When a failure reduces the worker count, the surviving workers must adapt several training components before they can resume. Each adaptation addresses a specific consistency requirement that, if violated, would corrupt the model or waste computation.
 
-Batch size adjustment is the first concern: with fewer workers, each worker must process more samples to maintain the global batch size, or the global batch size must be reduced. Reducing global batch size may require learning rate adjustment.
+Batch size adjustment is the first concern: with fewer workers, each worker must process more samples to maintain the global batch size, or the global batch size must be reduced. Reducing global batch size during recovery may require learning rate adjustment to preserve convergence properties.
 
-The relationship between batch size and optimal learning rate has been studied extensively. @goyal2017accurate demonstrated that a linear scaling rule works well in practice: when scaling the batch size by factor $k$, scale the learning rate also by factor $k$. @Eq-lr-scaling expresses an alternative square root scaling law that provides more conservative adjustment:
+The relationship between batch size and optimal learning rate determines how aggressively the job can resize without destabilizing training. @goyal2017accurate demonstrated that a linear scaling rule works well in practice: when scaling the batch size by factor $k$, scale the learning rate also by factor $k$. @Eq-lr-scaling expresses an alternative square root scaling law that provides more conservative adjustment during recovery:
 
 $$ \eta_{\text{new}} = \eta_{\text{base}} \times \sqrt{\frac{N_{\text{new}}}{N_{\text{base}}}} $$ {#eq-lr-scaling}
 
-where $N$ represents the number of workers (and thus the global batch size). The linear rule [@goyal2017accurate] is often preferred for large batch training with warmup, while square root scaling provides a more conservative alternative when stability is a concern.
+where $N$ represents the number of workers (and thus the global batch size). The linear rule [@goyal2017accurate] is often preferred for large batch training with warmup, while square root scaling provides a more conservative alternative when recovery stability is the priority over throughput.
 
-Gradient accumulation offers another mechanism: to maintain effective batch size with fewer workers, each worker can accumulate gradients over multiple micro-batches before synchronization. If worker count drops by half, doubling the accumulation steps maintains the same effective batch size.
+Gradient accumulation offers an alternative to learning rate adjustment: to maintain the original effective batch size with fewer workers, each surviving worker can accumulate gradients over multiple micro-batches before synchronization. If worker count drops by half, doubling the accumulation steps preserves the same effective batch size and avoids any learning rate change, at the cost of doubling per-step wall time.
 
-Data loader redistribution presents a coordination challenge. When workers change, the data loader must redistribute data assignments to ensure all data is processed and no data is duplicated or dropped.
+Data loader redistribution is a coordination requirement that recovery must handle atomically. When workers are lost, the data loader must redistribute data shard assignments to ensure all training data is still processed and no samples are duplicated or dropped. A failed redistribution silently corrupts the training distribution.
 
-State resharding adds further complexity when using sharded model parallelism (ZeRO/FSDP), because changing worker count requires redistributing model shards. This can be done online (migrating shards between workers) or through checkpoint reload (resharding during recovery).
+State resharding adds further complexity when using sharded model parallelism (ZeRO/FSDP), because the loss of a worker means one shard of the model state is no longer locally resident. Recovery can proceed online (migrating the orphaned shard to a surviving worker) or through checkpoint reload (resharding from the last durable checkpoint).
 
-#### Spot instance arbitrage {#sec-fault-tolerance-reliability-reliability-spot-instance-arbitrage-68ad}
+#### Spot instance preemption as a failure class {#sec-fault-tolerance-reliability-reliability-spot-instance-arbitrage-68ad}
 
-Elastic training doubles as an economic lever that can reduce training costs by 50 percent or more. Cloud providers offer preemptible ("spot") instances at 60–90 percent discounts compared to on-demand pricing, with the caveat that they can be reclaimed with little warning.
+Hardware faults are not the only event that removes workers from a running job. Cloud providers offer preemptible ("spot") instances at 60 to 90 percent discounts compared to on-demand pricing, with the caveat that they can be reclaimed with little warning. From the training framework's perspective, a spot reclamation is indistinguishable from a hardware failure: workers vanish, and the job must decide whether to halt or adapt.
 
-Traditional static jobs cannot use spot instances effectively because a single preemption kills the entire run. Elastic training transforms preemption from a fatal error into a recoverable resizing event. When a spot node is reclaimed:
+Traditional static jobs cannot survive spot preemption because a single lost node kills the entire run. Elastic recovery handles preemption identically to hardware faults:
 
-1.  The job detects the node loss.
-2.  It pauses briefly to redistribute the workload among surviving nodes (or waits for a replacement).
-3.  Training resumes.
+1.  The job detects the node loss (the mechanism is the same timeout or heartbeat failure).
+2.  It pauses briefly to redistribute the workload among surviving nodes.
+3.  Training resumes at reduced scale.
 
-This capability allows organizations to train on massive clusters of cheap, unreliable hardware. The cost savings (for example, \$0.60/hour vs. \$3.00/hour) far outweigh the efficiency loss from occasional resizing pauses, often reducing total training bills by >50 percent.
+This recovery capability unlocks a significant cost advantage. Organizations can train on clusters of cheap, unreliable spot hardware because elastic recovery converts each preemption into a temporary throughput reduction rather than a fatal error. The cost savings (for example, \$0.60/hour vs. \$3.00/hour) far outweigh the efficiency loss from occasional resizing pauses, often reducing total training bills by more than 50 percent.
 
-#### Framework support for elastic training {#sec-fault-tolerance-reliability-reliability-framework-support-elastic-training-8b75}
+#### Framework support for elastic recovery {#sec-fault-tolerance-reliability-reliability-framework-support-elastic-training-8b75}
 
-Modern frameworks provide varying levels of elastic training support:
+The recovery adaptation mechanisms above (batch size adjustment, learning rate recalibration, data loader redistribution, state resharding) must be implemented by the training framework. Frameworks differ in how much of this recovery logic they automate and how they coordinate the surviving workers after a failure.
 
-PyTorch Elastic (TorchElastic) provides elastic launch capabilities through `torchrun`. It supports membership changes through a rendezvous mechanism[^fn-rendezvous-elastic] where workers can join or leave and the training process adapts. It integrates with Kubernetes for automatic scaling.
+PyTorch Elastic (TorchElastic) detects worker failures through a rendezvous mechanism[^fn-rendezvous-elastic] that re-executes whenever the worker group changes. Surviving workers re-form the communication group and continue training. TorchElastic handles rank reassignment and communication group reconstruction automatically, but leaves batch size and learning rate adjustment to user code. It integrates with Kubernetes for node-level failure detection.
 
-[^fn-rendezvous-elastic]: **Rendezvous**: From French "rendez-vous" (present yourselves), this coordination protocol requires all workers to discover each other and agree on group membership before proceeding. In elastic training, rendezvous re-executes whenever workers join or leave, reassigning ranks and establishing a new process group. The protocol's cost is a synchronization barrier that blocks all workers until the slowest one arrives, creating a startup latency proportional to cluster heterogeneity. \index{Rendezvous!elastic training}
+[^fn-rendezvous-elastic]: **Rendezvous**: From French "rendez-vous" (present yourselves), this coordination protocol requires all surviving workers to discover each other and agree on the new group membership before training can resume. The protocol's cost is a synchronization barrier that blocks all workers until the slowest one arrives, creating a recovery latency proportional to cluster heterogeneity. \index{Rendezvous!elastic training}
 
-DeepSpeed [@rasley2020] provides ZeRO-based distributed training and checkpointing building blocks for large models; in elastic deployments, recovery also depends on the surrounding launcher, resource manager, and checkpoint policy.
+DeepSpeed [@rasley2020] provides ZeRO-based distributed training and checkpointing building blocks for large models. Its recovery model is checkpoint-based: after a failure, the job reloads from the last checkpoint with a potentially different worker count. The elastic behavior depends on the surrounding launcher and resource manager rather than being built into the framework.
 
-Ray Train, built on Ray's actor model, provides native elasticity. Workers are Ray actors that can be dynamically added or removed, and Ray's distributed object store facilitates efficient state redistribution.
+Ray Train, built on Ray's actor model, provides the most automated recovery path. Workers are Ray actors that can be dynamically added or removed, and Ray's distributed object store facilitates state redistribution to surviving workers without a full checkpoint reload.
 
-Horovod Elastic extends Horovod's [@sergeev2018horovod] data parallel training with elastic capabilities. Workers can join or leave during training, with automatic rank reassignment and gradient accumulation adjustment.
+Horovod Elastic extends Horovod's [@sergeev2018horovod] data parallel training with failure-aware capabilities. When a worker is lost, Horovod automatically reassigns ranks and adjusts gradient accumulation, reconstructing the AllReduce ring around the surviving workers.
 
-@Tbl-elastic-training-comparison compares how modern frameworks vary significantly in their elastic training support, with differences in automatic recovery mechanisms and state management approaches.
+@Tbl-elastic-training-comparison compares the recovery automation and state management approaches across these frameworks.
 
-| **Framework**       | **Elastic Support** | **Automatic Recovery** | **State Resharding** | **Cluster Integration** |
-|:--------------------|:--------------------|:-----------------------|:---------------------|:------------------------|
-| **PyTorch Elastic** | Yes                 | Yes                    | Manual               | Kubernetes              |
-| **DeepSpeed**       | Partial             | Checkpoint-based       | Deployment-dependent | External schedulers     |
-| **Ray Train**       | Yes                 | Yes                    | Automatic            | Ray Cluster             |
-| **Horovod Elastic** | Yes                 | Yes                    | Manual               | SLURM, Kubernetes       |
+| **Framework**       | **Failure Detection** | **Automatic Recovery** | **State Resharding** | **Cluster Integration** |
+|:--------------------|:----------------------|:-----------------------|:---------------------|:------------------------|
+| **PyTorch Elastic** | Rendezvous timeout    | Yes                    | Manual               | Kubernetes              |
+| **DeepSpeed**       | External              | Checkpoint-based       | Deployment-dependent | External schedulers     |
+| **Ray Train**       | Actor supervision     | Yes                    | Automatic            | Ray Cluster             |
+| **Horovod Elastic** | Driver heartbeat      | Yes                    | Manual               | SLURM, Kubernetes       |
 
-: **Elastic Training Framework Comparison**\index{Elastic Training!framework support}: Modern frameworks provide varying levels of support for elastic training, with different approaches to automatic recovery and state management. {#tbl-elastic-training-comparison}
+: **Elastic Recovery Framework Comparison**\index{Elastic Training!framework support}: Frameworks differ in how they detect worker failures and how much of the recovery sequence (group reconstruction, state redistribution, batch size adjustment) they automate. {#tbl-elastic-training-comparison}
 
 ### Model-specific training fault tolerance {#sec-fault-tolerance-reliability-reliability-modelspecific-training-fault-tolerance-4b70}
 
