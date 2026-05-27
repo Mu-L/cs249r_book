@@ -18,6 +18,7 @@ import { useTheme } from "@/components/ThemeProvider";
 const primaryLinks = [
   { href: "/", label: "Vault", icon: Library },
   { href: "/practice", label: "Practice", icon: Target },
+  { href: "/plans", label: "Plans", icon: Map },
   { href: "/gauntlet", label: "Mock Interview", icon: Crosshair },
   { href: "/progress", label: "Progress", icon: BarChart3 },
   { href: "/about", label: "About", icon: Info },
@@ -25,7 +26,6 @@ const primaryLinks = [
 
 const toolLinks = [
   { href: "/explore", label: "Vault Explorer", icon: Network },
-  { href: "/plans", label: "Study Plans", icon: Map },
   { href: "/framework", label: "Framework", icon: Atom },
   { href: "/contribute", label: "Contribute", icon: Send },
   { href: "/roofline", label: "Roofline", icon: Cpu },
