@@ -67,14 +67,13 @@ def plot_roofline(*args, **kwargs):
 
 def __getattr__(name):
     """Lazy imports for datasets (circular import on Python <3.12)."""
-    if name == "datasets":
-        from . import datasets as _mod
+    if name in ("datasets", "Datasets"):
+        import importlib
+        _mod = importlib.import_module("mlsysim.datasets")
+        _cls = _mod.Datasets
         globals()["datasets"] = _mod
-        return _mod
-    if name == "Datasets":
-        from .datasets.registry import Datasets as _cls
         globals()["Datasets"] = _cls
-        return _cls
+        return _mod if name == "datasets" else _cls
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
