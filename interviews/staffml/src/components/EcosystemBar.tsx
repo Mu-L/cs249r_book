@@ -565,7 +565,29 @@ export default function EcosystemBar() {
 
       {/* Mobile expanded */}
       {mobileOpen && (
-        <div className="nav-lg:hidden" style={{ borderTop: `1px solid ${borderColor}`, backgroundColor: bgColor, padding: '12px 16px' }}>
+        <div
+          className="nav-lg:hidden"
+          style={{
+            borderTop: `1px solid ${borderColor}`,
+            backgroundColor: bgColor,
+            padding: '12px 16px',
+            // Cap the menu at the remaining viewport height so it scrolls
+            // internally instead of pushing the whole sticky bar past the
+            // viewport. Without this, the menu's overflow content sits
+            // below the fold and the next touch-drag scrolls the PAGE
+            // (because the menu isn't its own scroll container) — items
+            // only became reachable after the bar released at the body
+            // bottom. 60 = the header row's minHeight; `dvh` (not `vh`)
+            // tracks the dynamic mobile viewport as the URL bar shows /
+            // hides so we don't clip the bottom on iOS Safari.
+            maxHeight: 'calc(100dvh - 60px)',
+            overflowY: 'auto',
+            // Prevent scroll-chaining: once the menu reaches its end, a
+            // continued swipe shouldn't start scrolling the page behind.
+            overscrollBehavior: 'contain',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
           {LEFT_MENUS.map((menu) => (
             <div key={menu.id} style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: '#adb5bd', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 4 }}>
