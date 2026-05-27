@@ -26,10 +26,13 @@ from .literature.registry import Literature
 from .ops import Ops, Monitoring
 from .core import calibration
 
-# datasets.registry.Datasets is imported eagerly (needed for star import).
-# The `datasets` MODULE import is lazy via __getattr__ to break a circular
-# import chain on Python <3.12.
-from .datasets.registry import Datasets
+# datasets: Datasets class is eagerly available (needed for star import).
+# The module import is deferred to after __init__ completes to break
+# circular import on Python <3.12.
+import importlib as _importlib
+_datasets_mod = _importlib.import_module(".datasets.registry", __name__)
+Datasets = _datasets_mod.Datasets
+del _importlib, _datasets_mod
 
 # AUTHORITATIVE SOLVERS
 from .core.solver import (
