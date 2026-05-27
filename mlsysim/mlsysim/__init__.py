@@ -26,11 +26,8 @@ from .literature.registry import Literature
 from .ops import Ops, Monitoring
 from .core import calibration
 
-# datasets imported AFTER all other subpackages to avoid circular import
-# on Python <3.12 (datasets.registry → core.registry triggers re-entry
-# into mlsysim.__init__ when the package is partially initialized).
-from . import datasets
-from .datasets.registry import Datasets
+# datasets deferred to __getattr__ to break circular import on Python <3.12.
+# (datasets.registry → core.registry → re-enters mlsysim.__init__)
 
 # AUTHORITATIVE SOLVERS
 from .core.solver import (
@@ -68,4 +65,18 @@ def plot_roofline(*args, **kwargs):
     return _plot_roofline(*args, **kwargs)
 
 
-__all__ = sorted(name for name in globals() if not name.startswith("_"))
+def __getattr__(name):
+    """Lazy imports for datasets (circular import on Python <3.12)."""
+    if name == "datasets":
+        from . import datasets as _mod
+        globals()["datasets"] = _mod
+        return _mod
+    if name == "Datasets":
+        from .datasets.registry import Datasets as _cls
+        globals()["Datasets"] = _cls
+        return _cls
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# __all__ includes Datasets so `from mlsysim import *` picks it up
+__all__ = sorted(name for name in globals() if not name.startswith("_")) + ["Datasets"]
