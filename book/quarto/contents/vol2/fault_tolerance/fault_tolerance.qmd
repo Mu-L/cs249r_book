@@ -874,12 +874,65 @@ Advanced semiconductor processes can increase soft-error sensitivity as node cap
 
 Memory subsystems are the most vulnerability-prone components, and fault tolerance mechanisms impose a direct bandwidth tax. @Tbl-memory-bandwidth-protection quantifies this cost across memory technologies:
 
-| **Memory Technology** | **Base Bandwidth** **(GB/s)** | **ECC Overhead** **(%)** | **Effective** **Bandwidth (GB/s)** |
-|:----------------------|------------------------------:|-------------------------:|-----------------------------------:|
-| **DDR4-3200**         |                          51.2 |             12.5 percent |                               44.8 |
-| **HBM2**              |                           900 |             12.5 percent |                              787.5 |
-| **HBM3**              |                         1,600 |             12.5 percent |                              1,400 |
-| **GDDR6X**            |                           760 |           Typically none |                                760 |
+```{python}
+#| echo: false
+#| label: mem-bandwidth-protection-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ MEMORY BANDWIDTH PROTECTION ANALYSIS (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-memory-bandwidth-protection — effective BW after ECC overhead.
+# │
+# │ Goal: Compute effective bandwidth = base BW × (1 - ECC overhead) for each
+# │   memory technology.
+# │ Show: DDR4 44.8, HBM2 787.5, HBM3 1,400, GDDR6X 760 GB/s in table.
+# │ How: Multiply base bandwidth by (1 - overhead fraction). GDDR6X has no ECC.
+# │
+# │ Imports: mlsysim.fmt (fmt, fmt_int, MarkdownStr, check)
+# │ Exports: MemBandwidthProtection.ddr4_eff_str,
+# │   MemBandwidthProtection.hbm2_eff_str,
+# │   MemBandwidthProtection.hbm3_eff_str,
+# │   MemBandwidthProtection.gddr6x_eff_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, fmt_int, MarkdownStr, check
+
+
+class MemBandwidthProtection:
+    """Compute effective memory bandwidth after ECC overhead."""
+
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    # Base bandwidths (GB/s) — not in mlsysim constants; hardcoded from specs
+    ddr4_base_gbps = 51.2
+    hbm2_base_gbps = 900
+    hbm3_base_gbps = 1600
+    gddr6x_base_gbps = 760
+
+    ecc_overhead = 0.125  # 12.5% ECC overhead
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    ddr4_eff = ddr4_base_gbps * (1 - ecc_overhead)
+    hbm2_eff = hbm2_base_gbps * (1 - ecc_overhead)
+    hbm3_eff = hbm3_base_gbps * (1 - ecc_overhead)
+    gddr6x_eff = gddr6x_base_gbps  # no ECC
+
+    # ┌── 3. GUARD (Invariants) ────────────────────────────────────────────
+    check(abs(ddr4_eff - 44.8) < 0.01, f"DDR4 effective BW mismatch: {ddr4_eff}")
+    check(abs(hbm2_eff - 787.5) < 0.01, f"HBM2 effective BW mismatch: {hbm2_eff}")
+    check(abs(hbm3_eff - 1400) < 0.01, f"HBM3 effective BW mismatch: {hbm3_eff}")
+    check(gddr6x_eff == 760, f"GDDR6X effective BW mismatch: {gddr6x_eff}")
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────────────────────
+    ddr4_eff_str = fmt(ddr4_eff, precision=1, commas=False)
+    hbm2_eff_str = fmt(hbm2_eff, precision=1, commas=False)
+    hbm3_eff_str = fmt(hbm3_eff, precision=0)
+    gddr6x_eff_str = fmt_int(gddr6x_eff)
+```
+
+| **Memory Technology** | **Base Bandwidth** **(GB/s)** | **ECC Overhead** **(%)** |               **Effective** **Bandwidth (GB/s)** |
+|:----------------------|------------------------------:|-------------------------:|-------------------------------------------------:|
+| **DDR4-3200**         |                          51.2 |             12.5 percent |   `{python} MemBandwidthProtection.ddr4_eff_str` |
+| **HBM2**              |                           900 |             12.5 percent |   `{python} MemBandwidthProtection.hbm2_eff_str` |
+| **HBM3**              |                         1,600 |             12.5 percent |   `{python} MemBandwidthProtection.hbm3_eff_str` |
+| **GDDR6X**            |                           760 |           Typically none | `{python} MemBandwidthProtection.gddr6x_eff_str` |
 
 : **Memory Bandwidth Protection Analysis**\index{Memory Bandwidth!protection analysis}: Impact of ECC protection on effective memory bandwidth across different memory technologies used in ML accelerators. The bandwidth overhead directly affects training throughput for memory-bound workloads. {#tbl-memory-bandwidth-protection}
 
@@ -2164,14 +2217,122 @@ If checkpoints occur hourly, the system wastes **\$24,000 per day** waiting for 
 
 @Tbl-checkpoint-overhead-by-model reveals how checkpoint characteristics vary dramatically by model architecture: larger models require longer write times but also benefit from correspondingly longer optimal intervals.
 
-| **Model Type**                   | **Checkpoint Size** | **Write Time (100 GB/s)** | **Optimal Interval (5hr GPU-only MTBF)** | **Save Overhead** |
-|:---------------------------------|--------------------:|--------------------------:|-----------------------------------------:|------------------:|
-| **Archetype A (175B dense LLM)** |              2.1 TB |                      21 s |                                 14.5 min |       2.4 percent |
-| **GPT-3.5 (20B)**                |              240 GB |                     2.4 s |                                  4.6 min |       0.9 percent |
-| **BERT-Large**                   |              1.3 GB |                   0.013 s |                                     22 s |      0.06 percent |
-| **Archetype B (DLRM at Scale)**  |                4 TB |                      40 s |                                   20 min |       3.3 percent |
-| **ResNet-50**\index{ResNet-50}   |              100 MB |                   0.001 s |                                      6 s |      0.02 percent |
-| **ViT-Large**                    |              1.2 GB |                   0.012 s |                                     21 s |      0.06 percent |
+```{python}
+#| echo: false
+#| label: checkpoint-overhead-by-model-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ CHECKPOINT OVERHEAD BY MODEL TYPE (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-checkpoint-overhead-by-model immediately below this cell.
+# │
+# │ Goal: Compute write time, optimal checkpoint interval, and save overhead
+# │       for six model archetypes using the Young-Daly square-root formula.
+# │ Show: All numeric cells in the checkpoint overhead comparison table.
+# │ How: write_time = size / bandwidth; tau_opt = sqrt(2 * write_time * MTBF);
+# │      overhead = write_time / tau_opt * 100.
+# │
+# │ Imports: mlsysim.fmt (fmt, MarkdownStr, check), math
+# │ Exports: CheckpointOverheadCalc.{archA,gpt35,bert,archB,resnet,vit}_*_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, fmt_int, MarkdownStr, check
+import math
+
+
+class CheckpointOverheadCalc:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────────
+    # Checkpoint sizes in GB for each model archetype
+    archA_size_gb = 2100       # 175B dense LLM: ~12 bytes/param (mixed precision + optimizer)
+    gpt35_size_gb = 240        # 20B model
+    bert_size_gb = 1.3         # BERT-Large
+    archB_size_gb = 4000       # DLRM at scale (embedding-heavy)
+    resnet_size_gb = 0.1       # ResNet-50 (100 MB)
+    vit_size_gb = 1.2          # ViT-Large
+
+    write_bw_gbs = 100         # Write bandwidth: 100 GB/s
+    mtbf_hours = 5             # GPU-only MTBF: 5 hours
+    mtbf_s = mtbf_hours * 3600  # = 18000 seconds
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────────
+    # Write time = checkpoint_size / write_bandwidth
+    archA_write_s = archA_size_gb / write_bw_gbs
+    gpt35_write_s = gpt35_size_gb / write_bw_gbs
+    bert_write_s = bert_size_gb / write_bw_gbs
+    archB_write_s = archB_size_gb / write_bw_gbs
+    resnet_write_s = resnet_size_gb / write_bw_gbs
+    vit_write_s = vit_size_gb / write_bw_gbs
+
+    # Optimal interval = sqrt(2 * write_time * MTBF) [Young-Daly formula]
+    archA_interval_s = math.sqrt(2 * archA_write_s * mtbf_s)
+    gpt35_interval_s = math.sqrt(2 * gpt35_write_s * mtbf_s)
+    bert_interval_s = math.sqrt(2 * bert_write_s * mtbf_s)
+    archB_interval_s = math.sqrt(2 * archB_write_s * mtbf_s)
+    resnet_interval_s = math.sqrt(2 * resnet_write_s * mtbf_s)
+    vit_interval_s = math.sqrt(2 * vit_write_s * mtbf_s)
+
+    # Save overhead = write_time / optimal_interval * 100
+    archA_overhead_pct = (archA_write_s / archA_interval_s) * 100
+    gpt35_overhead_pct = (gpt35_write_s / gpt35_interval_s) * 100
+    bert_overhead_pct = (bert_write_s / bert_interval_s) * 100
+    archB_overhead_pct = (archB_write_s / archB_interval_s) * 100
+    resnet_overhead_pct = (resnet_write_s / resnet_interval_s) * 100
+    vit_overhead_pct = (vit_write_s / vit_interval_s) * 100
+
+    # ┌── 3. GUARD (Invariants) ────────────────────────────────────────────────
+    check(archA_interval_s > 0, "Archetype A interval must be positive")
+    check(gpt35_interval_s > 0, "GPT-3.5 interval must be positive")
+    check(bert_interval_s > 0, "BERT interval must be positive")
+    check(archB_interval_s > 0, "Archetype B interval must be positive")
+    check(resnet_interval_s > 0, "ResNet-50 interval must be positive")
+    check(vit_interval_s > 0, "ViT-Large interval must be positive")
+    check(archA_overhead_pct < 10, "Archetype A overhead must be < 10%")
+    check(gpt35_overhead_pct < 10, "GPT-3.5 overhead must be < 10%")
+    check(bert_overhead_pct < 10, "BERT overhead must be < 10%")
+    check(archB_overhead_pct < 10, "Archetype B overhead must be < 10%")
+    check(resnet_overhead_pct < 10, "ResNet-50 overhead must be < 10%")
+    check(vit_overhead_pct < 10, "ViT-Large overhead must be < 10%")
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────────────────────────────────
+    # -- Checkpoint sizes
+    archA_size_str = MarkdownStr("2.1 TB")
+    gpt35_size_str = MarkdownStr("240 GB")
+    bert_size_str = MarkdownStr("1.3 GB")
+    archB_size_str = MarkdownStr("4 TB")
+    resnet_size_str = MarkdownStr("100 MB")
+    vit_size_str = MarkdownStr("1.2 GB")
+
+    # -- Write times
+    archA_write_str = fmt(archA_write_s, precision=0, commas=False, suffix=" s")
+    gpt35_write_str = fmt(gpt35_write_s, precision=1, commas=False, suffix=" s")
+    bert_write_str = fmt(bert_write_s, precision=3, commas=False, suffix=" s")
+    archB_write_str = fmt(archB_write_s, precision=0, commas=False, suffix=" s")
+    resnet_write_str = fmt(resnet_write_s, precision=3, commas=False, suffix=" s")
+    vit_write_str = fmt(vit_write_s, precision=3, commas=False, suffix=" s")
+
+    # -- Optimal intervals (min for >= 60s, s for < 60s)
+    archA_interval_str = fmt(archA_interval_s / 60, precision=1, commas=False, suffix=" min")
+    gpt35_interval_str = fmt(gpt35_interval_s / 60, precision=1, commas=False, suffix=" min")
+    bert_interval_str = fmt_int(bert_interval_s, commas=False, suffix=" s")
+    archB_interval_str = fmt_int(archB_interval_s / 60, commas=False, suffix=" min")
+    resnet_interval_str = fmt_int(resnet_interval_s, commas=False, suffix=" s")
+    vit_interval_str = fmt_int(vit_interval_s, commas=False, suffix=" s")
+
+    # -- Save overhead percentages
+    archA_overhead_str = fmt(archA_overhead_pct, precision=1, commas=False, suffix=" percent")
+    gpt35_overhead_str = fmt(gpt35_overhead_pct, precision=1, commas=False, suffix=" percent")
+    bert_overhead_str = fmt(bert_overhead_pct, precision=2, commas=False, suffix=" percent")
+    archB_overhead_str = fmt(archB_overhead_pct, precision=1, commas=False, suffix=" percent")
+    resnet_overhead_str = fmt(resnet_overhead_pct, precision=2, commas=False, suffix=" percent")
+    vit_overhead_str = fmt(vit_overhead_pct, precision=2, commas=False, suffix=" percent")
+```
+
+| **Model Type**                   |                               **Checkpoint Size** |                          **Write Time (100 GB/s)** |              **Optimal Interval (5hr GPU-only MTBF)** |                                     **Save Overhead** |
+|:---------------------------------|--------------------------------------------------:|---------------------------------------------------:|------------------------------------------------------:|------------------------------------------------------:|
+| **Archetype A (175B dense LLM)** |  `{python} CheckpointOverheadCalc.archA_size_str` |  `{python} CheckpointOverheadCalc.archA_write_str` |  `{python} CheckpointOverheadCalc.archA_interval_str` |  `{python} CheckpointOverheadCalc.archA_overhead_str` |
+| **GPT-3.5 (20B)**                |  `{python} CheckpointOverheadCalc.gpt35_size_str` |  `{python} CheckpointOverheadCalc.gpt35_write_str` |  `{python} CheckpointOverheadCalc.gpt35_interval_str` |  `{python} CheckpointOverheadCalc.gpt35_overhead_str` |
+| **BERT-Large**                   |   `{python} CheckpointOverheadCalc.bert_size_str` |   `{python} CheckpointOverheadCalc.bert_write_str` |   `{python} CheckpointOverheadCalc.bert_interval_str` |   `{python} CheckpointOverheadCalc.bert_overhead_str` |
+| **Archetype B (DLRM at Scale)**  |  `{python} CheckpointOverheadCalc.archB_size_str` |  `{python} CheckpointOverheadCalc.archB_write_str` |  `{python} CheckpointOverheadCalc.archB_interval_str` |  `{python} CheckpointOverheadCalc.archB_overhead_str` |
+| **ResNet-50**\index{ResNet-50}   | `{python} CheckpointOverheadCalc.resnet_size_str` | `{python} CheckpointOverheadCalc.resnet_write_str` | `{python} CheckpointOverheadCalc.resnet_interval_str` | `{python} CheckpointOverheadCalc.resnet_overhead_str` |
+| **ViT-Large**                    |    `{python} CheckpointOverheadCalc.vit_size_str` |    `{python} CheckpointOverheadCalc.vit_write_str` |    `{python} CheckpointOverheadCalc.vit_interval_str` |    `{python} CheckpointOverheadCalc.vit_overhead_str` |
 
 : **Checkpoint Overhead by Model Type**: Larger models with correspondingly larger checkpoints require longer save times but also benefit from longer optimal checkpoint intervals. The percentage column reports save-only checkpoint write tax, not total Young-Daly waste; at the optimum, expected rework adds a comparable term. {#tbl-checkpoint-overhead-by-model}
 

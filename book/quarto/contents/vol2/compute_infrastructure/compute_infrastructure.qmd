@@ -2610,21 +2610,56 @@ As @tbl-memory-breakdown shows, for our `{python} InfraFrontierNodeBreakdownReca
 ```{python}
 #| echo: false
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Exports: InfraFrontierNodeTableRecap.frontier_params_b_str
+# │ Exports: InfraFrontierNodeTableRecap.frontier_params_b_str,
+# │          InfraFrontierNodeTableRecap.bytes_fp16_str,
+# │          InfraFrontierNodeTableRecap.bytes_fp32_str,
+# │          InfraFrontierNodeTableRecap.weights_gb_str,
+# │          InfraFrontierNodeTableRecap.gradients_gb_str,
+# │          InfraFrontierNodeTableRecap.optimizer_m_gb_str,
+# │          InfraFrontierNodeTableRecap.optimizer_v_gb_str,
+# │          InfraFrontierNodeTableRecap.activation_range_gb_str,
+# │          InfraFrontierNodeTableRecap.total_range_tb_str
+from mlsysim.fmt import MarkdownStr, fmt_int
+
 class InfraFrontierNodeTableRecap:
 
+    # ┌── 1. LOAD ──────────────────────────────────────────
+    params = Models.Language.GPT3.parameters.m_as(param)
+
+    # ┌── 2. EXECUTE ───────────────────────────────────────
+    weights_gb = (params * BYTES_FP16.m_as(byte) * byte).m_as(GB)
+    gradients_gb = weights_gb
+    optimizer_m_gb = (params * BYTES_FP32.m_as(byte) * byte).m_as(GB)
+    optimizer_v_gb = optimizer_m_gb
+    activation_min_gb = 100
+    activation_max_gb = 400
+    total_min_tb = 2.2
+    total_max_tb = 2.5
+
+    # ┌── 3. GUARD ─────────────────────────────────────────
+    check(weights_gb > 0, "Weights must be positive")
+    check(optimizer_m_gb > weights_gb, "FP32 optimizer moment must exceed FP16 weights")
+
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    frontier_params_b_str = fmt(Models.Language.GPT3.parameters.m_as(param) / BILLION, precision=0, commas=False)
+    frontier_params_b_str = fmt(params / BILLION, precision=0, commas=False)
+    bytes_fp16_str = fmt_int(BYTES_FP16.m_as(byte), commas=False)
+    bytes_fp32_str = fmt_int(BYTES_FP32.m_as(byte), commas=False)
+    weights_gb_str = fmt(weights_gb, precision=0, commas=False)
+    gradients_gb_str = fmt(gradients_gb, precision=0, commas=False)
+    optimizer_m_gb_str = fmt(optimizer_m_gb, precision=0, commas=False)
+    optimizer_v_gb_str = fmt(optimizer_v_gb, precision=0, commas=False)
+    activation_range_gb_str = MarkdownStr(f"{fmt(activation_min_gb, precision=0, commas=False)}--{fmt(activation_max_gb, precision=0, commas=False)}")
+    total_range_tb_str = MarkdownStr(f"**{fmt(total_min_tb, precision=1, commas=False)}--{fmt(total_max_tb, precision=1, commas=False)}**")
 ```
 
-| **Component**                          | **Precision** | **Memory per Parameter** | **Total for `{python} InfraFrontierNodeTableRecap.frontier_params_b_str`B Model** |
-|:---------------------------------------|:-------------:|:------------------------:|:---------------------------------------------------------------------------------:|
-| **Model Weights**\index{Model Weights} |      FP16     |         2 bytes          |                                       350 GB                                      |
-| **Gradients**                          |      FP16     |         2 bytes          |                                       350 GB                                      |
-| **Optimizer (Adam $m$)**               |      FP32     |         4 bytes          |                                       700 GB                                      |
-| **Optimizer (Adam $v$)**               |      FP32     |         4 bytes          |                                       700 GB                                      |
-| **Activations**                        |     Mixed     |         Variable         |                                    100--400 GB                                    |
-| **Total**                              |               |                          |                                  **2.2--2.5 TB**                                  |
+| **Component**                          | **Precision** |                   **Memory per Parameter**                  | **Total for `{python} InfraFrontierNodeTableRecap.frontier_params_b_str`B Model** |
+|:---------------------------------------|:-------------:|:-----------------------------------------------------------:|:---------------------------------------------------------------------------------:|
+| **Model Weights**\index{Model Weights} |      FP16     | `{python} InfraFrontierNodeTableRecap.bytes_fp16_str` bytes |              `{python} InfraFrontierNodeTableRecap.weights_gb_str` GB             |
+| **Gradients**                          |      FP16     | `{python} InfraFrontierNodeTableRecap.bytes_fp16_str` bytes |             `{python} InfraFrontierNodeTableRecap.gradients_gb_str` GB            |
+| **Optimizer (Adam $m$)**               |      FP32     | `{python} InfraFrontierNodeTableRecap.bytes_fp32_str` bytes |            `{python} InfraFrontierNodeTableRecap.optimizer_m_gb_str` GB           |
+| **Optimizer (Adam $v$)**               |      FP32     | `{python} InfraFrontierNodeTableRecap.bytes_fp32_str` bytes |            `{python} InfraFrontierNodeTableRecap.optimizer_v_gb_str` GB           |
+| **Activations**                        |     Mixed     |                           Variable                          |         `{python} InfraFrontierNodeTableRecap.activation_range_gb_str` GB         |
+| **Total**                              |               |                                                             |            `{python} InfraFrontierNodeTableRecap.total_range_tb_str` TB           |
 
 : **Training Memory Breakdown for a 175B-Parameter Frontier Model**: The optimizer state alone (first and second moments in FP32) consumes 4$\times$ the memory of the model weights, making optimizer memory the dominant component of training memory. This is why memory optimization techniques focus heavily on optimizer state sharding and offloading. {#tbl-memory-breakdown}
 
@@ -3166,15 +3201,82 @@ The cumulative efficiency across all five stages is typically 85--90 percent, me
 
 To make this concrete, consider the power budget for a single rack containing four DGX H100 nodes:
 
-| **Component**                       | **Power (kW)** | **% of Rack Total** |
-|:------------------------------------|:--------------:|:-------------------:|
-| **GPU compute ($32 \times 700$ W)** |      22.4      |      67 percent     |
-| **Host CPUs and DRAM**              |      3.2       |      10 percent     |
-| **NVSwitch fabric**                 |      1.6       |      5 percent      |
-| **InfiniBand HCAs**                 |      0.8       |      2 percent      |
-| **Power conversion losses**         |      2.8       |      8 percent      |
-| **Cooling overhead (PUE 1.1)**      |      2.7       |      8 percent      |
-| **Total**                           |    **33.5**    |   **100 percent**   |
+```{python}
+#| echo: false
+#| label: rack-power-budget-calc
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ RACK POWER BUDGET (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-rack-power and surrounding prose.
+# │
+# │ Goal:    Itemize power budget for a 4-node DGX H100 rack.
+# │ Show:    Per-component kW and percentage of rack total.
+# │ How:     GPU power from mlsysim constants; other components as inputs;
+# │          total = sum; percentages = component/total × 100.
+# │
+# │ Imports: mlsysim.fmt (fmt, fmt_int, check), Hardware, Systems
+# │ Exports: RackPowerBudget.*_str (per-row power and percentage, plus total)
+# └─────────────────────────────────────────────────────────────────────────────
+
+class RackPowerBudget:
+    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    gpu_tdp_w = Hardware.Cloud.H100.tdp.m_as(watt)
+    gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
+    nodes_per_rack = 4
+
+    host_kw = 3.2
+    nvswitch_kw = 1.6
+    ib_kw = 0.8
+    conversion_kw = 2.8
+    cooling_kw = 2.7
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
+    num_gpus = gpus_per_node * nodes_per_rack
+    gpu_kw = num_gpus * gpu_tdp_w / THOUSAND
+    total_kw = gpu_kw + host_kw + nvswitch_kw + ib_kw + conversion_kw + cooling_kw
+
+    gpu_pct = round(gpu_kw / total_kw * 100)
+    host_pct = round(host_kw / total_kw * 100)
+    nvswitch_pct = round(nvswitch_kw / total_kw * 100)
+    ib_pct = round(ib_kw / total_kw * 100)
+    conversion_pct = round(conversion_kw / total_kw * 100)
+    cooling_pct = round(cooling_kw / total_kw * 100)
+    pct_sum = gpu_pct + host_pct + nvswitch_pct + ib_pct + conversion_pct + cooling_pct
+
+    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
+    check(num_gpus == 32, f"Expected 32 GPUs, got {num_gpus}")
+    check(abs(gpu_kw - 22.4) < 0.1, f"GPU power ({gpu_kw:.1f} kW)")
+    check(abs(total_kw - 33.5) < 0.1, f"Total rack power ({total_kw:.1f} kW)")
+    check(pct_sum == 100, f"Percentages sum to {pct_sum}, expected 100")
+
+    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────
+    num_gpus_str = fmt(num_gpus, precision=0, commas=False)
+    gpu_tdp_w_str = fmt(gpu_tdp_w, precision=0, commas=False)
+    gpu_kw_str = fmt(gpu_kw, precision=1, commas=False)
+    host_kw_str = fmt(host_kw, precision=1, commas=False)
+    nvswitch_kw_str = fmt(nvswitch_kw, precision=1, commas=False)
+    ib_kw_str = fmt(ib_kw, precision=1, commas=False)
+    conversion_kw_str = fmt(conversion_kw, precision=1, commas=False)
+    cooling_kw_str = fmt(cooling_kw, precision=1, commas=False)
+    total_kw_str = fmt(total_kw, precision=1, commas=False)
+
+    gpu_pct_str = fmt(gpu_pct, precision=0, commas=False, suffix=" percent")
+    host_pct_str = fmt(host_pct, precision=0, commas=False, suffix=" percent")
+    nvswitch_pct_str = fmt(nvswitch_pct, precision=0, commas=False, suffix=" percent")
+    ib_pct_str = fmt(ib_pct, precision=0, commas=False, suffix=" percent")
+    conversion_pct_str = fmt(conversion_pct, precision=0, commas=False, suffix=" percent")
+    cooling_pct_str = fmt(cooling_pct, precision=0, commas=False, suffix=" percent")
+```
+
+| **Component**                                                                                                 |                **Power (kW)**                |              **% of Rack Total**              |
+|:--------------------------------------------------------------------------------------------------------------|:--------------------------------------------:|:---------------------------------------------:|
+| **GPU compute ($`{python} RackPowerBudget.num_gpus_str` \times `{python} RackPowerBudget.gpu_tdp_w_str`$ W)** |    `{python} RackPowerBudget.gpu_kw_str`     |     `{python} RackPowerBudget.gpu_pct_str`    |
+| **Host CPUs and DRAM**                                                                                        |    `{python} RackPowerBudget.host_kw_str`    |    `{python} RackPowerBudget.host_pct_str`    |
+| **NVSwitch fabric**                                                                                           |  `{python} RackPowerBudget.nvswitch_kw_str`  |  `{python} RackPowerBudget.nvswitch_pct_str`  |
+| **InfiniBand HCAs**                                                                                           |     `{python} RackPowerBudget.ib_kw_str`     |     `{python} RackPowerBudget.ib_pct_str`     |
+| **Power conversion losses**                                                                                   | `{python} RackPowerBudget.conversion_kw_str` | `{python} RackPowerBudget.conversion_pct_str` |
+| **Cooling overhead (PUE 1.1)**                                                                                |  `{python} RackPowerBudget.cooling_kw_str`   |   `{python} RackPowerBudget.cooling_pct_str`  |
+| **Total**                                                                                                     | **`{python} RackPowerBudget.total_kw_str`**  |                **100 percent**                |
 
 : **Power Budget for a Four-Node DGX H100 Rack**: GPUs consume two thirds of total rack power, but the remaining one third (host systems, networking, power conversion, and cooling) cannot be eliminated and must be budgeted for when sizing the facility's electrical infrastructure. The power conversion losses (8 percent) represent the cumulative inefficiency of the five-stage delivery chain. {#tbl-rack-power}
 
