@@ -5,23 +5,12 @@ from . import config
 from . import evaluation
 from .constants import ureg, Q_
 
-# Lazy re-exports: avoid triggering sibling imports during mlsysim.__init__
-# partial initialization (circular import on Python <3.12).
-def __getattr__(name):
-    _lazy = {
-        "Hardware": "..hardware.registry",
-        "Models": "..models.registry",
-        "Platforms": "..platforms.registry",
-        "Systems": "..systems.registry",
-        "Infrastructure": "..infra.registry",
-    }
-    if name in _lazy:
-        import importlib
-        mod = importlib.import_module(_lazy[name], __name__)
-        val = getattr(mod, name)
-        globals()[name] = val
-        return val
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# Point to the new vetted registries
+from ..hardware.registry import Hardware
+from ..models.registry import Models
+from ..platforms.registry import Platforms
+from ..systems.registry import Systems
+from ..infra.registry import Infrastructure
 
 from .scenarios import Scenario, Scenarios, Applications, Fleet
 from .resolver_factory import ResolverFactory
