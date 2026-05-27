@@ -5,6 +5,12 @@ mlsysim: Machine Learning Systems Infrastructure and Modeling Platform
 
 __version__ = "0.1.2"
 
+# datasets imported FIRST: it only needs core.units, core.constants,
+# core.registry (submodules that initialize independently). This avoids
+# the circular chain on Python <3.12 where core.__init__ → hardware →
+# mlsysim (partial) → datasets fails.
+from . import datasets
+
 from . import core
 from . import hardware
 from . import models
@@ -20,14 +26,12 @@ from .core.scenarios import Scenario, Scenarios, Applications
 from .hardware.registry import Hardware
 from .models.registry import Models
 from .platforms.registry import Platforms
+from .datasets.registry import Datasets
 from .systems.registry import Systems
 from .infra.registry import Infrastructure
 from .literature.registry import Literature
 from .ops import Ops, Monitoring
 from .core import calibration
-
-# datasets deferred to __getattr__ to break circular import on Python <3.12.
-# (datasets.registry → core.registry → re-enters mlsysim.__init__)
 
 # AUTHORITATIVE SOLVERS
 from .core.solver import (
@@ -65,17 +69,4 @@ def plot_roofline(*args, **kwargs):
     return _plot_roofline(*args, **kwargs)
 
 
-def __getattr__(name):
-    """Lazy imports for datasets (circular import on Python <3.12)."""
-    if name in ("datasets", "Datasets"):
-        import importlib
-        _mod = importlib.import_module("mlsysim.datasets")
-        _cls = _mod.Datasets
-        globals()["datasets"] = _mod
-        globals()["Datasets"] = _cls
-        return _mod if name == "datasets" else _cls
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# __all__ includes Datasets so `from mlsysim import *` picks it up
-__all__ = sorted(name for name in globals() if not name.startswith("_")) + ["Datasets"]
+__all__ = sorted(name for name in globals() if not name.startswith("_"))
