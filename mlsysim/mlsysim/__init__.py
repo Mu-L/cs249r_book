@@ -8,7 +8,6 @@ __version__ = "0.1.2"
 from . import core
 from . import hardware
 from . import models
-from . import datasets
 from . import platforms
 from . import infra
 from . import systems
@@ -21,12 +20,17 @@ from .core.scenarios import Scenario, Scenarios, Applications
 from .hardware.registry import Hardware
 from .models.registry import Models
 from .platforms.registry import Platforms
-from .datasets.registry import Datasets
 from .systems.registry import Systems
 from .infra.registry import Infrastructure
 from .literature.registry import Literature
 from .ops import Ops, Monitoring
 from .core import calibration
+
+# datasets imported AFTER all other subpackages to avoid circular import
+# on Python <3.12 (datasets.registry → core.registry triggers re-entry
+# into mlsysim.__init__ when the package is partially initialized).
+from . import datasets
+from .datasets.registry import Datasets
 
 # AUTHORITATIVE SOLVERS
 from .core.solver import (
