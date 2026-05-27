@@ -27,6 +27,146 @@ these into a coherent interview arc.
 
 ---
 
+## Existing Assets to Leverage
+
+The platform already has substantial infrastructure the live
+interviewer should build on, not rebuild.
+
+### Chains (843 chains, 2,853 questions)
+
+Pre-built difficulty progressions that are the interviewer's primary
+navigation structure. A chain is a curated sequence of questions on
+the same topic that escalates through levels and zones:
+
+```
+Chain: cloud-chain-auto-002-04 (collective-communication)
+  [0] L3 fluency     → MoE AllToAll Communication Time
+  [1] L4 diagnosis   → Diagnosing MoE AllToAll Network Bottlenecks
+  [2] L5 evaluation  → Trade-offs of DCQCN Parameters in RoCEv2 AI Clusters
+  [3] L6+ mastery    → MoE Interconnect Bottleneck on TPU Pods
+```
+
+How the interviewer uses chains:
+
+- **Entry point selection**: Start the candidate at a chain position
+  matching their target level (e.g., position [1] for L4 target)
+- **Zoom in/out**: Move backward in the chain to simplify, forward
+  to escalate. The chain already has the right questions.
+- **Natural transitions**: When a chain is exhausted, the coverage
+  map identifies the next uncovered area and picks a chain there
+- **Primary vs secondary tiers**: 1,480 primary memberships (clean
+  Bloom progressions, shown by default) and 1,374 secondary
+  (alternate paths, used when the primary chain doesn't fit)
+
+The most common chain shapes:
+
+| Progression | Count | Interview use |
+|---|---|---|
+| L3 → L4 → L5 | 127 | Default for staff-level (start L3 warmup) |
+| L3 → L4 → L5 → L6+ | 64 | Full escalation for strong candidates |
+| L4 → L5 → L6+ | 33 | Skip warmup for senior candidates |
+| L2 → L3 → L4 → L5 | 33 | Start easier for uncertain areas |
+
+Zone progressions within chains:
+
+| Zone flow | Count | What it tests |
+|---|---|---|
+| fluency → diagnosis → evaluation | 29 | Know it → find the bug → judge the trade-off |
+| recall → fluency → evaluation | 28 | Define it → apply it → evaluate it |
+| fluency → design → mastery | 28 | Understand it → build it → own it |
+| fluency → diagnosis → specification | 23 | Apply it → debug it → spec the fix |
+
+### Gauntlet Mode (structural template)
+
+The gauntlet page (`src/app/gauntlet/page.tsx`) already implements the
+multi-phase interview pattern:
+
+- Phase machine: `setup | active | review | results`
+- Track/level/duration selectors
+- Warm-up question selection (easier question first)
+- Round-robin across zones for breadth
+- Realism modes: strict / standard / open (controls tool access)
+- Timer, progress tracking, results persistence
+
+The live interviewer reuses this phase structure but replaces the
+quiz loop with a chat interface.
+
+### Worker Infrastructure (LLM routing + personas)
+
+The Cloudflare Worker (`worker/src/index.ts`) already has:
+
+- **6 LLM provider adapters**: Groq (Llama 3.3 70B), OpenAI
+  (GPT-4o mini), Anthropic, Gemini, OpenRouter, CF Workers AI
+- **Priority-based failover**: if Groq is down, falls through to
+  OpenAI, then Anthropic, etc.
+- **Two persona system prompts**: Socratic (clarification only,
+  never reveals answer) and Tutor (post-reveal explanation)
+- **Server-side prompt enforcement**: system prompt injected
+  server-side so the client cannot override it
+- **Rate limiting**: per-IP bucketing with configurable windows
+
+The live interviewer adds a third persona: Conductor. It reuses the
+same adapter registry and failover logic.
+
+### Spaced Repetition + Progress System
+
+`src/lib/progress.ts` tracks:
+
+- Per-question attempt history (score, timestamp)
+- SM-2 spaced repetition cards (due dates, intervals)
+- Gauntlet results (score, questions, timing)
+- Activity log (streaks, session history)
+
+The live interviewer can:
+
+- Exclude already-mastered questions from the pool (SR interval
+  > 30 days = candidate knows this)
+- Feed interview results back into the SR system (weak areas get
+  shorter intervals, come up sooner in practice mode)
+- Save interview sessions alongside gauntlet results
+
+### Existing Components (direct reuse)
+
+| Component | Live interviewer use |
+|---|---|
+| `NapkinCalc` | Collapsible calculator during estimation questions |
+| `HardwareRef` | Quick spec lookup (H100 TFLOPS, A100 memory, etc.) |
+| `GlossaryText` | Acronym tooltips in interviewer messages |
+| `MarkdownText` | Render interviewer messages with bold/code/numbers |
+| `MetaTooltip` | Hover info on competency badges in coverage bar |
+| `LevelBadge` | Show question difficulty in transcript |
+| `ChainBadge` | Show chain context when the AI follows a chain |
+| `QuestionVisual` | Display SVG diagrams when relevant to the scenario |
+| `QuestionFeedback` | Post-interview per-question feedback UI |
+| `Toast` | Notifications (session saved, time warning, etc.) |
+
+### Analytics Events
+
+`src/lib/analytics.ts` already defines event types for gauntlet
+(started, completed, abandoned). The live interviewer adds parallel
+events: `interview_started`, `interview_completed`,
+`interview_abandoned`.
+
+### Napkin Math Checking
+
+`checkNapkinMath()` in `corpus.ts` does algorithmic tolerance
+checking with track-specific thresholds (cloud: 25%, edge: 15%,
+mobile: 10%). Every vault question has napkin math with assumptions,
+calculations, and conclusions. The live interviewer uses these to
+silently evaluate the candidate's estimates and calibrate follow-ups.
+
+### Glossary (831 terms)
+
+The glossary we just built (`src/data/glossary.json`, 831 terms with
+definitions and acronym expansions) serves double duty:
+
+- Inline tooltips in the interviewer's messages (via GlossaryText)
+- The AI interviewer's acronym awareness: when it detects the
+  candidate is unfamiliar with a term, it can pull the definition
+  from the glossary data passed in the system prompt context
+
+---
+
 ## Goals
 
 ### G1. Feel like a real interview, not a quiz
@@ -108,18 +248,58 @@ The end-of-interview report should tell the candidate:
 ### 1. Question selection (the conductor function)
 
 The AI does not see all 10,711 questions. The client pre-selects a pool
-of ~30 hydrated questions matching the session config (track, level
-range, diversity across areas). The AI picks from this pool.
+of questions and chains matching the session config. The AI navigates
+chains for depth and switches chains for breadth.
 
-Pool selection strategy (client-side):
+Pool selection strategy (client-first, chain-aware):
 
-1. Filter by track and level range (target level +/- 1)
-2. Sample 2-3 questions per competency area for breadth
-3. Prefer questions with napkin_math (all have it) and visuals (144 do)
-4. Prefer higher Bloom levels (analyze, evaluate, create) for staff
-5. Exclude questions the candidate has already practiced (from
-   localStorage attempt history)
-6. Refresh pool when < 10 unused questions remain
+**Step 1: Select chains (primary navigation structure)**
+
+1. Filter chains by track
+2. For each competency area, find chains whose entry point matches
+   the target level range (+/- 1 level)
+3. Pick 1-2 chains per competency area (primary tier preferred)
+4. For a 45-min session targeting 5 areas: ~8-10 chains selected
+
+**Step 2: Hydrate chain members**
+
+1. For each selected chain, hydrate the full question details (scenario,
+   solution, napkin_math) via the vault worker
+2. Send chain structure to the AI: the position order, levels, zones,
+   and which question is the "entry point" for this candidate's level
+
+**Step 3: Fill gaps with standalone questions**
+
+1. For competency areas with no good chain match, add 2-3 standalone
+   questions filtered by track + level + zone diversity
+2. Prefer higher Bloom levels (analyze, evaluate, create)
+3. Prefer questions with visuals (144 available)
+
+**Step 4: Exclude mastered questions**
+
+1. Check SR cards from progress.ts
+2. Exclude questions with interval > 30 days (well-known)
+3. Prefer questions the candidate has attempted but scored poorly on
+   (targeted remediation)
+
+**Step 5: Refresh during session**
+
+1. When < 3 unused chains remain, fetch replacement chains biased
+   toward uncovered areas
+2. Track coverage map: which areas have been touched, at what depth
+
+**How the AI uses chains during the interview:**
+
+The AI receives chains as ordered sequences, not individual questions.
+When it presents a scenario from chain position [1], it knows that:
+- Position [0] is the simpler version (zoom in if candidate struggles)
+- Position [2] is the harder follow-up (escalate if candidate is strong)
+- The chain's zone progression tells it what cognitive move comes next
+  (e.g., fluency → diagnosis → evaluation)
+
+This means the AI's follow-up questions are real vault questions with
+canonical solutions and napkin math, not improvised prompts. Every
+turn is grounded in curated content.
 
 ### 2. Conversational flow (the dialogue function)
 
@@ -498,17 +678,37 @@ trade-off questions.
 Closing (3-5 min): Summarize coverage, ask if they have questions,
 end naturally.
 
-### Section 3: Question pool instructions
+### Section 3: Chain navigation instructions
 
-You have a pool of curated questions with scenarios, solutions, and
-napkin math. When presenting a scenario:
-- Paraphrase naturally
-- Use metadata (zone, area, topic) to track coverage
+You have chains of curated questions organized as difficulty
+progressions. Each chain covers one topic and escalates through levels
+and cognitive zones (e.g., fluency → diagnosis → evaluation).
+
+When navigating a chain:
+- Start at the entry point matching the candidate's target level
+- If the candidate answers well: advance to the next position in the
+  chain (harder level, different zone)
+- If the candidate struggles: step back to the previous position
+  (simpler framing of the same concept)
+- When you reach the end of a chain (or the candidate clearly owns
+  the topic): transition to a chain in an uncovered competency area
+
+When presenting a scenario from the chain:
+- Paraphrase naturally. Never read vault text verbatim.
 - After the candidate responds, evaluate silently against the canonical
-  solution and napkin math
+  solution and napkin math at that chain position
 - Never reveal the canonical answer
-- Bias toward uncovered competency areas
-- Note: {COVERED_AREAS} have been explored. Prioritize {UNCOVERED}.
+- Use the chain's zone progression as your dialogue guide:
+  fluency positions → test application
+  diagnosis positions → ask them to find the bottleneck
+  evaluation positions → ask them to judge trade-offs
+  design positions → ask them to propose an architecture
+  mastery positions → ask them to solve an open-ended extension
+
+Coverage tracking:
+- {COVERED_AREAS} have been explored. Prioritize {UNCOVERED}.
+- Aim for {TARGET_AREAS} competency areas in this session.
+- Go deep (3+ chain positions) in at least {DEEP_DIVE_COUNT} areas.
 
 ### Section 4: Evaluation criteria
 
@@ -539,27 +739,45 @@ Signal weak areas by probing deeper. Signal strong areas by moving on.
 ### Phase 1: MVP (target: working end-to-end)
 
 Files to create:
-- `src/app/interview/page.tsx` (setup + active + feedback phases)
-- `src/lib/interview.ts` (session state, pool selection, transcript
-  management)
-- `src/lib/interview-prompt.ts` (system prompt builder)
+- `src/app/interview/page.tsx` (setup + active + feedback phases,
+  modeled after gauntlet page.tsx phase machine)
+- `src/lib/interview.ts` (session state, chain-aware pool selection,
+  transcript management, coverage tracking)
+- `src/lib/interview-prompt.ts` (system prompt builder with chain
+  context injection)
 
 Files to modify:
-- `worker/src/index.ts` (add POST /interview endpoint)
+- `worker/src/index.ts` (add Conductor persona + POST /interview
+  endpoint, alongside existing Socratic + Tutor personas)
+- `src/lib/corpus.ts` (export chain selection helpers:
+  getChainsForArea, getChainEntryPoint)
+
+Components to reuse directly:
+- `NapkinCalc`, `HardwareRef` (collapsible tool panels)
+- `GlossaryText`, `MarkdownText` (message rendering)
+- `LevelBadge`, `ChainBadge` (transcript annotations)
+- `QuestionVisual` (inline diagrams)
+- `Toast` (notifications)
 
 What the MVP delivers:
-- Setup page with track/level/duration selectors
+- Setup page with track/level/duration/focus-area selectors
 - Chat interface with scrolling transcript
-- AI interviewer that presents scenarios, follows up, and transitions
-- Basic feedback page with area ratings and recommendations
+- Chain-aware AI interviewer: navigates chains for depth (follow-up
+  questions are real vault questions with solutions and napkin math),
+  switches chains for breadth (coverage-driven transitions)
+- Basic feedback page with per-area ratings and evidence
+- Practice recommendations linked to specific questions
 - Session persistence in localStorage
+- Interview results fed back into SR system (weak areas get shorter
+  review intervals)
 
 What the MVP skips:
-- Streaming responses
-- Diagram canvas
-- Competency radar chart
+- Streaming responses (request/response for now)
+- Diagram canvas (text descriptions only)
+- Competency radar chart (simple bar chart instead)
 - Transcript export
 - Session comparison
+- Voice input
 
 ### Phase 2: Polish
 
