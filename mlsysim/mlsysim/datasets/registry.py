@@ -1,11 +1,13 @@
-import mlsysim.core.units
-import mlsysim.core.constants
-import mlsysim.core.registry
+import importlib as _il
+_units = _il.import_module("mlsysim.core.units")
+_consts = _il.import_module("mlsysim.core.constants")
+_reg = _il.import_module("mlsysim.core.registry")
 
-count = mlsysim.core.units.count
-IMAGE_CHANNELS_RGB = mlsysim.core.constants.IMAGE_CHANNELS_RGB
-IMAGE_DIM_RESNET = mlsysim.core.constants.IMAGE_DIM_RESNET
-Registry = mlsysim.core.registry.Registry
+count = _units.count
+IMAGE_CHANNELS_RGB = _consts.IMAGE_CHANNELS_RGB
+IMAGE_DIM_RESNET = _consts.IMAGE_DIM_RESNET
+Registry = _reg.Registry
+del _il, _units, _consts, _reg
 from .types import DatasetProfile
 
 _IMAGENET_TRAINING = 1_281_167 * count

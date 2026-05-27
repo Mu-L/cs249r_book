@@ -8,7 +8,8 @@ __version__ = "0.1.2"
 from . import core
 from . import hardware
 from . import models
-from . import datasets
+# datasets NOT imported here — causes circular import on Python <3.12.
+# Access via mlsysim.Datasets (lazy __getattr__) or mlsysim.datasets.
 from . import platforms
 from . import infra
 from . import systems
@@ -21,7 +22,7 @@ from .core.scenarios import Scenario, Scenarios, Applications
 from .hardware.registry import Hardware
 from .models.registry import Models
 from .platforms.registry import Platforms
-from .datasets.registry import Datasets
+# Datasets loaded lazily via __getattr__ below.
 from .systems.registry import Systems
 from .infra.registry import Infrastructure
 from .literature.registry import Literature
@@ -64,4 +65,17 @@ def plot_roofline(*args, **kwargs):
     return _plot_roofline(*args, **kwargs)
 
 
-__all__ = sorted(name for name in globals() if not name.startswith("_"))
+def __getattr__(name):
+    """Lazy import for datasets subpackage (circular import on Python <3.12)."""
+    if name in ("datasets", "Datasets"):
+        import importlib
+        _mod = importlib.import_module("mlsysim.datasets")
+        _cls = _mod.Datasets
+        globals()["datasets"] = _mod
+        globals()["Datasets"] = _cls
+        return _mod if name == "datasets" else _cls
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Datasets in __all__ so `from mlsysim import *` picks it up.
+__all__ = sorted(name for name in globals() if not name.startswith("_")) + ["Datasets"]
