@@ -13,7 +13,6 @@ from . import infra
 from . import systems
 from . import sim
 from . import physics
-from . import datasets  # after core/hardware/models to avoid circular import on Python <3.12
 
 # AUTHORITATIVE API ENTRY POINTS
 from .core.engine import Engine
@@ -21,12 +20,16 @@ from .core.scenarios import Scenario, Scenarios, Applications
 from .hardware.registry import Hardware
 from .models.registry import Models
 from .platforms.registry import Platforms
-from .datasets.registry import Datasets
 from .systems.registry import Systems
 from .infra.registry import Infrastructure
 from .literature.registry import Literature
 from .ops import Ops, Monitoring
 from .core import calibration
+
+# datasets imported last: its registry pulls from core.constants which
+# can re-enter mlsysim on Python <3.12 if the package isn't fully initialized.
+from . import datasets
+from .datasets.registry import Datasets
 
 # AUTHORITATIVE SOLVERS
 from .core.solver import (
