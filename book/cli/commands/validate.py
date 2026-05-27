@@ -257,6 +257,8 @@ class ValidateCommand:
             Scope("self-ref", "_run_self_referential", default=False),
             Scope("capitalized", "_run_mitpress_capitalized_refs",
                   note='"chapter 12" lowercase in prose (§10.3.2)'),
+            Scope("xref-case", "_run_xref_sentence_start_case",
+                  note="@fig- at sentence start should be @Fig- (MIT Press lowercase prefix)"),
         ],
         "labels": [
             # duplicates and orphans are both curated, but each carries its
@@ -5824,6 +5826,92 @@ class ValidateCommand:
         return ValidationRunResult(
             name="mitpress-capitalized-refs",
             description='Lowercase "chapter/section/figure/table" in prose references (MIT Press §10.4)',
+            files_checked=len(files),
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    def _run_xref_sentence_start_case(self, root: Path) -> ValidationRunResult:
+        """Flag lowercase @fig-/@tbl-/@sec-/@eq-/@lst- at sentence starts.
+
+        With crossref prefixes configured to lowercase, sentence-start refs
+        must use the capitalized Quarto syntax (@Fig-, @Tbl-, @Sec-, @Eq-,
+        @Lst-) so the rendered prefix is uppercase.
+        """
+        start = time.time()
+        files = self._qmd_files(root)
+        issues: List[ValidationIssue] = []
+        xref_re = re.compile(r"@(fig|tbl|sec|eq|lst)-[\w-]+")
+        footnote_def = re.compile(r"^\s*\[\^fn-")
+
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            in_code = False
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if stripped.startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    continue
+                if stripped.startswith("#|"):
+                    continue
+                if stripped.startswith(":::"):
+                    continue
+                if footnote_def.match(line):
+                    continue
+
+                for m in xref_re.finditer(line):
+                    col = m.start()
+                    before = line[:col].rstrip()
+                    is_sentence_start = False
+
+                    if not before:
+                        # Line-start ref: check preceding line
+                        prev = ""
+                        for pi in range(idx - 2, -1, -1):
+                            ps = lines[pi].strip()
+                            if not ps:
+                                is_sentence_start = True
+                                break
+                            prev = ps
+                            break
+                        if not is_sentence_start and prev:
+                            if prev[-1] in ".?!":
+                                is_sentence_start = True
+                            elif prev.startswith("#"):
+                                is_sentence_start = True
+                            elif prev.endswith(":::"):
+                                is_sentence_start = True
+                    else:
+                        if re.search(r'[.?!]\s*$', before):
+                            is_sentence_start = True
+                        elif re.search(r':\s*$', before):
+                            after_ref = line[m.end():].strip()
+                            if after_ref and after_ref[0] not in ".,;:)]":
+                                is_sentence_start = True
+
+                    if is_sentence_start:
+                        ref_type = m.group(1)
+                        cap_form = f"@{ref_type[0].upper()}{ref_type[1:]}-"
+                        context = line.strip()[:100]
+                        issues.append(
+                            ValidationIssue(
+                                file=self._relative_file(file),
+                                line=idx,
+                                code="xref_sentence_start_case",
+                                message=(
+                                    f"Lowercase @{ref_type}- at sentence start "
+                                    f"-- use {cap_form} for uppercase prefix"
+                                ),
+                                severity="warning",
+                                context=context,
+                            )
+                        )
+
+        return ValidationRunResult(
+            name="xref-sentence-start-case",
+            description="Flag lowercase crossref prefixes at sentence starts (MIT Press convention)",
             files_checked=len(files),
             issues=issues,
             elapsed_ms=int((time.time() - start) * 1000),
