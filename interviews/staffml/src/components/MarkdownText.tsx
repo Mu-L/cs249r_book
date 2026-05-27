@@ -2,12 +2,21 @@
 
 import React from "react";
 import clsx from "clsx";
+import GlossaryText from "./GlossaryText";
 
 /**
- * Renders basic markdown-like text with bold, inline code, and highlighted numbers/units.
- * Extracted from NapkinMathDisplay for reuse across the app.
+ * Renders basic markdown-like text with bold, inline code, highlighted
+ * numbers/units, and optional glossary acronym tooltips.
  */
-export default function MarkdownText({ text, className }: { text: string; className?: string }) {
+export default function MarkdownText({
+  text,
+  className,
+  glossary = true,
+}: {
+  text: string;
+  className?: string;
+  glossary?: boolean;
+}) {
   if (!text) return null;
 
   // Split on **bold** markers and inline code `backticks`
@@ -41,14 +50,16 @@ export default function MarkdownText({ text, className }: { text: string; classN
             </span>
           );
         }
-        // Highlight numbers and units inline
+        if (glossary) {
+          return <GlossaryText key={i} text={part} />;
+        }
         return <HighlightNumbers key={i} text={part} />;
       })}
     </span>
   );
 }
 
-function HighlightNumbers({ text }: { text: string }) {
+export function HighlightNumbers({ text }: { text: string }) {
   // Highlight numbers with units (e.g., "5 ms", "3.35 TB/s", "989 TFLOPS",
   // "120e12 FLOPs", "1.2×10^14 bytes"). The number group accepts:
   //   - plain integers/decimals with optional thousands commas: 1,000.5
