@@ -63,13 +63,25 @@ def plot_roofline(*args, **kwargs):
     return _plot_roofline(*args, **kwargs)
 
 
-# datasets imported at the very end of __init__ — after everything else
-# is fully registered. On Python <3.12, importing datasets triggers
-# core.constants via relative imports, which may re-enter __init__.
-# By this point __init__ is nearly complete so the re-entry finds
-# everything it needs.
-from . import datasets
-from .datasets.registry import Datasets
+# NOTE: datasets is NOT imported here — it causes an unavoidable circular
+# import on Python <=3.12 (relative imports in datasets/registry.py
+# re-enter mlsysim.__init__ via parent-package resolution).
+# Access via: from mlsysim.datasets.registry import Datasets
+# The book's QMD cells get Datasets from the star import of mlsysim,
+# which uses __getattr__ below to load it lazily.
 
 
-__all__ = sorted(name for name in globals() if not name.startswith("_"))
+def __getattr__(name):
+    """Lazy import for datasets (avoids circular import on all Python versions)."""
+    if name in ("datasets", "Datasets"):
+        # Direct submodule import — bypasses __init__ re-entry because
+        # we import the leaf module, not the package.
+        import mlsysim.datasets.registry as _reg
+        import mlsysim.datasets as _mod
+        globals()["datasets"] = _mod
+        globals()["Datasets"] = _reg.Datasets
+        return _mod if name == "datasets" else _reg.Datasets
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = sorted(name for name in globals() if not name.startswith("_")) + ["Datasets"]
