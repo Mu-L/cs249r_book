@@ -8,8 +8,7 @@ __version__ = "0.1.2"
 from . import core
 from . import hardware
 from . import models
-# datasets NOT imported here — causes circular import on Python <3.12.
-# Access via mlsysim.Datasets (lazy __getattr__) or mlsysim.datasets.
+# datasets deferred to __getattr__ (see below) to avoid circular import.
 from . import platforms
 from . import infra
 from . import systems
@@ -73,8 +72,19 @@ def __getattr__(name):
     if name in ("datasets", "Datasets") and not _datasets_loading:
         _datasets_loading = True
         try:
-            import importlib
-            _mod = importlib.import_module("mlsysim.datasets")
+            # Force-load the real datasets package now that __init__ is done.
+            import importlib, importlib.util, sys
+            spec = importlib.util.find_spec("mlsysim.datasets")
+            if spec is None:
+                # Fallback: construct spec from filesystem
+                import pathlib
+                ds_init = pathlib.Path(__file__).parent / "datasets" / "__init__.py"
+                spec = importlib.util.spec_from_file_location(
+                    "mlsysim.datasets", str(ds_init),
+                    submodule_search_locations=[str(ds_init.parent)])
+            _mod = importlib.util.module_from_spec(spec)
+            sys.modules["mlsysim.datasets"] = _mod
+            spec.loader.exec_module(_mod)
             _cls = _mod.Datasets
             globals()["datasets"] = _mod
             globals()["Datasets"] = _cls
