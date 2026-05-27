@@ -1,23 +1,6 @@
-import sys as _sys
-
-# Read core submodules from sys.modules to avoid parent-package re-entry
-# on Python <=3.12. These modules are guaranteed to be loaded because
-# mlsysim.__init__ imports core (and all its submodules) before datasets.
-_units = _sys.modules.get("mlsysim.core.units")
-_consts = _sys.modules.get("mlsysim.core.constants")
-_reg = _sys.modules.get("mlsysim.core.registry")
-
-if _units is not None and _consts is not None and _reg is not None:
-    count = _units.count
-    IMAGE_CHANNELS_RGB = _consts.IMAGE_CHANNELS_RGB
-    IMAGE_DIM_RESNET = _consts.IMAGE_DIM_RESNET
-    Registry = _reg.Registry
-else:
-    from ..core.units import count
-    from ..core.constants import IMAGE_CHANNELS_RGB, IMAGE_DIM_RESNET
-    from ..core.registry import Registry
-
-del _sys, _units, _consts, _reg
+from ..core.units import count
+from ..core.constants import IMAGE_CHANNELS_RGB, IMAGE_DIM_RESNET
+from ..core.registry import Registry
 from .types import DatasetProfile
 
 _IMAGENET_TRAINING = 1_281_167 * count
