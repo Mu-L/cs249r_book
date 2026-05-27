@@ -422,6 +422,7 @@ export function exportProgress(): string {
     streak: getStorage(STREAK_KEY, {}),
     daily: getStorage('staffml_daily', {}),
     planProgress: getStorage('staffml_plan_progress', {}),
+    customPaths: getStorage('staffml_custom_paths', []),
     analytics: getStorage('staffml_analytics', []),
     exportedAt,
     version: 1,
@@ -464,7 +465,7 @@ export function importProgress(json: string): boolean {
     if (data.streak !== undefined && (typeof data.streak !== 'object' || Array.isArray(data.streak))) return false;
 
     // Snapshot existing values so we can roll back on any write failure.
-    const KEYS = [STORAGE_KEY, GAUNTLET_KEY, SR_KEY, STREAK_KEY, 'staffml_daily', 'staffml_plan_progress', 'staffml_analytics'] as const;
+    const KEYS = [STORAGE_KEY, GAUNTLET_KEY, SR_KEY, STREAK_KEY, 'staffml_daily', 'staffml_plan_progress', 'staffml_custom_paths', 'staffml_analytics'] as const;
     const snapshot: Record<string, string | null> = {};
     for (const k of KEYS) {
       try { snapshot[k] = window.localStorage.getItem(k); } catch { snapshot[k] = null; }
@@ -486,6 +487,7 @@ export function importProgress(json: string): boolean {
       if (data.streak !== undefined) setStorage(STREAK_KEY, data.streak);
       if (data.daily !== undefined) setStorage('staffml_daily', data.daily);
       if (data.planProgress !== undefined) setStorage('staffml_plan_progress', data.planProgress);
+      if (data.customPaths !== undefined) setStorage('staffml_custom_paths', data.customPaths);
       if (data.analytics !== undefined && Array.isArray(data.analytics)) setStorage('staffml_analytics', data.analytics);
     } catch {
       rollback();
@@ -508,6 +510,7 @@ export function clearProgress(): void {
     window.localStorage.removeItem(STREAK_KEY);
     window.localStorage.removeItem('staffml_daily');
     window.localStorage.removeItem('staffml_plan_progress');
+    window.localStorage.removeItem('staffml_custom_paths');
     // Clear the export timestamp too — once everything is gone, a stale
     // "Last exported" readout pointing at data that no longer exists
     // would be misleading.
