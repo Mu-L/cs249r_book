@@ -8,7 +8,6 @@ __version__ = "0.1.2"
 from . import core
 from . import hardware
 from . import models
-# datasets deferred to __getattr__ (see below) to avoid circular import.
 from . import platforms
 from . import infra
 from . import systems
@@ -64,35 +63,13 @@ def plot_roofline(*args, **kwargs):
     return _plot_roofline(*args, **kwargs)
 
 
-_datasets_loading = False
-
-def __getattr__(name):
-    """Lazy import for datasets subpackage (circular import on Python <3.12)."""
-    global _datasets_loading
-    if name in ("datasets", "Datasets") and not _datasets_loading:
-        _datasets_loading = True
-        try:
-            # Force-load the real datasets package now that __init__ is done.
-            import importlib, importlib.util, sys
-            spec = importlib.util.find_spec("mlsysim.datasets")
-            if spec is None:
-                # Fallback: construct spec from filesystem
-                import pathlib
-                ds_init = pathlib.Path(__file__).parent / "datasets" / "__init__.py"
-                spec = importlib.util.spec_from_file_location(
-                    "mlsysim.datasets", str(ds_init),
-                    submodule_search_locations=[str(ds_init.parent)])
-            _mod = importlib.util.module_from_spec(spec)
-            sys.modules["mlsysim.datasets"] = _mod
-            spec.loader.exec_module(_mod)
-            _cls = _mod.Datasets
-            globals()["datasets"] = _mod
-            globals()["Datasets"] = _cls
-            return _mod if name == "datasets" else _cls
-        finally:
-            _datasets_loading = False
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# datasets imported at the very end of __init__ — after everything else
+# is fully registered. On Python <3.12, importing datasets triggers
+# core.constants via relative imports, which may re-enter __init__.
+# By this point __init__ is nearly complete so the re-entry finds
+# everything it needs.
+from . import datasets
+from .datasets.registry import Datasets
 
 
-# Datasets in __all__ so `from mlsysim import *` picks it up.
-__all__ = sorted(name for name in globals() if not name.startswith("_")) + ["Datasets"]
+__all__ = sorted(name for name in globals() if not name.startswith("_"))
