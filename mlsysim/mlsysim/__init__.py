@@ -5,15 +5,10 @@ mlsysim: Machine Learning Systems Infrastructure and Modeling Platform
 
 __version__ = "0.1.2"
 
-# datasets imported FIRST: it only needs core.units, core.constants,
-# core.registry (submodules that initialize independently). This avoids
-# the circular chain on Python <3.12 where core.__init__ → hardware →
-# mlsysim (partial) → datasets fails.
-from . import datasets
-
 from . import core
 from . import hardware
 from . import models
+from . import datasets
 from . import platforms
 from . import infra
 from . import systems
