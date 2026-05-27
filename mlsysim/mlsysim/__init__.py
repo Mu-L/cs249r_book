@@ -8,12 +8,12 @@ __version__ = "0.1.2"
 from . import core
 from . import hardware
 from . import models
-from . import datasets
 from . import platforms
 from . import infra
 from . import systems
 from . import sim
 from . import physics
+from . import datasets  # after core/hardware/models to avoid circular import on Python <3.12
 
 # AUTHORITATIVE API ENTRY POINTS
 from .core.engine import Engine
