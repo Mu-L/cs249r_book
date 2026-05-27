@@ -7,7 +7,7 @@ import { ECOSYSTEM_BASE } from "../lib/env";
 import {
   Library, Target, Crosshair, BarChart3, BookOpen,
   Menu, X, Sun, Moon, Map, Cpu, Server, ChevronDown, Info,
-  Star, Bug, Send, Atom, Network,
+  Star, Bug, Send, Atom, Network, Mic2,
 } from "lucide-react";
 import clsx from "clsx";
 import StreakBadge from "@/components/StreakBadge";
@@ -19,6 +19,7 @@ const primaryLinks = [
   { href: "/", label: "Vault", icon: Library },
   { href: "/practice", label: "Practice", icon: Target },
   { href: "/gauntlet", label: "Mock Interview", icon: Crosshair },
+  { href: "/interview", label: "Live Interview", icon: Mic2 },
   { href: "/progress", label: "Progress", icon: BarChart3 },
   { href: "/about", label: "About", icon: Info },
 ];
