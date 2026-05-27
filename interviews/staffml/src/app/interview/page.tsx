@@ -38,6 +38,14 @@ import type {
 
 type Phase = "setup" | "active" | "feedback";
 
+const TRACK_LABELS: Record<string, string> = {
+  cloud: "Cloud",
+  edge: "Edge",
+  global: "Global",
+  mobile: "Mobile",
+  tinyml: "TinyML",
+};
+
 const DURATIONS = [
   { label: "Quick", minutes: 15 },
   { label: "Standard", minutes: 30 },
@@ -495,7 +503,7 @@ function SetupPhase({
                 selectedTrack === t
                   ? "bg-accentBlue/10 border-accentBlue text-accentBlue"
                   : "border-border text-textSecondary hover:text-textPrimary hover:border-textMuted")}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {TRACK_LABELS[t] ?? t}
             </button>
           ))}
         </div>
