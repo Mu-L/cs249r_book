@@ -3752,12 +3752,12 @@ class ValidateCommand:
         lowercase_x_mult_pat = re.compile(
             r"""`x\s+[a-z]"""    # `...`x word  (after inline python)
             r"""|"""
-            r"""\dx\s+[a-z]"""   # Nx word  (digit then x then lowercase)
+            r"""(?<![A-Z])\dx\s+[a-z]"""   # Nx word — but not after uppercase (excludes MI300X, H100x, etc.)
         )
         # Hex literal pattern to exclude matches like 0x61, 0xff
         hex_literal_pat = re.compile(r"0x[0-9a-fA-F]")
         # Cross-reference ID pattern: @tbl-foo300x, @fig-bar2x, @sec-baz1x — these are labels not multiplication
-        xref_id_pat = re.compile(r"@(?:tbl|fig|sec|eq|lst)-[a-z0-9_-]+x\b")
+        xref_id_pat = re.compile(r"@(?:tbl|fig|sec|eq|lst)-[a-z0-9_-]+x\b", re.IGNORECASE)
         # Quarto attribute blocks can contain IDs such as
         # {#tbl-assumptions-mi300x tbl-colwidths="[...]"}; those are
         # identifiers, not prose multiplication.
