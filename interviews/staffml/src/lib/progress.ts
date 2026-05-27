@@ -294,7 +294,120 @@ export function getStreakMilestone(streak: number): string | null {
   return null;
 }
 
-// ─── Clear All ───────────────────────────────────
+// ─── Topic-Level Progress (NeetCode-style) ──────
+
+import { getTopics, getTopicsByArea, getCompetencyAreas, getQuestionsByFilter } from "./corpus";
+import { getTopicById } from "./taxonomy";
+
+export interface TopicProgress {
+  topicId: string;
+  topicName: string;
+  area: string;
+  totalQuestions: number;
+  attempted: number;
+  correct: number;
+  highestLevel: string | null;
+  levelBreakdown: Record<string, { total: number; attempted: number; correct: number }>;
+}
+
+export interface AreaProgress {
+  area: string;
+  totalQuestions: number;
+  attempted: number;
+  correct: number;
+  topics: TopicProgress[];
+}
+
+const LEVEL_ORDER = ["L1", "L2", "L3", "L4", "L5", "L6+"];
+
+export function getTopicProgressMap(): AreaProgress[] {
+  const attempts = getAttempts();
+  const areas = getCompetencyAreas();
+
+  const attemptsByQuestion: Record<string, { level: string; best: number }> = {};
+  for (const a of attempts) {
+    const prev = attemptsByQuestion[a.questionId];
+    if (!prev || a.selfScore > prev.best) {
+      attemptsByQuestion[a.questionId] = { level: a.level, best: a.selfScore };
+    }
+  }
+
+  const attemptedByTopic: Record<string, Set<string>> = {};
+  const correctByTopic: Record<string, Set<string>> = {};
+  const correctByTopicLevel: Record<string, Record<string, Set<string>>> = {};
+
+  for (const a of attempts) {
+    const topic = getTopicForQuestion(a.questionId);
+    if (!topic) continue;
+    if (!attemptedByTopic[topic]) attemptedByTopic[topic] = new Set();
+    attemptedByTopic[topic].add(a.questionId);
+    if (a.selfScore >= 2) {
+      if (!correctByTopic[topic]) correctByTopic[topic] = new Set();
+      correctByTopic[topic].add(a.questionId);
+      if (!correctByTopicLevel[topic]) correctByTopicLevel[topic] = {};
+      if (!correctByTopicLevel[topic][a.level]) correctByTopicLevel[topic][a.level] = new Set();
+      correctByTopicLevel[topic][a.level].add(a.questionId);
+    }
+  }
+
+  return areas.map((area) => {
+    const topics = getTopicsByArea(area);
+    const topicProgresses: TopicProgress[] = topics.map((topicId) => {
+      const topicDef = getTopicById(topicId);
+      const topicName = topicDef?.name || topicId;
+
+      const levelBreakdown: Record<string, { total: number; attempted: number; correct: number }> = {};
+      let totalQuestions = 0;
+      for (const level of LEVEL_ORDER) {
+        const qs = getQuestionsByFilter({ competency_area: area, topic: topicId, level });
+        const total = qs.length;
+        const attemptedSet = new Set<string>();
+        const correctSet = new Set<string>();
+        for (const q of qs) {
+          if (attemptedByTopic[topicId]?.has(q.id)) attemptedSet.add(q.id);
+          if (correctByTopic[topicId]?.has(q.id)) correctSet.add(q.id);
+        }
+        levelBreakdown[level] = { total, attempted: attemptedSet.size, correct: correctSet.size };
+        totalQuestions += total;
+      }
+
+      const attempted = attemptedByTopic[topicId]?.size || 0;
+      const correct = correctByTopic[topicId]?.size || 0;
+
+      let highestLevel: string | null = null;
+      for (let i = LEVEL_ORDER.length - 1; i >= 0; i--) {
+        const lvl = LEVEL_ORDER[i];
+        if ((correctByTopicLevel[topicId]?.[lvl]?.size || 0) > 0) {
+          highestLevel = lvl;
+          break;
+        }
+      }
+
+      return { topicId, topicName, area, totalQuestions, attempted, correct, highestLevel, levelBreakdown };
+    });
+
+    const totalQuestions = topicProgresses.reduce((s, t) => s + t.totalQuestions, 0);
+    const attempted = topicProgresses.reduce((s, t) => s + t.attempted, 0);
+    const correct = topicProgresses.reduce((s, t) => s + t.correct, 0);
+
+    return { area, totalQuestions, attempted, correct, topics: topicProgresses };
+  });
+}
+
+let _topicLookup: Record<string, string> | null = null;
+function buildTopicLookup(): Record<string, string> {
+  if (!_topicLookup) {
+    _topicLookup = {};
+    const { getQuestions } = require("./corpus") as typeof import("./corpus");
+    for (const q of getQuestions()) {
+      _topicLookup[q.id] = q.topic;
+    }
+  }
+  return _topicLookup;
+}
+function getTopicForQuestion(questionId: string): string | null {
+  return buildTopicLookup()[questionId] || null;
+}
 
 // ─── Export / Import ─────────────────────────────
 
