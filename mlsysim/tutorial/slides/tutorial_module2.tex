@@ -1,0 +1,851 @@
+% =============================================================================
+% MLSys·im Tutorial Tutorial — Parts 0–4 (Morning Session)
+% =============================================================================
+\documentclass[aspectratio=169, 12pt]{beamer}
+\usepackage{../../../slides/assets/beamerthememlsys}
+
+\mlsyssetup{
+  volume       = {Tutorial},
+  chapter      = {Module 2},
+  logo         = {../../../slides/assets/img/logo-mlsysbook.png},
+  instlogo     = {../../../slides/assets/img/logo-harvard.png},
+  chaptertitle = {MLSys·im: Advanced Single-Node Analysis},
+}
+
+% --- Fonts ---
+\usepackage[T1]{fontenc}
+\usepackage[scaled=0.9]{helvet}
+\usepackage{courier}
+\renewcommand{\familydefault}{\sfdefault}
+
+% --- Packages ---
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage[table]{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, calc, decorations.pathreplacing}
+
+% --- Code listings ---
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{crimson}\bfseries,
+  stringstyle=\color{datastroke},
+  commentstyle=\color{midgray}\itshape,
+  backgroundcolor=\color{computeblue!20},
+  frame=single,
+  rulecolor=\color{computestroke},
+  numbers=none,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+  aboveskip=6pt,
+  belowskip=4pt,
+}
+
+% --- Convenience macros ---
+\newcommand{\mlsysim}{\texttt{mlsysim}}
+\newcommand{\wallbox}[2]{%
+  \begin{block}{#1}#2\end{block}%
+}
+\newcommand{\PredictStart}{\begin{alertblock}{Predict Before You Peek}}
+\newcommand{\PredictEnd}{\end{alertblock}}
+
+% --- Image paths ---
+\graphicspath{{images/}}
+
+% --- Section count (must match actual \section{} count) ---
+\setcounter{mlsystotalsections}{6}
+
+\title{MLSys·im Tutorial --- Module 2}
+\subtitle{Advanced Single-Node Analysis}
+\author{Vijay Janapa Reddi}
+\institute{Harvard University}
+\date{Tutorial}
+
+% =============================================================================
+\begin{document}
+
+% --- Roadmap ---
+\begin{frame}[shrink]{Roadmap: Conference Tutorial}
+\centering\small
+\begin{tabular}{rll}
+\toprule
+\textbf{Module} & \textbf{Topic} & \textbf{Status} \\
+\midrule
+Module 1 & Foundations \& Architecture & \checkmark Done \\
+\rowcolor{crimson!12}
+\textbf{Module 2} & \textbf{Advanced Single-Node Analysis} & \textbf{$\leftarrow$ You are here} \\
+Module 3 & Scale, Dollars, and Carbon & \\
+Module 4 & Design Space Exploration \& Synthesis & \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+
+\section{Memory Walls \& Serving}
+
+\begin{frame}[shrink]{Beyond FLOPs: The Data Wall}
+GPUs are so fast they often starve waiting for data. This occurs in two places:
+\begin{itemize}
+  \item \textbf{Ingestion (I/O):} Can the storage sub-system push bytes fast enough?
+  \item \textbf{Transformation (CPU):} Can the CPUs decode JPEGs and augment data fast enough?
+\end{itemize}
+\vfill
+\begin{block}{The Algebra of Data Stalls}
+\[
+\text{Ingestion Stalled} \iff \text{Demand BW} > \text{Storage BW}
+\]
+\[
+\text{Transformation Stalled} \iff \frac{\text{Batch Size}}{\text{CPU Throughput}} > T_{\text{GPU\_Step}}
+\]
+\end{block}
+\end{frame}
+
+\begin{frame}[fragile,shrink=10]{Live Demo: Uncovering the Data Wall (Scenario C)}
+\begin{lstlisting}[language=Python]
+from mlsysim.solvers import DataModel, TransformationModel
+from mlsysim.hardware.registry import Hardware
+from mlsysim.core.constants import Q_
+
+demand_rate = Q_("40000 1/s") * Q_("150 KB") # ~6 GB/s
+
+data_result = DataModel().solve(
+    workload_data_rate=demand_rate, hardware=Hardware.Cloud.A100)
+print(f"I/O Stalled: {data_result.is_stalled}") # False
+
+transform_result = TransformationModel().solve(
+    batch_size=40000,
+    cpu_throughput_per_worker_hz=850, # JPEG decode + crop
+    num_workers=64                    # 8 CPUs per GPU
+)
+print(f"CPU Stalled: {transform_result.is_bottleneck}") # True
+\end{lstlisting}
+\end{frame}
+
+
+% --- Slide 2.1: Key Question ---
+\begin{frame}[shrink]{Key Question}
+\note{[1 min] ``You have seen that LLM inference at batch 1 is
+memory-bound. But serving is more complex than a single forward
+pass. What makes LLM serving fundamentally different from
+CNN inference?''
+% -- FLEX: [CORE]
+}
+
+\centering
+\Large\bfseries
+Why does the first token take 50\,ms\\[0.2cm]
+but each next token only takes 5\,ms?
+\end{frame}
+
+% --- Slide 2.2: Two Phases of LLM Serving ---
+\begin{frame}[shrink]{Wall 4: Prefill vs Decode --- Two Different Physics}
+\note{[3 min] ``Prefill is like reading a book fast (compute-intensive).
+Decode is like looking up one word at a time in a dictionary
+(memory-intensive). Same model, different bottlenecks.''
+% -- FLEX: [CORE]
+}
+
+\small
+\wallbox{The Serving Wall}{
+\begin{tabular}{lcl}
+  \textbf{TTFT} (Prefill) & $=$ & $\dfrac{\text{Prefill FLOPs}}{\text{Peak FLOPS} \times \text{MFU}}$
+  \quad\colorbox{computeblue}{Compute-bound} \\[10pt]
+  \textbf{ITL} (Decode)   & $=$ & $\dfrac{\text{Weight Bytes}}{\text{Bandwidth}}$
+  \quad\colorbox{datagreen}{Memory-bound}
+\end{tabular}
+}
+
+\vspace{0.3cm}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Prefill} (process the prompt)
+\begin{itemize}\setlength\itemsep{2pt}
+  \item All prompt tokens in parallel
+  \item $O(S^2)$ attention + $O(S \cdot P)$ linear
+  \item Compute-bound (high AI)
+  \item Determines \textbf{TTFT}
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Decode} (generate tokens)
+\begin{itemize}\setlength\itemsep{2pt}
+  \item One token at a time
+  \item Must reload all weights per token
+  \item Memory-bound (AI $\approx$ 1)
+  \item Determines \textbf{ITL}
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 2.3: KV Cache --- The Hidden Consumer ---
+\begin{frame}[shrink]{Wall 5: The KV Cache --- Hidden Memory Consumer}
+\note{[3 min] ``Each active request carries its own memory of the
+conversation.'' Quick math: how much KV cache does one Llama-3 8B
+request at 4K context need in FP16?
+Expected: 2 * 32 * 32 * 128 * 4096 * 2 bytes = ~2 GB.
+% -- FLEX: [CORE]
+}
+
+\small
+\wallbox{The Batching Wall}{
+\[
+  \text{KV cache} = 2 \times L \times H \times d \times S \times B \times \text{bpp}
+\]
+}
+
+\vspace{0.2cm}
+\textbf{Llama-3 8B at 4K context, FP16:}
+\begin{itemize}
+  \item $2 \times 32 \times 32 \times 128 \times 4096 \times 2\;\text{bytes} \approx 2\;\text{GB}$ per request
+  \item H100 has 80 GB HBM --- model weights take 16 GB
+  \item Remaining 64 GB $\div$ 2 GB/request $=$ \textbf{$\sim$32 concurrent requests}
+\end{itemize}
+
+\vspace{0.2cm}
+\begin{alertblock}{The serving paradox}
+  You want high batch size (for throughput) but KV cache limits how
+  many requests fit in memory. \alert{Memory capacity, not compute, limits concurrency.}
+\end{alertblock}
+\end{frame}
+
+% --- Slide 2.4: Live Demo --- ServingModel ---
+\begin{frame}[fragile,shrink=10]{Live Demo: Two-Phase Serving Analysis}
+\note{[2 min] Run ServingModel live. Point out TTFT vs ITL in output.
+Show that TTFT is compute-bound and ITL is memory-bound.
+% -- FLEX: [CORE]
+}
+
+\small
+\begin{lstlisting}
+serving = mlsysim.ServingModel()
+result  = serving.solve(llama, hw,
+                        seq_len=4096, batch_size=1)
+print(f"TTFT: {result.ttft:~P}")
+print(f"ITL:  {result.itl:~P}")
+print(f"KV cache/req: {result.kv_cache_per_request:~P}")
+\end{lstlisting}
+
+\vspace{0.2cm}
+\begin{exampleblock}{Expected output}
+  TTFT $\approx$ 20--50 ms (compute-bound),
+  ITL $\approx$ 5 ms (memory-bound),
+  KV cache per request $\approx$ 2 GB
+\end{exampleblock}
+\end{frame}
+
+% --- Slide 2.5: Continuous Batching ---
+\begin{frame}[shrink]{Continuous Batching: Don't Wait, Serve}
+\note{[2 min] ``In static batching, the GPU waits for the longest
+request to finish. In continuous batching, new requests start
+as soon as any slot frees up. Throughput can improve 2--5x.''
+% -- FLEX: [OPTIONAL] Can summarize quickly if behind schedule.
+}
+
+\small
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Static batching}
+\begin{itemize}\setlength\itemsep{2pt}
+  \item Pad all sequences to max length
+  \item GPU idle while short requests finish
+  \item Throughput limited by longest request
+  \item Simple to implement
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Continuous batching}
+\begin{itemize}\setlength\itemsep{2pt}
+  \item Insert new requests per iteration
+  \item No padding waste
+  \item Throughput 2--5$\times$ higher
+  \item Used by vLLM, TGI, TensorRT-LLM
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3cm}
+\centering
+\begin{tikzpicture}[scale=0.65, >=Stealth]
+  % Static
+  \node[font=\scriptsize\bfseries] at (0, 2.5) {Static};
+  \foreach \i/\len in {0/4, 1/2, 2/3} {
+    \fill[computeblue, draw=computestroke] (0.5, \i*0.7) rectangle ({0.5 + \len*0.5}, \i*0.7+0.5);
+    \fill[errorfill, draw=errorstroke, opacity=0.5] ({0.5 + \len*0.5}, \i*0.7) rectangle (2.5, \i*0.7+0.5);
+  }
+  \node[font=\tiny, errorstroke] at (2.8, 0.7) {waste};
+
+  % Continuous
+  \node[font=\scriptsize\bfseries] at (5, 2.5) {Continuous};
+  \fill[computeblue, draw=computestroke] (5.5, 1.4) rectangle (7.5, 1.9);
+  \fill[datagreen, draw=datastroke] (5.5, 0.7) rectangle (6.5, 1.2);
+  \fill[routingorange, draw=routingstroke] (6.7, 0.7) rectangle (7.5, 1.2);
+  \fill[computeblue, draw=computestroke] (5.5, 0) rectangle (7, 0.5);
+  \fill[datagreen, draw=datastroke] (7.2, 0) rectangle (7.5, 0.5);
+  \node[font=\tiny, datastroke] at (8, 0.7) {no waste};
+\end{tikzpicture}
+\end{frame}
+
+% --- Slide 2.6: PagedAttention ---
+\begin{frame}[fragile,shrink=10]{PagedAttention: Virtual Memory for KV Cache}
+\note{[2 min] ``Just like OS virtual memory pages physical RAM,
+PagedAttention pages the KV cache. Non-contiguous blocks mean
+no fragmentation, so you can fit more requests.''
+% -- FLEX: [OPTIONAL]
+}
+
+\small
+\textbf{The problem:} Pre-allocated KV cache wastes memory on short sequences.
+
+\textbf{The solution} (Kwon et al., 2023 --- vLLM):
+\begin{itemize}
+  \item Divide KV cache into fixed-size \textbf{pages} (e.g., 16 tokens each)
+  \item Allocate pages on demand, not up front
+  \item Non-contiguous storage eliminates fragmentation
+  \item Memory utilization improves from $\sim$50\% to $>$95\%
+\end{itemize}
+
+\vspace{0.2cm}
+\begin{exampleblock}{Impact}
+  With the same 80 GB H100, PagedAttention can serve
+  \textbf{2--4$\times$ more concurrent requests} than static allocation.
+\end{exampleblock}
+
+\vspace{0.2cm}
+\begin{lstlisting}
+# mlsysim models this with ContinuousBatchingModel
+from mlsysim.core.solver import ContinuousBatchingModel
+cb = ContinuousBatchingModel()
+result = cb.solve(model, hw, seq_len=4096,
+                  max_batch_size=32, page_size=16)
+print(f"Max concurrent: {result.max_concurrent_requests}")
+\end{lstlisting}
+\end{frame}
+
+% --- Slide 2.7: Predict Before You Peek #3 ---
+\begin{frame}[shrink]{Predict: How Many Concurrent Requests?}
+\note{[2 min] Predict-before-reveal. Give 60 seconds.
+H100 80 GB, Llama-3 8B FP16, 4K context. How many concurrent requests?
+Expected: weights = 16 GB, remaining = 64 GB.
+PagedAttention (95\% util): ~30. Without (50\% util): ~16.
+Turn to your neighbor: did you get the same answer? Why or why not? 60 seconds.
+% -- FLEX: [CORE]
+}
+
+\centering
+\Large\bfseries
+H100 (80 GB), Llama-3 8B (FP16), 4K context.\\[0.5cm]
+\normalsize
+How many concurrent requests can you serve?\\[0.3cm]
+
+\pause
+
+\small
+\begin{tabular}{lcc}
+\toprule
+  & \textbf{Static alloc.} & \textbf{PagedAttention} \\
+\midrule
+KV cache utilization & $\sim$50\% & $\sim$95\% \\
+Effective memory/req & $\sim$4 GB & $\sim$2.1 GB \\
+Max concurrent & $\sim$16 & $\sim$30 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3cm}
+\pause
+\alert{PagedAttention nearly doubles serving capacity without changing hardware.}
+\end{frame}
+
+% --- Slide 2.8: Speculative Decoding ---
+\begin{frame}[fragile,shrink=10]{Speculative Decoding: Betting on the Draft}
+\note{[2 min] ``Use a small draft model to guess the next K tokens.
+Then verify all K in a single forward pass of the big model.
+If the draft is right 70\% of the time and K=5, you effectively
+decode ~3.5 tokens per forward pass instead of 1.''
+% -- FLEX: [OPTIONAL]
+}
+
+\small
+\textbf{Insight:} Decode is memory-bound $\Rightarrow$ the GPU has spare compute.
+
+\textbf{Speculative decoding} (Leviathan et al., 2023):
+\begin{enumerate}\setlength\itemsep{2pt}
+  \item \textbf{Draft} $K$ tokens with a small model (fast, low quality)
+  \item \textbf{Verify} all $K$ tokens in one forward pass of the big model
+  \item \textbf{Accept} the longest prefix that matches
+  \item Speedup $\approx K \times \alpha$ where $\alpha$ is acceptance rate
+\end{enumerate}
+
+\vspace{0.2cm}
+\begin{lstlisting}
+# mlsysim supports speculative decoding
+draft = mlsysim.Models.Language.Llama3_8B  # smaller
+result = serving.solve(model, hw, seq_len=4096,
+          draft_model=draft, draft_acceptance_rate=0.7)
+print(f"Speedup: {result.speculative_speedup:.2f}x")
+\end{lstlisting}
+\end{frame}
+
+% --- Slide 2.9: Disaggregated Serving ---
+\begin{frame}[fragile,shrink=10]{Disaggregated Serving: Right Hardware for Each Phase}
+\note{[2 min] ``Split prefill and decode onto different node types.
+Prefill nodes optimize for FLOPS, decode nodes optimize for
+bandwidth. Transfer KV cache over the network between them.''
+% -- FLEX: [OPTIONAL]
+}
+
+\small
+\textbf{Key insight:} Prefill and decode have \textit{opposite} hardware preferences.
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Prefill node}
+\begin{itemize}\setlength\itemsep{2pt}
+  \item Needs high FLOPS
+  \item Moderate memory
+  \item E.g., H100 at high utilization
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Decode node}
+\begin{itemize}\setlength\itemsep{2pt}
+  \item Needs high BW
+  \item Large memory (for KV cache)
+  \item E.g., many smaller accelerators
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3cm}
+\begin{lstlisting}
+# Disaggregated serving in mlsysim
+result = serving.solve(model, hw, seq_len=4096,
+          decode_hardware=mlsysim.Hardware.Cloud.A100)
+print(f"TTFT: {result.ttft:~P}  ITL: {result.itl:~P}")
+\end{lstlisting}
+
+\vspace{0.2cm}
+\alert{Trade-off: network transfer of KV cache adds latency between phases.}
+\end{frame}
+
+% --- Slide 2.10: Exercise 2 ---
+\begin{frame}[fragile,shrink=10]{Exercise 2: Serving Capacity Planning}
+\note{[5 min] Attendees work in pairs.
+How many concurrent Llama-3 8B requests (4K context) can an H100
+serve while maintaining ITL < 10ms?
+Expected: ~30 with PagedAttention at FP16. Binding: memory capacity.
+Turn to your neighbor: did you get the same answer? Why or why not? 60 seconds.
+% -- FLEX: [CORE]
+}
+
+\centering
+\Large\bfseries
+Hands-On Exercise\\[0.5cm]
+\normalsize
+
+\textbf{Question:} You run Llama-3 8B (FP16) on one H100 with 4K context.\\
+Your SLA requires ITL $<$ 10 ms.\\
+How many concurrent requests can you serve?
+
+\vspace{0.3cm}
+\begin{lstlisting}
+from mlsysim.core.solver import ContinuousBatchingModel
+cb = ContinuousBatchingModel()
+result = cb.solve(llama, hw, seq_len=4096,
+                  max_batch_size=64, page_size=16)
+print(f"Max concurrent: {result.max_concurrent_requests}")
+\end{lstlisting}
+
+\vspace{0.2cm}
+\textit{Bonus: What happens if you switch to INT8 precision?
+Does concurrency double?}
+\end{frame}
+
+% --- Slide 2.11: Fallacies ---
+\begin{frame}[shrink]{Fallacies: Serving Edition}
+\note{[2 min] Walk through each fallacy with the quantitative
+counter-evidence.
+% -- FLEX: [OPTIONAL] --- can trim to 2 fallacies if behind.
+}
+
+\small
+\textbf{Fallacy:} \textit{``Faster GPUs always reduce latency.''}\\
+A 3.2$\times$ FLOPS improvement (A100 $\to$ H100) yields only
+1.7$\times$ ITL improvement because decode is memory-bound.
+
+\vspace{0.3cm}
+\textbf{Fallacy:} \textit{``Doubling memory doubles serving capacity.''}\\
+Weights are fixed overhead. Going from 80 GB to 160 GB adds 80 GB,
+but KV cache per request stays $\sim$2 GB. Capacity goes from $\sim$32
+to $\sim$72 ($\sim$2.3$\times$), not 2$\times$.
+
+\vspace{0.3cm}
+\textbf{Fallacy:} \textit{``Batch size 1 is fine for LLM inference.''}\\
+At bs=1, MFU $<$ 5\%. You are paying for 989 TFLOPS and using $<$ 50.
+Continuous batching can recover 10--20$\times$ throughput.
+\end{frame}
+
+% --- Slide 2.12: Part 2 Key Takeaway ---
+\begin{frame}[shrink]{Part 2: Key Takeaway}
+\note{[1 min] One sentence summary, repeat twice.
+% -- FLEX: [CORE]
+}
+
+\centering\Large
+
+\textbf{LLM serving has two phases\\with opposite bottlenecks.}\\[0.5cm]
+
+\normalsize
+\begin{itemize}
+  \item \textbf{Prefill} (TTFT) is compute-bound --- optimize with parallelism.
+  \item \textbf{Decode} (ITL) is memory-bound --- optimize with bandwidth.
+  \item \textbf{KV cache} limits concurrency --- optimize with PagedAttention.
+  \item \texttt{ServingModel.solve()} decomposes both phases in one call.
+\end{itemize}
+\end{frame}
+
+% =============================================================================
+% PART 3: COMPRESSION & EFFICIENCY (8 slides)
+% =============================================================================
+
+\section{Compression \& Efficiency}
+
+% --- Slide 3.1: Key Question ---
+\begin{frame}[shrink]{Key Question}
+\note{[1 min] ``If we can shrink the model, we move less data,
+and the memory wall recedes. But there is a catch.''
+% -- FLEX: [CORE]
+}
+
+\centering
+\Large\bfseries
+Can you make the model 4$\times$ smaller\\[0.2cm]
+and get a 4$\times$ speedup?
+\end{frame}
+
+% --- Slide 3.2: Wall 13 --- Compression ---
+\begin{frame}[shrink]{Wall 13: The Fidelity Wall}
+\note{[2 min] ``Storage always shrinks. But inference speedup
+depends on the method. This distinction trips up everyone.''
+% -- FLEX: [CORE]
+}
+
+\small
+\wallbox{The Fidelity Wall}{
+\[
+  \text{Compression}_{\text{quant}} = \frac{32}{\text{bits}},
+  \qquad
+  \text{Compression}_{\text{prune}} = \frac{1}{1 - \text{sparsity}}
+\]
+}
+
+\vspace{0.3cm}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{Storage} & \textbf{Speedup} & \textbf{Accuracy} \\
+\midrule
+FP32 $\to$ FP16 & 2$\times$ & 2$\times$ & $\sim$0\% loss \\
+FP16 $\to$ INT8  & 2$\times$ & 1.5--2$\times$ & $<$1\% loss \\
+FP16 $\to$ INT4  & 4$\times$ & 2--3$\times$ & 2--5\% loss \\
+50\% unstructured prune & 2$\times$ & \alert{1$\times$ (no speedup!)} & 1--3\% loss \\
+50\% structured prune & 2$\times$ & $\sim$2$\times$ & 2--5\% loss \\
+2:4 N:M sparsity & 2$\times$ & 2$\times$ & 1--2\% loss \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.2cm}
+\alert{Unstructured pruning saves storage but gives zero GPU speedup.\\
+Only structured patterns accelerate hardware execution.}
+\end{frame}
+
+% --- Slide 3.3: Quantization Deep Dive ---
+\begin{frame}[shrink]{Quantization: Trading Bits for Speed}
+\note{[2 min] Walk through the precision ladder.
+``If you quantize Llama-3 8B from FP16 to INT4, how much memory?''
+Expected: 8B * 0.5 bytes = 4 GB. Down from 16 GB.
+% -- FLEX: [CORE]
+}
+
+\small
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\textbf{The precision ladder:}
+
+\vspace{0.2cm}
+\begin{tikzpicture}[scale=0.8, >=Stealth]
+  \foreach \i/\label/\bits/\color in {
+    0/FP32/32/errorfill,
+    1/FP16\slash BF16/16/routingorange,
+    2/INT8\slash FP8/8/computeblue,
+    3/INT4/4/datagreen} {
+    \fill[\color, draw=midgray] (0, 3-\i) rectangle ({0.15*\bits}, 3.6-\i);
+    \node[right, font=\scriptsize] at ({0.15*\bits + 0.2}, 3.3-\i) {\label};
+  }
+  \draw[->, thick] (0, -0.5) -- (5.5, -0.5) node[right, font=\scriptsize] {Size};
+  \node[font=\scriptsize, midgray] at (2.5, -1) {$\longleftarrow$ smaller is better};
+\end{tikzpicture}
+\end{column}
+\begin{column}{0.42\textwidth}
+\textbf{Llama-3 8B memory:}
+\scriptsize
+\begin{tabular}{lc}
+\toprule
+Precision & Weight Size \\
+\midrule
+FP32 & 32 GB \\
+FP16 & 16 GB \\
+INT8 & 8 GB \\
+INT4 & 4 GB \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3cm}
+\normalsize
+At INT4, Llama-3 8B fits in\\
+a \textbf{laptop GPU} (6 GB).
+\end{column}
+\end{columns}
+\end{frame}
+
+% --- Slide 3.4: Live Demo --- CompressionModel ---
+\begin{frame}[fragile,shrink=10]{Live Demo: Quantization Impact}
+\note{[2 min] Run CompressionModel live. Show storage savings
+and speedup side by side.
+% -- FLEX: [CORE]
+}
+
+\small
+\begin{lstlisting}
+from mlsysim.core.solver import CompressionModel
+comp = CompressionModel()
+for bits in [16, 8, 4]:
+    r = comp.solve(llama, hw, method="quantization",
+                   target_bitwidth=bits)
+    print(f"INT{bits}: size={r.compressed_size:~P}  "
+          f"speedup={r.inference_speedup:.1f}x")
+\end{lstlisting}
+
+\vspace{0.2cm}
+\begin{exampleblock}{What to observe}
+  \begin{itemize}
+    \item Storage shrinks linearly with bit reduction
+    \item Speedup follows storage for quantization (structured by nature)
+    \item Accuracy degrades modestly at INT8, more at INT4
+  \end{itemize}
+\end{exampleblock}
+\end{frame}
+
+% --- Slide 3.5: Structured vs Unstructured Pruning ---
+\begin{frame}[fragile,shrink=10]{Pruning: The Structure Matters}
+\note{[2 min] ``Unstructured pruning zeros out individual weights.
+The matrix is still the same shape, so the GPU does the same
+number of operations. No speedup! Structured pruning removes
+entire rows/columns, physically shrinking the matrix.''
+WARN: Students assume any compression = speedup.
+% -- FLEX: [CORE]
+}
+
+\small
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Unstructured}
+\begin{itemize}\setlength\itemsep{2pt}
+  \item Zero out individual weights
+  \item Matrix shape unchanged
+  \item GPU does same work (skip zeros? nope)
+  \item \alert{Storage savings only}
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Structured / N:M}
+\begin{itemize}\setlength\itemsep{2pt}
+  \item Remove entire rows/columns, or\\
+        2:4 pattern (Ampere+)
+  \item Physically smaller matrices
+  \item GPU hardware support (2:4 $\to$ 2$\times$)
+  \item \textbf{Real speedup}
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3cm}
+\begin{lstlisting}
+for stype in ["unstructured", "structured", "n_m"]:
+    r = comp.solve(llama, hw, method="pruning",
+            sparsity=0.5, sparsity_type=stype)
+    print(f"{stype:>14}: {r.inference_speedup:.1f}x")
+\end{lstlisting}
+\end{frame}
+
+% --- Slide 3.5b: Predict --- What Does INT4 Change? ---
+\begin{frame}[shrink]{Predict: What Does INT4 Change?}
+\note{[1 min] Quick poll. Most say "latency gets better." The real answer is fleet size.
+Turn to your neighbor: did you get the same answer? Why or why not? 60 seconds.}
+\centering
+\Large
+\textbf{You quantize Llama-3 70B from FP16 to INT4.}\\[0.5cm]
+\normalsize
+What is the BIGGEST impact on your serving infrastructure?\\[0.3cm]
+\begin{enumerate}[(A)]
+  \item Inference latency drops by 4$\times$
+  \item Model quality degrades significantly
+  \item \textbf{You need half as many GPUs}
+  \item Memory bandwidth becomes the bottleneck
+\end{enumerate}
+\end{frame}
+
+% --- Slide 3.6: Predict Before You Peek #4 ---
+\begin{frame}[shrink]{Predict: INT4 Llama-3 8B on H100}
+\note{[2 min] Predict-before-reveal. If you quantize to INT4 at bs=1,
+is it still memory-bound? Yes! Load time = 4/3350 = 1.2 ms.
+Compute still ~0.03 ms. Still memory-bound but 4x faster.
+Turn to your neighbor: did you get the same answer? Why or why not? 60 seconds.
+% -- FLEX: [CORE]
+}
+
+\centering
+\Large\bfseries
+Quantize Llama-3 8B to INT4.\\
+Run inference at batch size 1 on H100.\\[0.5cm]
+\normalsize
+Is it still memory-bound?\\[0.3cm]
+
+\pause
+
+\small
+\begin{tabular}{lcc}
+\toprule
+              & \textbf{FP16} & \textbf{INT4} \\
+\midrule
+Weight size   & 16 GB & 4 GB \\
+Load time     & 4.8 ms & 1.2 ms \\
+Compute time  & 0.03 ms & 0.03 ms \\
+\midrule
+Bottleneck    & Memory & \textbf{Still Memory!} \\
+Decode speedup & --- & \textbf{4$\times$} \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3cm}
+\pause
+\alert{INT4 gives 4$\times$ faster decode, but the GPU is still memory-bound.\\
+The memory wall is that deep.}
+\end{frame}
+
+% --- Slide 3.7: Exercise 3 ---
+\begin{frame}[fragile,shrink=10]{Exercise 3: Compression Tradeoffs}
+\note{[5 min] Compare INT8 quantization vs 50\% structured pruning
+for Llama-3 8B on H100. Which gives better speedup per accuracy loss?
+Expected: INT8 wins (~2x speedup, <1\% loss vs 2-5\% loss).
+Turn to your neighbor: did you get the same answer? Why or why not? 60 seconds.
+% -- FLEX: [CORE]
+}
+
+\centering
+\Large\bfseries
+Hands-On Exercise\\[0.5cm]
+\normalsize
+
+\textbf{Question:} For Llama-3 8B on H100, which is the better deal?
+\begin{enumerate}
+  \item INT8 quantization
+  \item 50\% structured pruning
+\end{enumerate}
+Compare speedup per accuracy point lost.
+
+\vspace{0.3cm}
+\begin{lstlisting}
+r1 = comp.solve(llama, hw, method="quantization",
+                target_bitwidth=8)
+r2 = comp.solve(llama, hw, method="pruning",
+        sparsity=0.5, sparsity_type="structured")
+print(f"Quant: {r1.inference_speedup:.1f}x / "
+      f"{abs(r1.accuracy_delta):.1%} loss")
+print(f"Prune: {r2.inference_speedup:.1f}x / "
+      f"{abs(r2.accuracy_delta):.1%} loss")
+\end{lstlisting}
+\end{frame}
+
+% --- Slide 3.7b: Compression Changes Fleet Architecture ---
+\begin{frame}[shrink]{Compression Changes Fleet Architecture}
+\note{[3 min] This is the ``aha'' that compression is architecture, not optimization.
+The punchline: INT4 halves your GPU count AND your electricity bill.}
+
+\small
+\textbf{Llama-3 70B Serving Fleet:}
+
+\vspace{0.3cm}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Precision & Model Size & GPUs Needed & Annual Cost \\
+\midrule
+FP16 & 140 GB & 4 (TP=4) & \$480K \\
+INT8 & 70 GB & 2 (TP=2) & \$240K \\
+INT4 & 35 GB & 1 & \$120K \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3cm}
+\textbf{INT4 doesn't just improve latency --- it eliminates 3 GPUs per replica.}\\
+At 100 replicas for 1000 QPS: that's \textbf{300 fewer GPUs} and \textbf{\$36M saved per year}.
+
+\vfill
+\centering
+\small\textcolor{gray}{This is why quantization is a Day 1 architectural decision, not a Day 100 optimization.}
+\end{frame}
+
+% --- Slide 3.8: Part 3 Key Takeaway ---
+\begin{frame}[shrink]{Part 3: Key Takeaway}
+\note{[1 min] One sentence. Repeat.
+% -- FLEX: [CORE]
+}
+
+\centering\Large
+
+\textbf{Storage savings $\neq$ inference speedup.}\\[0.5cm]
+
+\normalsize
+\begin{itemize}
+  \item Quantization gives both storage and speed gains.
+  \item Unstructured pruning gives storage only --- zero GPU speedup.
+  \item N:M sparsity (2:4) is the hardware-friendly middle ground.
+  \item Even at INT4, LLM decode is \textit{still} memory-bound.
+  \item \texttt{CompressionModel.solve()} quantifies the full tradeoff.
+\end{itemize}
+\end{frame}
+
+% --- Roadmap: After Lunch ---
+\begin{frame}[shrink]{Roadmap: Afternoon Session}
+\note{[1 min] Re-energize the room. ``Welcome back. The morning was about
+single-node physics. The afternoon is about fleets, money, and carbon.''}
+
+\centering\small
+\begin{tabular}{rll}
+\toprule
+\textbf{Time} & \textbf{Part} & \textbf{Status} \\
+\midrule
+9:00--12:00  & Parts 0--3: Single Node   & \checkmark Done \\
+\midrule
+\rowcolor{crimson!12}
+1:00--2:15   & \textbf{Part 4: Going Distributed} & \textbf{$\leftarrow$ You are here} \\
+2:30--3:15   & Part 5: Economics \& Sustainability & \\
+3:15--3:45   & Part 6: Design Space Exploration & \\
+3:45--4:15   & Part 7: TinyML to Frontier & \\
+4:15--4:45   & Part 8: Advanced Topics & \\
+4:45--5:00   & Part 9: Wrap-Up \& Capstone & \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% =============================================================================
+% PART 4: GOING DISTRIBUTED (15 slides)
+% =============================================================================
+
+
+\end{document}

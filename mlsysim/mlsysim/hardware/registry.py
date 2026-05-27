@@ -113,7 +113,7 @@ class CloudHardware(Registry):
             "provenance": Provenance(
                 id="prov:nvidia-b200-datasheet",
                 kind=ProvenanceKind.DATASHEET,
-                ref="NVIDIA Blackwell product documentation",
+                ref="NVIDIA Blackwell product documentation (Dense numbers)",
                 url="https://www.nvidia.com/en-us/data-center/blackwell/",
                 verified="2025-03-06",
             ),
@@ -129,7 +129,7 @@ class CloudHardware(Registry):
                 "fp16": 162 * PFLOPs / second,
                 "bf16": 162 * PFLOPs / second,
                 "fp8": 324 * PFLOPs / second,
-                "fp4": 720 * PFLOPs / second,
+                "fp4": 648 * PFLOPs / second,
             },
         ),
         memory=MemoryHierarchy(capacity=13.8 * TB, bandwidth=576 * TB / second),
