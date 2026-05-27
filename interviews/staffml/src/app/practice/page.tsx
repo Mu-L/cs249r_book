@@ -17,6 +17,7 @@ import NapkinCalc from "@/components/NapkinCalc";
 import idRedirects from "@/data/id-redirects.json";
 import AskInterviewer from "@/components/AskInterviewer";
 import MarkdownText from "@/components/MarkdownText";
+import GlossaryText from "@/components/GlossaryText";
 import NapkinMathDisplay from "@/components/NapkinMathDisplay";
 import LevelBadge from "@/components/LevelBadge";
 import { useToast } from "@/components/Toast";
@@ -1079,7 +1080,7 @@ function PracticePage() {
                       <div className="prose max-w-none mt-6">
                         {current.scenario ? (
                           <p className="text-textSecondary leading-relaxed text-base">
-                            {cleanScenario(current.scenario)}
+                            <GlossaryText text={cleanScenario(current.scenario)} />
                           </p>
                         ) : (
                           <ScenarioSkeleton />

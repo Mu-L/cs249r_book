@@ -502,6 +502,103 @@ export function getPrimaryChainForQuestion(questionId: string): ChainInfo | null
   return all.find(c => c.tier === "primary") ?? all[0];
 }
 
+// ─── Chain selection for interview conductor ────────────────────────────────
+
+export interface ChainMember {
+  id: string;
+  title: string;
+  level: string;
+  zone: string;
+  position: number;
+}
+
+export interface ChainSummary {
+  chainId: string;
+  tier: ChainTier;
+  topic: string;
+  area: string;
+  members: ChainMember[];
+}
+
+const _chainSummaries: ChainSummary[] = [];
+_chainIndex.forEach((members, chainId) => {
+  if (members.length <= 1) return;
+  const firstQ = questions.find(q => q.id === members[0].id);
+  if (!firstQ) return;
+  _chainSummaries.push({
+    chainId,
+    tier: _tierOf(chainId),
+    topic: firstQ.topic,
+    area: firstQ.competency_area,
+    members: members.map((m: { id: string; title: string; level: string; position: number }) => {
+      const q = questions.find(x => x.id === m.id);
+      return { id: m.id, title: m.title, level: m.level, zone: q?.zone ?? "recall", position: m.position };
+    }),
+  });
+});
+
+const LEVEL_ORDER = ["L1", "L2", "L3", "L4", "L5", "L6+"];
+
+export function getChainsByArea(area: string, track?: string): ChainSummary[] {
+  return _chainSummaries.filter(c => {
+    if (c.area !== area) return false;
+    if (track) {
+      const q = questions.find(x => x.id === c.members[0].id);
+      if (q && q.track !== track) return false;
+    }
+    return true;
+  });
+}
+
+export function getChainsByTopic(topic: string, track?: string): ChainSummary[] {
+  return _chainSummaries.filter(c => {
+    if (c.topic !== topic) return false;
+    if (track) {
+      const q = questions.find(x => x.id === c.members[0].id);
+      if (q && q.track !== track) return false;
+    }
+    return true;
+  });
+}
+
+export function getChainsForInterview(
+  track: string,
+  levels: string[],
+  areas?: string[],
+): ChainSummary[] {
+  const levelSet = new Set(levels);
+  return _chainSummaries
+    .filter(c => {
+      const q = questions.find(x => x.id === c.members[0].id);
+      if (!q || q.track !== track) return false;
+      if (areas && !areas.includes(c.area)) return false;
+      return c.members.some(m => levelSet.has(m.level));
+    })
+    .sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier === "primary" ? -1 : 1;
+      return b.members.length - a.members.length;
+    });
+}
+
+export function getChainEntryPoint(
+  chain: ChainSummary,
+  targetLevel: string,
+): ChainMember | null {
+  const targetIdx = LEVEL_ORDER.indexOf(targetLevel);
+  if (targetIdx < 0) return chain.members[0] ?? null;
+  let best: ChainMember | null = null;
+  let bestDist = Infinity;
+  for (const m of chain.members) {
+    const mIdx = LEVEL_ORDER.indexOf(m.level);
+    const dist = targetIdx - mIdx;
+    if (dist >= 0 && dist < bestDist) {
+      best = m;
+      bestDist = dist;
+    }
+  }
+  return best ?? chain.members[0] ?? null;
+}
+
 // ─── Async worker fetchers (for scenario/details, post-bundle-shrink) ──────
 
 /** URL of the Cloudflare Worker that serves full question data. */
