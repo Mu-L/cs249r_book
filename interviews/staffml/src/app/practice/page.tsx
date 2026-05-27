@@ -42,6 +42,7 @@ import { Calendar, ArrowLeft, Flag, LinkIcon } from "lucide-react";
 import Link from "next/link";
 import { buildReportUrl } from "@/lib/issue-url";
 import QuestionFeedback from "@/components/QuestionFeedback";
+import ChapterLinks from "@/components/ChapterLinks";
 import QuestionVisual from "@/components/QuestionVisual";
 import { track } from "@/lib/analytics";
 
@@ -1339,6 +1340,7 @@ function PracticePage() {
                               })}
                             </div>
                             <QuestionFeedback question={current} />
+                            <ChapterLinks area={current.competency_area} />
                             {chainInfo && (
                               <ChainStrip chain={chainInfo} onNavigate={handleChainNavigate} />
                             )}

@@ -15,6 +15,7 @@ import { extractRubric, rubricToScore, RubricItem } from "@/lib/rubric";
 import { track } from "@/lib/analytics";
 import { useToast } from "@/components/Toast";
 import HardwareRef from "@/components/HardwareRef";
+import ChapterLinks from "@/components/ChapterLinks";
 
 export default function PlansPage() {
   const [mounted, setMounted] = useState(false);
@@ -301,6 +302,7 @@ export default function PlansPage() {
                     ))}
                   </div>
                 )}
+                <ChapterLinks area={current.competency_area} />
                 <div className="border-t border-border pt-4">
                   <span className="text-[10px] font-mono text-textTertiary uppercase block mb-3">Rate yourself</span>
                   <div className="grid grid-cols-4 gap-2">
