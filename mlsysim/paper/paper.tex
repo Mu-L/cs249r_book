@@ -1013,11 +1013,7 @@ The Chinchilla paper~\citep{hoffmann2022chinchilla} establishes that compute-opt
 \textbf{Anchor~7: Llama~3 Parallelism Strategy (Optimizer Convergence).}
 To validate the Tier 3 design-space search, we configure the \texttt{ParallelismOptimizer} with the Meta Llama~3 405B model and its 16{,}384 H100 cluster constraints~\citep{llama3team2024}. When asked to find the compute-optimal parallelism split that maximizes MFU under the 80\,GB HBM capacity constraint, the optimizer recovers Meta's two binding decisions: $\text{TP}{=}8$, pinning tensor parallelism to a single node so AllReduce traffic stays on intra-node NVLink rather than crossing InfiniBand, and a pipeline depth in the published $\text{PP}{=}16$ regime, which is the smallest depth at which the 405B model's per-stage state fits in 80\,GB once optimizer and activation memory are accounted for. The remaining context- and data-parallel dimensions match Meta's published 4D split. The optimizer therefore reproduces the qualitative parallelism strategy used in production, confirming that it correctly navigates the interacting memory and topology constraints; it is not designed to match Meta's batch-size-specific CP tuning bit-for-bit.
 
-These seven anchors span five of the six taxonomy domains (Node, Data is validated indirectly via the ResNet pipeline-bound case in \Cref{sec:usage}, Algorithm, Fleet, Operations) and cover both Roofline regimes (compute-bound and memory-bound). \Cref{tab:validation} summarizes the results.
-
-Every entry in the MLSys Zoo (spanning Hardware, Models, Systems, and Infrastructure) records mandatory \texttt{metadata.provenance}. This enforces strict traceability: datasheet numbers require a verified URL, while expert estimates and heuristics require documented justification. This prevents the silent accumulation of ``magic numbers'' as the framework evolves.
-
-\begin{table*}[!t]
+\begin{table*}[t]
 \centering
 \caption{\textbf{Validation Summary.} Predicted vs.\ reported values across seven empirical anchors. Error is $|(\text{pred.} - \text{rep.}) / \text{rep.}|$.}
 \label{tab:validation}
@@ -1037,6 +1033,10 @@ Every entry in the MLSys Zoo (spanning Hardware, Models, Systems, and Infrastruc
 \bottomrule
 \end{tabularx}
 \end{table*}
+
+These seven anchors span five of the six taxonomy domains (Node, Data is validated indirectly via the ResNet pipeline-bound case in \Cref{sec:usage}, Algorithm, Fleet, Operations) and cover both Roofline regimes (compute-bound and memory-bound). \Cref{tab:validation} summarizes the results.
+
+Every entry in the MLSys Zoo (spanning Hardware, Models, Systems, and Infrastructure) records mandatory \texttt{metadata.provenance}. This enforces strict traceability: datasheet numbers require a verified URL, while expert estimates and heuristics require documented justification. This prevents the silent accumulation of ``magic numbers'' as the framework evolves.
 
 \subsection{Design-Space Exploration Speed}
 \label{sec:validation-speed}
@@ -1081,7 +1081,7 @@ These checks are additive: each new registry entry or physics module automatical
 \section{Usage \& Case Studies}
 \label{sec:usage}
 
-\mlsysim is designed for three audiences: students developing quantitative reasoning skills, instructors preparing demonstrations, and researchers evaluating design trade-offs. We present two representative use cases per persona, each illustrating how solvers compose to answer questions that span multiple walls.
+\mlsysim is designed for three audiences: students developing quantitative reasoning skills, instructors preparing demonstrations, and researchers evaluating design trade-offs. We present two representative use cases per persona, each illustrating how solvers compose to answer questions that span multiple walls. For concrete code examples of how users define hardware and invoke these solvers programmatically in Python, see the Appendix (Listings~\ref{lst:speculative},~\ref{lst:appendix-sweep},~\ref{lst:appendix-compose},~\ref{lst:appendix-data}, and~\ref{lst:appendix-synthesis}).
 
 \subsection{Student Use Cases}
 
@@ -1278,11 +1278,34 @@ The MLSys Zoo comprises six registries spanning the full systems stack. This app
 
 \subsection{Hardware Registry}
 
-\Cref{tab:hw-catalog} lists all registered accelerators grouped by deployment tier. Each entry is a fully typed \texttt{HardwareNode} with \texttt{pint}-dimensioned fields. Users add custom entries by instantiating the same types (Listing~\ref{lst:hwnode}), and custom entries participate in the same dimensional pipeline as vetted ones. For example, a research team evaluating a pre-release accelerator can define a speculative entry with projected specifications and immediately sweep it against existing workloads.
+\Cref{tab:hw-catalog} lists all registered accelerators grouped by deployment tier. Each entry is a fully typed \texttt{HardwareNode} with \texttt{pint}-dimensioned fields. Users add custom entries by instantiating the same types (Listing~\ref{lst:hwnode}), and custom entries participate in the same dimensional pipeline as vetted ones. For example, a research team evaluating a pre-release accelerator can define a speculative entry with projected specifications and immediately sweep it against existing workloads (Listing~\ref{lst:speculative}).
+
+\begin{figure}[!ht]
+\begin{lstlisting}[language=Python]
+from mlsysim.hardware.types import HardwareNode, ComputeCore, MemoryHierarchy
+from mlsysim.core.constants import TFLOPs, GB, TB, second, watt
+
+custom_accelerator = HardwareNode(
+    name="Speculative GPU 2027",
+    release_year=2027,
+    compute=ComputeCore(
+        peak_flops=1200 * TFLOPs / second,
+        precision_flops={"fp16": 1200 * TFLOPs / second, "fp8": 2400 * TFLOPs / second}
+    ),
+    memory=MemoryHierarchy(
+        capacity=144 * GB,
+        bandwidth=5.0 * TB / second
+    ),
+    tdp=800 * watt
+)
+\end{lstlisting}
+\caption{\textbf{Extending the Registry.} Defining a custom, speculative hardware entry. Because it uses the typed \texttt{HardwareNode} schema (\Cref{tab:type-schema}), it can immediately be evaluated by any Tier 1 or Tier 2 solver without risking unit mismatches.}
+\label{lst:speculative}
+\end{figure}
 
 \begin{table}[!ht]
 \centering
-\caption{\textbf{Hardware Registry.} All registered accelerators organized by deployment tier. Peak FLOP/s is FP16 Tensor Core (or equivalent) throughput; BW is HBM (or on-die SRAM for wafer-scale/tiny) bandwidth.\protect\footnotemark\ The last row shows a user-defined custom entry (Listing~\ref{lst:hwnode}).}
+\caption{\textbf{Hardware Registry.} All registered accelerators organized by deployment tier. Peak FLOP/s is FP16 Tensor Core (or equivalent) throughput; BW is HBM (or on-die SRAM for wafer-scale/tiny) bandwidth.\protect\footnotemark\ The last row shows a user-defined custom entry.}
 \label{tab:hw-catalog}
 \small
 \renewcommand{\arraystretch}{1.05}
@@ -1461,5 +1484,126 @@ Beneath the resolvers lies the Physics Engine, which contains the dimensioned ma
 \bottomrule
 \end{tabularx}
 \end{table}
+
+\subsection{Code Examples Cookbook}
+
+To demonstrate how the theoretical 3-tier architecture from \Cref{sec:solver-formalism} is exposed in Python, we provide four complete, runnable examples. These listings illustrate how users can leverage \mlsysim for design-space sweeps, cross-domain composition, data pipeline analysis, and SLA-driven hardware synthesis.
+
+\begin{figure}[!ht]
+\begin{lstlisting}[language=Python]
+from mlsysim.core.engine import Engine
+from mlsysim.hardware.registry import Hardware
+from mlsysim.models.registry import Models
+import pandas as pd
+
+# Sweep Llama 3 8B across multiple batch sizes on an H100 GPU
+model = Models.Language.Llama3_8B
+hardware = Hardware.Cloud.H100
+
+results = []
+for batch_size in [1, 8, 32, 128, 256]:
+    # Engine.solve() wraps the Tier 1 SingleNodeModel
+    perf = Engine.solve(model, hardware, batch_size=batch_size, precision="fp16")
+    
+    results.append({
+        "Batch Size": batch_size,
+        "Throughput (tok/s)": perf.throughput.magnitude,
+        "Bottleneck": perf.bottleneck,
+        "MFU": perf.mfu
+    })
+
+df = pd.DataFrame(results)
+print(df)
+\end{lstlisting}
+\caption{\textbf{Programmatic Sweeps (Tier 1).} Using the \texttt{Engine} to sweep a workload across a hardware constraint space (batch size). Because execution takes $<$1\,ms per point, sweeping hundreds of configurations is trivial.}
+\label{lst:appendix-sweep}
+\end{figure}
+
+\begin{figure}[!ht]
+\begin{lstlisting}[language=Python]
+from mlsysim.solvers import DistributedModel, SustainabilityModel
+from mlsysim.systems.registry import Systems
+from mlsysim.infra.registry import Infrastructure
+from mlsysim.models.registry import Models
+
+fleet = Systems.Clusters.Research_256  # 32x DGX H100 nodes
+
+# 1. Performance Domain: How long will it take to train?
+perf = DistributedModel().solve(
+    model=Models.Language.Llama3_70B,
+    fleet=fleet,
+    tp_size=8, pp_size=1, dp_size=32,
+    activation_checkpointing="selective"
+)
+training_days = perf.latency.to("days").magnitude
+
+# 2. Sustainability Domain: What is the carbon impact?
+# Compose the output of the DistributedModel into the SustainabilityModel
+sust = SustainabilityModel().solve(
+    fleet=fleet,
+    duration_days=training_days,
+    datacenter=Infrastructure.Datacenters.GCP_Iowa,  # High-carbon grid
+    mfu=perf.mfu
+)
+print(f"Total Carbon: {sust.carbon_footprint:.1f} tonnes CO2e")
+\end{lstlisting}
+\caption{\textbf{Resolver Composition (Tier 1).} Output quantities from one solver (e.g., the computed training duration from the \texttt{DistributedModel}) feed directly into subsequent solvers (e.g., \texttt{SustainabilityModel}), enabling end-to-end full-stack analysis without manual unit conversion.}
+\label{lst:appendix-compose}
+\end{figure}
+
+\begin{figure}[!ht]
+\begin{lstlisting}[language=Python]
+from mlsysim.solvers import DataModel, TransformationModel
+from mlsysim.hardware.registry import Hardware
+from mlsysim.core.constants import Q_
+
+# 1. Define the ingestion demand (e.g., training a vision model)
+# We need to feed 40,000 images per second to the GPU.
+demand_rate = Q_("40000 1/s") * Q_("150 KB") # ~6 GB/s
+
+# 2. Check if the DGX A100 PCIe bus can handle the bandwidth
+data_result = DataModel().solve(
+    workload_data_rate=demand_rate,
+    hardware=Hardware.Cloud.A100
+)
+print(f"I/O Stalled: {data_result.is_stalled}") # False
+
+# 3. Check if the CPUs can decode/augment images fast enough
+transform_result = TransformationModel().solve(
+    batch_size=40000,
+    cpu_throughput_per_worker_hz=850, # ImageNet JPEG decode + crop
+    num_workers=64                    # 8 CPUs per GPU
+)
+print(f"CPU Stalled: {transform_result.is_bottleneck}") # True
+\end{lstlisting}
+\caption{\textbf{Data Pipeline Analysis (Tier 1).} Evaluating the ``Data Wall''. This example separates I/O bandwidth bottlenecks (storage to GPU) from CPU transformation bottlenecks (decoding and augmenting data), replicating the analysis from Case Study S2.}
+\label{lst:appendix-data}
+\end{figure}
+
+\begin{figure}[!ht]
+\begin{lstlisting}[language=Python]
+from mlsysim.solvers import SynthesisSolver
+from mlsysim.models.registry import Models
+from mlsysim.core.constants import Q_
+
+# We want to serve Llama-3 8B. 
+# Our strict SLA dictates an inter-token latency of exactly 30 ms.
+# What is the minimum hardware capability required to achieve this?
+
+solver = SynthesisSolver()
+requirements = solver.solve(
+    model=Models.Language.Llama3_8B,
+    target_latency=Q_("30 ms"),
+    batch_size=1,
+    precision="fp16"
+)
+
+# Output the hardware requirements
+print(f"Required HBM Bandwidth: {requirements.required_bw.to('GB/s'):.1f}")
+print(f"Required Compute:       {requirements.required_flops.to('TFLOPs/s'):.1f}")
+\end{lstlisting}
+\caption{\textbf{SLA-Driven Hardware Synthesis (Tier 2).} Instead of evaluating a known piece of hardware, the \texttt{SynthesisSolver} works backward. Given a strict latency SLA, it algebraically inverts the Roofline equations to output the minimum memory bandwidth and compute throughput required to purchase or provision.}
+\label{lst:appendix-synthesis}
+\end{figure}
 
 \end{document}
