@@ -474,7 +474,7 @@ class LatencyVsBw:
 *   Latency Time: $2\ \mu\text{s}$.
 *   **Total**: `{python} LatencyVsBw.total_b_us_str` μs. Latency is `{python} LatencyVsBw.lat_pct_b_str`, completely negligible.
 
-**Systems insight**: For Data Parallelism (large gradients), the target is $\beta$: compress gradients and add NICs. For Pipeline/Expert Parallelism (small activations), every microsecond of $\alpha$ matters: kernel bypass and topology optimization. The $\alpha$-$\beta$ model identifies *which constraint to optimize*.
+**Systems insight**: For Data Parallelism (large gradients), the target is $\beta$: compress gradients and add NICs. For Pipeline/Expert Parallelism (small activations), every microsecond of $\alpha$ matters: kernel bypass and topology optimization. The $\alpha$-$\beta$ model identifies which constraint to optimize.
 
 :::
 
@@ -894,8 +894,8 @@ Ring AllReduce[^fn-ring-bandwidth-optimal] arranges nodes in a logical ring ($0 
 
 The algorithm splits the vector of size $M$ into $N$ chunks and proceeds in two phases.
 
-1.  **Scatter-Reduce Phase**\index{Ring AllReduce!scatter-reduce phase}: In $N-1$ steps, chunks flow around the ring, accumulating sums. At the end, each node holds the complete sum for *one* chunk ($1/N$ of the total result).
-2.  **AllGather Phase**\index{Ring AllReduce!AllGather phase}: In $N-1$ steps, the partial sums circulate the ring until every node has *all* chunks.
+1.  **Scatter-Reduce Phase**\index{Ring AllReduce!scatter-reduce phase}: In $N-1$ steps, chunks flow around the ring, accumulating sums. At the end, each node holds the complete sum for one chunk ($1/N$ of the total result).
+2.  **AllGather Phase**\index{Ring AllReduce!AllGather phase}: In $N-1$ steps, the partial sums circulate the ring until every node has all chunks.
 
 The data flow during Step 1 is illustrated in @fig-ring-allreduce.
 
@@ -1561,7 +1561,7 @@ class ThreeLevelNapkin:
 ![](images/svg/sharp-innetwork.svg){width=100%}
 :::
 
-Hierarchical AllReduce reduces the volume of cross-node traffic, but the aggregation still requires multiple network round-trips. As @fig-sharp-innetwork contrasts, an alternative approach eliminates round-trips entirely by performing the reduction *inside the network switch itself*. NVIDIA's **Scalable Hierarchical Aggregation and Reduction Protocol (SHARP)**[^fn-sharp-innetwork] implements this idea: instead of gradients traveling to a destination GPU for summation, the InfiniBand switch aggregates partial sums as data packets pass through it.
+Hierarchical AllReduce reduces the volume of cross-node traffic, but the aggregation still requires multiple network round-trips. As @fig-sharp-innetwork contrasts, an alternative approach eliminates round-trips entirely by performing the reduction inside the network switch itself. NVIDIA's **Scalable Hierarchical Aggregation and Reduction Protocol (SHARP)**[^fn-sharp-innetwork] implements this idea: instead of gradients traveling to a destination GPU for summation, the InfiniBand switch aggregates partial sums as data packets pass through it.
 
 [^fn-sharp-innetwork]: **SHARP (Scalable Hierarchical Aggregation and Reduction Protocol)**: In-network computing on Quantum InfiniBand switches that performs reduction operations (such as sum, min, and max) as packets traverse an aggregation tree [@graham2020]. Graham et al. report substantially higher reduction bandwidth than host-based algorithms and describe switch-resource limits on outstanding aggregation groups and trees, which can create contention when many collectives compete for the same in-network resources. \index{SHARP!in-network reduction}
 
@@ -1682,7 +1682,7 @@ An alternative to Top-k is **Random-k sparsification**\index{Random-k Sparsifica
 
 #### The convergence problem {#sec-collective-communication-convergence-problem-43f6}
 
-Naively discarding small gradients creates a systematic bias. If a parameter consistently receives small gradients (e.g., 0.01 per step), it will *not* be updated because 0.01 is always below the Top-k threshold. Over thousands of steps, these "lost" gradients accumulate to a significant error that prevents the model from converging to the true optimum.
+Naively discarding small gradients creates a systematic bias. If a parameter consistently receives small gradients (e.g., 0.01 per step), it will not be updated because 0.01 is always below the Top-k threshold. Over thousands of steps, these "lost" gradients accumulate to a significant error that prevents the model from converging to the true optimum.
 
 The problem is not merely practical; it is a fundamental mathematical obstacle. Without correction, sparsified SGD is a *biased estimator* of the true gradient, and biased gradient descent can converge to arbitrarily wrong solutions. The same problem afflicts aggressive quantization: rounding gradients to INT8 or 1-bit introduces a systematic rounding error that accumulates across training steps. Error feedback addresses this accumulation for quantized gradients [@seide2014] and for sparsified gradients [@stich2018sparsified; @karimireddy2019error].
 
@@ -1789,7 +1789,7 @@ class ErrorFeedbackTrace:
 
 ### 1-bit Adam: Compression-aware optimization {#sec-communication-1bit-adam}
 
-Error Feedback restores convergence guarantees for any compression scheme, but it treats the optimizer as a black box. The gradient is compressed, transmitted, decompressed, and then fed to the optimizer as if nothing happened. This separation leaves performance on the table: the optimizer maintains internal state (momentum, variance estimates) that contains information about the gradient distribution, yet compression ignores this state entirely. The techniques above compress gradients independently of the optimizer. A more integrated approach, pioneered by Microsoft's DeepSpeed team, compresses the *optimizer's communication* rather than the *raw gradients*. **1-bit Adam**\index{1-bit Adam} [@tang20211bit] observes that the Adam optimizer\index{Adam Optimizer} maintains two momentum states ($m_t$ and $v_t$) that change slowly between steps. Rather than communicating the full gradient and reconstructing Adam states independently on each worker, 1-bit Adam communicates only the *sign* of the momentum (1 bit per parameter) plus a per-tensor scaling factor.
+Error Feedback restores convergence guarantees for any compression scheme, but it treats the optimizer as a black box. The gradient is compressed, transmitted, decompressed, and then fed to the optimizer as if nothing happened. This separation leaves performance on the table: the optimizer maintains internal state (momentum, variance estimates) that contains information about the gradient distribution, yet compression ignores this state entirely. The techniques above compress gradients independently of the optimizer. A more integrated approach, pioneered by Microsoft's DeepSpeed team, compresses the *optimizer's communication* rather than the *raw gradients*. **1-bit Adam**\index{1-bit Adam} [@tang20211bit] observes that the Adam optimizer\index{Adam Optimizer} maintains two momentum states ($m_t$ and $v_t$) that change slowly between steps. Rather than communicating the full gradient and reconstructing Adam states independently on each worker, 1-bit Adam communicates only the sign of the momentum (1 bit per parameter) plus a per-tensor scaling factor.
 
 The algorithm proceeds in two phases. During a *warmup phase* (typically 15--20 percent of training), standard Adam runs with full-precision communication to establish stable momentum estimates. Once the momentum variance stabilizes (indicated by the ratio $\text{Var}(m_t) / \text{E}[|m_t|]^2$ falling below a threshold), the algorithm switches to *compressed mode*. In compressed mode, each worker computes its local Adam update, extracts the sign of the momentum difference since the last communication, and transmits 1 bit per parameter plus a single FP32 scaling factor per tensor.
 
