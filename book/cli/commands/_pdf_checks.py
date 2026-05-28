@@ -2,7 +2,8 @@
 
 Scans rendered PDF text (via ``pdftotext``) for defects Quarto/LuaLaTeX can
 emit without failing the render: unresolved cross-refs (``?@sec-foo``),
-undefined LaTeX references (``Figure ??``), and leaked Python tracebacks.
+undefined LaTeX references (``Figure ??``), leaked Python tracebacks, and
+matplotlib/Python ``UserWarning`` text that escaped into the rendered output.
 """
 
 from __future__ import annotations
@@ -23,11 +24,15 @@ RESIDUAL_XREF = re.compile(r"\?@((?:sec|fig|tbl|eq|lst)-[\w.-]+)")
 LATEX_UNDEF = re.compile(r"\b(?:Figure|Table|Section|Equation|Listing)\s+\?\?+")
 PYTHON_LEAK = re.compile(
     r"(?:Traceback \(most recent call last\)|"
-    r"NameError:|AttributeError:|ModuleNotFoundError:|Error rendering)",
+    r"NameError:|AttributeError:|ModuleNotFoundError:|Error rendering|"
+    r"UserWarning:)",
     re.I,
 )
 QUARTO_XREF_WARN = re.compile(
     r"Unable to resolve crossref (@(?:sec|fig|tbl|eq|lst)-[\w.-]+)"
+)
+OVERFULL_HBOX = re.compile(
+    r"Overfull \\hbox \((\d+(?:\.\d+)?)pt too wide\)"
 )
 
 
@@ -113,7 +118,7 @@ def scan_pdf_text(pdf_path: Path) -> list[PdfIssue]:
 
 
 def scan_build_log(log_path: Path | None) -> list[PdfIssue]:
-    """Return Quarto cross-ref warnings from a render log, if provided."""
+    """Return cross-ref warnings and overfull hbox alerts from a render log."""
     if log_path is None or not log_path.exists():
         return []
     try:
@@ -131,6 +136,76 @@ def scan_build_log(log_path: Path | None) -> list[PdfIssue]:
                 count=count,
             )
         )
+
+    # Overfull hbox: content overflowed the text block (tables, figures, code).
+    # Map each warning to a chapter via the companion .tex file.
+    SEVERE_THRESHOLD_PT = 20.0
+    overfull_line_re = re.compile(
+        r"Overfull \\hbox \((\d+(?:\.\d+)?)pt too wide\).*?lines (\d+)"
+    )
+
+    # Build chapter map from the .tex file (cover images mark chapter starts)
+    chapter_map: list[tuple[int, str]] = []
+    tex_path = None
+    if log_path:
+        # Try the common names for the generated .tex alongside the log
+        for candidate in (
+            log_path.with_suffix(".tex"),
+            log_path.parent / "Machine-Learning-Systems-Vol1.tex",
+            log_path.parent / "Machine-Learning-Systems-Vol2.tex",
+        ):
+            if candidate.is_file():
+                tex_path = candidate
+                break
+    if tex_path and tex_path.is_file():
+        cover_re = re.compile(r"contents/vol[12]/([^/]+)/images/png/cover_")
+        try:
+            for i, line in enumerate(tex_path.read_text(errors="replace").splitlines(), 1):
+                m = cover_re.search(line)
+                if m:
+                    chapter_map.append((i, m.group(1)))
+        except OSError:
+            pass
+
+    def _chapter_for_tex_line(line_num: int) -> str:
+        if not chapter_map:
+            return "unknown"
+        result = chapter_map[0][1]
+        for start, name in chapter_map:
+            if line_num >= start:
+                result = name
+            else:
+                break
+        return result
+
+    severe_items: list[tuple[float, str]] = []
+    for m in overfull_line_re.finditer(text):
+        pts = float(m.group(1))
+        if pts >= SEVERE_THRESHOLD_PT:
+            tex_line = int(m.group(2))
+            chapter = _chapter_for_tex_line(tex_line)
+            severe_items.append((pts, chapter))
+
+    if severe_items:
+        by_chapter: dict[str, list[float]] = {}
+        for pts, ch in severe_items:
+            by_chapter.setdefault(ch, []).append(pts)
+        details = "; ".join(
+            f"{ch}: {len(pts_list)} overflow(s), worst {max(pts_list):.0f}pt"
+            for ch, pts_list in sorted(by_chapter.items(), key=lambda x: -max(x[1]))
+        )
+        worst = max(pts for pts, _ in severe_items)
+        issues.append(
+            PdfIssue(
+                code="overfull-hbox",
+                message=(
+                    f"{len(severe_items)} overfull \\hbox >= {SEVERE_THRESHOLD_PT:.0f}pt "
+                    f"(worst: {worst:.0f}pt). By chapter: {details}"
+                ),
+                count=len(severe_items),
+            )
+        )
+
     return issues
 
 
@@ -186,13 +261,19 @@ def verify_volume_pdf(
         ),
         PdfCheckItem(
             "python-traceback",
-            "No Python tracebacks in PDF text",
+            "No Python tracebacks or UserWarnings in PDF text",
             not any(i.code == "python-traceback" for i in issues),
         ),
         PdfCheckItem(
             "quarto-crossref-warning",
             "No Quarto crossref warnings in build log",
             not any(i.code == "quarto-crossref-warning" for i in issues),
+            skipped=log_path is None,
+        ),
+        PdfCheckItem(
+            "overfull-hbox",
+            "No severe layout overflow (Overfull hbox >= 20pt)",
+            not any(i.code == "overfull-hbox" for i in issues),
             skipped=log_path is None,
         ),
     ]
