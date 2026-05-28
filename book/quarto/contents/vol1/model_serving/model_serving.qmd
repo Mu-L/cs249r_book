@@ -61,7 +61,7 @@ Applying the D·A·M taxonomy reveals how deployment inverts the engineering pri
 
 :::
 
-The consequences of ignoring this inversion become apparent during a traffic spike that pushes the system beyond what it was designed to handle.
+A single traffic spike that exceeds this margin can cascade into system-wide failure.
 
 ```{python}
 #| echo: false
@@ -195,7 +195,7 @@ plt.close()
 
 Trace the curve in @fig-tail-latency-explosion and notice how latency remains manageable until utilization crosses roughly 70 percent, then explodes—this is *why* production systems must run at relatively low utilization (40–60 percent) to guarantee stable tail latency\index{Tail Latency!utilization threshold} (p99). For a mathematical treatment of long-tailed distributions and why P99 latency dominates the user experience at scale, see @sec-data-foundations-distributions-long-tail-901f. The curve is a simple queueing approximation intended for intuition rather than a specific workload.
 
-Beyond the technical limits of latency, the economics of serving have undergone a radical transformation. As models become more efficient and hardware becomes more specialized, the cost of "intelligence" is collapsing[^fn-jevons-paradox]. To grasp the speed of this collapse, examine the log-scale price trajectory in @fig-intelligence-deflation, which tracks public API list prices as a market proxy.
+Beyond the technical limits of latency, the economics of serving have undergone a radical transformation. As models become more efficient and hardware becomes more specialized, the cost of "intelligence" is collapsing[^fn-jevons-paradox]. Facebook's experience at fleet scale illustrates the magnitude of this serving cost problem.
 
 [^fn-jevons-paradox]: **Jevons Paradox**: William Stanley Jevons observed in 1865 that efficiency improvements in coal-powered steam engines increased total coal consumption by making steam power economically viable for applications previously too costly. The same dynamic governs AI inference: each 10$\times$ cost reduction opens application classes that were economically infeasible at the previous price point, expanding aggregate demand by more than the efficiency gain. This is why cheaper inference reliably increases, not decreases, total GPU fleet demand—efficiency and demand are complements in AI, not substitutes. \index{Jevons Paradox!inference demand}
 
@@ -209,7 +209,7 @@ Beyond the technical limits of latency, the economics of serving have undergone 
 **Systems lesson**: Training creates the model; serving pays the recurring bill. At fleet scale, a model architecture that is cheap to train can still be too expensive, too memory-bound, or too variable in tail latency to serve.
 :::
 
-The same serving-economics pressure appears in public API prices, where each order-of-magnitude drop changes which applications are feasible.
+The same serving-economics pressure appears in public API prices. To grasp the speed of this cost collapse, examine the log-scale price trajectory in @fig-intelligence-deflation, which tracks public API list prices as a market proxy. Each order-of-magnitude drop changes which applications are feasible.
 
 ::: {#fig-intelligence-deflation fig-env="figure" fig-pos="htb" fig-cap="**Intelligence Deflation**: Representative public API input-token list prices per 1M tokens (USD) over time (Log Scale). Prices are model-version snapshots collected from the public pricing pages of OpenAI, Anthropic, Google, and DeepSeek between 2020 and 2025 and are intended as a market trend indicator, not a controlled or current-price comparison. API token-processing prices have collapsed by multiple orders of magnitude, transforming the economics of automated AI workflows." fig-alt="Line plot showing representative public API input-token pricing collapsing from USD 20 per million tokens in 2020 to under USD 0.10 per million tokens in 2025. Log scale highlights the deflationary trend with models from OpenAI, Anthropic, Google, and DeepSeek."}
 
@@ -851,6 +851,8 @@ Latency constraints directly dictate infrastructure costs. Consider a GPU server
 Most production systems combine both approaches. Common queries hit a cache populated by batch inference while uncommon requests trigger dynamic computation. Understanding this spectrum matters because it determines which subsequent optimization strategies apply. Static inference optimizes for throughput during batch computation and storage efficiency for serving. Dynamic inference optimizes for per-request latency under concurrent load, which requires understanding *where* time goes within each request.
 
 The static-vs.-dynamic decision is the first of several architectural choices that shape serving system design. Equally important is *where* the model executes, since deployment context constrains every subsequent optimization.
+
+All of the cost analysis above assumes a traditional forward pass: a fixed computation graph that executes once per request and produces a result. A new class of models upends that assumption by deliberately increasing the amount of computation spent per query, trading latency for answer quality, and the serving cost implications are substantial.
 
 ::: {#psp-model-serving-looking-ahead-rise-inference-time-compute-system-2 .callout-perspective title="Looking ahead: The rise of inference-time compute (System 2)"}
 
@@ -1671,7 +1673,7 @@ Key insight: preprocessing consumes `{python} LatencyBudgetCalc.preprocess_pct_s
 
 :::
 
-The ResNet example represents compute-bound inference where math dominates. Recommendation systems exhibit a different bottleneck profile entirely.
+The ResNet example represents compute-bound inference where the forward-pass arithmetic dominates the latency budget. Applying the same framework to a different model architecture often reveals that the bottleneck shifts from compute to memory bandwidth, invalidating the optimization strategies that worked for vision models. Recommendation systems exhibit exactly this shift.
 
 ```{python}
 #| echo: false
@@ -1734,7 +1736,7 @@ class DlrmLatencyCalc:
 
 :::
 
-The two lighthouse cases illustrate the same general failure mode: straightforward optimization efforts target where ML expertise applies (model quantization, pruning) while the binding constraint sits elsewhere (image decoding on CPU for ResNet-50, embedding-table memory bandwidth for DLRM). Adopting *the quantitative approach to serving* exposes these hidden bottlenecks before engineering effort is misallocated.
+The two lighthouse cases illustrate the same general failure mode: straightforward optimization efforts target where ML expertise applies (model quantization, pruning) while the binding constraint sits elsewhere (image decoding on CPU for ResNet-50, embedding-table memory bandwidth for DLRM). The pattern generalizes: any serving system where the model accounts for less than half of total latency will see diminishing returns from model-only optimizations, regardless of how large those individual speedups are. Amdahl's Law quantifies the ceiling. Adopting *the quantitative approach to serving* exposes these hidden bottlenecks before engineering effort is misallocated.
 
 ```{python}
 #| echo: false
@@ -2832,7 +2834,7 @@ Note: Times shown are pure inference time, excluding queue wait. @Sec-model-serv
 
 :::
 
-The table reveals the throughput-latency trade-off in stark terms: larger batches dramatically improve hardware efficiency but increase per-request latency. In practice, the optimal batch size depends on both the latency Service Level Objective (SLO) and the arrival rate of requests. The question facing every serving engineer is therefore quantitative: determining the largest batch size that still meets a given latency SLO. A small sweep over batch sizes turns that trade-off into an operating point.
+The table reveals the throughput-latency trade-off in stark terms: larger batches dramatically improve hardware efficiency but increase per-request latency. The 6.4$\times$ throughput gain from batch one to batch thirty-two comes at the cost of 5$\times$ higher inference time, and user-perceived latency compounds further once the batching window wait is included. In practice, the optimal batch size depends on both the latency Service Level Objective (SLO) and the arrival rate of requests. A system serving interactive recommendations under a 20 ms SLO cannot use batch thirty-two, even though hardware utilization at that point approaches 95 percent. The question facing every serving engineer is therefore quantitative: determining the largest batch size that still meets a given latency SLO. A small sweep over batch sizes turns that trade-off into an operating point.
 
 ```{python}
 #| echo: false
@@ -3711,6 +3713,8 @@ Unlike Poisson traffic where dynamic batching optimizes throughput, streaming tr
 
 #### Single-user traffic (sequential arrivals) {#sec-model-serving-singleuser-traffic-sequential-arrivals-78da}
 
+Streaming traffic correlates arrivals by sensor synchronization, making batch size and deadline externally fixed. At the opposite end of the spectrum, mobile and embedded applications face no batching opportunity at all. The optimization target shifts from synchronization budget against a hard frame deadline to per-request latency against energy consumption under a thermal power envelope.
+
 Mobile\index{Single-User Traffic!mobile serving}\index{SingleStream!MLPerf scenario} and embedded applications serve one user at a time, with requests arriving only after the previous result is consumed. For ResNet-50 on a phone, the dominant costs shift from batch formation to per-request latency and energy.
 
 ```{python}
@@ -3872,7 +3876,7 @@ Generative models produce a stream of tokens rather than a single output tensor.
 
 :::
 
-These two metrics capture distinct user experience aspects.
+These two metrics capture distinct user experience aspects, and production systems set separate SLO targets for each.
 
 ::: {#lhs-model-serving-llm-serving-latency-targets .callout-lighthouse title="LLM serving latency targets"}
 
@@ -3884,9 +3888,11 @@ A production-grade LLM service typically targets the following SLOs:
 
 :::
 
+Meeting these TPOT targets depends on more than memory bandwidth alone: the algorithm used to select each token also affects per-token latency and output quality.
+
 ### Decoding strategies {#sec-model-serving-decoding-strategies-afe8}
 
-Generative models require decoding strategies that trade-off quality, diversity, and latency. The choice of decoding strategy dramatically affects both output quality and computational cost.
+Generative models require decoding strategies that trade off quality, diversity, and latency. The choice of decoding strategy dramatically affects both output quality and computational cost.
 
 The simplest approach, greedy decoding\index{Greedy Decoding!LLM generation}, selects the highest-probability token at each step. It is fast but often produces repetitive, low-quality outputs because it cannot recover from early mistakes. Beam search\index{Beam Search!decoding strategy} improves quality by maintaining multiple candidate sequences and selecting the highest-scoring complete sequence, though it multiplies computation by the beam width. Sampling\index{Sampling!temperature, top-k, top-p} with temperature, top-$k$\index{Top-k!sampling}, and top-$p$ parameters introduces randomness for diversity [@holtzman2020curious]. Temperature scales logits before softmax. Top-$k$ limits sampling to the $k$ highest-probability tokens. Top-$p$, also called nucleus sampling\index{Nucleus Sampling!top-p}, limits sampling to tokens comprising probability mass $p$.
 
