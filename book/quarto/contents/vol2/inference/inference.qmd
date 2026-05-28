@@ -1370,6 +1370,8 @@ At scale with multiple replicas, batch formation can occur either at individual 
 
 Production systems typically use replica-local batching with load balancing that ensures roughly equal traffic distribution, achieving the benefits of centralized batching without the complexity.
 
+The dynamic batching strategy above works well for vision models where every input has the same shape and every forward pass takes roughly the same time. Autoregressive language models break both assumptions: each request generates a variable number of tokens, and a short prompt finishing in 50 ms shares the GPU with a long response that runs for 2 seconds. Padding every batch to the longest sequence wastes the compute that dynamic batching was designed to recover, and holding finished requests in place until the slowest one completes reintroduces the idle-GPU problem at a different level.
+
 ### Continuous batching for LLM inference {#sec-inference-scale-continuous-batching-llm-inference-f8e6}
 
 The autoregressive bottleneck (Principle \ref{pri-autoregressive-bottleneck}) governs this regime: in generative models, the decode phase is strictly memory-bandwidth bound because the entire model weight set must be loaded for every single token generated. Throughput scales with batch size, sharing weight loads across multiple requests, not compute power.
@@ -2085,7 +2087,7 @@ class RecsysLatencyBreakdown:
 
 ### Streaming inference for real-time applications {#sec-inference-scale-streaming-inference-realtime-applications-906c}
 
-Some applications cannot tolerate batching delay of any kind. Real-time speech recognition, video analysis, and robotics require processing inputs as they arrive with minimal latency.
+Feature-parallel batching amortizes embedding lookup costs across thousands of queries per second, but it still operates in a request-response pattern: the system collects a batch, processes it, and returns results. Some applications cannot tolerate even that collection delay. Real-time speech recognition, video analysis, and robotics require processing inputs as they arrive, often within a single inter-frame interval of 10 to 33 ms.
 
 Streaming inference processes inputs incrementally without waiting for batch formation:
 
@@ -2272,6 +2274,7 @@ As an LLM generates a 2,000-word essay, it must constantly recall every word it 
 The memory management techniques that enable efficient LLM serving at scale include PagedAttention for fragmentation-free allocation, prefix caching for common prompt sharing, and speculative decoding for latency reduction.
 
 ### KV cache fundamentals {#sec-inference-scale-kv-cache-fundamentals-2ccd}
+
 
 ::: {#dfn-inference-kv-cache .callout-definition title="KV cache"}
 
@@ -2534,6 +2537,8 @@ Result: enough total free capacity exists, but no contiguous block is large enou
 Production systems report 60--80 percent memory waste from fragmentation under realistic workloads, severely limiting batch sizes and throughput.
 
 ### PagedAttention {#sec-inference-scale-pagedattention-3c94}
+
+The fragmentation overhead measured above is not inherent to autoregressive generation; it is an artifact of treating GPU memory as a contiguous slab. Applying the same virtual-memory abstraction that solved RAM fragmentation decades ago eliminates the problem entirely.
 
 ::: {#dfn-inference-pagedattention .callout-definition title="PagedAttention"}
 
@@ -3262,6 +3267,8 @@ LLM inference consists of two distinct phases with different computational chara
 ![](images/svg/disaggregated-serving.svg)
 :::
 
+The architectural split shown above rests on a fundamental asymmetry between the two phases of transformer inference: one is compute-bound, the other memory-bandwidth-bound.
+
 ::: {#dfn-inference-prefill-decode-phases .callout-definition title="Prefill and decode phases"}
 
 ***Prefill and Decode Phases***\index{Prefill and Decode!definition}\index{Inference!prefill vs. decode} are the two distinct computational regimes of transformer-based LLM inference.
@@ -3332,7 +3339,7 @@ The schedule ensures decode latency remains bounded regardless of incoming promp
 
 :::
 
-KV Cache management enables a single GPU to handle many concurrent requests without crashing.
+Chunked prefill and disaggregated serving solve the interference between long prompts and active decode streams, but they assume every request runs the same model weights. Production platforms increasingly serve thousands of fine-tuned variants from a single cluster, where each user's personalized adapter competes for the same on-chip memory that the KV cache already pressures. The memory management problem shifts from paging attention state to swapping model weights on every context switch.
 
 ### Dynamic memory swapping and multi-tenancy {#sec-inference-scale-lora-multi-tenancy}
 
@@ -6005,7 +6012,7 @@ Before late 2022, LLM serving was plagued by the "straggler problem." Frameworks
 
 :::
 
-Each case study demonstrates how the principles of batching, sharding, load balancing, and autoscaling combine to meet specific requirements.
+Continuous batching transformed LLM serving economics, but it is one component of a larger stack. The three case studies that follow show how recommendation, language model, and edge inference systems each assemble a different subset of the chapter's techniques to meet workload-specific cost and latency constraints.
 
 ### Meta recommendation serving {#sec-inference-scale-meta-recommendation-serving-bede}
 
