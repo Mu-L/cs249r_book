@@ -17,6 +17,7 @@ import NapkinCalc from "@/components/NapkinCalc";
 import idRedirects from "@/data/id-redirects.json";
 import AskInterviewer from "@/components/AskInterviewer";
 import MarkdownText from "@/components/MarkdownText";
+import GlossaryText from "@/components/GlossaryText";
 import NapkinMathDisplay from "@/components/NapkinMathDisplay";
 import LevelBadge from "@/components/LevelBadge";
 import { useToast } from "@/components/Toast";
@@ -42,6 +43,7 @@ import { Calendar, ArrowLeft, Flag, LinkIcon } from "lucide-react";
 import Link from "next/link";
 import { buildReportUrl } from "@/lib/issue-url";
 import QuestionFeedback from "@/components/QuestionFeedback";
+import ChapterLinks from "@/components/ChapterLinks";
 import QuestionVisual from "@/components/QuestionVisual";
 import { track } from "@/lib/analytics";
 
@@ -1078,7 +1080,7 @@ function PracticePage() {
                       <div className="prose max-w-none mt-6">
                         {current.scenario ? (
                           <p className="text-textSecondary leading-relaxed text-base">
-                            {cleanScenario(current.scenario)}
+                            <GlossaryText text={cleanScenario(current.scenario)} />
                           </p>
                         ) : (
                           <ScenarioSkeleton />
@@ -1339,6 +1341,7 @@ function PracticePage() {
                               })}
                             </div>
                             <QuestionFeedback question={current} />
+                            <ChapterLinks area={current.competency_area} />
                             {chainInfo && (
                               <ChainStrip chain={chainInfo} onNavigate={handleChainNavigate} />
                             )}

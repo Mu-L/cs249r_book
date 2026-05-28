@@ -198,7 +198,9 @@ Before formalizing the iron law, consider how these constraints interact in prac
 
 ## Iron Law of Training Performance {#sec-model-training-iron-law-training-performance-a53f}
 
-Frameworks provide abstractions for expressing training algorithms, but training systems engineering determines whether those algorithms can execute within physical resource limits. The iron law\index{Training!iron law of training performance}\index{Iron Law of Training Performance!utilization gap} provides the organizing framework for understanding how every optimization technique improves training time. This is a specialized application of the general iron law of ML systems introduced in @sec-introduction-iron-law-ml-systems-c32a, focused specifically on maximizing computational throughput.
+PaLM's loss spikes illustrate a broader point: instability at frontier scale is not a rare accident but a predictable consequence of pushing computational intensity, memory pressure, and data dependencies simultaneously. Each of those three characteristics is individually manageable, yet their interactions produce failure modes that operational recovery alone cannot prevent. Diagnosing which factor dominates a given failure, and quantifying the cost of each, requires a formal decomposition of training time into its physical constituents.
+
+The iron law\index{Training!iron law of training performance}\index{Iron Law of Training Performance!utilization gap} provides exactly that organizing framework: it decomposes training time so that every optimization technique maps to a specific term in the equation. This is a specialized application of the general iron law of ML systems introduced in @sec-introduction-iron-law-ml-systems-c32a, focused specifically on maximizing computational throughput.
 
 ::: {#dfn-training-iron-law-training-performance .callout-definition title="The iron law of training performance"}
 
@@ -314,6 +316,8 @@ Training GPT-2 is primarily memory-bound (due to activation storage) and compute
 Not all training workloads are compute bound. Recommendation models like Deep Learning Recommendation Model (DLRM) are dominated by massive embedding tables\index{Embedding Table!capacity bottleneck} (`{python} GPT2LighthouseSpecs.dlrm_params_min_b_str` to `{python} GPT2LighthouseSpecs.dlrm_params_max_t_str` trillion parameters, mostly embeddings) that make them memory-bandwidth-bound rather than compute bound, requiring model parallelism for *capacity* rather than *throughput*. The remainder of this chapter focuses on dense, compute-intensive training using GPT-2 as the primary worked example.
 
 Training systems occupy a critical position in the machine learning pipeline: they consume prepared data from upstream engineering (@sec-data-engineering) and produce trained models for downstream deployment (@sec-ml-operations). Data quality directly impacts training stability, while training efficiency determines iteration velocity during model development. Modern training systems face three scaling challenges. First, data scale: processing petabyte datasets requires efficient I/O pipelines and distributed storage. Second, model scale: billion-parameter models demand parallelization strategies including data parallelism\index{Distributed Training!data parallelism}[^fn-training-data-parallelism] (replicate model, split data) and model parallelism\index{Distributed Training!model parallelism}[^fn-training-model-parallelism] (split model across devices). Third, infrastructure scale: coordinating thousands of accelerators introduces communication overhead that can dominate training time. These challenges motivate the workflow management tools (@sec-ml-workflow) that automate training orchestration.
+
+GPT-2's `{python} GPT2LighthouseSpecs.gpt2_dataset_size_gb_str` WebText corpus sits at the lower end of this data scale spectrum. Frontier models consume datasets that are two to three orders of magnitude larger, and the physics of data movement shifts qualitatively across that range. At the low end, the entire dataset fits in memory and the $D_{\text{vol}}/\text{BW}$ term in the iron law is negligible; at the high end, sustained I/O throughput becomes the binding constraint, requiring dedicated prefetch workers, zero-copy transfer paths, and distributed storage backends to keep accelerators from starving between batches.
 
 ::: {#psp-training-10-gb-10-tb-scale-factor .callout-perspective title="The 10 GB to 10 TB scale factor"}
 
@@ -787,6 +791,8 @@ gelu_approx = (
 :::
 
 The GELU approximation highlights a broader pattern: compute cost is not always the dominant concern. For activation functions, the real bottleneck is often memory bandwidth rather than arithmetic operations. This distinction between compute-bound and memory-bound operations directly affects optimization priorities and recurs throughout our analysis of training bottlenecks.
+
+The distinction is quantifiable. A matrix multiplication in GPT-2's attention layers performs hundreds of FLOPs per byte loaded, saturating the accelerator's arithmetic units. An element-wise activation like ReLU or GELU performs one to three FLOPs per byte, finishing its arithmetic before the next cache line arrives from HBM. The arithmetic intensity gap between these two operation classes spans two orders of magnitude, which means that optimizing activation compute (for example, replacing GELU with a cheaper function) yields almost no wall-clock improvement because memory transfer time, not arithmetic time, determines how long the operation takes.
 
 ::: {#psp-training-memory-bandwidth-bottlenecks .callout-perspective title="Memory bandwidth bottlenecks"}
 
@@ -3492,6 +3498,8 @@ Training bottlenecks fall into three categories that map directly to the D·A·M
 : **D·A·M Taxonomy Applied to Training Bottlenecks**: Each axis of the D·A·M taxonomy (Data, Algorithm, Machine) maps to a distinct training bottleneck with characteristic symptoms. Profiling reveals which axis is the limiting factor, guiding practitioners to the appropriate optimization technique. {#tbl-dam-training-bottlenecks tbl-colwidths="[13,18,44,35]"}
 
 Profiling tools reveal which bottleneck dominates a given workload. @Fig-tf-bottleneck-trace captures a data-bound pathology through TensorFlow's profiler: the gaps in GPU activity (white regions between compute blocks) reveal that the device frequently waits for input data, with utilization dropping to zero during data loading phases.
+
+The data-bound category is the most commonly misdiagnosed bottleneck in practice. A training job with 40 percent MFU and a GPU utilization trace full of idle gaps looks like a hardware problem, but the root cause is often a software serialization bottleneck in the input pipeline. When the CPU-side data loader cannot prepare batches faster than the accelerator consumes them, no amount of GPU tuning can close the gap.
 
 ::: {#exmp-training-gil-locked-gpu .callout-example title="The GIL-locked GPU"}
 
@@ -6505,6 +6513,8 @@ Within a single node, GPUs communicate via high-bandwidth interconnects like NVL
 
 \index{Distributed Training!communication overhead}
 When single-node multi-GPU training remains insufficient, distributed training extends across multiple machines. This introduces network communication bottlenecks (typically 1.25--12.5 GB/s, or 10--100 Gbps, between nodes vs. `{python} SingleNodeInterconnect.nvlink_h100_str` within a node) and fault tolerance requirements absent from single-node setups. The bandwidth gap matters because synchronization turns every gradient update into a data-movement problem.
+
+Within a single node, NVLink provides enough bandwidth to overlap gradient synchronization with computation, keeping the $L_{\text{lat}}$ term in the iron law small relative to the compute term. Crossing the node boundary collapses that ratio: inter-node Ethernet or InfiniBand bandwidth is 10--50$\times$ lower than NVLink, and every AllReduce operation must traverse this slower fabric. The communication overhead that was negligible at four GPUs can dominate total step time at 64 nodes, making the physical cost of moving gradients the central engineering constraint of distributed training.
 
 ::: {#psp-training-physics-synchronization .callout-perspective title="The physics of synchronization"}
 
