@@ -584,6 +584,8 @@ The model reveals two regimes:
 
 For NDR InfiniBand with $\alpha \approx$ `{python} NetworkAlphaBeta.ib_alpha_us_str` and $\beta \approx$ `{python} NetworkAlphaBeta.ib_beta_gbs_str`, the crossover point $n = \alpha\beta \approx$ `{python} NetworkAlphaBeta.n_cross_ib_kb_str`. Messages smaller than this gain little from more bandwidth; messages larger than this gain little from lower latency.
 
+The crossover point separates two fundamentally different optimization strategies: reducing hop count to lower $\alpha$, or adding link bandwidth to raise $\beta$. Applying the model to the concrete message sizes that our 175B training job generates on every iteration makes this distinction actionable.
+
 ::: {#nbk-network-fabrics-alpha-beta-crossover .callout-notebook title="The alpha-beta crossover"}
 
 **Problem**: A fabric designer is comparing InfiniBand NDR (`{python} NetworkAlphaBeta.ib_alpha_us_str`, `{python} NetworkAlphaBeta.ib_beta_gbs_str`) against a slower Ethernet baseline (`{python} NetworkAlphaBeta.eth_alpha_us_str`, `{python} NetworkAlphaBeta.eth_beta_gbs_str`). For a `{python} NetworkAlphaBeta.n_small_kb_str` control message and a `{python} NetworkAlphaBeta.n_large_mb_str` gradient shard, which part of $T(n)=\alpha+n/\beta$ dominates, and why does the faster fabric help for different reasons in each regime?
@@ -710,6 +712,8 @@ plt.close()
 :::
 
 The same model also identifies when communication overtakes computation.
+
+The $\alpha$-$\beta$ analysis above focused on the transfer time of individual messages across a single link, treating the network as a point-to-point channel. In a data-parallel training loop, however, the relevant question is whether the collective AllReduce across the full cluster finishes before the next compute step is ready to begin. When the gradient vector grows large enough, the aggregate transfer time for a ring AllReduce exceeds the per-step computation time, and the network becomes the pacing constraint for the entire training job.
 
 ::: {#nbk-allreduce-bottleneck .callout-notebook title="When does AllReduce become the bottleneck?"}
 
@@ -880,6 +884,8 @@ class NonBlockingOversubscription:
     throughput_loss_pct_str = fmt(throughput_loss_pct, precision=1, commas=False, suffix=" percent")
 ```
 
+The first property, bisection bandwidth, quantifies the worst-case throughput ceiling that the topology imposes on global collectives. A cluster can have thousands of fast links at the edge and still starve its AllReduce operations if the cross-sectional capacity at the narrowest point in the switching hierarchy is insufficient.
+
 ::: {#dfn-network-fabrics-bisection-bandwidth .callout-definition title="Bisection bandwidth"}
 
 ***Bisection Bandwidth***\index{Bisection Bandwidth!definition} is a network topology metric defined as the minimum aggregate link capacity crossing any partition that divides the cluster into two equal halves, representing the worst-case throughput ceiling for all-to-all communication patterns such as AllReduce.
@@ -891,6 +897,8 @@ class NonBlockingOversubscription:
 :::
 
 For ML training, where all-to-all communication is standard, full $\text{BW}_{\text{bisect}}$ is the foundational requirement. A fabric that falls short forces every synchronization step to bottleneck at the narrowest cross-section, and the entire cluster idles while gradients trickle through.
+
+Bisection bandwidth is a metric; the topology property that delivers full $\text{BW}_{\text{bisect}}$ under arbitrary traffic patterns is a non-blocking fabric. A non-blocking design guarantees that the uplink capacity at every switch tier matches or exceeds the downlink capacity, so no internal contention reduces the cross-sectional throughput below its theoretical maximum. When a fabric is oversubscribed, the effective $\text{BW}_{\text{bisect}}$ drops by the oversubscription ratio, and every global collective slows proportionally.
 
 ::: {#dfn-network-fabrics-non-blocking-fabric .callout-definition title="Non-blocking fabric"}
 
@@ -913,6 +921,8 @@ The **Top-of-Rack (ToR)**\index{ToR} switch serves as the fundamental physical a
 To mitigate congestion at this edge, network architects maximize the switch **radix**\index{Radix}, the number of ports available. A modern switch with a radix of 64 allocates 32 ports downlink to the servers (ensuring full bandwidth for the 32 GPUs) and 32 ports uplink to the spine. This 1:1 subscription ratio guarantees non-blocking performance at the rack level. For our cluster of `{python} NetworkTopologyRadixRecap.n_gpus_str`, the physical topology comprises approximately 32 such racks. The job scheduler must be topology-aware for performance, while reliable replica placement must also span independent rack failure domains so that a single lost rack does not take down the entire training run (see @sec-fault-tolerance-reliability-reliability-replica-placement-failure-domains-73a7).
 
 ### Fat-tree (Clos) networks {#sec-network-fabrics-fat-tree}
+
+The ToR provides non-blocking bandwidth within a single rack, but connecting 32 racks into a cluster that preserves full $\text{BW}_{\text{bisect}}$ across every possible communication pair requires a topology that scales cross-sectional capacity with cluster size. The fat-tree (also called a Clos network) achieves this by adding parallel spine switches at each tier, so the aggregate uplink capacity always matches the total edge bandwidth feeding into it.
 
 ::: {#dfn-network-fabrics-fat-tree .callout-definition title="Fat-tree"}
 
@@ -1139,13 +1149,15 @@ Communication latency ($\alpha$) is proportional to the number of switch hops.
 
 :::
 
-That same-rank latency dividend is why the rail pattern appears in production LLM training fleets rather than remaining a cabling optimization.
+That same-rank latency dividend is why the rail pattern appears in production LLM training fleets rather than remaining a cabling optimization. The archetype A workloads that dominate large-scale LLM training exploit this structure directly, because 3D parallelism generates traffic patterns that align with the rail wiring.
 
 ::: {#lhs-network-fabrics-archetype-gpt-4-llama-3-rail-optimized-fleet .callout-lighthouse title="Archetype A (GPT-4/Llama-3): The rail-optimized fleet"}
 
 **Archetype A (GPT-4)** is the primary driver for rail-optimized fabrics. Because it uses **3D Parallelism**\index{3D Parallelism}, it generates two distinct traffic patterns: (1) massive, bandwidth-hungry gradient averaging for data parallelism, and (2) high-frequency, latency-sensitive activation exchanges for tensor parallelism. The rail-optimized design ensures that data-parallel traffic traverses only a single switch hop between nodes, minimizing the latency that would otherwise stall the synchronous training loop.
 
 :::
+
+The engineering consequence of this alignment is measurable at cluster scale. Because each of the 8 GPU ranks in a node communicates only with the same rank on other nodes during data-parallel AllReduce, the rail topology partitions the cluster into 8 independent switch networks that can operate concurrently without contention.
 
 ```{python}
 #| echo: false
@@ -1350,6 +1362,8 @@ Because BSP enforces a global barrier at each superstep, the entire cluster move
 
 \index{Priority Flow Control}
 
+The BSP weakest-link property means that even a single dropped packet can trigger a retransmission timeout that stalls the global barrier for milliseconds, an eternity in a training loop where each compute step finishes in tens of milliseconds. RoCEv2 fabrics solve this by operating in lossless mode: rather than allowing switch buffers to overflow and drop packets, the fabric uses a link-layer backpressure mechanism to pause upstream senders before any buffer saturates.
+
 ::: {#dfn-network-fabrics-priority-flow-control .callout-definition title="Priority flow control"}
 
 ***Priority Flow Control (PFC)***\index{Priority Flow Control!definition} is a link-layer mechanism that prevents switch buffer overflow by sending PAUSE frames to an upstream sender when a port's queue depth crosses a configured threshold, throttling injection on a per-priority basis without dropping packets.
@@ -1478,6 +1492,8 @@ This mechanism becomes essential for Mixture-of-Experts (MoE) models. Unlike the
 ### The incast problem in ML {#sec-network-fabrics-incast}
 
 \index{Incast}
+
+Congestion control and adaptive routing manage flows that traverse the interior of the fabric. A different failure mode occurs at the edge, where the traffic pattern itself overwhelms a single port regardless of how much capacity the fabric interior provides.
 
 ::: {#dfn-network-fabrics-incast .callout-definition title="Incast"}
 
