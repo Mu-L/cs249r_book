@@ -1168,7 +1168,6 @@ output = activation(
 
 :::
 
-
 The matrix multiplication dominates computation time, but this abstraction still hides the underlying loop structure. At the processor level, @lst-loop_level_dense reveals how nested loops multiply inputs and weights, sum the results, and apply a nonlinear function, exposing the $\mathcal{O}(B \times d_{\text{in}} \times d_{\text{out}})$ complexity that accelerators must handle efficiently.
 
 ::: {#lst-loop_level_dense lst-cap="**Processor-Level Execution**: Nested loops reveal the $\mathcal{O}(B \times d_{\text{in}} \times d_{\text{out}})$ multiply-accumulate operations that accelerators must execute, with `{python} WeightMatrixCalc.wm_batch_macs_m_str` million MACs for $B$=`{python} WeightMatrixCalc.wm_batch_str`, $d_{\text{in}}$=`{python} WeightMatrixCalc.wm_in_str`, $d_{\text{out}}$=`{python} WeightMatrixCalc.wm_out_str` configurations."}
@@ -1334,7 +1333,6 @@ Matrix and vector operations together handle the linear algebra of neural networ
 
 : **Operation Characteristics**: Matrix operations excel at many-to-many transformations common in neural network layers, while vector operations efficiently handle one-to-one transformations like activation functions and normalization. The distinction determines which hardware primitive (tensor core or vector unit) delivers optimal performance for each operation. {#tbl-matrix tbl-colwidths="[18,23,35,24]"}
 
-
 ### Special function units {#sec-hardware-acceleration-special-function-units-ed00}
 
 Special Function Units (SFUs)\index{Special Function Unit!SFU} provide dedicated hardware for these nonlinear computations, completing the trio of core processing primitives. The need for such units is not new: floating-point coprocessors addressed scalar arithmetic bottlenecks [@palmer1980intel8087], and digital signal processing hardware addressed related demands for specialized arithmetic in scientific and signal-processing workloads [@broesch1997]. Neural networks have intensified this demand because activation functions, normalization layers, and softmax transformations appear after every linear layer, making them a throughput bottleneck rather than an occasional convenience.
@@ -1429,7 +1427,6 @@ vrsqrt.v v5, v1          # Fast reciprocal square root
 ```
 
 :::
-
 
 | **Function Unit**    | **Operation**       | **Implementation Strategy**           | **Typical Latency** |
 |:---------------------|:--------------------|:--------------------------------------|--------------------:|
@@ -2245,7 +2242,11 @@ Because systolic arrays physically fix how data flows through the grid, designer
 
 ::: {#psp-hw-acceleration-matching-architecture-workload .callout-perspective title="Matching architecture to workload"}
 
-**The architects' dilemma**: Systolic arrays must choose which data to keep stationary (in registers) to minimize movement. This choice hard-codes the hardware's preference for certain model types. @Tbl-hw-acceleration-systolic-dataflow contrasts the three stationary-operand strategies and the workloads each favors:
+**The architects' dilemma**: Systolic arrays must choose which data to keep stationary (in registers) to minimize movement. This choice hard-codes the hardware's preference for certain model types. @Tbl-hw-acceleration-systolic-dataflow contrasts the three stationary-operand strategies and the workloads each favors.
+
+There is no "perfect" accelerator. A chip optimized for Weight-Stationary flow (like early TPUs) excels at CNNs where filters are small and heavily reused, but faces challenges with LLM inference at small batch sizes, where the weight matrix is read once per token with minimal reuse, pushing architectures toward output-stationary or hybrid dataflow patterns.
+
+:::
 
 | **Strategy**                                                     | **Stationary Item** | **Optimized For**          | **Example Workload**                                                                        |
 |:-----------------------------------------------------------------|:--------------------|:---------------------------|:--------------------------------------------------------------------------------------------|
@@ -2254,10 +2255,6 @@ Because systolic arrays physically fix how data flows through the grid, designer
 | **Row-Stationary**\index{Row-Stationary!dataflow strategy}       | Input Rows ($A$)    | Data Reuse                 | **General MatMul**: Balancing input and weight reuse.                                       |
 
 : **Systolic-Array Dataflow Strategies**: Three stationary-operand choices for systolic arrays, the reuse pattern each maximizes, and the workload class that benefits, showing how a fixed dataflow choice hard-codes an accelerator's affinity for specific models. {#tbl-hw-acceleration-systolic-dataflow tbl-colwidths="[20,18,18,44]"}
-
-There is no "perfect" accelerator. A chip optimized for Weight-Stationary flow (like early TPUs) excels at CNNs where filters are small and heavily reused, but faces challenges with LLM inference at small batch sizes, where the weight matrix is read once per token with minimal reuse, pushing architectures toward output-stationary or hybrid dataflow patterns.
-
-:::
 
 The synchronized data flow ensures that matrix element $A[i,k]$ encounters corresponding $B[k,j]$ elements at precise temporal intervals, executing the multiply-accumulate operations required for matrix multiplication $C[i,j] = \sum_k A[i,k]\times B[k,j]$. This systematic reuse of operands across multiple processing elements substantially reduces memory bandwidth requirements by eliminating redundant data fetches from external memory subsystems.
 
@@ -2424,12 +2421,12 @@ The **single-machine stack** is governed by an orders-of-magnitude bandwidth hie
 
 Modern AI processors exhibit a range of design trade-offs based on their intended applications, and comparing their configurations reveals how deployment constraints drive architectural divergence. A training-optimized accelerator like the NVIDIA A100 packs 108 Streaming Multiprocessors with wide SIMD units and FP16 tensor cores because training throughput scales with aggregate multiply-accumulate capacity. Google's TPUv4 makes a radically different bet: just two cores per chip, each containing a massive $128{\times}128$ BF16 systolic array, a design that trades programmer flexibility for extreme efficiency on the dense matrix multiplications that dominate transformer training. At the inference end, Intel's Sapphire Rapids dedicates Advanced Matrix Extensions (AMX) tile engines to INT8 and BF16, reflecting the insight from @sec-model-compression that inference models tolerate reduced precision. Apple's M1 Neural Engine takes this further by shrinking processing elements to $16{\times}16$ FP16 tiles within a 16-core array, prioritizing energy efficiency per operation over peak throughput. Energy efficiency per operation is the critical metric when a smartphone's entire compute budget is five watts. @Tbl-execution-units compares these architectural configurations.
 
-| **Processor**                                   | **SIMD Width** |       **Tensor Core Size** | **processing elements** | **Primary Workloads** |
+| **Processor**                                   | **SIMD Width** |    **Tensor Core Size**    | **processing elements** | **Primary Workloads** |
 |:------------------------------------------------|:--------------:|:--------------------------:|:-----------------------:|:----------------------|
-| **NVIDIA A100**                                 |       1024-bit | $4{\times}4{\times}4$ FP16 |                 108 SMs | Training, HPC         |
-| **Google TPUv4**                                |       128-wide |      $128{\times}128$ BF16 |            2 cores/chip | Training              |
-| **Intel Sapphire**\index{Intel!Sapphire Rapids} |    512-bit AVX |   $32{\times}32$ INT8/BF16 |                56 cores | Inference             |
-| **Apple M1**                                    |   128-bit NEON |        $16{\times}16$ FP16 |  16 Neural Engine cores | Mobile inference      |
+| **NVIDIA A100**                                 |    1024-bit    | $4{\times}4{\times}4$ FP16 |         108 SMs         | Training, HPC         |
+| **Google TPUv4**                                |    128-wide    |   $128{\times}128$ BF16    |       2 cores/chip      | Training              |
+| **Intel Sapphire**\index{Intel!Sapphire Rapids} |  512-bit AVX   |  $32{\times}32$ INT8/BF16  |         56 cores        | Inference             |
+| **Apple M1**                                    |  128-bit NEON  |    $16{\times}16$ FP16     |  16 Neural Engine cores | Mobile inference      |
 
 : **AI Processor Configurations**: Modern AI processors prioritize different execution unit characteristics for specific workloads: NVIDIA A100 uses wide SIMD and tensor cores for training, Google TPUv4 emphasizes high-throughput BF16 matrix multiplication, Intel Sapphire Rapids focuses on INT8-optimized inference, and Apple M1 prioritizes low-power FP16 execution. These variations in SIMD width, tensor core size, and processing element count reflect the growing diversity in AI hardware architectures. {#tbl-execution-units tbl-colwidths="[20,20,20,20,20]"}
 
@@ -2551,13 +2548,13 @@ class AcceleratorEconomics:
 
 @Tbl-accelerator-economics provides representative cost-performance data for common accelerators. These figures are approximate and vary by vendor, region, and purchase volume; the key insight is the trend rather than the absolute numbers. The cost per TFLOP/s has improved substantially from V100 to newer accelerators, even as the absolute power requirement (TDP)\index{TDP!Thermal Design Power} has climbed to nearly 1,000 W for flagship units, reflecting the industry's shift toward density over raw unit cost. The trend is not strictly monotonic at every generation under all precision modes: under the representative TF32 calculation shown here, H100's price per TFLOP/s runs slightly above A100's because list price scaled faster than TF32 throughput.
 
-| **Accelerator**                    | **List Price (USD)**                            |        **Representative Peak Throughput (precision shown)** |                         **Memory Bandwidth** | **Price/Performance**                        |
+| **Accelerator**                    |               **List Price (USD)**              |     **Representative Peak Throughput (precision shown)**    |             **Memory Bandwidth**             |            **Price/Performance**             |
 |:-----------------------------------|:-----------------------------------------------:|:-----------------------------------------------------------:|:--------------------------------------------:|:--------------------------------------------:|
-| **NVIDIA V100**\index{NVIDIA!V100} | `{python} AcceleratorEconomics.v100_price_str`  |             `{python} AcceleratorEconomics.v100_tflops_str` |  `{python} AcceleratorEconomics.v100_bw_str` | `{python} AcceleratorEconomics.v100_pp_str`  |
-| **NVIDIA A100**\index{NVIDIA!A100} | `{python} AcceleratorEconomics.a100_price_str`  |        `{python} AcceleratorEconomics.a100_tflops_fp16_str` |  `{python} AcceleratorEconomics.a100_bw_str` | `{python} AcceleratorEconomics.a100_pp_str`  |
-| **NVIDIA H100**                    | `{python} AcceleratorEconomics.h100_price_str`  | `{python} AcceleratorEconomics.h100_tflops_tf32_str` (TF32) |  `{python} AcceleratorEconomics.h100_bw_str` | `{python} AcceleratorEconomics.h100_pp_str`  |
-| **Google TPUv4**                   | `{python} AcceleratorEconomics.tpu_price_str`   |     `{python} AcceleratorEconomics.tpuv4_tflops_str` (BF16) | `{python} AcceleratorEconomics.tpuv4_bw_str` | `{python} AcceleratorEconomics.tpu_pp_str`   |
-| **Intel Gaudi 2**                  | `{python} AcceleratorEconomics.gaudi_price_str` |      `{python} AcceleratorEconomics.gaudi_tflops_str` (FP8) | `{python} AcceleratorEconomics.gaudi_bw_str` | `{python} AcceleratorEconomics.gaudi_pp_str` |
+| **NVIDIA V100**\index{NVIDIA!V100} |  `{python} AcceleratorEconomics.v100_price_str` |       `{python} AcceleratorEconomics.v100_tflops_str`       | `{python} AcceleratorEconomics.v100_bw_str`  | `{python} AcceleratorEconomics.v100_pp_str`  |
+| **NVIDIA A100**\index{NVIDIA!A100} |  `{python} AcceleratorEconomics.a100_price_str` |     `{python} AcceleratorEconomics.a100_tflops_fp16_str`    | `{python} AcceleratorEconomics.a100_bw_str`  | `{python} AcceleratorEconomics.a100_pp_str`  |
+| **NVIDIA H100**                    |  `{python} AcceleratorEconomics.h100_price_str` | `{python} AcceleratorEconomics.h100_tflops_tf32_str` (TF32) | `{python} AcceleratorEconomics.h100_bw_str`  | `{python} AcceleratorEconomics.h100_pp_str`  |
+| **Google TPUv4**                   |  `{python} AcceleratorEconomics.tpu_price_str`  |   `{python} AcceleratorEconomics.tpuv4_tflops_str` (BF16)   | `{python} AcceleratorEconomics.tpuv4_bw_str` |  `{python} AcceleratorEconomics.tpu_pp_str`  |
+| **Intel Gaudi 2**                  | `{python} AcceleratorEconomics.gaudi_price_str` |    `{python} AcceleratorEconomics.gaudi_tflops_str` (FP8)   | `{python} AcceleratorEconomics.gaudi_bw_str` | `{python} AcceleratorEconomics.gaudi_pp_str` |
 
 : **Accelerator Cost-Performance Comparison**: Hardware costs evaluated against representative peak computational capabilities for optimal deployment strategy selection. The precision modes differ by row, so price/performance entries are useful for trend intuition but are not an apples-to-apples FP16 comparison. Newer accelerators offer better price-performance ratios, though total cost of ownership includes power consumption, cooling requirements, and infrastructure costs. Prices are approximate list prices and vary by region and volume; TPU pricing estimated from cloud rates. {#tbl-accelerator-economics tbl-colwidths="[17,18,27,18,20]"}
 
@@ -3560,7 +3557,6 @@ Attention caching mechanisms and specialized tensor layouts further reduce redun
 \index{Accelerator!design, workload-specific memory}
 The diverse memory requirements of MLPs, CNNs, and transformers highlight the need to tailor memory architectures to specific workloads. @Tbl-model-mem-compare reveals how memory access patterns vary dramatically across model types.
 
-
 | **Model Type**  | **Weight Size**                                     | **Activation Reuse** | **Memory Access Pattern**                           | **Primary Bottleneck**      |
 |:----------------|:----------------------------------------------------|:---------------------|:----------------------------------------------------|:----------------------------|
 | **MLP (Dense)** | Large, dense                                        | Low                  | Regular, sequential (streamed)                      | Bandwidth (off-chip)        |
@@ -4314,7 +4310,6 @@ A batch-1 GPT-2 calculation makes this bandwidth ceiling concrete.
 *   **Data movement**: Must load all weights (`{python} Gpt2ThroughputCalc.gpt2_weight_gb_str` @ FP16) for every token.
 *   **Compute**: Vector-Matrix multiplication. 2$\times$ Params ≈ `{python} Gpt2ThroughputCalc.gpt2_decode_gflops_str` GFLOPs.
 
-
 ```{=latex}
 \tcbbreak
 ```
@@ -4641,7 +4636,6 @@ for output_block in outputs:  # Keep partial sums stationary
 
 :::
 
-
 ##### Input stationary {#sec-hardware-acceleration-input-stationary-6c7b}
 
 \index{Input-Stationary!dataflow strategy}The two strategies examined so far each fix a different operand in local memory: weight stationary fixes weights to reduce read bandwidth for parameters, and output stationary fixes partial sums to reduce write bandwidth for accumulations. The third strategy completes the picture by fixing the remaining operand: input activations. In transformer models, a single input token participates in computations across multiple attention heads and layers; in batch processing, the same activation batch feeds into many different weight matrices. When activation reuse is the dominant memory cost, keeping inputs stationary and streaming weights through the system yields the best energy and bandwidth trade-off.
@@ -4811,12 +4805,12 @@ Y = 2.0 * X2 + 1.0  # Final result
 
 Each operation produces an intermediate tensor that must be written to memory and retrieved for the next operation. On large tensors, this overhead of moving data can outweigh the computational cost of the operations [@shazeer2018mesh]. @Tbl-memory-footprint illustrates the memory overhead in a naïve execution model. While only the final result $Y$ is needed, storing multiple intermediate tensors creates unnecessary memory traffic and inefficient memory usage.
 
-| **Tensor**       | **Size (MB) for $1024{\times}1024$ Tensor**     |
+| **Tensor**       |   **Size (MB) for $1024{\times}1024$ Tensor**   |
 |:-----------------|:-----------------------------------------------:|
-| **X**            | `{python} MemoryFootprintCalc.tensor_mb_str`    |
-| **X'**           | `{python} MemoryFootprintCalc.tensor_mb_str`    |
-| **X''**          | `{python} MemoryFootprintCalc.tensor_mb_str`    |
-| **Y**            | `{python} MemoryFootprintCalc.tensor_mb_str`    |
+| **X**            |   `{python} MemoryFootprintCalc.tensor_mb_str`  |
+| **X'**           |   `{python} MemoryFootprintCalc.tensor_mb_str`  |
+| **X''**          |   `{python} MemoryFootprintCalc.tensor_mb_str`  |
+| **Y**            |   `{python} MemoryFootprintCalc.tensor_mb_str`  |
 | **Total Memory** | **`{python} MemoryFootprintCalc.total_mb_str`** |
 
 : **Intermediate Tensor Storage**: Naive execution models require substantial memory to store intermediate tensors generated by each operation. For a $1024{\times}1024$ tensor, storing intermediate results (even when only the final output is needed) quadruples the total memory footprint from `{python} MemoryFootprintCalc.tensor_mb_str` to `{python} MemoryFootprintCalc.total_mb_str`. Minimizing intermediate data storage is essential for improving memory efficiency. {#tbl-memory-footprint}
@@ -4881,7 +4875,6 @@ class FusionBenefitsCalc:
     naive_mb_str = fmt(naive_mb, precision=1, commas=False, suffix=" MB")
     fused_mb_str = fmt(fused_mb, precision=1, commas=False, suffix=" MB")
 ```
-
 
 | **Execution Model** | **Intermediate Tensors Stored** |        **Total Memory Usage (MB)**         |
 |:--------------------|:-------------------------------:|:------------------------------------------:|
