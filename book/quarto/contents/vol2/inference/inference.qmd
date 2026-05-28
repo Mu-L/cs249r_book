@@ -1988,30 +1988,15 @@ Feature-parallel batching is natural when embeddings are sharded across servers:
 
 ::: {#exmp-inference-recsys-batching-at-meta-scale .callout-example title="RecSys batching at Meta scale"}
 
-Consider Meta's recommendation infrastructure serving 10 million QPS across the platform:
+Consider Meta's recommendation infrastructure serving 10 million QPS across the platform. Each request queries ~100 candidate items, each item requires 50 embedding lookups (user, item, cross features), totaling 5,000 embedding lookups per request against a 100 TB embedding table sharded across 1,000 servers.
 
-**Request characteristics**:
+**Batching strategy**: With 10M QPS and 1,000 embedding shards, each shard receives
 
-- Each request queries ~100 items (candidate ranking)
-- Each item requires 50 embedding lookups (user features, item features, cross features)
-- Total embedding lookups: 5,000 per request
-- Embedding table size: 100 TB across 1,000 shards
+$$\text{Lookups per shard} = \frac{10 \times 10^6 \times 5000}{1000} = 50 \text{ million lookups/sec.}$$
 
-**Batching strategy**:
+Single-threaded processing cannot sustain that rate. A 1 ms batch-accumulation window\index{Batching!batch, accumulation window} absorbs 10,000 concurrent requests per shard, yielding 50K lookups per batch—high memory bandwidth utilization through sequential access patterns. @Tbl-inference-recsys-latency-breakdown shows how the five-phase latency\index{Latency!breakdown} composition fits within the 10 ms SLO, with embedding lookup dominating at 2 ms.
 
-With 10M QPS and 1,000 embedding shards, each shard receives:
-
-$$\text{Lookups per shard} = \frac{10 \times 10^6 \times 5000}{1000} = 50 \text{ million lookups/sec}$$
-
-Single-threaded processing cannot sustain that rate. Instead:
-
-**Batch accumulation window**\index{Batching!batch, accumulation window}: 1 ms
-**Requests per batch**: 10,000 (at 10M QPS)
-**Lookups per shard per batch**: 50K
-
-Each embedding shard processes about 50K lookups in a batched operation, achieving high memory bandwidth utilization through sequential memory access patterns.
-
-As @tbl-inference-recsys-latency-breakdown shows, the per-phase latency\index{Latency!breakdown} composition is:
+:::
 
 ```{python}
 #| echo: false
@@ -2068,8 +2053,6 @@ class RecsysLatencyBreakdown:
 
 : **Latency Breakdown for a 10M-QPS Recommender Request**: Per-phase contribution to end-to-end latency for a single recommender request at 10M QPS with 1,000 embedding shards. {#tbl-inference-recsys-latency-breakdown}
 
-:::
-
 ### Streaming inference for real-time applications {#sec-inference-scale-streaming-inference-realtime-applications-906c}
 
 Some applications cannot tolerate batching delay of any kind. Real-time speech recognition, video analysis, and robotics require processing inputs as they arrive with minimal latency.
@@ -2088,11 +2071,17 @@ where all components must complete within the inter-frame interval. A streaming 
 
 ::: {#exmp-inference-streaming-speech-recognition-pipeline .callout-example title="Streaming speech recognition pipeline"}
 
-Consider a streaming speech-to-text system with 20 ms audio frames:
+Consider a streaming speech-to-text system with 20 ms audio frames and a 100 ms end-to-end latency budget\index{Latency Budget} (5 frames of delay). @Tbl-inference-streaming-speech-pipeline traces the per-stage latency\index{Pipeline!stages} the pipeline must hit to stay within budget; the seven stages sum to 90 ms, leaving 10 ms of slack.
 
-**Latency budget**\index{Latency Budget}: 100 ms end-to-end (5 frames of delay)
+**Key constraints**:
 
-@Tbl-inference-streaming-speech-pipeline traces the per-stage latency\index{Pipeline!stages} the pipeline must hit to stay within the 100 ms budget:
+- No batching: Each frame processes individually
+- Stateful model: Encoder maintains context across frames
+- Pipeline parallelism: While frame N is in decoder, frame N+1 is in encoder
+
+GPU utilization is typically 30--50 percent for streaming workloads, traded for latency guarantee.
+
+:::
 
 | **Stage**                                        |      **Duration** | **Notes**                   |
 |:-------------------------------------------------|------------------:|:----------------------------|
@@ -2106,16 +2095,6 @@ Consider a streaming speech-to-text system with 20 ms audio frames:
 | **Total**                                        |         **90 ms** | Within 100 ms budget        |
 
 : **Streaming Speech Recognition Pipeline Latency**: Per-stage latency for a streaming speech-to-text pipeline operating on 20 ms audio frames against a 100 ms end-to-end budget. {#tbl-inference-streaming-speech-pipeline}
-
-**Key constraints**:
-
-- No batching: Each frame processes individually
-- Stateful model: Encoder maintains context across frames
-- Pipeline parallelism: While frame N is in decoder, frame N+1 is in encoder
-
-GPU utilization is typically 30--50 percent for streaming workloads, traded for latency guarantee.
-
-:::
 
 ### Adaptive batching strategies {#sec-inference-scale-adaptive-batching-strategies-4fc1}
 
@@ -2160,9 +2139,9 @@ The scheduler maintains separate queues for each preferred batch size and routes
 
 $$\text{Queue selection} = \operatorname{arg\,min}_{q} \left( \text{wait}_q + \text{exec}(|q| + 1) \right)$$
 
-This optimization considers both the current queue length and the efficiency of the resulting batch size.
+This optimization considers both the current queue length and the efficiency of the resulting batch size. @Tbl-inference-triton-adaptive-batching shows the result for ResNet-50 on V100: the scheduler automatically increases batch size to maintain throughput as traffic grows, with measured throughput tracking offered load until saturation near 2,000 QPS.
 
-**Observed behavior on ResNet-50 (V100)**:
+:::
 
 | **Traffic Level** | **Avg Batch Size** | **Avg Latency** | **Throughput** |
 |:------------------|-------------------:|----------------:|---------------:|
@@ -2172,10 +2151,6 @@ This optimization considers both the current queue length and the efficiency of 
 | **2000 QPS**      |               24.1 |           28 ms |       1980 QPS |
 
 : **Triton Adaptive Batching: ResNet-50 on V100**: Observed batch size, average latency, and sustained throughput for the Triton inference server's adaptive batcher under increasing traffic on ResNet-50 (V100). {#tbl-inference-triton-adaptive-batching}
-
-As @tbl-inference-triton-adaptive-batching shows, the system automatically increases batch size to maintain throughput as traffic grows, with measured throughput tracking offered load until saturation near 2,000 QPS.
-
-:::
 
 ### Quantitative summary: Batching strategy selection {#sec-inference-scale-quantitative-summary-batching-strategy-selection-d5af}
 
@@ -2396,9 +2371,7 @@ The same formula can be turned into an explicit batch-size limit for production 
 # │          KVCacheCapacityEstimator.kv_gb_per_request_str,
 # │          KVCacheCapacityEstimator.available_kv_gb_str,
 # │          KVCacheCapacityEstimator.max_batch_str,
-# │          KVCacheCapacityEstimator.step1_kv_per_token_math,
-# │          KVCacheCapacityEstimator.step2_cache_per_request_math,
-# │          KVCacheCapacityEstimator.step3_max_batch_math
+# │          KVCacheCapacityEstimator.step1_kv_per_token_math
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt_int, check, fmt, MarkdownStr
 
@@ -2452,14 +2425,6 @@ class KVCacheCapacityEstimator:
         f"= {kv_bytes_per_token:,} \\text{{ bytes}} \\approx "
         f"\\mathbf{{{kv_mb_per_token:.2f} \\text{{ MB/token}}}} $$"
     )
-    step2_cache_per_request_math = MarkdownStr(
-        f"$$ {context_tokens:,} \\text{{ tokens}} \\times {kv_mb_per_token:.2f} \\text{{ MB/token}} \\approx "
-        f"\\mathbf{{{kv_gb_per_request:.0f} \\text{{ GB/request}}}} $$"
-    )
-    step3_max_batch_math = MarkdownStr(
-        f"$$ \\text{{Max Batch}} = \\left\\lfloor \\frac{{{available_kv_gb:.0f}}}{{{kv_gb_per_request:.0f}}} \\right\\rfloor "
-        f"= \\mathbf{{{max_batch}}} $$"
-    )
 ```
 
 ::: {#exmp-inference-kv-cache-capacity-estimator .callout-example title="KV-cache capacity estimator"}
@@ -2476,19 +2441,12 @@ $$ \text{Total Memory} = M_{\text{weights}} + (\text{Batch} \times \text{Context
 *   $s_{\text{elem}} = 2$ bytes (FP16).
 *   Context $= 131,072$ tokens.
 
-**Step 1**: Calculate memory per token.
+**Per-token KV memory**:
 `{python} KVCacheCapacityEstimator.step1_kv_per_token_math`
 
-**Step 2**: Calculate cache per request.
-`{python} KVCacheCapacityEstimator.step2_cache_per_request_math`
-
-**Step 3**: Determine max batch size.
-Available Memory for KV = `{python} KVCacheCapacityEstimator.total_hbm_gb_str` (Total) - `{python} KVCacheCapacityEstimator.weight_gb_str` (Weights) - `{python} KVCacheCapacityEstimator.system_gb_str` (System) = `{python} KVCacheCapacityEstimator.available_kv_gb_str`.
-`{python} KVCacheCapacityEstimator.step3_max_batch_math`
-
-**Systems insight**: Even with GQA, 128K-context requests consume tens of gigabytes of KV cache, so the system serves only a small number of concurrent long-context requests before memory becomes the binding constraint. Addressing this requires PagedAttention (to reduce fragmentation) and KV-cache quantization or sharding.
-
 :::
+
+At `{python} KVCacheCapacityEstimator.context_tokens_str` tokens $\times$ `{python} KVCacheCapacityEstimator.kv_mb_per_token_str` MB/token, each long-context request consumes approximately `{python} KVCacheCapacityEstimator.kv_gb_per_request_str` GB of KV cache. Subtracting weights (`{python} KVCacheCapacityEstimator.weight_gb_str`) and system overhead (`{python} KVCacheCapacityEstimator.system_gb_str`) from the `{python} KVCacheCapacityEstimator.total_hbm_gb_str` total HBM leaves `{python} KVCacheCapacityEstimator.available_kv_gb_str` available for KV cache, which supports at most `{python} KVCacheCapacityEstimator.max_batch_str` concurrent 128K-context requests. Even with GQA halving KV-head count, long-context inference becomes memory-bound at modest batch sizes, motivating the fragmentation reductions and KV-cache sharding techniques addressed next.
 
 ### The fragmentation problem {#sec-inference-scale-fragmentation-problem-28be}
 
