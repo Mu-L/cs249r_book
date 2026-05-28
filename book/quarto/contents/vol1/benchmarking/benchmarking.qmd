@@ -853,9 +853,21 @@ Achievable perf = `{python} BertRoofline.bert_ai_b1_str` FLOP/byte $\times$ `{py
 
 GPU utilization = `{python} BertRoofline.bert_perf_b1_str` ÷ `{python} BertRoofline.a100_tflops_fp16_str` = **`{python} BertRoofline.bert_util_b1_str`**
 
-:::
+**Step 4**: Optimization via batching.
+Increase batch size to `{python} BertRoofline.batch32_str`:
 
-The batch = 1 utilization above leaves substantial peak throughput unused. Increasing batch size to `{python} BertRoofline.batch32_str` reuses the same `{python} BertRoofline.bert_weight_mb_str` of weights for `{python} BertRoofline.batch32_str`$\times$ more compute, scaling FLOPs to `{python} BertRoofline.bert_b32_flops_eq_str` = `{python} BertRoofline.bert_batch32_flops_str`$\times 10^{9}$ and lifting arithmetic intensity to `{python} BertRoofline.bert_ai_b32_eq_str` = `{python} BertRoofline.bert_ai_b32_str` FLOP/byte. Since `{python} BertRoofline.bert_ai_b32_str` > `{python} BertRoofline.a100_ridge_str`, batch = 32 is compute-bound: achievable performance is roughly `{python} BertRoofline.utilization_peak_str` $\times$ `{python} BertRoofline.a100_tflops_fp16_str` = **`{python} BertRoofline.bert_perf_b32_str`** at $\approx 85\%$ GPU utilization. Batching, however, increases latency because the system must wait to accumulate requests. This is the fundamental throughput-latency trade-off that MLPerf scenarios capture: SingleStream (batch = 1, latency-optimized) vs. Offline (maximum batch, throughput-optimized).
+- Same `{python} BertRoofline.bert_weight_mb_str` of weights, but `{python} BertRoofline.batch32_str`$\times$ more compute
+- New FLOPs: `{python} BertRoofline.bert_b32_flops_eq_str` = `{python} BertRoofline.bert_batch32_flops_str`$\times 10^{9}$
+- New intensity: `{python} BertRoofline.bert_ai_b32_eq_str` = `{python} BertRoofline.bert_ai_b32_str` FLOP/byte
+
+Since `{python} BertRoofline.bert_ai_b32_str` > `{python} BertRoofline.a100_ridge_str`, batch = 32 is compute-bound:
+
+Achievable perf ≈ `{python} BertRoofline.utilization_peak_str` $\times$ `{python} BertRoofline.a100_tflops_fp16_str` = **`{python} BertRoofline.bert_perf_b32_str`**
+$$\text{GPU utilization} \approx 85\%$$
+
+**Systems insight**: Batch size transforms memory-bound inference (`{python} BertRoofline.bert_util_b1_str` utilization) into compute-bound inference (`{python} BertRoofline.utilization_peak_pct_str` utilization). Batching, however, increases latency because the system must wait to accumulate requests. This is the fundamental throughput-latency trade-off that MLPerf scenarios capture: SingleStream (batch = 1, latency-optimized) vs. Offline (maximum batch, throughput-optimized).
+
+:::
 
 System benchmarks evaluate performance across scales, ranging from single-chip configurations to large distributed systems and covering AI workloads that include both training and inference tasks. This evaluation approach ensures that benchmarks accurately reflect real-world deployment scenarios and deliver insights that inform both hardware selection decisions and system architecture design. @Fig-imagenet-gpus reveals the striking correlation between GPU adoption and ImageNet classification error rates from 2010 to 2014: as GPU entries surged from 0 to 110, error rates plummeted from 28.2 percent to 7.3 percent, demonstrating how hardware capabilities and algorithmic advances drive progress in tandem.
 
@@ -2471,11 +2483,7 @@ class EnergyBreakdownCalc:
 
 Recall from @sec-hardware-acceleration that moving data costs far more energy than computing on it (the energy-movement invariant formalized in @sec-data-engineering). Understanding *why* quantization reduces energy consumption\index{Quantization!INT8 energy savings} requires decomposing energy into its physical sources. Two dominant factors determine inference energy: compute operations and memory access.
 
-@Tbl-benchmarking-energy-per-precision reveals a 20$\times$ gap between FP32 and INT8 multiply-accumulate cost, because transistor count scales roughly with bit-width squared and switching energy scales with transistor count. @Tbl-benchmarking-energy-memory-tier extends the picture to memory: reading one byte from DRAM costs over `{python} EnergyPerOp.dram_vs_reg_ratio_str` more energy than a register access. Combining both effects, @tbl-benchmarking-mobilenet-int8-energy decomposes per-inference energy into model-load and compute terms at FP32 vs. INT8 for MobileNet.
-
-**Systems insight**: Memory access dominates FP32 energy consumption (~`{python} EnergyBreakdownCalc.e_fp32_load_mj_str` mJ vs. `{python} EnergyBreakdownCalc.e_fp32_compute_mj_str` mJ compute). INT8 quantization provides `{python} EnergyBreakdownCalc.s_load_str`$\times$ memory energy reduction and ~`{python} EnergyBreakdownCalc.s_compute_str`$\times$ compute energy reduction. The combined effect explains why quantized models on edge devices achieve dramatic battery life improvements: they attack the dominant memory bottleneck while simultaneously accelerating compute.
-
-:::
+Because transistor count scales roughly with bit-width squared, narrower datatypes consume dramatically less energy per operation—@tbl-benchmarking-energy-per-precision reveals a 20$\times$ gap between FP32 and INT8 multiply-accumulate cost:
 
 | **Precision** |           **Multiplier Energy**            | **Relative Cost** |
 |:--------------|:------------------------------------------:|:-----------------:|
@@ -2484,6 +2492,10 @@ Recall from @sec-hardware-acceleration that moving data costs far more energy th
 | **INT8**      | ~`{python} EnergyPerOp.energy_int8_str` pJ |    0.05$\times$   |
 
 : **Per-Operation Energy by Precision**: Energy cost of a single multiply-accumulate at FP32, FP16, and INT8, with relative cost normalized to FP32, illustrating why narrower datatypes dominate compute-energy savings. {#tbl-benchmarking-energy-per-precision}
+
+An 8-bit multiplier uses ~20$\times$ less energy than a 32-bit floating-point multiplier because transistor count scales roughly with bit-width squared, and switching energy scales with transistor count.
+
+@Tbl-benchmarking-energy-memory-tier extends the picture to memory access, with energy cost per byte across each tier of the hierarchy:
 
 | **Memory Level** |                  **Energy per Byte**                  | **Relative Cost** |
 |:-----------------|:-----------------------------------------------------:|:-----------------:|
@@ -2494,6 +2506,10 @@ Recall from @sec-hardware-acceleration that moving data costs far more energy th
 
 : **Memory Access Energy by Tier**: Per-byte energy cost across the register-to-DRAM hierarchy, with relative cost normalized to a register read, exposing why off-chip memory traffic dominates inference energy budgets. {#tbl-benchmarking-energy-memory-tier}
 
+Memory access dominates: reading one byte from DRAM costs over `{python} EnergyPerOp.dram_vs_reg_ratio_str` more energy than a register access.
+
+@Tbl-benchmarking-mobilenet-int8-energy combines the two effects for a MobileNet inference, decomposing per-inference energy into model-load and compute terms at FP32 vs. INT8:
+
 | **Component**                                                 | **FP32 (`{python} EnergyBreakdownCalc.m_fp32_mb_str`)** | **INT8 (`{python} EnergyBreakdownCalc.m_int8_mb_str`)** |                      **Savings**                       |
 |:--------------------------------------------------------------|:-------------------------------------------------------:|:-------------------------------------------------------:|:------------------------------------------------------:|
 | **Model load from DRAM**                                      |    `{python} EnergyBreakdownCalc.e_fp32_load_str` μJ    |    `{python} EnergyBreakdownCalc.e_int8_load_str` μJ    |   `{python} EnergyBreakdownCalc.s_load_str`$\times$    |
@@ -2501,6 +2517,10 @@ Recall from @sec-hardware-acceleration that moving data costs far more energy th
 | **Total**                                                     |  **`{python} EnergyBreakdownCalc.e_fp32_total_str` μJ** |  **`{python} EnergyBreakdownCalc.e_int8_total_str` μJ** | **`{python} EnergyBreakdownCalc.s_total_str`$\times$** |
 
 : **MobileNet INT8 Energy Breakdown**: Per-inference energy decomposed into model-load and compute terms for FP32 vs. INT8, showing that INT8 quantization attacks DRAM-traffic energy as the dominant component. {#tbl-benchmarking-mobilenet-int8-energy}
+
+**Systems insight**: Memory access dominates FP32 energy consumption (~`{python} EnergyBreakdownCalc.e_fp32_load_mj_str` mJ vs. `{python} EnergyBreakdownCalc.e_fp32_compute_mj_str` mJ compute). INT8 quantization provides `{python} EnergyBreakdownCalc.s_load_str`$\times$ memory energy reduction and ~`{python} EnergyBreakdownCalc.s_compute_str`$\times$ compute energy reduction. The combined effect explains why quantized models on edge devices achieve dramatic battery life improvements: they attack the dominant memory bottleneck while simultaneously accelerating compute.
+
+:::
 
 Training GPT-3 was estimated to consume `{python} EnergyPerOp.gpt3_energy_mwh_str` of electricity [@patterson2021carbon]. If a system can achieve the same accuracy with fewer training iterations, it directly reduces energy consumption. Energy-aware benchmarks help guide the development of hardware and training strategies that optimize power efficiency while maintaining accuracy targets.
 
