@@ -1986,18 +1986,6 @@ Then: Combine features per request for ranking
 
 Feature-parallel batching is natural when embeddings are sharded across servers: each embedding server handles lookups for its shard across all requests in the batch. At Meta-scale request volumes, this turns feature sharding into a serving strategy rather than a storage detail.
 
-::: {#exmp-inference-recsys-batching-at-meta-scale .callout-example title="RecSys batching at Meta scale"}
-
-Consider Meta's recommendation infrastructure serving 10 million QPS across the platform. Each request queries ~100 candidate items, each item requires 50 embedding lookups (user, item, cross features), totaling 5,000 embedding lookups per request against a 100 TB embedding table sharded across 1,000 servers.
-
-**Batching strategy**: With 10M QPS and 1,000 embedding shards, each shard receives
-
-$$\text{Lookups per shard} = \frac{10 \times 10^6 \times 5000}{1000} = 50 \text{ million lookups/sec.}$$
-
-Single-threaded processing cannot sustain that rate. A 1 ms batch-accumulation window\index{Batching!batch, accumulation window} absorbs 10,000 concurrent requests per shard, yielding 50K lookups per batch—high memory bandwidth utilization through sequential access patterns. @Tbl-inference-recsys-latency-breakdown shows how the five-phase latency\index{Latency!breakdown} composition fits within the 10 ms SLO, with embedding lookup dominating at 2 ms.
-
-:::
-
 ```{python}
 #| echo: false
 #| label: recsys-latency-breakdown-calc
@@ -2042,6 +2030,33 @@ class RecsysLatencyBreakdown:
     total_str = fmt(total_ms, precision=1, commas=False)
 ```
 
+::: {#exmp-inference-recsys-batching-at-meta-scale .callout-example title="RecSys batching at Meta scale"}
+
+Consider Meta's recommendation infrastructure serving 10 million QPS across the platform:
+
+**Request characteristics**:
+
+- Each request queries ~100 items (candidate ranking)
+- Each item requires 50 embedding lookups (user features, item features, cross features)
+- Total embedding lookups: 5,000 per request
+- Embedding table size: 100 TB across 1,000 shards
+
+**Batching strategy**:
+
+With 10M QPS and 1,000 embedding shards, each shard receives:
+
+$$\text{Lookups per shard} = \frac{10 \times 10^6 \times 5000}{1000} = 50 \text{ million lookups/sec}$$
+
+Single-threaded processing cannot sustain that rate. Instead:
+
+**Batch accumulation window**\index{Batching!batch, accumulation window}: 1 ms
+**Requests per batch**: 10,000 (at 10M QPS)
+**Lookups per shard per batch**: 50K
+
+Each embedding shard processes about 50K lookups in a batched operation, achieving high memory bandwidth utilization through sequential memory access patterns.
+
+As @tbl-inference-recsys-latency-breakdown shows, the per-phase latency\index{Latency!breakdown} composition is:
+
 | **Phase**                                    |                                       **Duration** | **Notes**                   |
 |:---------------------------------------------|---------------------------------------------------:|:----------------------------|
 | **Request routing**                          |                                             0.2 ms | Consistent hashing to shard |
@@ -2052,6 +2067,8 @@ class RecsysLatencyBreakdown:
 | **Total**                                    | **`{python} RecsysLatencyBreakdown.total_str` ms** | Within 10 ms SLO            |
 
 : **Latency Breakdown for a 10M-QPS Recommender Request**: Per-phase contribution to end-to-end latency for a single recommender request at 10M QPS with 1,000 embedding shards. {#tbl-inference-recsys-latency-breakdown}
+
+:::
 
 ### Streaming inference for real-time applications {#sec-inference-scale-streaming-inference-realtime-applications-906c}
 
@@ -2071,17 +2088,11 @@ where all components must complete within the inter-frame interval. A streaming 
 
 ::: {#exmp-inference-streaming-speech-recognition-pipeline .callout-example title="Streaming speech recognition pipeline"}
 
-Consider a streaming speech-to-text system with 20 ms audio frames and a 100 ms end-to-end latency budget\index{Latency Budget} (5 frames of delay). @Tbl-inference-streaming-speech-pipeline traces the per-stage latency\index{Pipeline!stages} the pipeline must hit to stay within budget; the seven stages sum to 90 ms, leaving 10 ms of slack.
+Consider a streaming speech-to-text system with 20 ms audio frames:
 
-**Key constraints**:
+**Latency budget**\index{Latency Budget}: 100 ms end-to-end (5 frames of delay)
 
-- No batching: Each frame processes individually
-- Stateful model: Encoder maintains context across frames
-- Pipeline parallelism: While frame N is in decoder, frame N+1 is in encoder
-
-GPU utilization is typically 30--50 percent for streaming workloads, traded for latency guarantee.
-
-:::
+@Tbl-inference-streaming-speech-pipeline traces the per-stage latency\index{Pipeline!stages} the pipeline must hit to stay within the 100 ms budget:
 
 | **Stage**                                        |      **Duration** | **Notes**                   |
 |:-------------------------------------------------|------------------:|:----------------------------|
@@ -2095,6 +2106,16 @@ GPU utilization is typically 30--50 percent for streaming workloads, traded for 
 | **Total**                                        |         **90 ms** | Within 100 ms budget        |
 
 : **Streaming Speech Recognition Pipeline Latency**: Per-stage latency for a streaming speech-to-text pipeline operating on 20 ms audio frames against a 100 ms end-to-end budget. {#tbl-inference-streaming-speech-pipeline}
+
+**Key constraints**:
+
+- No batching: Each frame processes individually
+- Stateful model: Encoder maintains context across frames
+- Pipeline parallelism: While frame N is in decoder, frame N+1 is in encoder
+
+GPU utilization is typically 30--50 percent for streaming workloads, traded for latency guarantee.
+
+:::
 
 ### Adaptive batching strategies {#sec-inference-scale-adaptive-batching-strategies-4fc1}
 
@@ -2425,6 +2446,14 @@ class KVCacheCapacityEstimator:
         f"= {kv_bytes_per_token:,} \\text{{ bytes}} \\approx "
         f"\\mathbf{{{kv_mb_per_token:.2f} \\text{{ MB/token}}}} $$"
     )
+    step2_cache_per_request_math = MarkdownStr(
+        f"$$ {context_tokens:,} \\text{{ tokens}} \\times {kv_mb_per_token:.2f} \\text{{ MB/token}} \\approx "
+        f"\\mathbf{{{kv_gb_per_request:.0f} \\text{{ GB/request}}}} $$"
+    )
+    step3_max_batch_math = MarkdownStr(
+        f"$$ \\text{{Max Batch}} = \\left\\lfloor \\frac{{{available_kv_gb:.0f}}}{{{kv_gb_per_request:.0f}}} \\right\\rfloor "
+        f"= \\mathbf{{{max_batch}}} $$"
+    )
 ```
 
 ::: {#exmp-inference-kv-cache-capacity-estimator .callout-example title="KV-cache capacity estimator"}
@@ -2441,12 +2470,19 @@ $$ \text{Total Memory} = M_{\text{weights}} + (\text{Batch} \times \text{Context
 *   $s_{\text{elem}} = 2$ bytes (FP16).
 *   Context $= 131,072$ tokens.
 
-**Per-token KV memory**:
+**Step 1**: Calculate memory per token.
 `{python} KVCacheCapacityEstimator.step1_kv_per_token_math`
 
-:::
+**Step 2**: Calculate cache per request.
+`{python} KVCacheCapacityEstimator.step2_cache_per_request_math`
 
-At `{python} KVCacheCapacityEstimator.context_tokens_str` tokens $\times$ `{python} KVCacheCapacityEstimator.kv_mb_per_token_str` MB/token, each long-context request consumes approximately `{python} KVCacheCapacityEstimator.kv_gb_per_request_str` GB of KV cache. Subtracting weights (`{python} KVCacheCapacityEstimator.weight_gb_str`) and system overhead (`{python} KVCacheCapacityEstimator.system_gb_str`) from the `{python} KVCacheCapacityEstimator.total_hbm_gb_str` total HBM leaves `{python} KVCacheCapacityEstimator.available_kv_gb_str` available for KV cache, which supports at most `{python} KVCacheCapacityEstimator.max_batch_str` concurrent 128K-context requests. Even with GQA halving KV-head count, long-context inference becomes memory-bound at modest batch sizes, motivating the fragmentation reductions and KV-cache sharding techniques addressed next.
+**Step 3**: Determine max batch size.
+Available Memory for KV = `{python} KVCacheCapacityEstimator.total_hbm_gb_str` (Total) - `{python} KVCacheCapacityEstimator.weight_gb_str` (Weights) - `{python} KVCacheCapacityEstimator.system_gb_str` (System) = `{python} KVCacheCapacityEstimator.available_kv_gb_str`.
+`{python} KVCacheCapacityEstimator.step3_max_batch_math`
+
+**Systems insight**: Even with GQA, 128K-context requests consume tens of gigabytes of KV cache, so the system serves only a small number of concurrent long-context requests before memory becomes the binding constraint. Addressing this requires PagedAttention (to reduce fragmentation) and KV-cache quantization or sharding.
+
+:::
 
 ### The fragmentation problem {#sec-inference-scale-fragmentation-problem-28be}
 
@@ -3160,7 +3196,15 @@ When a new high-priority request cannot fit, the system follows a sequence of st
 
 ::: {#nbk-inference-kv-cache-memory-hierarchy .callout-notebook title="KV cache memory hierarchy"}
 
-Production systems manage KV-cache memory pressure across the three-tier hierarchy in @tbl-inference-kv-cache-memory-hierarchy, paging from GPU HBM down to CPU DRAM and NVMe SSD as the active working set exceeds each tier's capacity.
+Production systems manage KV-cache memory pressure across the three-tier hierarchy in @tbl-inference-kv-cache-memory-hierarchy, paging from GPU HBM down to CPU DRAM and NVMe SSD as the active working set exceeds each tier's capacity:
+
+| **Tier**     | **Capacity** | **Latency** | **Use Case**      |
+|:-------------|-------------:|------------:|:------------------|
+| **GPU HBM**  |        80 GB |        0 ms | Active sequences  |
+| **CPU DRAM** |         1 TB |      1–5 ms | Swapped sequences |
+| **NVMe SSD** |        10 TB |    10–50 ms | Long-term cache   |
+
+: **KV Cache Memory Hierarchy**: Capacity, swap-in latency, and intended use case for the three tiers production inference servers use to manage KV-cache memory pressure. {#tbl-inference-kv-cache-memory-hierarchy}
 
 **Swap implementation**\index{Swap Implementation}:
 
@@ -3184,14 +3228,6 @@ async def swap_to_gpu(sequence_id):
 - Average swap latency: 3 ms (acceptable for nonurgent requests)
 
 :::
-
-| **Tier**     | **Capacity** | **Latency** | **Use Case**      |
-|:-------------|-------------:|------------:|:------------------|
-| **GPU HBM**  |        80 GB |        0 ms | Active sequences  |
-| **CPU DRAM** |         1 TB |      1–5 ms | Swapped sequences |
-| **NVMe SSD** |        10 TB |    10–50 ms | Long-term cache   |
-
-: **KV Cache Memory Hierarchy**: Capacity, swap-in latency, and intended use case for the three tiers production inference servers use to manage KV-cache memory pressure. {#tbl-inference-kv-cache-memory-hierarchy}
 
 Swapping expands capacity by an order of magnitude, but the underlying problem remains: a single GPU must handle both the compute-heavy prompt processing and the bandwidth-heavy token generation. Separating those phases onto different hardware pools eliminates this mismatch entirely.
 
@@ -3999,9 +4035,7 @@ These scale bullets describe infrastructure-level totals, not one dense resident
 
 Each inference request requires approximately `{python} MetaEmbeddingScaleCheck.lookups_per_request_str` embedding lookups. Without optimization, this would require `{python} MetaEmbeddingScaleCheck.lookups_per_request_str` network round trips. Instead, the system applies several optimizations. Batch accumulation collects lookups for 1 ms. Lookup deduplication removes duplicate entities across requests. Shard-aware batching groups lookups by destination shard. Parallel dispatch sends batched requests to all shards simultaneously. Streaming assembly reconstructs embeddings as responses arrive.
 
-The order-of-magnitude effect of these optimizations on round-trip count, lookup latency, and bandwidth appears in @tbl-inference-meta-embedding-perf.
-
-:::
+The order-of-magnitude effect of these optimizations on round-trip count, lookup latency, and bandwidth appears in @tbl-inference-meta-embedding-perf:
 
 | **Metric**              | **Without Optimization** | **With Optimization** |
 |:------------------------|-------------------------:|----------------------:|
@@ -4010,6 +4044,8 @@ The order-of-magnitude effect of these optimizations on round-trip count, lookup
 | **Network bandwidth**   |                  10 Gbps |       40 Gbps (burst) |
 
 : **Meta Embedding Sharding Lookup Performance**: Network round-trip, lookup-latency, and bandwidth measurements for the recommendation lookup path before and after batching plus shard-aware dispatch, showing the order-of-magnitude effect of these optimizations. {#tbl-inference-meta-embedding-perf}
+
+:::
 
 ### Hybrid sharding strategies {#sec-inference-scale-hybrid-sharding-strategies-e605}
 
@@ -4133,11 +4169,7 @@ class AllReduceInterconnect:
 
 ::: {#nbk-inference-interconnect-technology-comparison .callout-notebook title="Interconnect technology comparison"}
 
-Communication overhead depends heavily on the interconnect technology. The physical bandwidth, latency, and intended scope of each candidate interconnect appear in @tbl-inference-interconnect-specs, and @tbl-inference-allreduce-interconnect translates those bandwidths into AllReduce time for an 8-way tensor-parallel layer (activation `{python} AllReduceInterconnect.message_mb_str` per all-reduce; batch=1, hidden=`{python} AllReduceInterconnect.hidden_dim_str`) as a fraction of a 30 ms transformer-layer budget.
-
-**Systems insight**: NVLink enables efficient tensor parallelism within a node; cross-node tensor parallelism requires InfiniBand for acceptable overhead.
-
-:::
+Communication overhead depends heavily on the interconnect technology. @Tbl-inference-interconnect-specs records the physical bandwidth, latency, and intended scope of each candidate interconnect:
 
 | **Interconnect**   | **Bandwidth**\index{Interconnect!bandwidth} | **Latency**\index{Interconnect!latency} | **Use Case**           |
 |:-------------------|--------------------------------------------:|----------------------------------------:|:-----------------------|
@@ -4148,6 +4180,8 @@ Communication overhead depends heavily on the interconnect technology. The physi
 
 : **Datacenter Interconnect Specs**: Bandwidth, latency, and intended scope for NVLink, PCIe Gen5, InfiniBand HDR, and 100G Ethernet, establishing the physical limits that bound achievable sharding speedups. {#tbl-inference-interconnect-specs}
 
+@Tbl-inference-allreduce-interconnect translates those bandwidths into AllReduce time for an 8-way tensor-parallel layer (activation `{python} AllReduceInterconnect.message_mb_str` per all-reduce; batch=1, hidden=`{python} AllReduceInterconnect.hidden_dim_str`) as a fraction of a 30 ms transformer-layer budget:
+
 | **Interconnect**                 |                             **AllReduce Time** |                            **% of 30 ms Layer** |
 |:---------------------------------|-----------------------------------------------:|------------------------------------------------:|
 | **NVLink**                       | `{python} AllReduceInterconnect.nvlink_ms_str` | `{python} AllReduceInterconnect.nvlink_pct_str` |
@@ -4155,6 +4189,10 @@ Communication overhead depends heavily on the interconnect technology. The physi
 | **100G Ethernet**                |    `{python} AllReduceInterconnect.eth_ms_str` |    `{python} AllReduceInterconnect.eth_pct_str` |
 
 : **AllReduce Cost by Interconnect**: AllReduce time for an 8 MB activation across NVLink, InfiniBand, and 100G Ethernet, with each as a fraction of a 30 ms transformer-layer budget, showing why intra-node TP requires NVLink-class bandwidth. {#tbl-inference-allreduce-interconnect}
+
+**Systems insight**: NVLink enables efficient tensor parallelism within a node; cross-node tensor parallelism requires InfiniBand for acceptable overhead.
+
+:::
 
 NVLink bandwidth has evolved significantly over GPU generations.[^fn-nvlink-bandwidth-inf]
 
@@ -4843,9 +4881,7 @@ Consider an inference platform serving 10 tenants on shared H100 GPUs:
 - GPU utilization: `{python} NoisyNeighborQuotaScenario.gpu_util_pct_str`
 - All SLOs met
 
-As @tbl-inference-noisy-neighbor-no-isolation records, when tenant 3 bursts to `{python} NoisyNeighborQuotaScenario.tenant_burst_qps_str` without isolation, that burst cascades into SLO violations for all ten tenants on the shared pool. Per-tenant resource quotas contain the impact to the offending tenant alone (@tbl-inference-noisy-neighbor-quotas).
-
-:::
+**Tenant 3 bursts** (5$\times$ baseline). Without isolation, @tbl-inference-noisy-neighbor-no-isolation records how the burst cascades into SLO violations for all ten tenants on the shared pool:
 
 | **Tenant**       |  **QPS** | **P99 Latency** | **SLO Status** |
 |:-----------------|---------:|----------------:|:---------------|
@@ -4856,6 +4892,8 @@ As @tbl-inference-noisy-neighbor-no-isolation records, when tenant 3 bursts to `
 
 : **Noisy Neighbor Without Isolation**: Per-tenant QPS, p99 latency, and SLO status when tenant 3 bursts to `{python} NoisyNeighborQuotaScenario.tenant_burst_qps_str` on a shared GPU pool with no resource quotas. {#tbl-inference-noisy-neighbor-no-isolation}
 
+**With per-tenant quotas** (@tbl-inference-noisy-neighbor-quotas): impact contained to the offending tenant alone.
+
 | **Tenant**       |                                                           **QPS (actual)** |                                            **P99 Latency** | **SLO Status**                                                         |
 |:-----------------|---------------------------------------------------------------------------:|-----------------------------------------------------------:|:-----------------------------------------------------------------------|
 | **Tenant 1**     |                                                                        100 | `{python} NoisyNeighborQuotaScenario.protected_p99_ms_str` | `{python} NoisyNeighborQuotaScenario.protected_status_str`             |
@@ -4864,6 +4902,8 @@ As @tbl-inference-noisy-neighbor-no-isolation records, when tenant 3 bursts to `
 | **Tenants 4-10** |                                                                   100 each | `{python} NoisyNeighborQuotaScenario.protected_p99_ms_str` | `{python} NoisyNeighborQuotaScenario.protected_status_str`             |
 
 : **Noisy Neighbor With Per-Tenant Quotas**: Per-tenant QPS, p99 latency, and SLO status after enabling per-tenant resource quotas in the same workload. {#tbl-inference-noisy-neighbor-quotas}
+
+:::
 
 ### Resource quotas and fair sharing {#sec-inference-scale-resource-quotas-fair-sharing-006c}
 
@@ -5249,7 +5289,11 @@ In practice, neither forecasting nor event schedules alone suffice. Production s
 
 $$\text{Target replicas} = \max(\text{Predicted}, \text{Reactive}) + \text{Buffer}$$
 
-Daily patterns make the proactive side of this rule concrete. @Tbl-inference-chatbot-daily-traffic shows a chatbot service's predictable diurnal traffic, and @tbl-inference-chatbot-predictive-schedule converts that demand curve into a predictive schedule that warms replicas before each ramp.
+Daily patterns make the proactive side of this rule concrete.
+
+::: {#exmp-inference-predictive-scaling-traffic .callout-example title="Predictive scaling for traffic"}
+
+@Tbl-inference-chatbot-daily-traffic shows a chatbot service's predictable diurnal traffic:
 
 | **Time (UTC)** | **Typical QPS** | **Replicas Needed** |
 |:---------------|----------------:|--------------------:|
@@ -5260,6 +5304,8 @@ Daily patterns make the proactive side of this rule concrete. @Tbl-inference-cha
 | 20:00-00:00    |            1000 |                  10 |
 
 : **Daily Traffic Pattern for a Chatbot Service**: Hourly QPS bands and the number of replicas required to absorb each band for a chatbot with predictable diurnal traffic. {#tbl-inference-chatbot-daily-traffic}
+
+A predictive autoscaler converts that demand curve into a schedule that warms replicas before each ramp (@tbl-inference-chatbot-predictive-schedule):
 
 | **Time** | **Action**   | **Replicas Active** | **Replicas Starting** |
 |:---------|:-------------|--------------------:|----------------------:|
@@ -5273,9 +5319,7 @@ Daily patterns make the proactive side of this rule concrete. @Tbl-inference-cha
 
 : **Predictive Scaling Schedule**: Per-time-bucket scaling actions, active replicas, and replicas in cold-start warming for the same chatbot service. {#tbl-inference-chatbot-predictive-schedule}
 
-::: {#exmp-inference-predictive-scaling-traffic .callout-example title="Predictive scaling for traffic"}
-
-For the chatbot service in @tbl-inference-chatbot-daily-traffic and @tbl-inference-chatbot-predictive-schedule, a reactive-only autoscaler must over-provision during each ramp (about 45 replicas at peak) because it cannot anticipate the curve. Predictive scaling sizes the fleet to the actual peak (30 replicas), recovering roughly 33 percent of GPU spend without sacrificing latency headroom.
+A reactive-only autoscaler must over-provision during each ramp (about 45 replicas at peak) because it cannot anticipate the curve. Predictive scaling sizes the fleet to the actual peak (30 replicas), recovering roughly 33 percent of GPU spend without sacrificing latency headroom.
 
 :::
 
