@@ -1946,50 +1946,7 @@ $T_{\text{pipelined}} = T_{\text{backward}} + T_{\text{first layer comm}} + (N_L
 
 :::
 
-The combination of hierarchical AllReduce (reducing the volume of data to communicate), rail-optimized routing (maximizing the throughput of each communication operation), and layer-by-layer overlap (hiding the remaining communication behind computation) forms the complete communication optimization stack for production distributed training. Each technique addresses a different term in the performance equation: hierarchical algorithms reduce $M$, topology-aware routing maximizes effective $\beta$, and overlap amortizes $\alpha$ by running communication concurrently with computation. When all three are applied together, the communication overhead for a well-configured system falls to 5--15 percent of total step time, down from the 50--80 percent that a naive flat, synchronous approach would impose.
-
-```{python}
-#| echo: false
-#| label: napkin-overlap-calc
-from mlsysim.fmt import check, fmt
-
-class NapkinOverlap:
-    # ┌── 1. LOAD ──────────────────────────────────────────
-    from mlsysim.core.constants import GB, second as _sec_no
-    params_b = Models.Language.Llama2_70B.parameters.m_as(Bparam)
-    bytes_per_param = 2       # FP16
-    nvlink_bw_gbs = Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/_sec_no)
-    compute_s = 2.1
-    # ┌── 2. EXECUTE ───────────────────────────────────────
-    gradient_gb = params_b * bytes_per_param
-    comm_s = 2 * gradient_gb/nvlink_bw_gbs
-    overlap_pct = comm_s/compute_s * 100
-    # ┌── 3. GUARD ─────────────────────────────────────────
-    check(gradient_gb == 140, f"gradient = {gradient_gb} GB")
-    check(abs(comm_s - 0.311) < 0.01, f"comm = {comm_s:.3f} s")
-    check(abs(overlap_pct - 15) < 1, f"overlap = {overlap_pct:.0f}%")
-    # ┌── 4. OUTPUT ────────────────────────────────────────
-    gradient_gb_str = fmt(gradient_gb, precision=0, commas=False)
-    comm_s_str = fmt(comm_s, precision=2, commas=False)
-    compute_s_str = fmt(compute_s, precision=1, commas=False)
-    overlap_pct_str = fmt(overlap_pct, precision=1, commas=False)
-    nvlink_bw_gbs_str = fmt(nvlink_bw_gbs, precision=0, commas=False)
-    params_b_str = fmt(params_b, precision=0, commas=False, suffix="B")
-    bytes_per_param_str = fmt(bytes_per_param, precision=0, commas=False)
-```
-
-::: {#nbk-collective-communication-napkin-math-overlap-budget .callout-notebook title="The overlap budget"}
-
-This analysis determines whether the communication cost of a 70B parameter model on 8 GPUs can be hidden behind computation. The physics determines the answer.
-
-1.  **Gradient size**: `{python} NapkinOverlap.params_b_str` params $\times$ `{python} NapkinOverlap.bytes_per_param_str` bytes (FP16) = `{python} NapkinOverlap.gradient_gb_str`.
-2.  **Communication time**: Using Ring AllReduce on NVLink (`{python} NapkinOverlap.nvlink_bw_gbs_str`/s), time is $\approx 2 \cdot M / \beta$ = `{python} NapkinOverlap.comm_s_str` s.
-3.  **Compute time**: A typical forward/backward pass for a block of this size takes $\approx$ `{python} NapkinOverlap.compute_s_str` s.
-4.  **Overlap ratio**: `{python} NapkinOverlap.comm_s_str` s divided by `{python} NapkinOverlap.compute_s_str` s $\approx$ `{python} NapkinOverlap.overlap_pct_str`.
-
-Since communication takes only `{python} NapkinOverlap.overlap_pct_str` of the compute time, it fits comfortably within the backward pass "overlap budget," meaning the network cost effectively disappears.
-
-:::
+The combination of hierarchical AllReduce (reducing the volume of data to communicate), rail-optimized routing (maximizing the throughput of each communication operation), and layer-by-layer overlap (hiding the remaining communication behind computation) forms the complete communication optimization stack for production distributed training. Each technique addresses a different term in the performance equation: hierarchical algorithms reduce $M$, topology-aware routing maximizes effective $\beta$, and overlap amortizes $\alpha$ by running communication concurrently with computation. When all three are applied together, the communication overhead for a well-configured system falls to 5--15 percent of total step time, down from the 50--80 percent that a naive flat, synchronous approach would impose. At a larger scale this is still tractable: a 70B-parameter model on 8 NVLink-connected GPUs must AllReduce 140 GB of FP16 gradients per step, which Ring AllReduce on NVLink completes in roughly 0.3 seconds against a 2.1-second per-step compute budget, comfortably overlapped at about 15 percent of compute time.
 
 ## Fallacies and Pitfalls {#sec-communication-collective-operations-collective-operations-fallacies-pitfalls-9cd0}
 
