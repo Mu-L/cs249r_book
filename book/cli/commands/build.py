@@ -249,7 +249,7 @@ class BuildCommand:
 
         return overall_ok
 
-    def _postflight_pdf_validation(self, volume: str, skip: bool = False) -> bool:
+    def _postflight_pdf_validation(self, volume: str, skip: bool = False, log_path=None) -> bool:
         """Scan the built volume PDF for unresolved refs and render leaks.
 
         Returns True if validation passed (or was skipped), False on findings
@@ -271,7 +271,7 @@ class BuildCommand:
         from cli.commands._pdf_checks import format_checklist, verify_volume_pdf
 
         quarto_dir = self.config_manager.book_dir
-        result = verify_volume_pdf(quarto_dir, volume)
+        result = verify_volume_pdf(quarto_dir, volume, log_path=log_path)
         console.print(format_checklist(result))
 
         if not result.ok:
@@ -759,7 +759,11 @@ class BuildCommand:
                     if not self._postflight_epub_validation(skip=skip_validate):
                         return False
                 elif format_type == "pdf":
-                    if not self._postflight_pdf_validation(volume, skip=skip_validate):
+                    build_log = getattr(self, '_last_build_log', None)
+                    if not self._postflight_pdf_validation(
+                        volume, skip=skip_validate,
+                        log_path=build_log if build_log and build_log.is_file() else None,
+                    ):
                         return False
             else:
                 console.print(f"[red]❌ {volume_name} {format_type.upper()} build failed[/red]")
@@ -816,7 +820,7 @@ class BuildCommand:
 
         try:
             if self.verbose:
-                # Verbose mode: stream output in real-time
+                # Verbose mode: stream output in real-time and save for analysis
                 console.print(f"[dim]▶ {description}[/dim]")
                 process = subprocess.Popen(
                     cmd,
@@ -828,12 +832,20 @@ class BuildCommand:
                     bufsize=1
                 )
 
-                # Stream output line by line
+                lines_buf: list[str] = []
                 for line in iter(process.stdout.readline, ''):
                     if line:
                         console.print(line.rstrip())
+                        lines_buf.append(line)
 
                 process.wait(timeout=1800)
+
+                # Save build log for post-build analysis (overfull hbox, etc.)
+                if cwd and lines_buf:
+                    build_log = Path(cwd) / "_build" / "last-build.log"
+                    build_log.parent.mkdir(parents=True, exist_ok=True)
+                    build_log.write_text("".join(lines_buf), encoding="utf-8")
+                    self._last_build_log = build_log
 
                 if process.returncode == 0:
                     return True
