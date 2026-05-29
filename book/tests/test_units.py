@@ -482,10 +482,10 @@ def test_hardware_wrong_unit_raises():
                 capacity=80 * GiB,
                 bandwidth=2039 * GB / second,
             ))
-        # Verify backward-compatible property access
-        assert node.peak_flops == 312 * TFLOPs / second
-        assert node.memory_capacity == 80 * GiB
-        assert node.memory_bw == 2039 * GB / second
+        # Verify canonical nested access to compute/memory specs
+        assert node.compute.peak_flops == 312 * TFLOPs / second
+        assert node.memory.capacity == 80 * GiB
+        assert node.memory.bandwidth == 2039 * GB / second
     except Exception as e:
         FAILURES.append(f"  ✗ HardwareNode construction failed unexpectedly: {e}")
         ok = False

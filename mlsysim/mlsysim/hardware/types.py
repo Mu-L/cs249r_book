@@ -13,6 +13,10 @@ class ComputeCore(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     peak_flops: Quantity
     precision_flops: Dict[str, Quantity] = Field(default_factory=dict)
+    # Streaming-multiprocessor count. Present for GPUs; absent (None) for device
+    # classes that have no SM concept (MCUs, TPUs). Pairs with the per-SM memory
+    # fields below to derive chip-level totals (e.g. register file across the die).
+    sm_count: Optional[int] = None
 
 class MemoryHierarchy(BaseModel):
     """
@@ -32,6 +36,10 @@ class MemoryHierarchy(BaseModel):
     flash_capacity: Optional[Quantity] = None
     flash_bandwidth: Optional[Quantity] = None
     l2_cache: Optional[Quantity] = None
+    # Per-SM on-chip memory. Present for GPUs; absent (None) for device classes
+    # without SMs. Multiply by ComputeCore.sm_count to derive chip-level totals.
+    register_file_per_sm: Optional[Quantity] = None
+    shared_memory_per_sm: Optional[Quantity] = None
 
 class StorageHierarchy(BaseModel):
     """
@@ -86,31 +94,6 @@ class HardwareNode(BaseModel):
     )
     dispatch_tax: Quantity = Field(default_factory=lambda: Q_("0.01 ms"))
     metadata: Metadata = Field(default_factory=Metadata)
-
-    # Backward-compatible flat access properties (chapters use these)
-    @property
-    def peak_flops(self) -> Quantity:
-        return self.compute.peak_flops
-
-    @property
-    def peak_flops_fp32(self) -> Optional[Quantity]:
-        return self.compute.precision_flops.get('fp32')
-
-    @property
-    def memory_bw(self) -> Quantity:
-        return self.memory.bandwidth
-
-    @property
-    def memory_capacity(self) -> Quantity:
-        return self.memory.capacity
-
-    @property
-    def ram(self) -> Quantity:
-        return self.memory.capacity
-
-    @property
-    def power_budget(self) -> Optional[Quantity]:
-        return self.tdp
 
     def ridge_point(self, precision: Optional[str] = None) -> Quantity:
         """
