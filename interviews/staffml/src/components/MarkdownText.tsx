@@ -15,13 +15,19 @@ import MathText from "./MathText";
  */
 const MATH_SPLIT = /(\$\$[^$]+\$\$|\$[^$\n]+\$)/g;
 
+// A `$...$` segment is real math only if its body carries a LaTeX signal
+// (backslash, caret, underscore, brace). Bare-$ currency — "$3M", "$2/hr and
+// $48/day" — has none, so it renders as text instead of garbled KaTeX. ~5% of
+// vault questions use bare-$ currency and would otherwise mis-render.
+const MATH_BODY = /[\\^_{}]/;
+
 function renderMathAware(text: string, glossary: boolean): React.ReactNode {
   const segments = text.split(MATH_SPLIT);
   return segments.map((seg, i) => {
-    if (seg.startsWith("$$") && seg.endsWith("$$") && seg.length > 4) {
+    if (seg.startsWith("$$") && seg.endsWith("$$") && seg.length > 4 && MATH_BODY.test(seg.slice(2, -2))) {
       return <MathText key={`m${i}`} expr={seg.slice(2, -2).trim()} display />;
     }
-    if (seg.startsWith("$") && seg.endsWith("$") && seg.length > 2) {
+    if (seg.startsWith("$") && seg.endsWith("$") && seg.length > 2 && MATH_BODY.test(seg.slice(1, -1))) {
       return <MathText key={`m${i}`} expr={seg.slice(1, -1).trim()} />;
     }
     return <MarkdownInline key={`t${i}`} text={seg} glossary={glossary} />;
