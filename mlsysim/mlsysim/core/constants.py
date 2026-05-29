@@ -35,24 +35,9 @@ MOBILE_INFERENCE_TDP_HIGH = 4 * watt
 IMAGE_DIM_RESNET = 224  # TODO(taxonomy P7): -> Datasets.ImageNet.image_width
 # IMAGE_CHANNELS_RGB, COLOR_DEPTH_8BIT -> core/units.py (encoding facts)
 
-# --- Network & Interconnect ---
-NETWORK_10G_BW = 10 * Gbps
-NETWORK_100G_BW = 100 * Gbps
-NETWORK_5G_ENERGY_PER_MB_MJ = 100 * ureg.millijoule / MB
-FEC_LATENCY_LOW = 100 * NS
-FEC_LATENCY_HIGH = 200 * NS
-FABRIC_ALPHA_NDR = 1.5 * US
-FABRIC_ALPHA_ROCE = 5.0 * US
-FABRIC_HOP_LATENCY = 0.6 * US
-
-# Optical Interconnects (2025-2026 Reference)
-OPTICS_POWER_PLUGGABLE_400G_W = 20 * watt
-OPTICS_POWER_CPO_400G_W = 10 * watt
-ETHERNET_400G_BW = 400 * Gbps
-ETHERNET_800G_BW = 800 * Gbps
-ETHERNET_1P6T_BW = 1600 * Gbps
-SWITCH_ASIC_51T2_BW = 51_200 * Gbps
-SWITCH_ASIC_102T4_BW = 102_400 * Gbps
+# --- Network & Interconnect --- (network is a composition fact -> Systems)
+# Ethernet 10G/100G/400G/800G/1.6T bandwidth -> Systems.Fabrics.Ethernet_*.bandwidth
+# switch-ASIC capacity, 400G optics power, α/FEC/hop latencies -> Systems.SwitchFabric.*
 
 # --- Energy --- (per-op / per-byte energy is a tech-class fact -> Hardware.Tech)
 # FLOP/ADD/INT8 op energy   -> Hardware.Tech.Op.*.energy        (Horowitz 2014, 45 nm)
@@ -61,8 +46,7 @@ SWITCH_ASIC_102T4_BW = 102_400 * Gbps
 # Architecture-class efficiency + per-byte movement hierarchy -> Literature.Energy.*
 ENERGY_MOBILENET_INF_MJ = 0.1 * ureg.millijoule  # TODO(taxonomy): MobileNet inference energy -> Models/Scenarios
 
-# Network transfer energy (reference) — TODO(taxonomy): -> Systems network-energy
-NETWORK_ENERGY_1KB_PJ = 1_000_000 * ureg.picojoule  # ~1 microjoule for 1KB
+# Network transfer energy -> Systems.NetworkEnergy.{Per5gMb, Per1Kb}
 
 # --- Physics ---
 # --- Physical Constants ---

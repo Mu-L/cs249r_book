@@ -220,8 +220,8 @@ def test_param_units():
 def test_network_units():
     """Verify network-scale conversions."""
     ok = True
-    ok &= check("10 Gbps -> Gbps", NETWORK_10G_BW.to(Gbps).magnitude, 10.0)
-    ok &= check("10 Gbps -> GB/s", NETWORK_10G_BW.to(GB / second).magnitude, 1.25)
+    ok &= check("10 Gbps -> Gbps", Systems.Fabrics.Ethernet_10G.bandwidth.to(Gbps).magnitude, 10.0)
+    ok &= check("10 Gbps -> GB/s", Systems.Fabrics.Ethernet_10G.bandwidth.to(GB / second).magnitude, 1.25)
     return ok
 
 
@@ -300,7 +300,7 @@ def test_no_large_raw_magnitudes():
         ("ResNet GFLOPs", RESNET50_FLOPs.to(GFLOPs).magnitude, 1e4),
         ("ResNet Mparam", RESNET50_PARAMS.to(Mparam).magnitude, 1e4),
         ("A100 GiB", A100_MEM_CAPACITY.to(GiB).magnitude, 1e4),
-        ("10G Gbps", NETWORK_10G_BW.to(Gbps).magnitude, 100),
+        ("10G Gbps", Systems.Fabrics.Ethernet_10G.bandwidth.to(Gbps).magnitude, 100),
     ]
     for label, value, threshold in conversions:
         if abs(value) > threshold:
@@ -380,8 +380,8 @@ def test_interconnect_specs():
     ok &= check("PCIe Gen5", PCIE_GEN5_BW.to(GB / second).magnitude, 64.0)
     ok &= check("IB HDR", INFINIBAND_HDR_BW.to(Gbps).magnitude, 200.0)
     ok &= check("IB NDR", INFINIBAND_NDR_BW.to(Gbps).magnitude, 400.0)
-    ok &= check("100G net", NETWORK_100G_BW.to(Gbps).magnitude, 100.0)
-    ok &= check("100G -> GB/s", NETWORK_100G_BW.to(GB / second).magnitude, 12.5)
+    ok &= check("100G net", Systems.Fabrics.Ethernet_100G.bandwidth.to(Gbps).magnitude, 100.0)
+    ok &= check("100G -> GB/s", Systems.Fabrics.Ethernet_100G.bandwidth.to(GB / second).magnitude, 12.5)
     return ok
 
 

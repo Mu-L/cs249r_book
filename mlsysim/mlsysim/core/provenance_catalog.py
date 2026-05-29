@@ -488,6 +488,18 @@ BOOK_FABRIC_LATENCY = _conv(
     notes="Order-of-magnitude μs values for napkin math; not vendor QoS guarantees.",
 )
 
+BOOK_SWITCH_OPTICS = _conv(
+    "prov:book-switch-optics",
+    "MLSysBook switch-ASIC capacity (51.2T/102.4T) and 400G optics power (pluggable/CPO) reference figures",
+    notes="2025-26 datacenter-switching reference points for the network-fabrics worked examples.",
+)
+
+BOOK_NETWORK_ENERGY = _conv(
+    "prov:book-network-energy",
+    "MLSysBook network data-transfer energy anchors (5G per-MB, generic per-KB)",
+    notes="Order-of-magnitude transfer-energy figures for intuition; not measured device values.",
+)
+
 BOOK_RECOVERY_ASSUMPTIONS = _conv(
     "prov:book-recovery-time-assumptions",
     "MLSysBook fleet recovery design assumptions (heartbeat, reschedule, checkpoint BW)",
