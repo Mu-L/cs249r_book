@@ -108,6 +108,20 @@ BOOK_ANOMALY_CASE = Provenance(
     verified="2025-03-06",
 )
 
+# --- Hardware technology-class facts (Hardware.Tech) ---
+HOROWITZ_ENERGY = _lit(
+    "prov:horowitz-2014",
+    "Horowitz (2014), \"Computing's Energy Problem (and what we can do about it)\", ISSCC — 45 nm per-operation/per-byte energies",
+)
+BOOK_LATENCY_HIERARCHY = _conv(
+    "prov:book-latency-hierarchy",
+    "MLSysBook memory/interconnect access-latency hierarchy (order-of-magnitude class figures)",
+)
+BOOK_STORAGE_TIERS = _conv(
+    "prov:book-storage-tiers",
+    "Generic storage/memory bandwidth tiers (NVMe Gen3/4/5, DDR, host DRAM) from vendor datasheet ranges",
+)
+
 RELIABILITY_MTTF_LITERATURE = _lit(
     "prov:reliability-mttf-literature",
     "Kokolis et al. (2025, HPCA); Zu et al. (2024, NSDI); Barroso et al. (2019) — order-of-magnitude steady-state MTTF",

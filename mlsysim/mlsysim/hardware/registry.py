@@ -507,6 +507,9 @@ class TinyHardware(Registry):
         metadata={"provenance": pc.HIMAX_WE1},
     )
 
+from .tech import Tech as _Tech
+
+
 class Hardware(Registry):
     """Registry namespace for Hardware."""
     Cloud = CloudHardware
@@ -514,4 +517,5 @@ class Hardware(Registry):
     Mobile = MobileHardware
     Edge = EdgeHardware
     Tiny = TinyHardware
+    Tech = _Tech  # technology-class facts (latency / energy / generic bandwidth)
 
