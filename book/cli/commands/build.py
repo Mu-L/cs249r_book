@@ -1076,8 +1076,12 @@ class BuildCommand:
                 if not uncommented.startswith('-'):
                     uncommented = '- ' + uncommented
                 reset_lines.append(' ' * indent + uncommented)
-            elif stripped.startswith('#') and ('part:' in stripped or stripped.lstrip('#').strip().startswith('chapters:')):
-                # Uncomment structural lines (part declarations, chapters keys)
+            elif stripped.startswith('#') and (
+                'part:' in stripped
+                or stripped.lstrip('#').strip().startswith('chapters:')
+                or stripped.lstrip('#').strip().startswith('appendices:')
+            ):
+                # Uncomment structural lines (part declarations, chapters/appendices keys)
                 indent = len(line) - len(line.lstrip())
                 uncommented = stripped.lstrip('#').lstrip()
                 reset_lines.append(' ' * indent + uncommented)
@@ -1808,12 +1812,13 @@ class BuildCommand:
                 original_content = cfg.read_text(encoding="utf-8")
                 reset_content = self._reset_config_comments(original_content)
 
-                if format_type == "html":
-                    # HTML fast builds can leave temporary render sections in place.
-                    cfg.write_text(reset_content, encoding="utf-8")
-                    self._remove_render_section(cfg)
-                else:
-                    cfg.write_text(reset_content, encoding="utf-8")
+                # All formats: uncomment any chapter/appendix/render entries a
+                # chapter-selective build commented out, restoring the full
+                # default manifest. For HTML this restores the render: list
+                # (vol2) and is a no-op for the render-all volume (vol1). The
+                # render: section is the HTML scoping mechanism and is no longer
+                # stripped on reset — doing so would delete vol2's full manifest.
+                cfg.write_text(reset_content, encoding="utf-8")
 
                 backup_file = cfg.with_suffix(".backup")
                 if backup_file.exists():
