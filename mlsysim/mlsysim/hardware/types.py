@@ -95,31 +95,6 @@ class HardwareNode(BaseModel):
     dispatch_tax: Quantity = Field(default_factory=lambda: Q_("0.01 ms"))
     metadata: Metadata = Field(default_factory=Metadata)
 
-    # Backward-compatible flat access properties (chapters use these)
-    @property
-    def peak_flops(self) -> Quantity:
-        return self.compute.peak_flops
-
-    @property
-    def peak_flops_fp32(self) -> Optional[Quantity]:
-        return self.compute.precision_flops.get('fp32')
-
-    @property
-    def memory_bw(self) -> Quantity:
-        return self.memory.bandwidth
-
-    @property
-    def memory_capacity(self) -> Quantity:
-        return self.memory.capacity
-
-    @property
-    def ram(self) -> Quantity:
-        return self.memory.capacity
-
-    @property
-    def power_budget(self) -> Optional[Quantity]:
-        return self.tdp
-
     def ridge_point(self, precision: Optional[str] = None) -> Quantity:
         """
         Calculates the Roofline ridge point (Intensity threshold).
