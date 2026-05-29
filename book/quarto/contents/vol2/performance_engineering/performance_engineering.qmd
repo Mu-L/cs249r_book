@@ -188,11 +188,13 @@ The efficiency frontier establishes what we are optimizing toward. The physics o
 # │ How: pulling constants from mlsysim.core.constants.
 # │
 # │ Imports: mlsysim.core.constants (Hardware.Cloud.H100.compute.precision_flops["fp8"], Hardware.Cloud.H100.memory.bandwidth,
-# │          Hardware.Cloud.H100.memory.capacity, Hardware.Cloud.H100.tdp, ENERGY_DRAM_ACCESS_PJ, ENERGY_SRAM_L1_PJ,
-# │          TFLOPs, TB, GiB, second, flop, byte, watt)
+# │          Hardware.Cloud.H100.memory.capacity, Hardware.Cloud.H100.memory.l2_cache, Hardware.Cloud.H100.tdp,
+# │          ENERGY_DRAM_ACCESS_PJ, ENERGY_SRAM_L1_PJ, LATENCY_HBM3, TFLOPs, TB, GiB, second, flop, byte, watt)
 # │ Exports: MemoryWallScenario.h100_fp8_str, MemoryWallScenario.h100_hbm_bw_str,
 # │          MemoryWallScenario.h100_ridge_fp8_str, MemoryWallScenario.energy_ratio_str,
-# │          MemoryWallScenario.h100_mem_str, MemoryWallScenario.h100_tdp_str
+# │          MemoryWallScenario.h100_mem_str, MemoryWallScenario.h100_tdp_str,
+# │          MemoryWallScenario.l2_cache_mb_str, MemoryWallScenario.hbm_latency_ns_str,
+# │          MemoryWallScenario.hbm_energy_pj_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, fmt_int
 
@@ -203,15 +205,19 @@ class MemoryWallScenario:
     flops_fp8 = Hardware.Cloud.H100.compute.precision_flops["fp8"]
     bw = Hardware.Cloud.H100.memory.bandwidth
     mem = Hardware.Cloud.H100.memory.capacity
+    l2_cache = Hardware.Cloud.H100.memory.l2_cache
     tdp = Hardware.Cloud.H100.tdp
     energy_dram = ENERGY_DRAM_ACCESS_PJ
     energy_sram = ENERGY_SRAM_L1_PJ
+    hbm_latency = LATENCY_HBM3
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     ridge_fp8 = (flops_fp8 / bw).m_as(flop/byte)
     energy_ratio = energy_dram/energy_sram
     register_total_mb = 33
-    l2_cache_mb = 50
+    l2_cache_mb = l2_cache.m_as('megabyte')
+    hbm_latency_ns = hbm_latency.m_as('nanosecond')
+    hbm_energy_pj = energy_dram.m_as('picojoule')
 
     # ┌── 3. GUARD (Invariants) ──────────────────────────────────────────
     from mlsysim.fmt import check
@@ -226,6 +232,8 @@ class MemoryWallScenario:
     h100_tdp_str = fmt_int(tdp.m_as(watt), commas=False)
     register_total_mb_str = fmt_int(register_total_mb, commas=False, suffix=' MB')
     l2_cache_mb_str = fmt_int(l2_cache_mb, commas=False, suffix=' MB')
+    hbm_latency_ns_str = fmt_int(hbm_latency_ns, commas=False, suffix=' ns')
+    hbm_energy_pj_str = fmt_int(hbm_energy_pj, commas=False, suffix=' pJ')
 ```
 
 An NVIDIA H100 delivers `{python} MemoryWallScenario.h100_fp8_str` of FP8 compute but only `{python} MemoryWallScenario.h100_hbm_bw_str` of memory bandwidth. If every byte loaded from memory does fewer than `{python} MemoryWallScenario.h100_ridge_fp8_str` arithmetic operations, the compute units sit idle, starved for data. This gap between compute capability and memory delivery rate is the memory wall, and it defines the landscape within which all performance engineering operates.
@@ -242,9 +250,9 @@ Registers are the fastest storage, located directly within each streaming multip
 
 Shared memory (SRAM) occupies the next level, pooled within each SM. The H100 provides up to 228 KB of configurable shared memory per SM. This memory is shared among all threads in a thread block, enabling cooperative data reuse. Access latency is approximately 20--30 clock cycles (~20 ns), and energy cost is roughly 0.5 pJ per access. Shared memory is the critical resource for operator fusion: if intermediate results fit in shared memory, they never need to traverse the slow HBM bus.
 
-The L2 cache sits between the SMs and HBM, providing a 50 MB on-chip buffer on the H100. It captures reuse patterns automatically (when the same data is accessed by multiple SMs) but cannot be explicitly managed by kernel authors. Access latency is approximately 200 clock cycles (~130 ns). The L2 cache is particularly important for multi-head attention, where multiple attention heads may access the same KV cache entries. If the KV cache for a given sequence position fits in L2, subsequent heads accessing the same position benefit from cache hits rather than paying the full HBM access cost.
+The L2 cache sits between the SMs and HBM, providing a `{python} MemoryWallScenario.l2_cache_mb_str` on-chip buffer on the H100. It captures reuse patterns automatically (when the same data is accessed by multiple SMs) but cannot be explicitly managed by kernel authors. Access latency is approximately 200 clock cycles (~130 ns). The L2 cache is particularly important for multi-head attention, where multiple attention heads may access the same KV cache entries. If the KV cache for a given sequence position fits in L2, subsequent heads accessing the same position benefit from cache hits rather than paying the full HBM access cost.
 
-High Bandwidth Memory (HBM) is the main off-chip memory, providing `{python} MemoryWallScenario.h100_mem_str` of capacity at `{python} MemoryWallScenario.h100_hbm_bw_str` bandwidth. HBM access latency is approximately 300 ns, and each access costs roughly 640 pJ of energy. Despite the "high bandwidth" designation, the bandwidth-to-capacity ratio means that reading the full `{python} MemoryWallScenario.h100_mem_str` of HBM takes approximately 24 ms, far longer than the sub-millisecond latency targets of real-time inference.
+High Bandwidth Memory (HBM) is the main off-chip memory, providing `{python} MemoryWallScenario.h100_mem_str` of capacity at `{python} MemoryWallScenario.h100_hbm_bw_str` bandwidth. HBM access latency is approximately `{python} MemoryWallScenario.hbm_latency_ns_str`, and each access costs roughly `{python} MemoryWallScenario.hbm_energy_pj_str` of energy. Despite the "high bandwidth" designation, the bandwidth-to-capacity ratio means that reading the full `{python} MemoryWallScenario.h100_mem_str` of HBM takes approximately 24 ms, far longer than the sub-millisecond latency targets of real-time inference.
 
 The energy cost of data movement has a direct economic consequence at data center scale. Consider a training cluster of 1,000 H100 GPUs, each performing approximately $10^{12}$ memory accesses per second during a memory-bound workload. If each access reads from HBM at 640 pJ, the memory subsystem alone consumes approximately 640 W per GPU, a significant fraction of the H100's `{python} MemoryWallScenario.h100_tdp_str` W TDP. If operator fusion moves half of those accesses from HBM to SRAM (at 0.5 pJ each), the per-GPU memory power drops by approximately 320 W. Across 1,000 GPUs, this saves 320 kW, equivalent to powering roughly 250 homes. This is not a secondary consideration; at cloud electricity prices, the annual cost difference is substantial, and it scales linearly with cluster size. The physics of data movement is not merely a performance constraint; it is an economic one.
 
