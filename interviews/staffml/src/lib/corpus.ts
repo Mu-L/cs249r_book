@@ -411,6 +411,173 @@ export function extractFinalNumber(text: string): number | null {
   return valid.length > 0 ? valid[valid.length - 1] : null;
 }
 
+// ─── Unit-aware numeric grading (js-quantities / Pint-equivalent) ───────────
+//
+// `extractFinalNumber` above is intentionally unit-blind and pins the
+// last-token convention (tested in napkin-grading.test.ts). The functions
+// below add unit-awareness as a NEW layer on top of it, using the
+// `js-quantities` library — the JS analogue of Python's Pint that this
+// project already uses server-side in mlsysim. The library, not a hand-rolled
+// table, validates whether a token is a real unit, handles SI prefixes
+// (mW ≠ MW), dimensional analysis, and conversion.
+//
+// SSR-safe import: js-quantities is a pure-JS CommonJS module with no DOM or
+// Node-only dependencies, so a top-level ESM import is safe under Next.js
+// server rendering. We type it loosely (the `@types/js-quantities` shapes
+// vary across versions) and only touch the small surface we need.
+import Qty from "js-quantities";
+
+/** Instance type returned by a Qty(...) call (the @types decl exposes the
+ *  callable as Qty.Type, so we derive the instance via ReturnType). */
+type QtyInstance = ReturnType<typeof Qty>;
+
+/** A parsed quantity plus the exact display string the user/model wrote. */
+export interface ParsedQuantity {
+  qty: QtyInstance;
+  /** Original "number + unit" substring, e.g. "42 ms", for UI display. */
+  display: string;
+  /** The unit token as written, e.g. "ms", "GB/s". */
+  unit: string;
+}
+
+// A candidate is a number (optionally with thousands commas / decimals /
+// scientific notation) immediately followed by a run of unit-ish characters.
+// The unit run accepts letters, the micro signs (µ U+00B5 / μ U+03BC), and the
+// `/` and `·`/`*` separators that appear in compound units like GB/s, FLOP/s.
+// We do NOT require the library to recognize the token here — we hand every
+// candidate to Qty() and let the library accept or reject it. That rejection
+// is exactly what fixes the last-token bug: "40 layers" / "40 epochs" fail to
+// parse and are skipped.
+const QTY_CANDIDATE =
+  /(\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*([A-Za-zµμ]+(?:\s*\/\s*[A-Za-z]+)?)/g;
+
+// Marker line that names the final answer, mirroring extractFinalNumber's
+// convention ("=> 42 ms", "answer: 1,024 GB", "final: 3.5 s").
+const QTY_MARKER = /(?:^|\n)\s*(?:=>|answer:|final:)\s*(.+)$/im;
+
+function tryParseQty(numRaw: string, unitRaw: string): ParsedQuantity | null {
+  const num = numRaw.replace(/,/g, "");
+  const unit = unitRaw.replace(/\s+/g, "");
+  try {
+    const qty = Qty(`${num} ${unit}`);
+    // Guard against degenerate parses (NaN scalar, etc.).
+    if (!Number.isFinite(qty.scalar)) return null;
+    return { qty, display: `${numRaw.trim()} ${unit}`, unit };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the user's final ANSWER as a unit-bearing quantity.
+ *
+ * Strategy mirrors `extractFinalNumber`:
+ *   1. If a marker line ("=>", "answer:", "final:") exists, parse the LAST
+ *      parseable quantity on that line first.
+ *   2. Otherwise scan the whole text and return the LAST candidate that the
+ *      units library successfully parses.
+ *
+ * Returns null when no candidate parses to a real unit. Non-unit trailing
+ * tokens ("40 layers", "40 epochs") are skipped because Qty() rejects them —
+ * so "1.31 MB across 40 layers" yields 1.31 MB, not 40.
+ */
+export function extractFinalQuantity(text: string): ParsedQuantity | null {
+  const scan = (segment: string): ParsedQuantity | null => {
+    let last: ParsedQuantity | null = null;
+    // Array.from avoids requiring downlevelIteration for the matchAll iterator.
+    for (const m of Array.from(segment.matchAll(QTY_CANDIDATE))) {
+      const parsed = tryParseQty(m[1], m[2]);
+      if (parsed) last = parsed;
+    }
+    return last;
+  };
+
+  const markerMatch = text.match(QTY_MARKER);
+  if (markerMatch) {
+    const fromMarker = scan(markerMatch[1]);
+    if (fromMarker) return fromMarker;
+  }
+  return scan(text);
+}
+
+/** Result of unit-aware grading: a NapkinResult plus display metadata. */
+export interface NapkinGradeResult extends NapkinResult {
+  /** Number used for grading (base-unit magnitude when units were involved). */
+  userNum: number;
+  modelNum: number;
+  /** Original display string the user wrote, e.g. "42 ms" (null if bare). */
+  userDisplay: string | null;
+  modelDisplay: string | null;
+  /** True when both sides parsed as compatible quantities and were converted. */
+  unitAware: boolean;
+}
+
+/**
+ * Grade a user's napkin-math answer against the model answer, unit-aware.
+ *
+ * - If BOTH sides parse to quantities:
+ *     - compatible dimensions → convert to common base, grade via checkNapkinMath.
+ *     - incompatible dimensions → way_off, labelled "Wrong quantity (a vs b)".
+ * - Otherwise → fall back to the legacy bare-number path (extractFinalNumber +
+ *   checkNapkinMath), preserving all existing behavior.
+ *
+ * checkNapkinMath's relative-error logic is reused verbatim — it is never
+ * reimplemented here.
+ */
+export function gradeNapkinAnswer(
+  userText: string,
+  modelText: string,
+  track: string,
+): NapkinGradeResult | null {
+  const userQty = extractFinalQuantity(userText);
+  const modelQty = extractFinalQuantity(modelText);
+
+  if (userQty && modelQty) {
+    if (userQty.qty.isCompatible(modelQty.qty)) {
+      // Convert both to base units so the magnitudes are directly comparable
+      // (42 ms and 42000 µs both become 0.042 s).
+      const userBase = userQty.qty.toBase().scalar;
+      const modelBase = modelQty.qty.toBase().scalar;
+      const result = checkNapkinMath(userBase, modelBase, track);
+      return {
+        ...result,
+        userNum: userBase,
+        modelNum: modelBase,
+        userDisplay: userQty.display,
+        modelDisplay: modelQty.display,
+        unitAware: true,
+      };
+    }
+    // Incompatible dimensions: a bandwidth answer to a capacity question, etc.
+    return {
+      grade: "way_off",
+      ratio: Infinity,
+      tolerance: 0,
+      label: `Wrong quantity (${userQty.unit} vs ${modelQty.unit})`,
+      maxSelfScore: 1,
+      userNum: userQty.qty.scalar,
+      modelNum: modelQty.qty.scalar,
+      userDisplay: userQty.display,
+      modelDisplay: modelQty.display,
+      unitAware: true,
+    };
+  }
+
+  // Legacy bare-number fallback (no parseable units on one or both sides).
+  const userNum = extractFinalNumber(userText);
+  const modelNum = extractFinalNumber(modelText);
+  if (userNum === null || modelNum === null) return null;
+  const result = checkNapkinMath(userNum, modelNum, track);
+  return {
+    ...result,
+    userNum,
+    modelNum,
+    userDisplay: userQty?.display ?? null,
+    modelDisplay: modelQty?.display ?? null,
+    unitAware: false,
+  };
+}
+
 // ─── Chain helpers ──────────────────────────────────────────
 // Chains are deepening question sequences on a topic (L1 → L6+)
 
