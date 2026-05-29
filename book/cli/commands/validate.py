@@ -133,9 +133,12 @@ LABEL_DEF_PATTERNS = {
         re.compile(r"#\|\s*label:\s*(lst-[\w-]+)"),  # #| label: lst-xyz
     ],
 }
-LABEL_REF_PATTERN = re.compile(r"@((?:fig|tbl|sec|eq|lst)-[\w-]+)")
+LABEL_REF_PATTERN = re.compile(r"@((?:[Ff]ig|[Tt]bl|[Ss]ec|[Ee]q|[Ll]st)-[\w-]+)")
 
-EXCLUDED_CITATION_PREFIXES = ("fig-", "tbl-", "sec-", "eq-", "lst-", "ch-", "nb-")
+EXCLUDED_CITATION_PREFIXES = (
+    "fig-", "tbl-", "sec-", "eq-", "lst-", "ch-", "nb-",
+    "Fig-", "Tbl-", "Sec-", "Eq-", "Lst-",
+)
 
 # Captionless float baseline: per-file counts of pre-existing violations
 # grandfathered when the caption-required / label-required scopes landed.
@@ -254,6 +257,8 @@ class ValidateCommand:
             Scope("self-ref", "_run_self_referential", default=False),
             Scope("capitalized", "_run_mitpress_capitalized_refs",
                   note='"chapter 12" lowercase in prose (§10.3.2)'),
+            Scope("xref-case", "_run_xref_sentence_start_case",
+                  note="@fig- at sentence start should be @Fig- (MIT Press lowercase prefix)"),
         ],
         "labels": [
             # duplicates and orphans are both curated, but each carries its
@@ -378,6 +383,10 @@ class ValidateCommand:
                   note="LaTeX in title=/fig-cap/tbl-cap/fig-alt/tbl-alt"),
             Scope("canonical", "_run_math_canonical",
                   note="fmt-family + _str/_math/_eq/_frac suffix discipline (LEGO)"),
+            # Added 2026-05-26: blocklist for banned suffix= values in fmt()
+            # calls (wrong unit conventions like TFLOPS, Gbps, etc.).
+            Scope("suffix-consistency", "_run_suffix_consistency",
+                  note='banned suffix= values (TFLOPS, Gbps, etc.)'),
             # render-audit builds every chapter (~10 min). Manual stage only;
             # default=False ensures `binder check math` stays under 1s.
             Scope("render-audit", "_run_math_render_audit", default=False),
@@ -400,6 +409,21 @@ class ValidateCommand:
                   note="LEGO variables defined but never referenced"),
             Scope("lego-prose-literals", "_run_lego_prose_literals",
                   note="hardcoded numbers in callout walkthroughs that share {python} refs"),
+            Scope("lego-prose-units", "_run_lego_prose_units",
+                  note="unit/currency tokens after {python} *_str refs", default=False),
+            Scope("lego-load-pint", "_run_lego_load_pint",
+                  note="physical *_value assignments must use ureg/registry", default=False),
+            Scope("lego-equations", "_run_lego_equations",
+                  note="A/B=C prose lines must match computed values", default=False),
+            # Added 2026-05-26: \\${python} collision — escaped dollar before
+            # {python} silently fails to render; correct form is \\$\\`{python}.
+            Scope("python-dollar-collision", "_run_python_dollar_collision",
+                  note="\\${python} collision — escaped dollar silently kills inline expr"),
+            # Added 2026-05-26: scan built HTML for literal {python} text that
+            # leaked through Quarto (expression failed to evaluate). Requires
+            # a prior html-audit build. Default=False (opt-in audit).
+            Scope("rendered-python-leak", "_run_rendered_python_leak",
+                  note="literal {python} leaked into rendered HTML", default=False),
         ],
         "tables": [
             Scope("grid-tables", "_run_grid_tables",
@@ -410,6 +434,8 @@ class ValidateCommand:
                   note="body-prose pipe tables need : caption {#tbl-X}"),
             Scope("caption-orphan", "_run_table_caption_orphan",
                   note="caption between two `:::` closes breaks EPUB"),
+            Scope("caption-detached", "_run_table_caption_detached",
+                  note="prose between pipe table and its `: caption {#tbl-}` breaks xref"),
         ],
         "listings": [
             # Listings in this book always use ::: {#lst-X lst-cap="..."} divs.
@@ -478,6 +504,10 @@ class ValidateCommand:
             # Scans _build/pdf-vol*/ artifact via pdftotext. Requires
             # --vol1 or --vol2 (or run both explicitly).
             Scope("verify", "_run_pdf_verify"),
+            # Added 2026-05-26: scan PDF text for "UserWarning" strings that
+            # may indicate a Python warning leaked into the rendered output.
+            # Default=False — post-build audit, not a pre-commit gate.
+            Scope("pdf-warnings", "_run_pdf_warnings", default=False),
         ],
         "registry": [
             Scope("sources", "_run_registry_sources",
@@ -1638,7 +1668,7 @@ class ValidateCommand:
         # "word[@cite]" — no space before the cite. A parenthetical citation
         # always takes a leading space in body prose. Excludes footnote
         # markers and reference labels.
-        no_space_before_bracket = re.compile(r"[a-zA-Z]\[@(?!sec-|fig-|tbl-|eq-|lst-|exr-|exm-|thm-|cor-|cnj-|def-|prp-|rem-|prf-|alg-)[A-Za-z]")
+        no_space_before_bracket = re.compile(r"[a-zA-Z]\[@(?![Ss]ec-|[Ff]ig-|[Tt]bl-|[Ee]q-|[Ll]st-|exr-|exm-|thm-|cor-|cnj-|def-|prp-|rem-|prf-|alg-)[A-Za-z]")
         # "[@a, @b]" — comma-separated multi-cite. Pandoc's citation syntax
         # requires semicolons: "[@a; @b]".
         comma_multicite = re.compile(r"\[@[A-Za-z][\w:.-]+,\s*@[A-Za-z]")
@@ -1687,7 +1717,7 @@ class ValidateCommand:
         # (@sec-, @fig-, etc.) so those are not mistaken for bibkeys.
         bracket_cite = re.compile(r"\[@[A-Za-z]")
         narrative_cite = re.compile(
-            r"@(?!sec-|fig-|tbl-|eq-|lst-|exr-|exm-|thm-|cor-|cnj-|"
+            r"@(?![Ss]ec-|[Ff]ig-|[Tt]bl-|[Ee]q-|[Ll]st-|exr-|exm-|thm-|cor-|cnj-|"
             r"def-|prp-|rem-|prf-|alg-)[A-Za-z][\w:-]*"
         )
 
@@ -2169,6 +2199,8 @@ class ValidateCommand:
 
                 for match in LABEL_REF_PATTERN.finditer(line):
                     label = match.group(1)
+                    # Normalize capitalized Quarto prefix (@Fig- -> fig-)
+                    label = label[0].lower() + label[1:]
                     references.setdefault(label, []).append((file, idx))
 
         # unreferenced definitions (skip section defaults, consistent with legacy behavior)
@@ -3231,6 +3263,82 @@ class ValidateCommand:
             elapsed_ms=int((time.time() - start) * 1000),
         )
 
+    _TABLE_CAPTION_RE = re.compile(
+        r"^:\s+\*?\*?.*\{#tbl-[\w-]+",
+    )
+    _PIPE_ROW_LOOSE_RE = re.compile(r"^\s*\|.+\|")
+
+    def _run_table_caption_detached(self, root: Path) -> ValidationRunResult:
+        """Flag pipe tables whose `: caption {#tbl-}` is separated by prose.
+
+        Quarto only binds a pipe-table caption to the table when the
+        `: Caption {#tbl-X}` line is the first non-blank line after the
+        last data row.  Intervening prose breaks the binding and the
+        cross-reference renders as ``?@tbl-X`` in the PDF.
+        """
+        start = time.time()
+        files = self._qmd_files(root)
+        raw_issues: List[ValidationIssue] = []
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            n = len(lines)
+            in_code = False
+            i = 0
+            while i < n:
+                line = lines[i]
+                if re.match(r"^\s*```", line):
+                    in_code = not in_code
+                    i += 1
+                    continue
+                if in_code:
+                    i += 1
+                    continue
+                if (self._PIPE_ROW_RE.match(line)
+                        and i + 1 < n
+                        and self._PIPE_SEP_RE.match(lines[i + 1])):
+                    j = i + 2
+                    while j < n and self._PIPE_ROW_LOOSE_RE.match(lines[j]):
+                        j += 1
+                    table_end = j - 1
+                    k = j
+                    while k < n and not lines[k].strip():
+                        k += 1
+                    if k < n and self._TABLE_CAPTION_RE.match(lines[k]):
+                        i = k + 1
+                        continue
+                    cap_k = k
+                    while cap_k < n and cap_k < j + 8:
+                        if self._TABLE_CAPTION_RE.match(lines[cap_k]):
+                            raw_issues.append(ValidationIssue(
+                                file=self._relative_file(file),
+                                line=cap_k + 1,
+                                code="table_caption_detached",
+                                message=(
+                                    f"Caption with #tbl- label is separated "
+                                    f"from its pipe table (table ends line "
+                                    f"{table_end + 1}) by intervening prose. "
+                                    f"Move the caption immediately after the "
+                                    f"table or merge the prose into the caption."
+                                ),
+                                severity="error",
+                                context=lines[cap_k].strip()[:120],
+                            ))
+                            break
+                        cap_k += 1
+                    i = max(j, cap_k + 1)
+                else:
+                    i += 1
+        return ValidationRunResult(
+            name="table-caption-detached",
+            description=(
+                "Pipe-table captions must immediately follow the table "
+                "(no intervening prose)"
+            ),
+            files_checked=len(files),
+            issues=raw_issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
     _FIG_DIV_OPEN_RE = re.compile(r"^:::+\s*\{[^}]*#fig-[\w-]+")
     # Chapter-opener cover images are decorative and not cross-referenced
     # by convention. They carry fig-alt for accessibility but no #fig-
@@ -3644,12 +3752,12 @@ class ValidateCommand:
         lowercase_x_mult_pat = re.compile(
             r"""`x\s+[a-z]"""    # `...`x word  (after inline python)
             r"""|"""
-            r"""\dx\s+[a-z]"""   # Nx word  (digit then x then lowercase)
+            r"""(?<![A-Z])\dx\s+[a-z]"""   # Nx word — but not after uppercase (excludes MI300X, H100x, etc.)
         )
         # Hex literal pattern to exclude matches like 0x61, 0xff
         hex_literal_pat = re.compile(r"0x[0-9a-fA-F]")
         # Cross-reference ID pattern: @tbl-foo300x, @fig-bar2x, @sec-baz1x — these are labels not multiplication
-        xref_id_pat = re.compile(r"@(?:tbl|fig|sec|eq|lst)-[a-z0-9_-]+x\b")
+        xref_id_pat = re.compile(r"@(?:tbl|fig|sec|eq|lst)-[a-z0-9_-]+x\b", re.IGNORECASE)
         # Quarto attribute blocks can contain IDs such as
         # {#tbl-assumptions-mi300x tbl-colwidths="[...]"}; those are
         # identifiers, not prose multiplication.
@@ -5718,6 +5826,92 @@ class ValidateCommand:
         return ValidationRunResult(
             name="mitpress-capitalized-refs",
             description='Lowercase "chapter/section/figure/table" in prose references (MIT Press §10.4)',
+            files_checked=len(files),
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    def _run_xref_sentence_start_case(self, root: Path) -> ValidationRunResult:
+        """Flag lowercase @fig-/@tbl-/@sec-/@eq-/@lst- at sentence starts.
+
+        With crossref prefixes configured to lowercase, sentence-start refs
+        must use the capitalized Quarto syntax (@Fig-, @Tbl-, @Sec-, @Eq-,
+        @Lst-) so the rendered prefix is uppercase.
+        """
+        start = time.time()
+        files = self._qmd_files(root)
+        issues: List[ValidationIssue] = []
+        xref_re = re.compile(r"@(fig|tbl|sec|eq|lst)-[\w-]+")
+        footnote_def = re.compile(r"^\s*\[\^fn-")
+
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            in_code = False
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if stripped.startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    continue
+                if stripped.startswith("#|"):
+                    continue
+                if stripped.startswith(":::"):
+                    continue
+                if footnote_def.match(line):
+                    continue
+
+                for m in xref_re.finditer(line):
+                    col = m.start()
+                    before = line[:col].rstrip()
+                    is_sentence_start = False
+
+                    if not before:
+                        # Line-start ref: check preceding line
+                        prev = ""
+                        for pi in range(idx - 2, -1, -1):
+                            ps = lines[pi].strip()
+                            if not ps:
+                                is_sentence_start = True
+                                break
+                            prev = ps
+                            break
+                        if not is_sentence_start and prev:
+                            if prev[-1] in ".?!":
+                                is_sentence_start = True
+                            elif prev.startswith("#"):
+                                is_sentence_start = True
+                            elif prev.endswith(":::"):
+                                is_sentence_start = True
+                    else:
+                        if re.search(r'[.?!]\s*$', before):
+                            is_sentence_start = True
+                        elif re.search(r':\s*$', before):
+                            after_ref = line[m.end():].strip()
+                            if after_ref and after_ref[0] not in ".,;:)]":
+                                is_sentence_start = True
+
+                    if is_sentence_start:
+                        ref_type = m.group(1)
+                        cap_form = f"@{ref_type[0].upper()}{ref_type[1:]}-"
+                        context = line.strip()[:100]
+                        issues.append(
+                            ValidationIssue(
+                                file=self._relative_file(file),
+                                line=idx,
+                                code="xref_sentence_start_case",
+                                message=(
+                                    f"Lowercase @{ref_type}- at sentence start "
+                                    f"-- use {cap_form} for uppercase prefix"
+                                ),
+                                severity="warning",
+                                context=context,
+                            )
+                        )
+
+        return ValidationRunResult(
+            name="xref-sentence-start-case",
+            description="Flag lowercase crossref prefixes at sentence starts (MIT Press convention)",
             files_checked=len(files),
             issues=issues,
             elapsed_ms=int((time.time() - start) * 1000),
@@ -8021,6 +8215,372 @@ class ValidateCommand:
             name="lego-prose-literals",
             description=f"LEGO walkthrough prose literal scan ({qmd_count} files)",
             files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_lego_prose_units(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-prose-units: units after {python} *_str in prose."""
+        from cli.commands._registry_checks import check_lego_prose_units, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_prose_units(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-prose-units",
+            description=f"LEGO prose unit-after-_str scan ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_lego_load_pint(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-load-pint: physical *_value must use ureg/registry."""
+        from cli.commands._registry_checks import check_lego_load_pint, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_load_pint(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-load-pint",
+            description=f"LEGO pint LOAD lint ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    def _run_lego_equations(self, root: Path) -> ValidationRunResult:
+        """code --scope lego-equations: numeric A/B=C coherence in prose."""
+        from cli.commands._registry_checks import check_lego_equations, repo_root_from_here
+
+        t0 = time.time()
+        repo = repo_root_from_here()
+        raw = check_lego_equations(repo)
+        issues = [
+            ValidationIssue(
+                file=i.file, line=i.line, code=i.code,
+                message=i.message, severity=i.severity,
+            )
+            for i in raw
+        ]
+        qmd_count = len(list((repo / "book" / "quarto" / "contents").rglob("*.qmd")))
+        return ValidationRunResult(
+            name="lego-equations",
+            description=f"LEGO equation coherence ({qmd_count} files)",
+            files_checked=qmd_count,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 1: \${python} collision detector  (code group)
+    # ------------------------------------------------------------------
+    #
+    # An escaped dollar immediately before {python} — i.e. \${python} —
+    # silently fails to render as an inline expression. The correct form
+    # is \$\`{python}  (backtick between \$ and {python}).
+    # Zero violations expected on the current corpus; this prevents
+    # regression.
+
+    # Pattern: backslash-dollar immediately before {python} WITHOUT a
+    # preceding backtick.  The negative lookbehind ensures we skip the
+    # correct form \$`{python}.
+    _DOLLAR_PYTHON_COLLISION = re.compile(
+        r"(?<!`)"           # not preceded by backtick (the correct form)
+        r"\\\$\{python\}"   # literal \${python}
+    )
+
+    def _run_python_dollar_collision(self, root: Path) -> ValidationRunResult:
+        r"""Flag \${python} in QMD prose — silently fails to render."""
+        start = time.time()
+        files = self._qmd_files(root)
+        issues: List[ValidationIssue] = []
+
+        block_start = re.compile(r"^```")
+        raw_latex_start = re.compile(r"^\\\[|^\$\$|^\\begin\{")
+        raw_latex_end = re.compile(r"^\\\]|^\$\$|^\\end\{")
+
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            in_code = False
+            in_raw_latex = False
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                # Toggle code fences
+                if stripped.startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    continue
+                # Skip raw LaTeX blocks (display math, \begin{} environments)
+                if raw_latex_start.match(stripped):
+                    in_raw_latex = True
+                    continue
+                if in_raw_latex:
+                    if raw_latex_end.match(stripped):
+                        in_raw_latex = False
+                    continue
+
+                for m in self._DOLLAR_PYTHON_COLLISION.finditer(line):
+                    context = line[max(0, m.start() - 10): min(len(line), m.end() + 20)].strip()
+                    issues.append(
+                        ValidationIssue(
+                            file=self._relative_file(file),
+                            line=idx,
+                            code="python_dollar_collision",
+                            message=(
+                                r"\${python} silently fails to render — "
+                                r"use \$\`{python} (backtick between \$ and {python})"
+                            ),
+                            severity="error",
+                            context=context,
+                        )
+                    )
+
+        return ValidationRunResult(
+            name="python-dollar-collision",
+            description=r"\${python} collision detector (prevents silent render failure)",
+            files_checked=len(files),
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 2: suffix-consistency blocklist  (math group)
+    # ------------------------------------------------------------------
+    #
+    # Scans suffix="..." values in fmt() calls inside {python} cells for
+    # banned unit conventions. This is a blocklist, not an allowlist:
+    # everything is allowed except the explicitly banned patterns.
+
+    _SUFFIX_VALUE = re.compile(r"""suffix\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+
+    # Banned patterns: wrong unit conventions for rate/throughput suffixes.
+    _BANNED_SUFFIXES: Set[str] = {
+        # Wrong pluralization of /s rate units
+        " TFLOPS/s", " GFLOPS/s",
+        # Wrong conventions — should use slash-s form
+        " TFLOPS", " TFLOPs",
+        " Gbps", " Mbps", " GBps", " TBps",
+    }
+
+    def _run_suffix_consistency(self, root: Path) -> ValidationRunResult:
+        """Flag banned suffix= values in fmt() calls (wrong unit conventions)."""
+        start = time.time()
+        files = self._qmd_files(root)
+        issues: List[ValidationIssue] = []
+
+        block_start = re.compile(r"^```\{python\}")
+        block_end = re.compile(r"^```\s*$")
+
+        for file in files:
+            lines = self._read_text(file).splitlines()
+            in_python = False
+            for idx, line in enumerate(lines, 1):
+                if block_start.match(line):
+                    in_python = True
+                    continue
+                if block_end.match(line):
+                    in_python = False
+                    continue
+                if not in_python:
+                    continue
+
+                for m in self._SUFFIX_VALUE.finditer(line):
+                    val = m.group(1) if m.group(1) is not None else m.group(2)
+                    if val in self._BANNED_SUFFIXES:
+                        issues.append(
+                            ValidationIssue(
+                                file=self._relative_file(file),
+                                line=idx,
+                                code="suffix_banned_convention",
+                                message=(
+                                    f'suffix="{val}" uses a banned unit convention. '
+                                    f"Rate units should use TFLOP/s, PFLOP/s, GB/s, etc. "
+                                    f"(slash-s form, no trailing S pluralization)."
+                                ),
+                                severity="error",
+                                context=line.strip()[:160],
+                            )
+                        )
+
+        return ValidationRunResult(
+            name="suffix-consistency",
+            description="Blocklist for banned suffix= unit conventions in fmt() calls",
+            files_checked=len(files),
+            issues=issues,
+            elapsed_ms=int((time.time() - start) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 3: PDF UserWarning check  (pdf group, default=False)
+    # ------------------------------------------------------------------
+    #
+    # Post-build: scan extracted PDF text for "UserWarning" strings that
+    # may indicate a Python warning leaked into the rendered output.
+
+    def _run_pdf_warnings(
+        self,
+        root: Path,
+        *,
+        vol1: bool = False,
+        vol2: bool = False,
+        log_path: Optional[str] = None,
+    ) -> ValidationRunResult:
+        """Scan PDF text for UserWarning strings (post-build audit)."""
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        quarto_dir = repo_root / "book" / "quarto"
+        issues: List[ValidationIssue] = []
+
+        volumes: List[str] = []
+        if vol1:
+            volumes.append("vol1")
+        if vol2:
+            volumes.append("vol2")
+        if not volumes:
+            volumes = ["vol1", "vol2"]
+
+        import shutil
+        if shutil.which("pdftotext") is None:
+            issues.append(ValidationIssue(
+                file="", line=0, code="pdftotext_missing",
+                message="pdftotext not installed; install poppler (e.g. brew install poppler)",
+                severity="warning",
+            ))
+            return ValidationRunResult(
+                name="pdf-warnings",
+                description="PDF UserWarning scan",
+                files_checked=0,
+                issues=issues,
+                elapsed_ms=int((time.time() - t0) * 1000),
+            )
+
+        from cli.commands._pdf_checks import PDF_BY_VOLUME
+
+        checked = 0
+        for vol in volumes:
+            pdf_name = PDF_BY_VOLUME.get(vol)
+            if not pdf_name:
+                continue
+            pdf_path = quarto_dir / "_build" / f"pdf-{vol}" / pdf_name
+            if not pdf_path.is_file():
+                continue
+            checked += 1
+            try:
+                proc = subprocess.run(
+                    ["pdftotext", "-layout", str(pdf_path), "-"],
+                    capture_output=True, text=True,
+                )
+                body = proc.stdout or ""
+            except Exception:
+                continue
+
+            for line_num, line in enumerate(body.splitlines(), 1):
+                if "UserWarning" in line:
+                    context = line.strip()[:200]
+                    issues.append(ValidationIssue(
+                        file=str(pdf_path.relative_to(repo_root)),
+                        line=line_num,
+                        code="pdf_userwarning",
+                        message=f"UserWarning text found in {vol} PDF output",
+                        severity="warning",
+                        context=context,
+                    ))
+
+        return ValidationRunResult(
+            name="pdf-warnings",
+            description=f"PDF UserWarning scan ({', '.join(volumes)})",
+            files_checked=checked,
+            issues=issues,
+            elapsed_ms=int((time.time() - t0) * 1000),
+        )
+
+    # ------------------------------------------------------------------
+    # Check 6: rendered {python} leak check  (code group, default=False)
+    # ------------------------------------------------------------------
+    #
+    # Post-render: scan all HTML files in _build/html-audit/ for literal
+    # {python} text that escaped Quarto inline-expression evaluation.
+    # Excludes {python} inside <code> tags (legitimate code listings).
+
+    _RENDERED_PYTHON_LEAK = re.compile(r"\{python\}")
+    # Match {python} inside <code>...</code> — these are legitimate.
+    _CODE_TAG_PYTHON = re.compile(r"<code[^>]*>.*?\{python\}.*?</code>", re.DOTALL)
+
+    def _run_rendered_python_leak(self, root: Path) -> ValidationRunResult:
+        """Scan built HTML for literal {python} that leaked through Quarto."""
+        t0 = time.time()
+        repo_root = Path(__file__).resolve().parents[3]
+        html_audit_dir = repo_root / "book" / "quarto" / "_build" / "html-audit"
+        issues: List[ValidationIssue] = []
+
+        if not html_audit_dir.is_dir():
+            issues.append(ValidationIssue(
+                file="", line=0, code="html_audit_missing",
+                message=(
+                    "html-audit build directory not found at "
+                    f"{html_audit_dir.relative_to(repo_root)}. "
+                    "Run a build first."
+                ),
+                severity="warning",
+            ))
+            return ValidationRunResult(
+                name="rendered-python-leak",
+                description="Literal {python} leak scan (no build found)",
+                files_checked=0,
+                issues=issues,
+                elapsed_ms=int((time.time() - t0) * 1000),
+            )
+
+        html_files = sorted(html_audit_dir.rglob("*.html"))
+        for html_file in html_files:
+            try:
+                content = html_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+            # Remove {python} occurrences inside <code> tags (legitimate)
+            cleaned = self._CODE_TAG_PYTHON.sub("", content)
+
+            for m in self._RENDERED_PYTHON_LEAK.finditer(cleaned):
+                # Find approximate line number
+                line_num = content[:m.start()].count("\n") + 1
+                start_ctx = max(0, m.start() - 40)
+                end_ctx = min(len(cleaned), m.end() + 40)
+                context = cleaned[start_ctx:end_ctx].replace("\n", " ").strip()[:120]
+                issues.append(ValidationIssue(
+                    file=str(html_file.relative_to(repo_root)),
+                    line=line_num,
+                    code="rendered_python_leak",
+                    message=(
+                        "Literal {python} found in rendered HTML — "
+                        "Quarto failed to evaluate an inline expression"
+                    ),
+                    severity="error",
+                    context=context,
+                ))
+
+        return ValidationRunResult(
+            name="rendered-python-leak",
+            description=f"Literal {{python}} leak scan ({len(html_files)} HTML files)",
+            files_checked=len(html_files),
             issues=issues,
             elapsed_ms=int((time.time() - t0) * 1000),
         )

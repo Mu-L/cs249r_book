@@ -44,7 +44,7 @@ PLAIN_ASSIGN = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*([^=].*)$")
 
 # Pattern: matches calls to canonical formatter helpers on the RHS.
 CANONICAL_STR_CALL = re.compile(
-    r"\b(fmt|fmt_int|fmt_percent|fmt_val|fmt_unit|fmt_sci|MarkdownStr)\s*\("
+    r"\b(fmt|fmt_qty|fmt_int|fmt_percent|fmt_val|fmt_unit|fmt_sci|MarkdownStr)\s*\("
 )
 CANONICAL_MATH_CALL = re.compile(
     r"\b(fmt_math|MarkdownStr)\s*\("
@@ -108,7 +108,7 @@ IMPLICIT_INT_CAST_FMT = re.compile(
 # Pattern: fmt-family helper names used as calls in a cell body. Any of these
 # requires a matching `from mlsysim.fmt import ...` line in the file.
 FMT_FAMILY_USE = re.compile(
-    r"\b(fmt|fmt_int|fmt_math|fmt_percent|fmt_val|fmt_unit|fmt_sci|fmt_frac|sci_latex|MarkdownStr|check)\s*\("
+    r"\b(fmt|fmt_qty|fmt_int|fmt_math|fmt_percent|fmt_val|fmt_unit|fmt_sci|fmt_frac|sci_latex|MarkdownStr|check)\s*\("
 )
 
 # Pattern: `from mlsysim.fmt import ...` block (possibly multi-line in parens
@@ -121,10 +121,15 @@ MLSYSIM_STAR_IMPORT = re.compile(r"\bfrom\s+mlsysim\s+import\s+\*")
 
 # Names exported by `from mlsysim import *` that belong to the fmt family.
 MLSYSIM_STAR_FMT_NAMES = frozenset({
-    "fmt", "fmt_int", "fmt_percent", "fmt_val", "fmt_unit", "fmt_sci",
+    "fmt", "fmt_qty", "fmt_int", "fmt_percent", "fmt_val", "fmt_unit", "fmt_sci",
     "fmt_frac", "fmt_math", "MarkdownStr", "check", "sci_latex",
 })
 
+# Pattern: fmt_percent(..., suffix=...) — fmt_percent does not accept suffix=.
+# This would raise a TypeError at render time.
+FMT_PERCENT_SUFFIX = re.compile(
+    r"\bfmt_percent\([^)]*\bsuffix\s*="
+)
 
 
 @dataclass
@@ -553,6 +558,43 @@ def _audit_missing_fmt_imports(qmd_path: Path) -> list[Violation]:
     return out
 
 
+def _audit_fmt_percent_suffix(qmd_path: Path) -> list[Violation]:
+    """Flag ``fmt_percent(..., suffix=...)`` calls.
+
+    ``fmt_percent()`` does not accept a ``suffix=`` keyword argument — it
+    returns the bare percentage number.  Passing ``suffix=`` raises
+    ``TypeError`` at render time.  Use ``fmt(x * 100, precision=N,
+    suffix=...)`` instead.
+    """
+    out: list[Violation] = []
+    lines = qmd_path.read_text(encoding="utf-8").splitlines()
+    rel = str(qmd_path)
+    in_cell = False
+    for i, line in enumerate(lines, 1):
+        if CELL_START.match(line):
+            in_cell = True
+            continue
+        if in_cell and CELL_END.match(line):
+            in_cell = False
+            continue
+        if not in_cell:
+            continue
+        if FMT_PERCENT_SUFFIX.search(line):
+            out.append(
+                Violation(
+                    file=rel,
+                    line=i,
+                    code="fmt_percent_suffix",
+                    message=(
+                        "fmt_percent() does not accept suffix=; "
+                        "use fmt(x * 100, precision=N, suffix=...) instead"
+                    ),
+                    context=line.strip()[:160],
+                )
+            )
+    return out
+
+
 def audit(paths: list[Path]) -> list[Violation]:
     all_violations: list[Violation] = []
     for p in paths:
@@ -568,6 +610,7 @@ def audit(paths: list[Path]) -> list[Violation]:
             all_violations.extend(_audit_spurious_decimal_precision(f))
             all_violations.extend(_audit_implicit_int_cast_precision_zero(f))
             all_violations.extend(_audit_missing_fmt_imports(f))
+            all_violations.extend(_audit_fmt_percent_suffix(f))
     return all_violations
 
 

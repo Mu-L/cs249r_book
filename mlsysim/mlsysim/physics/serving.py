@@ -10,7 +10,33 @@ from ._units import _ensure_unit
 
 
 def calc_queue_latency_mmc(arrival_rate_hz, service_rate_hz, num_servers):
-    """M/M/c queueing model for inference tail latency (Erlang C)."""
+    """
+    M/M/c queueing model for inference tail latency (Erlang C).
+
+    Calculates the expected queueing delays (P50 and P99) for a system with 
+    Markovian arrivals, Markovian service times, and `c` parallel servers.
+
+    This implementation uses the Log-Sum-Exp trick to calculate the Erlang C 
+    formula. This prevents floating-point overflow (`math.inf`) or underflow 
+    to `0.0` when dealing with large-scale clusters (e.g., c > 100).
+
+    Parameters
+    ----------
+    arrival_rate_hz : Quantity or float
+        The average rate of incoming requests (λ) in requests per second (Hz).
+    service_rate_hz : Quantity or float
+        The average rate at which a single server completes requests (μ) in Hz.
+    num_servers : int
+        The number of active parallel serving replicas (c).
+
+    Returns
+    -------
+    tuple
+        A 3-tuple containing:
+        - rho (float): Server utilization (λ / (c * μ)).
+        - p50_wait (Quantity): The 50th percentile queueing wait time.
+        - p99_wait (Quantity): The 99th percentile queueing wait time.
+    """
     lam = _ensure_unit(arrival_rate_hz, ureg.hertz, "arrival_rate_hz").magnitude
     mu = _ensure_unit(service_rate_hz, ureg.hertz, "service_rate_hz").magnitude
     c = max(1, int(num_servers))

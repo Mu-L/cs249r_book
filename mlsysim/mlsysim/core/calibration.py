@@ -54,6 +54,10 @@ PRUNING_STEEP_EXPONENT = 2.0
 CHECKPOINT_BYTES_PER_PARAM_ADAM = 14
 CHECKPOINT_BYTES_PER_PARAM_SGD = 4
 
+# TrainingMemoryModel: optimizer state (weights accounted separately in memory model)
+TRAINING_OPTIMIZER_BYTES_ADAM = 12.0  # FP32 master + first/second moments
+TRAINING_OPTIMIZER_BYTES_SGD = 4.0    # FP32 master
+
 # Fallback bandwidths for undefined hardware attributes
 FALLBACK_STORAGE_BANDWIDTH_GB_S = 1.0
 FALLBACK_INTERCONNECT_BANDWIDTH_GB_S = 100.0

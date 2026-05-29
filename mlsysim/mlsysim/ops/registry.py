@@ -5,4 +5,5 @@ from .monitoring import Monitoring
 
 
 class Ops(Registry):
+    """Registry namespace for Ops."""
     Monitoring = Monitoring

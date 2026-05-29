@@ -3,11 +3,16 @@ from ..core.registry import Registry
 from ..core.provenance import Provenance, ProvenanceKind
 from ..core import provenance_catalog as pc
 from ..core.constants import (
-    GB, GiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
+    GB, GiB, KiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
     LATENCY_NVLINK,
 )
 
 _H100_L2_CACHE = 50 * MB
+# H100 (SXM5) microarchitecture: 132 SMs, 256 KiB register file/SM, 228 KiB
+# configurable shared memory/SM (NVIDIA H100 whitepaper / GH100 architecture).
+_H100_SM_COUNT = 132
+_H100_REGISTER_FILE_PER_SM = 256 * KiB
+_H100_SHARED_MEMORY_PER_SM = 228 * KiB
 _TPUV5P_L2_SRAM = 100 * MB
 _SGX_EPC_CAPACITY = 128 * MB
 _SGX_BASE_LATENCY = 5 * ms
@@ -61,11 +66,13 @@ class CloudHardware(Registry):
     H100 = HardwareNode(
         name="NVIDIA H100",
         release_year=2022,
-        compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS, "fp32_cuda": 67 * TFLOPs / second}),
+        compute=ComputeCore(peak_flops=989 * TFLOPs / second, precision_flops={"tf32": 494 * TFLOPs / second, "fp8": 1979 * TFLOPs / second, "int8": 1979 * TOPS, "fp32_cuda": 67 * TFLOPs / second}, sm_count=_H100_SM_COUNT),
         memory=MemoryHierarchy(
             capacity=80 * GiB,
             bandwidth=3.35 * TB / second,
             l2_cache=_H100_L2_CACHE,
+            register_file_per_sm=_H100_REGISTER_FILE_PER_SM,
+            shared_memory_per_sm=_H100_SHARED_MEMORY_PER_SM,
         ),
         storage=StorageHierarchy(capacity=2 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
@@ -113,7 +120,7 @@ class CloudHardware(Registry):
             "provenance": Provenance(
                 id="prov:nvidia-b200-datasheet",
                 kind=ProvenanceKind.DATASHEET,
-                ref="NVIDIA Blackwell product documentation",
+                ref="NVIDIA Blackwell product documentation (Dense numbers)",
                 url="https://www.nvidia.com/en-us/data-center/blackwell/",
                 verified="2025-03-06",
             ),
@@ -129,7 +136,7 @@ class CloudHardware(Registry):
                 "fp16": 162 * PFLOPs / second,
                 "bf16": 162 * PFLOPs / second,
                 "fp8": 324 * PFLOPs / second,
-                "fp4": 720 * PFLOPs / second,
+                "fp4": 648 * PFLOPs / second,
             },
         ),
         memory=MemoryHierarchy(capacity=13.8 * TB, bandwidth=576 * TB / second),
@@ -501,6 +508,7 @@ class TinyHardware(Registry):
     )
 
 class Hardware(Registry):
+    """Registry namespace for Hardware."""
     Cloud = CloudHardware
     Workstation = WorkstationHardware
     Mobile = MobileHardware

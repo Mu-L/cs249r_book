@@ -11,6 +11,7 @@ from ..hardware.types import HardwareNode, Quantity
 __all__ = ["PerformanceProfile", "Engine"]
 
 class PerformanceProfile(BaseModel):
+    """The resulting performance metrics bounded by hardware limits."""
     model_config = ConfigDict(arbitrary_types_allowed=True)
     latency: Quantity
     latency_compute: Quantity

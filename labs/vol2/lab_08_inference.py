@@ -16,7 +16,7 @@ app = marimo.App(width="full")
 #
 # Tabbed Structure (35-40 minutes):
 #   Part A — The Serving Cost Inversion (12-15 min)
-#             Serving cost > training cost within ~6 weeks at 100 QPS.
+#             Serving cost > training cost within ~3-4 weeks at 100 QPS.
 #             Batching trades latency for throughput along a hockey stick.
 #
 #   Part B — The KV Cache Wall + Fleet Design Challenge (20-25 min)
@@ -43,11 +43,16 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    _labs_dir = Path(__file__).resolve().parents[1]
-    if str(_labs_dir) not in sys.path:
-        sys.path.insert(0, str(_labs_dir))
-    from bootstrap import setup_lab
-    await setup_lab(__file__)
+    if sys.platform == "emscripten":
+        import micropip
+        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
+        await micropip.install("../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False)
+    else:
+        _labs_dir = Path(__file__).resolve().parents[1]
+        if str(_labs_dir) not in sys.path:
+            sys.path.insert(0, str(_labs_dir))
+        from bootstrap import native_bootstrap
+        native_bootstrap(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
@@ -194,7 +199,7 @@ def _(mo):
         options={
             "A) 6 months -- training dominates for a long time": "A",
             "B) 3 months -- serving catches up gradually": "B",
-            "C) ~6 weeks -- serving cost grows fast": "C",
+            "C) ~3-4 weeks -- serving cost grows fast": "C",
             "D) Never -- training is always more expensive": "D",
         },
         label="You spent $2M training a 70B LLM. At 100 QPS and $0.01/query, when does cumulative serving cost exceed training cost?",

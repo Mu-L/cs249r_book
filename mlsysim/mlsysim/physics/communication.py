@@ -11,7 +11,30 @@ from ._units import _ensure_unit
 
 
 def calc_ring_allreduce_time(message_bytes, n_gpus, bandwidth_bytes_s, latency_s):
-    """Ring AllReduce: T = 2(N-1)/N × M/β + 2(N-1) × α."""
+    """
+    Calculates communication time for a Ring AllReduce collective.
+
+    The Ring AllReduce algorithm operates in two phases (Reduce-Scatter and
+    All-Gather). Each phase takes (N-1) steps. At each step, a chunk of size
+    M/N is transmitted. Therefore, the total volume transmitted by any single 
+    node is 2*(N-1)/N * M.
+
+    Parameters
+    ----------
+    message_bytes : Quantity
+        Total message size (M) to be reduced (e.g., model gradients).
+    n_gpus : int
+        Number of participating GPUs (N) in the ring.
+    bandwidth_bytes_s : Quantity
+        Link bandwidth between nodes in the ring (β).
+    latency_s : Quantity
+        Per-hop network latency (α).
+
+    Returns
+    -------
+    Quantity
+        Total time required for the collective operation in seconds.
+    """
     validate_at_least(n_gpus, 1, "n_gpus")
     if n_gpus == 1:
         return Q_("0 second")
@@ -26,7 +49,28 @@ def calc_ring_allreduce_time(message_bytes, n_gpus, bandwidth_bytes_s, latency_s
 
 
 def calc_tree_allreduce_time(message_bytes, n_gpus, bandwidth_bytes_s, latency_s):
-    """Tree AllReduce: T = 2 log₂(N) × M/β + 2 log₂(N) × α."""
+    """
+    Calculates communication time for a Tree AllReduce collective.
+
+    Tree AllReduce operates in O(log N) steps. It is often used in hierarchical
+    topologies where latency dominates over bandwidth.
+
+    Parameters
+    ----------
+    message_bytes : Quantity
+        Total message size (M) to be reduced.
+    n_gpus : int
+        Number of participating GPUs (N) in the tree.
+    bandwidth_bytes_s : Quantity
+        Link bandwidth between nodes (β).
+    latency_s : Quantity
+        Per-hop network latency (α).
+
+    Returns
+    -------
+    Quantity
+        Total time required for the collective operation in seconds.
+    """
     validate_at_least(n_gpus, 1, "n_gpus")
     if n_gpus == 1:
         return Q_("0 second")
@@ -41,7 +85,28 @@ def calc_tree_allreduce_time(message_bytes, n_gpus, bandwidth_bytes_s, latency_s
 
 
 def calc_all_to_all_time(message_bytes, n_gpus, bandwidth_bytes_s, latency_s):
-    """All-to-All: T = (N-1)/N × M/β + (N-1) × α."""
+    """
+    Calculates communication time for an All-to-All collective.
+
+    In an All-to-All operation (used heavily in Mixture of Experts routing), 
+    every node sends a distinct message to every other node.
+
+    Parameters
+    ----------
+    message_bytes : Quantity
+        Total message size (M) transmitted by a single node.
+    n_gpus : int
+        Number of participating GPUs (N).
+    bandwidth_bytes_s : Quantity
+        Link bandwidth between nodes (β).
+    latency_s : Quantity
+        Per-hop network latency (α).
+
+    Returns
+    -------
+    Quantity
+        Total time required for the collective operation in seconds.
+    """
     validate_at_least(n_gpus, 1, "n_gpus")
     msg = _ensure_unit(message_bytes, ureg.byte, "message_bytes")
     bw = _ensure_unit(bandwidth_bytes_s, ureg.byte / ureg.second, "bandwidth_bytes_s")
@@ -61,7 +126,38 @@ def calc_hierarchical_allreduce_time(
     intra_node_lat=Q_("500 ns"),
     inter_node_lat=Q_("5 us"),
 ):
-    """Hierarchical AllReduce (intra-node NVLink + inter-node IB)."""
+    """
+    Calculates communication time for a Hierarchical AllReduce collective.
+
+    This models the standard topology of modern GPU clusters (e.g., NVLink 
+    within a node, InfiniBand across nodes). It operates in three phases:
+    1. Reduce-Scatter locally within each node (using fast intra-node BW).
+    2. AllReduce the smaller, partially reduced chunks globally across nodes 
+       (using slower inter-node BW).
+    3. AllGather the fully reduced chunks locally within each node.
+
+    Parameters
+    ----------
+    message_bytes : Quantity
+        Total message size (M) to be reduced.
+    n_nodes : int
+        Number of physical server nodes.
+    gpus_per_node : int
+        Number of accelerators per node.
+    intra_node_bw : Quantity
+        Bandwidth between GPUs on the same node (e.g., NVLink).
+    inter_node_bw : Quantity
+        Bandwidth between nodes (e.g., InfiniBand / Ethernet).
+    intra_node_lat : Quantity, optional
+        Latency within the node. Defaults to 500 ns.
+    inter_node_lat : Quantity, optional
+        Latency across nodes. Defaults to 5 us.
+
+    Returns
+    -------
+    Quantity
+        Total time required for the hierarchical operation in seconds.
+    """
     t_reduce = calc_ring_allreduce_time(
         message_bytes, gpus_per_node, intra_node_bw, intra_node_lat
     )

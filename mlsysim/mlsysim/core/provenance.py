@@ -33,6 +33,12 @@ class Provenance(BaseModel):
 
     @model_validator(mode="after")
     def _validate_kind_rules(self) -> Provenance:
+        """
+        Enforces validation rules based on the ProvenanceKind.
+        
+        Requires URLs for datasheets, and notes for estimates and derived values,
+        ensuring proper traceability and justification for textbook numbers.
+        """
         if self.kind == ProvenanceKind.DATASHEET and not self.url:
             raise ValueError(f"datasheet provenance requires url: {self.ref!r}")
         if self.kind == ProvenanceKind.ESTIMATE and not self.notes:
@@ -64,17 +70,26 @@ class Sourced(float):
 
     @property
     def source(self) -> str:
+        """Returns the reference string of the provenance source."""
         return self.provenance.ref
 
     @property
     def url(self) -> Optional[str]:
+        """Returns the URL of the provenance source, if any."""
         return self.provenance.url
 
     @property
     def value(self) -> float:
+        """Returns the underlying float value of the sourced scalar."""
         return float(self)
 
     def render_markdown(self) -> str:
+        """
+        Renders a Markdown representation of the sourced scalar.
+        
+        This includes the value, description, provenance kind, source reference, 
+        and URL. It is used primarily by CLI commands to inspect values.
+        """
         lines = [
             f"**Assumption: {self.name}** = `{float(self)}`",
             "",

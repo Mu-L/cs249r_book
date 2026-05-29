@@ -62,13 +62,11 @@ from mlsysim.core.constants import *
 # │ Imports: mlsysim.registry, mlsysim.constants, mlsysim.book
 # │ Exports: (none)
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt_int, fmt, fmt_sci, check
+from mlsysim.fmt import fmt_int, fmt, check
 ```
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: fleet-setup
 from mlsysim.fmt import fmt, check, MarkdownStr
 ```
@@ -84,8 +82,6 @@ In the Fleet Stack shown in @fig-fleet-stack, orchestration operates at the Dist
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: cluster-economics-context
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ CLUSTER ECONOMICS CONTEXT (LEGO)
@@ -115,8 +111,8 @@ class ClusterEconomicsContext:
     idle_fraction = 0.30
     util_low = 0.50
     util_high = 0.80
-    a100_mem = Hardware.Cloud.A100.memory_capacity
-    h100_mem = Hardware.Cloud.H100.memory_capacity
+    a100_mem = Hardware.Cloud.A100.memory.capacity
+    h100_mem = Hardware.Cloud.H100.memory.capacity
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     daily_cost = cluster_size * gpu_hour_cost_usd * HOURS_PER_DAY
@@ -142,21 +138,19 @@ class ClusterEconomicsContext:
     annual_waste_str = fmt(annual_waste_m, precision=1, commas=False)
     productive_gpu_gain_str = fmt(productive_gpu_gain, precision=0)
     raw_gpu_equivalent_gain_str = fmt(raw_gpu_equivalent_gain, precision=0)
-    a100_mem_str = fmt(a100_mem.m_as(GiB), precision=0, commas=False)
-    h100_mem_str = fmt(h100_mem.m_as(GiB), precision=0, commas=False)
+    a100_mem_str = fmt(a100_mem.m_as(GiB), precision=0, commas=False, suffix=' GB')
+    h100_mem_str = fmt(h100_mem.m_as(GiB), precision=0, commas=False, suffix=' GB')
 ```
 
 To make the scheduling problem concrete, consider a research organization operating a `{python} ClusterEconomicsContext.cluster_size_str`-GPU cluster. @brown2020language report that training GPT-3 175B used 3.14$\times 10^{23}$ floating-point operations on a V100 GPU cluster. Imagine 100 frontier-scale training jobs of that class queued, alongside thousands of smaller experiments and inference workloads all competing for the same resources. The system must decide which jobs run, when they run, and where they run. A naive first-come-first-served policy would let the first few large jobs monopolize the cluster for weeks, starving smaller experiments that researchers need to iterate quickly. A strict fair-share policy would fragment GPUs across many small allocations, preventing any large job from assembling the contiguous allocation it needs. Neither extreme works. The scheduler must navigate a multi-dimensional trade-off space where every decision affects throughput, fairness, cost, and researcher productivity simultaneously.
 
-The economic stakes make these decisions consequential at every scale. A `{python} ClusterEconomicsContext.cluster_size_str`-GPU cluster at \$`{python} ClusterEconomicsContext.gpu_hour_cost_str` per GPU-hour costs \$`{python} ClusterEconomicsContext.daily_cost_str` per day to operate, whether the GPUs are computing useful work or sitting idle in a queue. If scheduling inefficiencies leave `{python} ClusterEconomicsContext.idle_pct_str` percent of GPUs idle, that translates to \$`{python} ClusterEconomicsContext.daily_waste_str` per day in wasted capacity, or about \$`{python} ClusterEconomicsContext.annual_waste_str` million annually. Conversely, improving utilization from `{python} ClusterEconomicsContext.util_low_pct_str` percent to `{python} ClusterEconomicsContext.util_high_pct_str` percent adds `{python} ClusterEconomicsContext.productive_gpu_gain_str` fully utilized GPU-equivalents of productive capacity without purchasing additional hardware. That gain is equivalent to buying `{python} ClusterEconomicsContext.raw_gpu_equivalent_gain_str` raw GPUs if they ran at the old `{python} ClusterEconomicsContext.util_low_pct_str` percent utilization. At this scale, a 1 percentage-point improvement in utilization is worth more annually than the salary of the engineer who achieves it. *Scheduling is not operational overhead; it is one of the highest-leverage engineering investments in ML infrastructure.*
+The economic stakes make these decisions consequential at every scale. A `{python} ClusterEconomicsContext.cluster_size_str`-GPU cluster at \$`{python} ClusterEconomicsContext.gpu_hour_cost_str` per GPU-hour costs \$`{python} ClusterEconomicsContext.daily_cost_str` per day to operate, whether the GPUs are computing useful work or sitting idle in a queue. If scheduling inefficiencies leave `{python} ClusterEconomicsContext.idle_pct_str` of GPUs idle, that translates to \$`{python} ClusterEconomicsContext.daily_waste_str` per day in wasted capacity, or about \$`{python} ClusterEconomicsContext.annual_waste_str` million annually. Conversely, improving utilization from `{python} ClusterEconomicsContext.util_low_pct_str` to `{python} ClusterEconomicsContext.util_high_pct_str` adds `{python} ClusterEconomicsContext.productive_gpu_gain_str` fully utilized GPU-equivalents of productive capacity without purchasing additional hardware. That gain is equivalent to buying `{python} ClusterEconomicsContext.raw_gpu_equivalent_gain_str` raw GPUs if they ran at the old `{python} ClusterEconomicsContext.util_low_pct_str` utilization. At this scale, a 1 percentage-point improvement in utilization is worth more annually than the salary of the engineer who achieves it. *Scheduling is not operational overhead; it is one of the highest-leverage engineering investments in ML infrastructure.*
 
 ML workloads present scheduling challenges that distinguish them fundamentally from traditional high-performance computing and cloud computing. **Gang scheduling**[^fn-gang-scheduling] represents the most critical difference: a distributed training job requiring 1,024 GPUs *cannot* make progress with only 512. Unlike traditional HPC simulations that can often scale to whatever resources are available, synchronous data parallelism demands all-or-nothing allocation. Every worker must participate in every AllReduce operation, and a missing worker blocks all others. A scheduler that partially allocates resources creates deadlocks where multiple jobs each hold some GPUs while waiting for more, with none able to proceed. This all-or-nothing requirement means the scheduler cannot simply "pack jobs tightly" as a traditional bin packer would; it must reason about atomic, multi-resource allocations across the entire cluster.
 
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: gang-scheduling-deadlock-notebook
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ GANG SCHEDULING DEADLOCK (NOTEBOOK)
@@ -195,16 +189,16 @@ class GangSchedulingDeadlock:
 
 ::: {#nbk-fleet-orchestration-physics-deadlock .callout-notebook title="The physics of deadlock"}
 
-**Problem**: A `{python} GangSchedulingDeadlock.gs_n_gpus_str`-GPU cluster receives two frontier training jobs from separate teams, each requiring the full cluster. A naive non-gang scheduler allocates `{python} GangSchedulingDeadlock.gs_partial_gpus_str` GPUs to Team A and `{python} GangSchedulingDeadlock.gs_partial_gpus_str` to Team B, then waits for more GPUs to become available. What is the steady-state outcome?
+**Problem**: A `{python} GangSchedulingDeadlock.gs_n_gpus_str`-GPU cluster receives two frontier training jobs from separate teams, each requiring the full cluster. A naive non-gang scheduler allocates `{python} GangSchedulingDeadlock.gs_partial_gpus_str` to Team A and `{python} GangSchedulingDeadlock.gs_partial_gpus_str` to Team B, then waits for more GPUs to become available. What is the steady-state outcome?
 
 **Math**:
 
-1. **Team A Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = **0 percent**.
-2. **Team B Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = **0 percent**.
-3. **Cluster Status**: `{python} GangSchedulingDeadlock.gs_n_gpus_str` GPUs allocated, 0 samples processed.
+1. **Team A Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = 0 percent.
+2. **Team B Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = 0 percent.
+3. **Cluster Status**: `{python} GangSchedulingDeadlock.gs_n_gpus_str` allocated, 0 samples processed.
 4. **Waste**: `{python} GangSchedulingDeadlock.gs_waste_m_str` dollars per hour in idle electricity and capital.
 
-**Systems insight**: This is a **Circular Dependency**\index{Deadlock!circular dependency}: Team A is waiting for Team B's GPUs, and Team B is waiting for Team A's. Without **Gang Scheduling** (all-or-nothing allocation), cluster efficiency drops to zero. In a large fleet, even a 5-minute deadlock can cost thousands of dollars. Schedulers like Kubernetes (via Coscheduling plugins) and Slurm enforce atomicity to ensure that if a job cannot run in full, it does not run at all.
+**Systems insight**: This is a circular dependency\index{Deadlock!circular dependency}: Team A is waiting for Team B's GPUs, and Team B is waiting for Team A's. Without gang scheduling (all-or-nothing allocation), cluster efficiency drops to zero. In a large fleet, even a 5-minute deadlock can cost thousands of dollars. Schedulers like Kubernetes (via Coscheduling plugins) and Slurm enforce atomicity to ensure that if a job cannot run in full, it does not run at all.
 
 :::
 
@@ -212,7 +206,7 @@ Beyond gang scheduling, topology awareness via **placement groups**[^fn-placemen
 
 [^fn-gang-scheduling]: **Gang Scheduling**: Formalized by @ousterhout1982scheduling for parallel systems, where the "Ousterhout matrix" co-schedules related threads across processors in synchronized time slices. In ML clusters, the constraint is stricter: synchronous AllReduce requires all workers simultaneously, so partial allocation wastes 100 percent of held resources rather than merely degrading throughput. A 1,024-GPU job holding 900 GPUs while waiting for 124 more burns approximately \$1,800/hour in idle capacity [@burns2016]. \index{Gang Scheduling!definition}
 
-GPU heterogeneity adds a second challenging dimension. Modern clusters contain mixtures of A100 and H100 accelerators with different memory capacities (`{python} ClusterEconomicsContext.a100_mem_str` GB vs. `{python} ClusterEconomicsContext.h100_mem_str` GB), compute throughput, and interconnect bandwidth. An H100 provides roughly twice the training throughput of an A100 for transformer workloads but costs proportionally more. Some models fit in A100 memory with appropriate parallelism strategies; others require the larger H100 memory to avoid excessive model sharding. The scheduler must match workloads to appropriate hardware based on actual requirements, not user preferences, while maintaining high utilization across heterogeneous pools. When users request specific GPU types out of habit rather than necessity, the mismatch between requested and required resources can leave entire hardware pools idle while queues overflow on preferred hardware.
+GPU heterogeneity adds a second challenging dimension. Modern clusters contain mixtures of A100 and H100 accelerators with different memory capacities (`{python} ClusterEconomicsContext.a100_mem_str` vs. `{python} ClusterEconomicsContext.h100_mem_str`), compute throughput, and interconnect bandwidth. An H100 provides roughly twice the training throughput of an A100 for transformer workloads but costs proportionally more. Some models fit in A100 memory with appropriate parallelism strategies; others require the larger H100 memory to avoid excessive model sharding. The scheduler must match workloads to appropriate hardware based on actual requirements, not user preferences, while maintaining high utilization across heterogeneous pools. When users request specific GPU types out of habit rather than necessity, the mismatch between requested and required resources can leave entire hardware pools idle while queues overflow on preferred hardware.
 
 Job duration unpredictability compounds these challenges further. A training run may converge early and complete in days rather than weeks. Hardware failures may abort jobs unexpectedly, returning resources at unpredictable times. Hyperparameter searches may reveal early that certain configurations will not succeed, leading to voluntary termination. Traditional scientific computing workloads, such as weather simulations or molecular dynamics, have more predictable runtimes that enable better scheduling decisions: the scheduler can project when resources will become available and plan accordingly. ML workloads deny this luxury, forcing schedulers to operate with deep uncertainty about when current jobs will release resources.
 
@@ -266,8 +260,6 @@ Consider a 64-GPU scheduling run for our 175B model. From a throughput perspecti
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-queuing-theory
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ QUEUING THEORY (LEGO)
@@ -310,7 +302,7 @@ Here, $\rho = \lambda_{\text{job}}/\mu$ represents cluster utilization, $1/\mu$ 
 
 In standard web serving, request service times are well approximated by an exponential distribution, yielding $C_s \approx 1$. In ML clusters, job durations follow a heavy-tailed distribution: a vast number of short debugging jobs (minutes) mixed with a few massive training runs (weeks). This extreme variance typically yields $C_s$ values between 3 and 5. The impact on wait times is multiplicative.
 
-At `{python} QueuingTheory.rho_pct_str` percent utilization $(\rho = 0.8)$: with an exponential workload $(C_s = 1)$, $W_q =$ `{python} QueuingTheory.wq_uniform_str` $\times$ the average job duration. With a typical ML workload $(C_s = 3)$, $W_q =$ `{python} QueuingTheory.wq_ml_str` $\times$ the average job duration. This explains the "utilization wall" in ML infrastructure. A web server cluster feels responsive at `{python} QueuingTheory.rho_pct_str` percent load, but an ML cluster at the same utilization feels broken, with jobs languishing in the queue for days. The heavy tail of the service distribution acts as a latency multiplier, forcing operators to run ML clusters at lower utilization (often 60 to 70 percent) to maintain acceptable responsiveness for interactive users.
+At `{python} QueuingTheory.rho_pct_str` utilization $(\rho = 0.8)$: with an exponential workload $(C_s = 1)$, $W_q =$ `{python} QueuingTheory.wq_uniform_str` $\times$ the average job duration. With a typical ML workload $(C_s = 3)$, $W_q =$ `{python} QueuingTheory.wq_ml_str` $\times$ the average job duration. This explains the "utilization wall" in ML infrastructure. A web server cluster feels responsive at `{python} QueuingTheory.rho_pct_str` load, but an ML cluster at the same utilization feels broken, with jobs languishing in the queue for days. The heavy tail of the service distribution acts as a latency multiplier, forcing operators to run ML clusters at lower utilization (often 60 to 70 percent) to maintain acceptable responsiveness for interactive users.
 
 :::
 
@@ -326,7 +318,6 @@ The most fundamental scheduling algorithm is **bin packing**[^fn-bin-packing-sch
 # │ Context: Bin packing — fragmentation and NVLink locality.
 # │ Exports: FleetFragmentation.total_gpus_str, effective_capacity_pct_str,
 # │          nvlink_h100_str, ib_ndr_gbs_str
-from mlsysim.core.constants import *
 class FleetFragmentation:
     from mlsysim import Hardware
     h_h100 = Hardware.Cloud.H100
@@ -337,19 +328,19 @@ class FleetFragmentation:
     job_request = 6
     wasted_per_node = gpus_per_node - job_request
     frag_pct = (wasted_per_node / gpus_per_node) * 100
-    nvlink_h100_val = h_h100.memory_bw.m_as(GB/second)
+    nvlink_h100_val = h_h100.nvlink.bandwidth.m_as(GB/second)
     ib_ndr_gbs_val = ib_ndr.bandwidth.m_as(GB/second)
     total_gpus_str = fmt(total_gpus, precision=0)
     effective_capacity_pct_str = fmt(100 - frag_pct, precision=0, commas=False)
-    nvlink_h100_str = fmt(nvlink_h100_val, precision=0)
-    ib_ndr_gbs_str = fmt(ib_ndr_gbs_val, precision=0)
+    nvlink_h100_str = fmt(nvlink_h100_val, precision=0, suffix=' GB/s')
+    ib_ndr_gbs_str = fmt(ib_ndr_gbs_val, precision=0, suffix=' GB/s')
 ```
 
-Consider a 64-node cluster with 8 GPUs per node, totaling `{python} FleetFragmentation.total_gpus_str` GPUs. If jobs request 6 GPUs each, each job occupies one full node but wastes 2 GPUs per node, reducing effective capacity to `{python} FleetFragmentation.effective_capacity_pct_str` percent. The remaining 2 GPUs per node cannot be combined across nodes because GPU workloads require local memory access. This **fragmentation** grows worse with heterogeneous job sizes: a mix of 1-GPU, 3-GPU, and 7-GPU jobs creates irregular gaps distributed across many nodes, where no single pending job can fit into any individual gap, yet the total free capacity would be sufficient if the gaps were contiguous.
+Consider a 64-node cluster with 8 GPUs per node, totaling `{python} FleetFragmentation.total_gpus_str`. If jobs request 6 GPUs each, each job occupies one full node but wastes 2 GPUs per node, reducing effective capacity to `{python} FleetFragmentation.effective_capacity_pct_str`. The remaining 2 GPUs per node cannot be combined across nodes because GPU workloads require local memory access. This **fragmentation** grows worse with heterogeneous job sizes: a mix of 1-GPU, 3-GPU, and 7-GPU jobs creates irregular gaps distributed across many nodes, where no single pending job can fit into any individual gap, yet the total free capacity would be sufficient if the gaps were contiguous.
 
 ML workloads make bin packing multi-dimensional in ways that traditional scheduling rarely encounters. Each job requires GPUs together with CPU cores for data preprocessing, host memory for data loading and augmentation pipelines, local SSD storage for dataset caching, and network bandwidth for gradient synchronization. A job requesting 4 GPUs, 32 CPU cores, and 256 GB of RAM may not fit on a node that has 4 free GPUs but only 16 free CPU cores because other jobs have consumed the host CPU for preprocessing. The scheduler must simultaneously satisfy all resource dimensions, and the job fits only if every dimension has sufficient capacity on the selected node. This multi-dimensional constraint dramatically reduces the solution space compared to single-dimensional packing, because a bottleneck in any single resource dimension can strand capacity in all others.
 
-Locality constraints further restrict placement beyond simple resource availability. A training job using tensor parallelism requires GPUs connected via NVLink within the same node, since cross-node communication over InfiniBand is an order of magnitude slower (`{python} FleetFragmentation.nvlink_h100_str` GB/s intra-node vs. `{python} FleetFragmentation.ib_ndr_gbs_str` GB/s inter-node). A job requesting "4 GPUs with NVLink connectivity" cannot use 2 GPUs from node A and 2 from node B, even if all 4 GPUs are individually available and the total capacity is sufficient. These topology constraints transform a packing problem into a placement problem where *which* specific resources matter as much as *how many* resources are available. The placement problem is strictly harder than the packing problem because it adds spatial constraints to the existing capacity constraints.
+Locality constraints further restrict placement beyond simple resource availability. A training job using tensor parallelism requires GPUs connected via NVLink within the same node, since cross-node communication over InfiniBand is an order of magnitude slower (`{python} FleetFragmentation.nvlink_h100_str` intra-node vs. `{python} FleetFragmentation.ib_ndr_gbs_str` inter-node). A job requesting "4 GPUs with NVLink connectivity" cannot use 2 GPUs from node A and 2 from node B, even if all 4 GPUs are individually available and the total capacity is sufficient. These topology constraints transform a packing problem into a placement problem where which specific resources matter as much as how many resources are available. The placement problem is strictly harder than the packing problem because it adds spatial constraints to the existing capacity constraints.
 
 Production schedulers address fragmentation through several complementary strategies, each targeting a different aspect of the problem.
 
@@ -357,14 +348,12 @@ Backfill scheduling allows smaller jobs to fill gaps while larger jobs wait for 
 
 Periodic **defragmentation**\index{Defragmentation} migrates or preempts low-priority jobs to consolidate free resources into contiguous blocks, analogous to memory compaction in operating systems. The scheduler identifies nodes where partial allocations leave stranded resources, preempts the jobs occupying those resources, and re-schedules them on nodes where they can be packed more efficiently. The cost of defragmentation (preempting running work, which wastes compute between the last checkpoint and the preemption event) must be weighed against the benefit (enabling large jobs to start sooner, improving overall throughput). Production systems typically run defragmentation during low-demand periods (late night, weekends) when the impact of preemption is minimal.
 
-A third strategy, **over-subscription**\index{Over-Subscription}, allows more jobs to be admitted than strictly fit, relying on statistical multiplexing to avoid simultaneous peak usage across all resource dimensions. If each job's GPU utilization averages 70 percent (alternating between compute-intensive and data-loading phases), the cluster can support approximately 1.4$\times$ as many jobs as the strict GPU count would allow. Over-subscription works well when resource utilization is genuinely bursty and jobs' peak usage periods are uncorrelated, but can cause severe performance degradation (thrashing, memory pressure, network congestion) when multiple jobs peak simultaneously. The key to safe over-subscription is monitoring actual utilization in real time and throttling admission when contention is detected. @fig-fragmentation-problem shows the combined effect: although 19 GPUs (roughly 30 percent of the cluster) sit idle, no single node has a contiguous block of eight, so a full-node job cannot be placed.
+A third strategy, **over-subscription**\index{Over-Subscription}, allows more jobs to be admitted than strictly fit, relying on statistical multiplexing to avoid simultaneous peak usage across all resource dimensions. If each job's GPU utilization averages 70 percent (alternating between compute-intensive and data-loading phases), the cluster can support approximately 1.4$\times$ as many jobs as the strict GPU count would allow. Over-subscription works well when resource utilization is genuinely bursty and jobs' peak usage periods are uncorrelated, but can cause severe performance degradation (thrashing, memory pressure, network congestion) when multiple jobs peak simultaneously. The key to safe over-subscription is monitoring actual utilization in real time and throttling admission when contention is detected. @Fig-fragmentation-problem shows the combined effect: although 19 GPUs (roughly 30 percent of the cluster) sit idle, no single node has a contiguous block of eight, so a full-node job cannot be placed.
 
 ::: {#fig-fragmentation-problem fig-env="figure" fig-pos="htb" fig-cap="**The Fragmentation Problem**: The heatmap shows a snapshot of an 8-node cluster (rows) with 8 GPUs each (columns). Different colors represent distinct active jobs, while gray slots represent free GPUs. Although 19 GPUs (~30 percent of capacity) are available globally, they are fragmented across nodes. A new job requiring 8 contiguous GPUs (a full node) cannot be scheduled because no single row is completely empty, illustrating how bin-packing inefficiencies reduce effective cluster capacity." fig-alt="8-by-8 heatmap of cluster GPU allocation. Rows are nodes, columns are GPU slots. Colored cells show jobs; gray shows free. Status panel indicates 19 free GPUs but no contiguous block of 8."}
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ FRAGMENTATION PROBLEM (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -465,7 +454,7 @@ fig = plt.gcf()
 
 ### Gang scheduling {#sec-fleet-orchestration-gang-scheduling}
 
-Partial allocation of multi-GPU jobs creates a failure mode unique to ML clusters: two jobs can each hold half the resources they need, blocking each other indefinitely while every allocated GPU sits idle. @fig-gang-scheduling-deadlock contrasts this deadlock scenario with the atomic allocation approach that eliminates it.\index{Atomic Allocation}
+Partial allocation of multi-GPU jobs creates a failure mode unique to ML clusters: two jobs can each hold half the resources they need, blocking each other indefinitely while every allocated GPU sits idle. @Fig-gang-scheduling-deadlock contrasts this deadlock scenario with the atomic allocation approach that eliminates it.\index{Atomic Allocation}
 
 ::: {#fig-gang-scheduling-deadlock fig-env="figure" fig-pos="htb" fig-cap="**The Distributed Deadlock (Hold and Wait)**: In a non-gang scheduler (left), job J1 acquires half the cluster and waits for the rest, while job J2 acquires the other half and waits for J1 to release its GPUs. Neither can proceed, and 100 percent of the cluster sits idle. Gang scheduling (right) solves this by mandating atomic allocation: a job is either granted its entire $N$-GPU requirement simultaneously or it waits in the queue without holding any resources." fig-alt="Two-panel diagram. Left panel shows jobs J1 and J2 each holding half of an 8-GPU pool and waiting for the other half, creating a deadlock. Right panel shows the same jobs running sequentially to completion under gang scheduling."}
 
@@ -491,7 +480,6 @@ A quick cost estimate shows why even modest improvements in this balance justify
 # │ Context: Economics of idle GPUs callout.
 # │ Exports: ClusterEconomicsIdleRecap.cluster_size_str, daily_cost_str, annual_cost_str
 
-from mlsysim.core.constants import *
 class ClusterEconomicsIdleRecap:
     cluster_size = Systems.Clusters.Training_10K.total_accelerators
     gpu_hour_cost_usd = Infrastructure.Pricing.Fleet.GpuHourRef.rate.m_as(USD / hour)
@@ -528,9 +516,9 @@ class ClusterEconomicsIdleRecap:
 The cost of poor scheduling compounds rapidly. Consider a `{python} ClusterEconomicsIdleRecap.cluster_size_str`-GPU cluster:
 
 - **Operating cost**: \$`{python} ClusterEconomicsIdleRecap.daily_cost_str`/day (\$`{python} ClusterEconomicsIdleRecap.annual_cost_str`M/year)
-- **At `{python} ClusterEconomicsIdleRecap.util_low_pct_str` percent utilization**: `{python} ClusterEconomicsIdleRecap.productive_low_str` GPUs productive, `{python} ClusterEconomicsIdleRecap.idle_low_str` idle = \$`{python} ClusterEconomicsIdleRecap.waste_low_str`/day wasted
-- **At `{python} ClusterEconomicsIdleRecap.util_high_pct_str` percent utilization**: `{python} ClusterEconomicsIdleRecap.productive_high_str` GPUs productive, `{python} ClusterEconomicsIdleRecap.idle_high_str` idle = \$`{python} ClusterEconomicsIdleRecap.waste_high_str`/day wasted
-- **Improvement value**: Moving from `{python} ClusterEconomicsIdleRecap.util_low_pct_str` percent to `{python} ClusterEconomicsIdleRecap.util_high_pct_str` percent saves \$`{python} ClusterEconomicsIdleRecap.savings_daily_str`/day, or about \$`{python} ClusterEconomicsIdleRecap.savings_annual_m_str`M/year
+- **At `{python} ClusterEconomicsIdleRecap.util_low_pct_str` utilization**: `{python} ClusterEconomicsIdleRecap.productive_low_str` productive, `{python} ClusterEconomicsIdleRecap.idle_low_str` idle = \$`{python} ClusterEconomicsIdleRecap.waste_low_str`/day wasted
+- **At `{python} ClusterEconomicsIdleRecap.util_high_pct_str` utilization**: `{python} ClusterEconomicsIdleRecap.productive_high_str` productive, `{python} ClusterEconomicsIdleRecap.idle_high_str` idle = \$`{python} ClusterEconomicsIdleRecap.waste_high_str`/day wasted
+- **Improvement value**: Moving from `{python} ClusterEconomicsIdleRecap.util_low_pct_str` to `{python} ClusterEconomicsIdleRecap.util_high_pct_str` saves \$`{python} ClusterEconomicsIdleRecap.savings_daily_str`/day, or about \$`{python} ClusterEconomicsIdleRecap.savings_annual_m_str`M/year
 
 This savings exceeds the cost of a dedicated scheduling engineering team by orders of magnitude. Every percentage point of utilization improvement on a large cluster translates to millions of dollars annually.
 
@@ -601,7 +589,7 @@ As @tbl-fleet-orchestration-slurm-partitions shows, GPU allocation strategies si
 
 The interaction between GPU allocation and node selection creates subtleties that affect both performance and utilization. A job requesting `--gpus=16 --gpus-per-node=8` will always receive exactly 2 complete nodes, ensuring all 8 GPUs within each node communicate via NVLink. The same job requesting `--gpus=16` without the per-node constraint might receive GPUs spread across 3 or 4 partially occupied nodes, degrading intra-node communication performance. For training jobs using tensor parallelism, the per-node constraint is essential; for data-parallel jobs that communicate only through AllReduce, the flexibility of unconstrained placement improves the scheduler's ability to find valid allocations and reduces fragmentation.
 
-The **fair-share scheduling** mechanism prevents any single user or project from monopolizing resources over time. The core insight is that past usage should affect future priority: heavy users should yield to lighter users when the cluster is contended. @eq-fleet-orchestration-fair-share captures this heuristic as an effective priority:
+The **fair-share scheduling** mechanism prevents any single user or project from monopolizing resources over time. The core insight is that past usage should affect future priority: heavy users should yield to lighter users when the cluster is contended. @Eq-fleet-orchestration-fair-share captures this heuristic as an effective priority:
 
 $$\text{Priority}_{\text{effective}} = \text{Priority}_{\text{base}} \times \frac{F_{\text{target}}}{F_{\text{actual}} + \epsilon}$$ {#eq-fleet-orchestration-fair-share}
 
@@ -637,7 +625,7 @@ Kubernetes' control loop architecture is built on the **controller pattern**[^fn
 
 [^fn-controller-k8s]: **Controller Pattern (Reconciliation Loop)**: A "level-triggered" design where the controller continuously compares desired state to actual state, as opposed to "edge-triggered" systems that react to individual events. The distinction matters for ML clusters: if a controller crashes and restarts, it re-reads current state and self-heals without needing an event log. The trade-off is that emergent interactions between multiple independent controllers can create unexpected scheduling behaviors that are difficult to debug sequentially. \index{Controller Pattern!Kubernetes}
 
-Native Kubernetes\index{Kubernetes!gpu allocation} lacks ML-aware scheduling, but a growing ecosystem of extensions addresses this gap. GPU scheduling relies on **device plugins**\index{Device Plugin} that expose accelerators as schedulable extended resources. The NVIDIA device plugin registers GPUs with the kubelet (the node-level agent), enabling pod specifications that request GPU resources declaratively through the standard Kubernetes resource model. @lst-fleet-orchestration-k8s-gpu shows the resulting pod fragment:
+Native Kubernetes\index{Kubernetes!gpu allocation} lacks ML-aware scheduling, but a growing ecosystem of extensions addresses this gap. GPU scheduling relies on **device plugins**\index{Device Plugin} that expose accelerators as schedulable extended resources. The NVIDIA device plugin registers GPUs with the kubelet (the node-level agent), enabling pod specifications that request GPU resources declaratively through the standard Kubernetes resource model. @Lst-fleet-orchestration-k8s-gpu shows the resulting pod fragment:
 
 ::: {#lst-fleet-orchestration-k8s-gpu lst-cap="**Kubernetes GPU Allocation**: Pod resource specification requesting GPUs through the NVIDIA device plugin. The `nvidia.com/gpu` resource name follows Kubernetes extended resource conventions, where the domain prefix identifies the device plugin vendor. This declarative syntax enables portable GPU workload definitions across any Kubernetes cluster with the NVIDIA device plugin installed."}
 
@@ -660,15 +648,14 @@ This binary allocation model creates a significant inefficiency for inference wo
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Context: MIG partitioning — A100/H100 memory capacities.
 # │ Exports: ClusterEconomicsMigRecap.a100_mem_str, h100_mem_str
-from mlsysim.core.constants import *
 class ClusterEconomicsMigRecap:
     from mlsysim import Hardware
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    a100_mem_str = fmt(Hardware.Cloud.A100.memory_capacity.m_as(GiB), precision=0, commas=False)
-    h100_mem_str = fmt(Hardware.Cloud.H100.memory_capacity.m_as(GiB), precision=0, commas=False)
+    a100_mem_str = fmt(Hardware.Cloud.A100.memory.capacity.m_as(GiB), precision=0, commas=False, suffix=' GB')
+    h100_mem_str = fmt(Hardware.Cloud.H100.memory.capacity.m_as(GiB), precision=0, commas=False)
 ```
 
-**Multi-Instance GPU (MIG)**[^fn-mig-isolation] technology addresses this inefficiency by partitioning A100 and H100 GPUs into hardware-isolated instances. An A100 with `{python} ClusterEconomicsMigRecap.a100_mem_str` GB of memory can be divided into configurations ranging from 7 small instances of approximately 10 GB each to 2 large instances of approximately 40 GB each. Unlike software-based GPU sharing (time-slicing), MIG provides hardware isolation: each instance has dedicated memory, cache, and compute resources, preventing one workload from interfering with another and eliminating the noisy neighbor[^fn-noisy-neighbor-etymology] effect. The device plugin exposes MIG instances as separate schedulable resources, allowing the scheduler to treat each instance as an independent GPU for allocation purposes.
+**Multi-Instance GPU (MIG)**[^fn-mig-isolation] technology addresses this inefficiency by partitioning A100 and H100 GPUs into hardware-isolated instances. An A100 with `{python} ClusterEconomicsMigRecap.a100_mem_str` of memory can be divided into configurations ranging from 7 small instances of approximately 10 GB each to 2 large instances of approximately 40 GB each. Unlike software-based GPU sharing (time-slicing), MIG provides hardware isolation: each instance has dedicated memory, cache, and compute resources, preventing one workload from interfering with another and eliminating the noisy neighbor[^fn-noisy-neighbor-etymology] effect. The device plugin exposes MIG instances as separate schedulable resources, allowing the scheduler to treat each instance as an independent GPU for allocation purposes.
 
 [^fn-mig-isolation]: **Multi-Instance GPU (MIG)**: Introduced with the A100 (2020), MIG partitions a single GPU into up to 7 hardware-isolated instances with dedicated memory controllers, L2 cache slices, and compute units. The isolation is enforced at the hardware level, not by time-slicing, eliminating the noisy-neighbor interference that degrades P99 latency by 10 to 20 percent under software sharing. The trade-off is rigidity: partition profiles cannot change without draining all workloads, making MIG poorly suited for clusters with rapidly shifting workload mixes. \index{MIG!GPU isolation}
 
@@ -768,7 +755,7 @@ Before the chapter turns to topology-aware scheduling, review the core trade-off
 
 :::
 
-The scheduling paradigms discussed earlier provide the infrastructure for resource allocation, but they treat GPUs as *interchangeable units* within a partition. The next section examines a critical refinement: how the *physical location* of allocated GPUs within the cluster's network topology affects training performance, and how topology-aware scheduling algorithms exploit this structure.
+The scheduling paradigms discussed earlier provide the infrastructure for resource allocation, but they treat GPUs as interchangeable units within a partition. The next section examines a critical refinement: how the physical location of allocated GPUs within the cluster's network topology affects training performance, and how topology-aware scheduling algorithms exploit this structure.
 
 ## Topology-Aware Scheduling {#sec-fleet-orchestration-topology-aware}
 
@@ -782,41 +769,40 @@ Randomly assigning 64 GPUs across a massive data center cripples a synchronous t
 # │ Context: Topology hierarchy — NVLink and InfiniBand bandwidth.
 # │ Exports: FleetTopologyInterconnect.nvlink_a100_str, nvlink_h100_str,
 # │          ib_ndr_str, ib_ndr_gbs_str
-from mlsysim.core.constants import *
 from mlsysim.fmt import fmt, check
 class FleetTopologyInterconnect:
     from mlsysim import Hardware
     h_h100 = Hardware.Cloud.H100
     h_a100 = Hardware.Cloud.A100
     ib_ndr = Systems.Fabrics.InfiniBand_NDR
-    nvlink_h100_val = h_h100.memory_bw.m_as(GB/second)
-    nvlink_a100_val = h_a100.memory_bw.m_as(GB/second)
+    nvlink_h100_val = h_h100.nvlink.bandwidth.m_as(GB/second)
+    nvlink_a100_val = h_a100.nvlink.bandwidth.m_as(GB/second)
     ib_ndr_gbps_val = ib_ndr.bandwidth.m_as('Gbps')
     ib_ndr_gbs_val = ib_ndr.bandwidth.m_as(GB/second)
     activation_gb = 1
     # ┌── 2. EXECUTE ───────────────────────────────────────
-    nvlink_xfer_ms = activation_gb / nvlink_h100_val * 1000
-    ib_xfer_ms = activation_gb / ib_ndr_gbs_val * 1000
+    nvlink_xfer_ms = activation_gb / nvlink_h100_val * THOUSAND
+    ib_xfer_ms = activation_gb / ib_ndr_gbs_val * THOUSAND
     xfer_slowdown = ib_xfer_ms / nvlink_xfer_ms
     # ┌── 3. GUARD ─────────────────────────────────────────
     check(abs(nvlink_xfer_ms - ib_xfer_ms) > 0, "IB transfer should differ from NVLink")
     check(xfer_slowdown > 1, f"Expected IB slowdown > 1, got {xfer_slowdown}")
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    nvlink_h100_str = fmt(nvlink_h100_val, precision=0)
-    nvlink_a100_str = fmt(nvlink_a100_val, precision=0)
-    ib_ndr_str = fmt(ib_ndr_gbps_val, precision=0)
-    ib_ndr_gbs_str = fmt(ib_ndr_gbs_val, precision=0)
-    activation_gb_str = fmt(activation_gb, precision=0, commas=False)
-    nvlink_xfer_ms_str = fmt(nvlink_xfer_ms, precision=1, commas=False)
-    ib_xfer_ms_str = fmt(ib_xfer_ms, precision=0, commas=False)
+    nvlink_h100_str = fmt(nvlink_h100_val, precision=0, suffix=' GB/s')
+    nvlink_a100_str = fmt(nvlink_a100_val, precision=0, suffix=' GB/s')
+    ib_ndr_str = fmt(ib_ndr_gbps_val, precision=0, suffix=" Gb/s")
+    ib_ndr_gbs_str = fmt(ib_ndr_gbs_val, precision=0, suffix=' GB/s')
+    activation_gb_str = fmt(activation_gb, precision=0, commas=False, suffix=' GB')
+    nvlink_xfer_ms_str = fmt(nvlink_xfer_ms, precision=1, commas=False, suffix=' ms')
+    ib_xfer_ms_str = fmt(ib_xfer_ms, precision=0, commas=False, suffix=' ms')
     xfer_slowdown_str = fmt(xfer_slowdown, precision=0, commas=False)
 ```
 
 Modern GPU clusters exhibit a multi-level communication hierarchy, where bandwidth decreases and latency increases at each level. This hierarchy is not an implementation detail that the scheduler can ignore; it is a physical constraint that directly determines training throughput for communication-intensive workloads. Understanding the hierarchy is essential for making placement decisions that translate allocated resources into useful work.
 
-Within a single node, GPUs communicate via **NVLink**\index{NVLink}, providing `{python} FleetTopologyInterconnect.nvlink_a100_str` GB/s per GPU on A100 systems and `{python} FleetTopologyInterconnect.nvlink_h100_str` GB/s on H100 systems. This high-bandwidth, low-latency interconnect enables efficient tensor parallelism, where matrix operations are split across GPUs that must exchange intermediate results (activations and gradients) at every transformer layer. The NVLink bandwidth is sufficient to overlap communication with computation for most model architectures, meaning tensor parallel operations can proceed at near-ideal throughput when confined to a single node.
+Within a single node, GPUs communicate via **NVLink**\index{NVLink}, providing `{python} FleetTopologyInterconnect.nvlink_a100_str` per GPU on A100 systems and `{python} FleetTopologyInterconnect.nvlink_h100_str` on H100 systems. This high-bandwidth, low-latency interconnect enables efficient tensor parallelism, where matrix operations are split across GPUs that must exchange intermediate results (activations and gradients) at every transformer layer. The NVLink bandwidth is sufficient to overlap communication with computation for most model architectures, meaning tensor parallel operations can proceed at near-ideal throughput when confined to a single node.
 
-Between nodes within the same rack or **leaf switch domain**\index{Leaf Switch Domain}, communication traverses InfiniBand or RoCE at `{python} FleetTopologyInterconnect.ib_ndr_str` Gbps (NDR InfiniBand), roughly `{python} FleetTopologyInterconnect.ib_ndr_gbs_str` GB/s per link. This represents an order of magnitude reduction from NVLink bandwidth. Data parallelism, which requires AllReduce of gradients after each training step, operates efficiently at this level because the gradient synchronization pattern allows overlap between communication and the next iteration's forward pass. The latency penalty is modest (microseconds vs. nanoseconds), and the aggregate bandwidth is sufficient for gradient tensors that are typically smaller than the activation tensors exchanged in tensor parallelism.
+Between nodes within the same rack or **leaf switch domain**\index{Leaf Switch Domain}, communication traverses InfiniBand or RoCE at `{python} FleetTopologyInterconnect.ib_ndr_str` (NDR InfiniBand), roughly `{python} FleetTopologyInterconnect.ib_ndr_gbs_str` per link. This represents an order of magnitude reduction from NVLink bandwidth. Data parallelism, which requires AllReduce of gradients after each training step, operates efficiently at this level because the gradient synchronization pattern allows overlap between communication and the next iteration's forward pass. The latency penalty is modest (microseconds vs. nanoseconds), and the aggregate bandwidth is sufficient for gradient tensors that are typically smaller than the activation tensors exchanged in tensor parallelism.
 
 Between racks connected through **spine switches**\index{Spine Switch}, communication crosses additional switch hops, introducing both higher latency and potentially reduced effective bandwidth due to network congestion. The fat-tree topologies analyzed in @sec-network-fabrics-fat-tree provide full bisection bandwidth in theory, but in practice, congestion from concurrent flows, routing inefficiencies, and switch buffer limitations reduce effective cross-rack bandwidth by 10 to 30 percent compared to intra-rack communication. Cross-rack communication also adds tail latency variability: while median latency may be only slightly higher, P99 latency can spike during congestion events, creating straggler effects in synchronous training where the slowest communicator determines the pace for all workers.
 
@@ -824,7 +810,7 @@ This hierarchy means that a 64-GPU job allocated entirely within a single rack (
 
 The scheduler must therefore model the cluster not as a flat list of compute slots, but as a hierarchical graph with distinct bandwidth cliffs at each level (GPU, Node, Rack, and Pod) corresponding to the NVLink, InfiniBand, and spine-switch boundaries described earlier. Each boundary crossing introduces an order-of-magnitude bandwidth reduction, and at the rack and pod levels, network oversubscription (often 2:1 or 4:1 at the spine switches) further restricts bisection bandwidth beyond what the raw link speed suggests. A topology-aware scheduler explicitly optimizes for these constraints, treating "locality" as a first-class resource. For a distributed training job requiring 1,024 GPUs, a fragmented placement that scatters workers across random racks can degrade training throughput by 30 to 50 percent compared to a compact placement within a single pod.
 
-@fig-topology-placement-paths contrasts optimal and scattered placement for a 4-GPU tensor parallel group, showing how the communication path determines whether GPUs use a single leaf switch or must traverse slower leaf-spine-leaf hops.
+@Fig-topology-placement-paths contrasts optimal and scattered placement for a 4-GPU tensor parallel group, showing how the communication path determines whether GPUs use a single leaf switch or must traverse slower leaf-spine-leaf hops.
 
 ::: {#fig-topology-placement-paths fig-env="figure" fig-pos="htb" fig-cap="**Topology-Unaware vs. Topology-Aware Placement**: A 4-GPU job placed across two racks (left, topology-unaware) must traverse leaf-spine-leaf hops: 3 switch hops per AllReduce message at about 12 GB/s effective bandwidth. The same 4-GPU job packed within one rack (right, topology-aware) uses a single leaf switch: 1 hop at about 50 GB/s, roughly 4x faster. A quantitative summary beneath the figure reports switch-hop counts and effective bandwidth." fig-alt="Two panels. Left (Topology-Unaware): 4-GPU job split across Rack A and Rack B via a Spine Switch with red dashed paths (3 hops, ~12 GB/s). Right (Topology-Aware): same job packed in one rack under Leaf-A (1 hop, ~50 GB/s)."}
 
@@ -842,14 +828,12 @@ $$ S_{\text{locality}} = \sum_{i < j} w(d(g_i, g_j)) $$ {#eq-fleet-orchestration
 
 where $g_i$ and $g_j$ are GPUs assigned to the job, $d(g_i, g_j)$ is their topological distance (0 for same node, 1 for same rack, 2 for different racks), and $w(\cdot)$ is a weighting function that increases with distance. The scheduler minimizes this score when selecting an allocation from the set of feasible placements. The weighting function encodes the performance impact of each topology level: $w(0) = 0$ (same node, NVLink, no penalty), $w(1) = 1$ (same rack, one switch hop), $w(2) = 10$ (different racks, multiple switch hops). The tenfold weight difference between same-rack and cross-rack placements reflects the disproportionate performance impact of crossing spine switches.
 
-More sophisticated algorithms distinguish between parallelism strategies, recognizing that different communication patterns have different bandwidth and latency requirements. Tensor parallelism requires the highest bandwidth and lowest latency because it exchanges activation tensors at every layer; it should be confined to NVLink domains within a single node. Pipeline parallelism tolerates moderate latency because it sends activations between stages less frequently (once per microbatch per stage boundary rather than at every layer); it can span nodes within a rack where InfiniBand provides sufficient bandwidth. Data parallelism, with its bulk gradient synchronization that can overlap with computation, operates efficiently across racks because the communication is less latency-sensitive and can use the available bandwidth effectively. @fig-topology-placement quantifies the impact: topology-aware scheduling can reduce AllReduce latency by 4.8$\times$ compared to random placement.
+More sophisticated algorithms distinguish between parallelism strategies, recognizing that different communication patterns have different bandwidth and latency requirements. Tensor parallelism requires the highest bandwidth and lowest latency because it exchanges activation tensors at every layer; it should be confined to NVLink domains within a single node. Pipeline parallelism tolerates moderate latency because it sends activations between stages less frequently (once per microbatch per stage boundary rather than at every layer); it can span nodes within a rack where InfiniBand provides sufficient bandwidth. Data parallelism, with its bulk gradient synchronization that can overlap with computation, operates efficiently across racks because the communication is less latency-sensitive and can use the available bandwidth effectively. @Fig-topology-placement quantifies the impact: topology-aware scheduling can reduce AllReduce latency by 4.8$\times$ compared to random placement.
 
 ::: {#fig-topology-placement fig-env="figure" fig-pos="htb" fig-cap="**Topology Placement Impact**: Reducing AllReduce latency by 4.8x through topology-aware scheduling (rack/rail optimization) compared to random placement for a 1 GB gradient sync on 64 GPUs." fig-alt="Bar chart comparing AllReduce latency for Random, Rack-Aware, Rail-Optimized, and Topology-Optimal placement. 4.8x speedup from Random to Topology-Optimal."}
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ TOPOLOGY PLACEMENT (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -914,8 +898,6 @@ A **hierarchical placement**\index{Hierarchical Placement} algorithm assigns res
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-topology-placement
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ TOPOLOGY PLACEMENT (LEGO)
@@ -948,11 +930,11 @@ class TopologyPlacement:
 
 The physical location of GPUs on the network switch fabric dramatically impacts collective performance. Consider an AllReduce operation across 64 GPUs: <!-- lego-ok: latencies are input assumptions -->
 
-*   **Random placement**: Spread across many racks $\rightarrow$ Traffic traverses core switches $\rightarrow$ **120 ms** latency.
-*   **Rack-aware**: Confined to a single rack (Top-of-Rack switch) $\rightarrow$ **85 ms**.
-*   **Rail-optimized**: Aligned to specialized "rails" (dedicated standard IB switches) $\rightarrow$ **40 ms**.
-*   **Topology-optimal**: All GPUs on the same leaf switch $\rightarrow$ **25 ms**.
-Proper scheduling yields a **`{python} TopologyPlacement.speedup_str`$\times$ speedup** purely by respecting the network topology, with zero changes to the model code.
+*   **Random placement**: Spread across many racks $\rightarrow$ Traffic traverses core switches $\rightarrow$ 120 ms latency.
+*   **Rack-aware**: Confined to a single rack (Top-of-Rack switch) $\rightarrow$ 85 ms.
+*   **Rail-optimized**: Aligned to specialized "rails" (dedicated standard IB switches) $\rightarrow$ 40 ms.
+*   **Topology-optimal**: All GPUs on the same leaf switch $\rightarrow$ 25 ms.
+Proper scheduling yields a `{python} TopologyPlacement.speedup_str`$\times$ speedup purely by respecting the network topology, with zero changes to the model code.
 
 :::
 
@@ -964,8 +946,8 @@ Consider a 256-GPU training job using 3D parallelism: 8-way tensor parallel, 4-w
 
 **Good placement** (topology-aware):
 
-- Tensor parallel groups: 32 groups of 8 GPUs, each confined to one 8-GPU node (NVLink: `{python} FleetTopologyInterconnect.nvlink_h100_str` GB/s)
-- Pipeline stages: 4 consecutive nodes within the same rack (1 switch hop, InfiniBand: `{python} FleetTopologyInterconnect.ib_ndr_gbs_str` GB/s)
+- Tensor parallel groups: 32 groups of 8 GPUs, each confined to one 8-GPU node (NVLink: `{python} FleetTopologyInterconnect.nvlink_h100_str`)
+- Pipeline stages: 4 consecutive nodes within the same rack (1 switch hop, InfiniBand: `{python} FleetTopologyInterconnect.ib_ndr_gbs_str`)
 - Data parallel replicas: 8 racks (2 switch hops for cross-rack AllReduce)
 
 **Bad placement** (topology-unaware):
@@ -974,7 +956,7 @@ Consider a 256-GPU training job using 3D parallelism: 8-way tensor parallel, 4-w
 - Pipeline stages scattered across racks (2 switch hops instead of 1)
 - Data parallel replicas randomly distributed
 
-The tensor parallel communication alone illustrates the impact. With NVLink at `{python} FleetTopologyInterconnect.nvlink_h100_str` GB/s, a `{python} FleetTopologyInterconnect.activation_gb_str` GB activation transfer takes approximately `{python} FleetTopologyInterconnect.nvlink_xfer_ms_str` ms. Over InfiniBand at `{python} FleetTopologyInterconnect.ib_ndr_gbs_str` GB/s, the same transfer takes approximately `{python} FleetTopologyInterconnect.ib_xfer_ms_str` ms, an `{python} FleetTopologyInterconnect.xfer_slowdown_str`$\times$ slowdown. Since tensor parallelism communicates at every transformer layer (typically 80+ layers for large models), this difference compounds to 15 to 30 percent total training throughput degradation.
+The tensor parallel communication alone illustrates the impact. With NVLink at `{python} FleetTopologyInterconnect.nvlink_h100_str`, a `{python} FleetTopologyInterconnect.activation_gb_str` activation transfer takes approximately `{python} FleetTopologyInterconnect.nvlink_xfer_ms_str`. Over InfiniBand at `{python} FleetTopologyInterconnect.ib_ndr_gbs_str`, the same transfer takes approximately `{python} FleetTopologyInterconnect.ib_xfer_ms_str`, a `{python} FleetTopologyInterconnect.xfer_slowdown_str`$\times$ slowdown. Since tensor parallelism communicates at every transformer layer (typically 80+ layers for large models), this difference compounds to 15 to 30 percent total training throughput degradation.
 
 :::
 
@@ -1010,49 +992,25 @@ Migration is not free; it requires a coordinated checkpoint, a job kill, a resch
 
 The topology-aware use of **taints and tolerations**[^fn-taints-tolerations] discussed here improves performance for allocated jobs by matching logical communication patterns to physical network structure. The complementary problem is how jobs adapt when the resources available to them change dynamically. Rather than treating resource allocation as fixed for a job's lifetime, elastic training allows jobs to grow, shrink, and recover without full restarts.
 
-## Elastic Training {#sec-fleet-orchestration-elastic-training}
+## Elastic Scheduling {#sec-fleet-orchestration-elastic-training}
 
-In that adaptive view, resource allocation becomes a contract that can change during execution.
+@Sec-fault-tolerance-reliability-reliability-elastic-training-4f87 develops the recovery mechanics of elastic training: how a distributed job adjusts its worker count, recalibrates batch size and learning rate, and reconstructs its communication group after a failure. Those mechanisms solve a reliability problem. From the scheduler's perspective, the same capability solves a fundamentally different problem: resource allocation under fluctuating demand.
 
-::: {#dfn-fleet-orchestration-elastic-training .callout-definition title="Elastic training"}
+When cluster demand fluctuates, rigid allocation creates two categories of waste. During off-peak hours, a job running on 256 GPUs cannot absorb idle resources to speed up training. During peak demand, the same job cannot release excess resources to accommodate higher-priority work without being fully preempted. The scheduler's only options are "let it keep all its resources" or "kill it entirely," with nothing in between.
 
-***Elastic Training***\index{Training!elastic, definition} is the capability of a distributed training job to dynamically adjust its worker count during execution without requiring a full restart.
+Elastic scheduling eliminates this binary choice. A training job might start with 128 GPUs (the minimum needed for reasonable throughput), scale up to 256 when resources become available, and scale back to 192 when higher-priority work arrives, all while maintaining continuous training progress. This flexibility transforms the scheduler's action space from a *binary* {continue, preempt} to a *continuous* spectrum of resource allocation levels.
 
-1.  **Significance (quantitative)**: It maximizes the system duty cycle by allowing training to continue through node failures and by absorbing idle capacity in the cluster. It requires Learning Rate Recalibration and gradient accumulation adjustment to maintain mathematical consistency as the global batch size changes.
-2.  **Distinction (durable)**: Unlike Standard Fault Tolerance (which relies on checkpoint-restart), Elastic Training is Always-Live\index{Always-Live}: the optimization loop never stops, it only changes its parallel width.
-3.  **Common pitfall**: A frequent misconception is that elasticity is "automatic." In reality, it is a Distributed Coordination Problem\index{Distributed Coordination Problem}: the training framework, the data loader, and the orchestrator must all synchronize their state to ensure that no data samples are lost or double-counted during worker scaling.
+### The scheduler-framework contract {#sec-fleet-orchestration-elastic-contract}
 
-:::
+Elastic scheduling requires a well-defined contract between the scheduler and the training framework. The scheduler guarantees that resource changes are communicated through defined signals, with sufficient advance notice for graceful adaptation. The framework guarantees that it can handle resource changes without corrupting model state, using the batch size adjustment, learning rate recalibration, and communication group reconstruction mechanisms developed in @sec-fault-tolerance-reliability-reliability-elastic-training-mechanisms-49b1.
 
-Consider what happens when a top-of-rack switch fails, taking out 8 GPUs from a 1,024-GPU training run. Under traditional rigid scheduling, the entire job crashes and must wait for 8 new GPUs to become available. Elastic training shatters this rigid contract, allowing the model to dynamically downscale to 1,016 GPUs and continue learning without interruption.
+From the scheduler's side, the contract has three parameters. First, the **elastic range** $[N_{\text{min}}, N_{\text{max}}]$ specifies the worker counts between which the job can operate. Second, the **transition cost** (typically 10 to 60 seconds for a rendezvous cycle) determines how frequently the scheduler can resize without the overhead negating the throughput gain. Third, the **scaling efficiency curve** tells the scheduler how much additional throughput each added worker delivers, which determines whether assigning idle GPUs to this job is more productive than holding them for a pending gang-scheduled job.
 
-In the traditional non-elastic case, when a node fails, the entire job must stop, synchronize all remaining workers, reload the most recent checkpoint, and restart with a new allocation that replaces the failed node. The restart overhead (checkpoint loading, optimizer state reconstruction, data pipeline warmup) wastes minutes to hours depending on model size and checkpoint storage bandwidth. During this time, all the surviving workers sit idle, waiting for the new allocation to be provisioned and the new worker to catch up. For a 1,024-GPU job where a single node (8 GPUs) fails, the remaining 1,016 GPUs are entirely unproductive during recovery.
+The scheduler must also account for the constraint that elastic scaling changes the effective batch size ($B_{\text{effective}} = B_{\text{per-worker}} \times W$). The two strategies for handling this (constant global batch size vs. adaptive learning rate) impose different limits on how aggressively the scheduler can resize: constant global batch size preserves convergence but may violate per-GPU memory limits at low worker counts, while adaptive learning rate simplifies worker management but introduces convergence risk during rapid scaling.
 
-When cluster demand fluctuates, rigid allocation creates a second category of waste. During off-peak hours, a job running on 256 GPUs cannot absorb idle resources to speed up training. During peak demand, the same job cannot release excess resources to accommodate higher-priority work without being fully preempted. The scheduler's only options are "let it keep all its resources" or "kill it entirely," with nothing in between.
+The scheduler interface to frameworks like TorchElastic exposes these parameters directly, as @lst-fleet-orchestration-torchelastic illustrates:
 
-Elastic training eliminates this binary choice by enabling jobs to dynamically adjust their worker count without full restart. A training job might start with 128 GPUs (the minimum needed for reasonable throughput), scale up to 256 when resources become available, and scale back to 192 when higher-priority work arrives, all while maintaining continuous training progress. This flexibility transforms the scheduler's action space from a *binary* {continue, preempt} to a *continuous* spectrum of resource allocation levels.
-
-### The elastic training contract {#sec-fleet-orchestration-elastic-contract}
-
-Elastic training requires a well-defined contract between the scheduler and the training framework, specifying what each side guarantees and what each side must handle. The scheduler guarantees that resource changes are communicated through defined signals, with sufficient advance notice for graceful adaptation. The framework guarantees that it can handle resource changes without corrupting model state. The framework must implement three fundamental operations.
-
-Scale-up (adding workers) is the simpler direction but still requires coordination across the entire training group. The framework must redistribute the dataset across the new worker count (so no data shard is orphaned or duplicated), adjust the effective batch size or per-worker batch size (depending on the scaling strategy), initialize new workers with current model parameters (requiring a parameter broadcast from existing workers), and join new workers into the communication group (reconstructing the AllReduce ring or tree). The initialization step is the most expensive: transferring the full model state to a new worker over InfiniBand takes seconds for a 70B parameter model, during which the existing workers must either pause or buffer gradient updates.
-
-Scale-down (removing workers) is conceptually the reverse but operationally more challenging because it must handle both voluntary departures (the scheduler reclaiming resources) and involuntary departures (worker failure). The framework must redistribute work from departing workers to remaining ones, adjust batch size to maintain convergence properties, cleanly remove workers from the communication group, and optionally save a checkpoint to simplify recovery if scale-down was triggered by preemption. The critical requirement is that the communication group reconstruction is atomic with respect to gradient updates: no gradient update should be in flight during the transition, because a partially completed AllReduce with a changing participant set would produce incorrect gradients.
-
-Worker replacement (substituting failed workers) combines scale-down and scale-up atomically, removing the failed worker and adding a replacement without changing the total worker count. This operation is the most common in practice and is the foundation of fault-tolerant training, connecting directly to the elastic recovery concepts introduced in @sec-fault-tolerance-reliability. Worker replacement must handle the additional complexity that the failed worker may not have completed its most recent communication, requiring the remaining workers to detect the incomplete operation (through timeouts) and reinitialize the communication group before adding the replacement.
-
-The mathematical implications of elastic scaling interact with the optimization dynamics of stochastic gradient descent in ways that affect convergence. The effective batch size changes with worker count according to $B_{\text{effective}} = B_{\text{per-worker}} \times W$, where $W$ is the active worker count. Changing $W$ mid-training alters the gradient noise level, which can affect convergence speed and final model quality. Two strategies handle this tension, each with distinct trade-offs.
-
-The first approach, constant batch size scaling, adjusts $B_{\text{per-worker}}$ inversely with $W$ to maintain $B_{\text{effective}}$ at its original value. When workers are added, each worker processes fewer samples per step; when workers are removed, each processes more. This approach preserves the optimization dynamics exactly (the gradient noise level is unchanged), but changes per-worker compute and memory requirements. If $B_{\text{per-worker}}$ becomes too small after aggressive scale-up, per-GPU utilization drops because the batch cannot saturate the GPU's compute units. If $B_{\text{per-worker}}$ becomes too large after scale-down, it may exceed per-GPU memory capacity.
-
-The alternative, adaptive batch size scaling, keeps $B_{\text{per-worker}}$ constant and adjusts the learning rate using scaling rules like the linear scaling rule of @goyal2017accurate, which increases the learning rate proportionally with batch size. This approach accepts changed optimization dynamics (larger batch sizes produce lower-variance gradient estimates, which may require different learning rate schedules) in exchange for simpler worker management (each worker's compute and memory requirements remain constant regardless of group size). For many practical workloads, adaptive batch size with linear learning rate scaling produces equivalent convergence outcomes, but the interaction between batch size scaling and other training hyperparameters (warmup schedule, weight decay, momentum) requires careful tuning.
-
-### Framework support {#sec-fleet-orchestration-elastic-frameworks}
-
-TorchElastic\index{TorchElastic!launch configuration} (torchelastic), integrated into PyTorch's `torch.distributed.elastic` module, provides the runtime infrastructure for elastic training. Jobs specify minimum and maximum worker counts, and TorchElastic manages worker lifecycle, as @lst-fleet-orchestration-torchelastic illustrates:
-
-::: {#lst-fleet-orchestration-torchelastic lst-cap="**TorchElastic Launch Configuration**: Elastic training specification allowing a job to run with between 32 and 128 GPUs. The rendezvous backend coordinates worker group membership changes, while the framework handles gradient synchronization group reconstruction when workers join or leave."}
+::: {#lst-fleet-orchestration-torchelastic lst-cap="**TorchElastic Launch Configuration**: The `--nnodes=4:16` range tells the scheduler that this job can operate with 32 to 128 GPUs. The scheduler places the job at any point within this range based on current cluster load and resizes it as demand changes."}
 
 ```{.bash}
 # Launch elastic training with min 32 to max 128 workers
@@ -1067,7 +1025,7 @@ torchrun \
 
 :::
 
-The `--nnodes=4:16` specification declares that the job can operate with anywhere from 4 to 16 nodes (32 to 128 GPUs with 8 GPUs per node). When a node fails, TorchElastic triggers a **rendezvous**[^fn-rendezvous-elastic-fleet] where surviving workers re-form the communication group and continue training. When additional nodes become available, new workers join through the same rendezvous mechanism.
+The `--nnodes=4:16` specification declares that the job can operate with anywhere from 4 to 16 nodes (32 to 128 GPUs with 8 GPUs per node). This range is the scheduler's action space: it can place the job at any point within this range based on current cluster load, and resize it as demand changes.
 
 ::: {#psp-fleet-orchestration-elastic-vs-rigid-scheduling .callout-perspective title="Elastic vs. rigid scheduling"}
 
@@ -1093,21 +1051,11 @@ The elastic job completes in approximately 26.5 hours (8 hours of scaled-up trai
 
 :::
 
-[^fn-rendezvous-elastic-fleet]: **Rendezvous**: From French *rendez-vous* ("present yourselves"), a coordination barrier where all participants must arrive before any can proceed. In TorchElastic, the rendezvous protocol must handle concurrent worker arrivals and departures without deadlock, typically taking 10 to 60 seconds depending on group size. When 1,000 workers simultaneously attempt rendezvous after a switch failure, this "thundering herd" can overwhelm the coordination service (etcd), turning a single hardware fault into a cascading scheduling failure. \index{Rendezvous!elastic training}
+### Scheduling constraints on elastic jobs {#sec-fleet-orchestration-elastic-limitations}
 
-Horovod's original design [@sergeev2018horovod] provides the ring AllReduce foundation for Horovod-based training. Elastic variants build on that foundation: when workers change, the training job must pause briefly while the communication topology is rebuilt and workers synchronize their state.
+The scheduler cannot treat every job as elastic. The most significant constraint is **incompatibility with model parallelism**. Elastic scaling is fundamentally a data-parallel operation: the scheduler adds or removes replicas of the model, changing the global batch size but keeping the model architecture constant. For a 175B-parameter job that relies on 8-way tensor parallelism within each node, elasticity operates strictly at the *node* level. The job can scale from 128 nodes (1,024 GPUs) to 120 nodes (960 GPUs), changing the data-parallel degree. It *cannot* elastically remove a single GPU from a tensor-parallel group; doing so would require re-sharding the model weights, equivalent to a full checkpoint-and-restart cycle. Pipeline parallelism permits limited elasticity in principle, but adding or removing stages forces a recalculation of the pipeline schedule that often negates the benefit.
 
-The key architectural difference between TorchElastic and Elastic Horovod lies in their coordination models. TorchElastic uses a centralized rendezvous mechanism (backed by etcd or the C10d backend) where all workers agree on group membership through a coordinator. Elastic Horovod uses a driver process that manages the ring topology externally and notifies workers of changes. The centralized rendezvous approach is more robust to simultaneous failures (multiple workers failing at the same time) but introduces a single point of coordination that must itself be fault-tolerant. The driver-based approach is simpler to implement but may produce inconsistent states if the driver and workers disagree about group membership during rapid changes.
-
-Both frameworks share a common limitation: the elastic transition period (the time between detecting a change and completing the group reconfiguration) is a period of reduced or zero training throughput. For TorchElastic, this transition typically takes 10 to 60 seconds depending on the number of workers and the rendezvous backend's performance. For Elastic Horovod, the transition is faster (5 to 30 seconds) but requires the driver process to be reachable. Minimizing transition time is important because frequent transitions (for example, in a highly volatile spot instance environment) can accumulate enough overhead to negate the cost savings from elastic scheduling.
-
-### Elastic training limitations and failure modes {#sec-fleet-orchestration-elastic-limitations}
-
-Elastic training offers theoretical resilience, but the physics of distributed deep learning imposes hard constraints on its practical utility. The most significant limitation is **incompatibility with model parallelism**. Elastic scaling is fundamentally a data-parallel operation: we add or remove replicas of the model, changing the global batch size but keeping the model architecture constant. For our 175B-parameter example, which relies on 8-way tensor parallelism within each node, elasticity operates strictly at the *node* level. The job can scale from 128 nodes (1,024 GPUs) to 120 nodes (960 GPUs), changing the data-parallel degree. However, it *cannot* elastically remove a *single GPU* from a tensor-parallel group; doing so would require re-sharding the 350 GB of model weights across the remaining 7 GPUs, a process equivalent to a full checkpoint-and-restart cycle. Similarly, pipeline parallelism allows for limited elasticity. Adding or removing pipeline stages is possible in principle, but it forces a complete recalculation of the pipeline schedule to balance computation, often negating the benefits of dynamic scaling.
-
-At scale, the mechanics of recovery introduce their own failure modes, most notably the **communication group reconstruction storm**\index{Communication Group Reconstruction Storm}. When a top-of-rack switch fails, causing 64 GPUs to vanish simultaneously, the remaining 960 workers do not immediately detect the loss. Instead, they hang on collective operations until a timeout expires (typically 30 to 60 seconds). Once the timeout triggers, every surviving worker simultaneously attempts to reconnect to the coordination service (for example, etcd or ZooKeeper) to establish a new rendezvous. This thundering herd of nearly 1,000 concurrent requests can overwhelm the key-value store, causing the rendezvous itself to time out and triggering a cascading failure loop where the job never successfully restabilizes. Production systems mitigate this through exponential backoff with jitter on rendezvous retries and by deploying high-availability coordination services with sufficient capacity to absorb burst traffic.
-
-The mathematical integrity of the training process is also compromised by **gradient staleness during transitions**\index{Gradient Staleness}. When new workers join the fleet to replace failed ones, they receive the latest model parameters but often miss the gradient updates that were in-flight during the transition window. This results in a temporary inconsistency in the global optimizer state, manifesting as a sharp spike in the training loss curve. For a 175B model training on 1,024 GPUs, a recovery event typically incurs 30 to 90 seconds of rendezvous latency and 15 to 45 seconds of parameter broadcast overhead (saturating InfiniBand links). The resulting loss spike from stale gradients usually self-corrects within 50 to 200 iterations, but if this occurs during a critical phase such as a learning rate warmup or decay, it can permanently destabilize convergence. Careful scheduling of elastic transitions to avoid sensitive training phases, combined with gradient clipping that limits the impact of stale updates, reduces this risk in practice.
+The transition cost also constrains the scheduler's resize frequency. Each scaling event incurs 10 to 60 seconds of reduced throughput while the framework reconstructs its communication group. A scheduler that resizes a job every time a single node becomes available accumulates enough transition overhead to yield net negative progress compared to a stable allocation. The scheduler must amortize transition cost over the subsequent run duration, which means small resize increments are only worthwhile if the job will run at the new scale for significantly longer than the transition window.
 
 ### Scheduler integration {#sec-fleet-orchestration-elastic-scheduler-integration}
 
@@ -1131,8 +1079,6 @@ This logic extends to the temporal dimension, where the scheduler must weigh the
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-elastic-scaling
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ ELASTIC SCALING DECISION (LEGO)
@@ -1178,9 +1124,9 @@ class ElasticScaling:
     es_s3p1_str = fmt(s3_phase1, precision=1, commas=False)
     es_s3p2_str = fmt(s3_phase2, precision=1, commas=False)
     es_s3_str = fmt(s3_work, precision=1, commas=False)
-    es_rescale_str = fmt(rescale_h, precision=2, commas=False)
-    es_rescale_min_str = fmt(rescale_min, precision=0, commas=False)
-    es_rescale_break_even_h_str = fmt(2, precision=0, commas=False)
+    es_rescale_str = fmt(rescale_h, precision=2, commas=False, suffix=' hours')
+    es_rescale_min_str = fmt(rescale_min, precision=0, commas=False, suffix=' minutes')
+    es_rescale_break_even_h_str = fmt(2, precision=0, commas=False, suffix=' hours')
     # Pre-compute the full Phase 2 math expression to avoid the
     # `\(...\)` + inline-`{python}` interaction anti-pattern that drops
     # the middle of the expression in rendered HTML (math.md §2).
@@ -1190,21 +1136,21 @@ class ElasticScaling:
     s1_gpus = 128
     s2_gpus = 512
     s3_gpus = 256
-    es_s1_gpus_str = fmt(s1_gpus, precision=0, commas=False)
-    es_window_h_str = fmt(window_h, precision=0, commas=False)
-    es_wait_h_str = fmt(wait_h, precision=0, commas=False)
-    es_s2_gpus_str = fmt(s2_gpus, precision=0, commas=False)
-    es_s2_run_h_str = fmt(s2_run_h, precision=0, commas=False)
-    es_s3_gpus_str = fmt(s3_gpus, precision=0, commas=False)
+    es_s1_gpus_str = fmt(s1_gpus, precision=0, commas=False, suffix=' GPUs')
+    es_window_h_str = fmt(window_h, precision=0, commas=False, suffix=' hours')
+    es_wait_h_str = fmt(wait_h, precision=0, commas=False, suffix=' hours')
+    es_s2_gpus_str = fmt(s2_gpus, precision=0, commas=False, suffix=' GPUs')
+    es_s2_run_h_str = fmt(s2_run_h, precision=0, commas=False, suffix=' hours')
+    es_s3_gpus_str = fmt(s3_gpus, precision=0, commas=False, suffix=' GPUs')
     es_peak_gpus_str = fmt(s2_gpus, precision=0, commas=False)
-    es_gpus_128_str = fmt(s1_gpus, precision=0, commas=False)
-    es_gpus_256_str = fmt(s3_gpus, precision=0, commas=False)
+    es_gpus_128_str = fmt(s1_gpus, precision=0, commas=False, suffix=' GPUs')
+    es_gpus_256_str = fmt(s3_gpus, precision=0, commas=False, suffix=' GPUs')
     es_tp_128_str = fmt(tp_128, precision=0, commas=False)
     es_tp_256_str = fmt(tp_256, precision=1, commas=False)
     es_tp_512_str = fmt(tp_512, precision=1, commas=False)
-    es_eff_256_pct_str = fmt(tp_256 / (2 * tp_128) * 100, precision=0, commas=False)
-    es_eff_512_pct_str = fmt(tp_512 / (4 * tp_128) * 100, precision=0, commas=False)
-    es_vs_wait_pct_str = fmt(elastic_vs_wait_pct, precision=1, commas=False)
+    es_eff_256_pct_str = fmt(tp_256 / (2 * tp_128) * 100, precision=0, commas=False, suffix=' percent')
+    es_eff_512_pct_str = fmt(tp_512 / (4 * tp_128) * 100, precision=0, commas=False, suffix=' percent')
+    es_vs_wait_pct_str = fmt(elastic_vs_wait_pct, precision=1, commas=False, suffix=' percent')
     es_vs_imm_mult_str = fmt(elastic_vs_immediate, precision=1, commas=False)
 ```
 
@@ -1212,15 +1158,15 @@ class ElasticScaling:
 
 Consider a large language model training job with a target batch size that requires `{python} ElasticScaling.es_peak_gpus_str` A100s for peak efficiency. Three scheduling strategies are evaluated over a `{python} ElasticScaling.es_window_h_str`-hour window.
 
-**Assumptions**: Throughput at `{python} ElasticScaling.es_gpus_128_str` GPUs is `{python} ElasticScaling.es_tp_128_str` epoch/hour (baseline). Throughput at `{python} ElasticScaling.es_gpus_256_str` GPUs is `{python} ElasticScaling.es_tp_256_str` epochs/hour (`{python} ElasticScaling.es_eff_256_pct_str` percent scaling efficiency). Throughput at `{python} ElasticScaling.es_s2_gpus_str` GPUs is `{python} ElasticScaling.es_tp_512_str` epochs/hour (`{python} ElasticScaling.es_eff_512_pct_str` percent scaling efficiency). Re-scaling cost is `{python} ElasticScaling.es_rescale_min_str` minutes (`{python} ElasticScaling.es_rescale_str` hours) to checkpoint, re-shard, and restart.
+**Assumptions**: Throughput at `{python} ElasticScaling.es_gpus_128_str` is `{python} ElasticScaling.es_tp_128_str` epoch/hour (baseline). Throughput at `{python} ElasticScaling.es_gpus_256_str` is `{python} ElasticScaling.es_tp_256_str` epochs/hour (`{python} ElasticScaling.es_eff_256_pct_str` scaling efficiency). Throughput at `{python} ElasticScaling.es_s2_gpus_str` is `{python} ElasticScaling.es_tp_512_str` epochs/hour (`{python} ElasticScaling.es_eff_512_pct_str` scaling efficiency). Re-scaling cost is `{python} ElasticScaling.es_rescale_min_str` (`{python} ElasticScaling.es_rescale_str`) to checkpoint, re-shard, and restart.
 
-**Strategy 1 -- Immediate start (no scaling)**: The job starts immediately with `{python} ElasticScaling.es_s1_gpus_str` GPUs and runs for the full `{python} ElasticScaling.es_window_h_str` hours. Total work: $24 \times 1.0 =$ `{python} ElasticScaling.es_s1_str` epochs.
+**Strategy 1 -- Immediate start (no scaling)**: The job starts immediately with `{python} ElasticScaling.es_s1_gpus_str` and runs for the full `{python} ElasticScaling.es_window_h_str`. Total work: $24 \times 1.0 =$ `{python} ElasticScaling.es_s1_str` epochs.
 
-**Strategy 2 -- Wait for capacity (gang scheduling)**: The job waits in the queue for `{python} ElasticScaling.es_wait_h_str` hours until `{python} ElasticScaling.es_s2_gpus_str` GPUs become available, then runs for `{python} ElasticScaling.es_s2_run_h_str` hours. Total work: $20 \times 3.2 =$ `{python} ElasticScaling.es_s2_str` epochs.
+**Strategy 2 -- Wait for capacity (gang scheduling)**: The job waits in the queue for `{python} ElasticScaling.es_wait_h_str` until `{python} ElasticScaling.es_s2_gpus_str` become available, then runs for `{python} ElasticScaling.es_s2_run_h_str`. Total work: $20 \times 3.2 =$ `{python} ElasticScaling.es_s2_str` epochs.
 
-**Strategy 3 -- Elastic scaling (step-up)**: The job starts immediately with `{python} ElasticScaling.es_s3_gpus_str` GPUs. After `{python} ElasticScaling.es_wait_h_str` hours, `{python} ElasticScaling.es_s3_gpus_str` more GPUs become available. The job pauses, scales up, and resumes. Phase 1: $4 \times 1.8 =$ `{python} ElasticScaling.es_s3p1_str` epochs. Phase 2: `{python} ElasticScaling.es_s3p2_math` epochs. Total work: `{python} ElasticScaling.es_s3p1_str` + `{python} ElasticScaling.es_s3p2_str` = `{python} ElasticScaling.es_s3_str` epochs.
+**Strategy 3 -- Elastic scaling (step-up)**: The job starts immediately with `{python} ElasticScaling.es_s3_gpus_str`. After `{python} ElasticScaling.es_wait_h_str`, `{python} ElasticScaling.es_s3_gpus_str` more GPUs become available. The job pauses, scales up, and resumes. Phase 1: $4 \times 1.8 =$ `{python} ElasticScaling.es_s3p1_str` epochs. Phase 2: `{python} ElasticScaling.es_s3p2_math` epochs. Total work: `{python} ElasticScaling.es_s3p1_str` + `{python} ElasticScaling.es_s3p2_str` = `{python} ElasticScaling.es_s3_str` epochs.
 
-The elastic strategy outperforms waiting by approximately `{python} ElasticScaling.es_vs_wait_pct_str` percent and the immediate small-scale run by nearly `{python} ElasticScaling.es_vs_imm_mult_str`$\times$. However, if the re-scaling cost exceeded `{python} ElasticScaling.es_rescale_break_even_h_str` hours (due to slow checkpoint transfer or compilation), Strategy 2 would become superior.
+The elastic strategy outperforms waiting by approximately `{python} ElasticScaling.es_vs_wait_pct_str` and the immediate small-scale run by nearly `{python} ElasticScaling.es_vs_imm_mult_str`$\times$. However, if the re-scaling cost exceeded `{python} ElasticScaling.es_rescale_break_even_h_str` (due to slow checkpoint transfer or compilation), Strategy 2 would become superior.
 
 :::
 
@@ -1230,15 +1176,13 @@ The placement and elasticity mechanisms discussed so far address individual job 
 
 A 10,000-GPU cluster represents a capital investment of roughly \$300 million and consumes millions more in monthly power and cooling. If poor scheduling leaves 20 percent of those GPUs idling in fragmentation gaps or waiting for data, roughly \$60 million in deployed capital sits unused, and at cloud-equivalent rates the same idleness burns approximately \$35 million per year in operating cost. Cost optimization forces the fleet orchestrator to treat the cluster as a massive financial asset whose ROI must be maximized.
 
-@fig-cost-idle-gpus makes this waste concrete by plotting annual wasted cost as a function of cluster size and utilization level. At 10,000 GPUs with 50 percent utilization, the annual waste exceeds \$87 million. Published measurements from production clusters suggest this is not hypothetical: Microsoft's Philly cluster study [@jeon2019analysis] measured mean GPU utilization of approximately 52 percent, and @li2023 found that 50 percent of jobs on NERSC's Perlmutter supercomputer used less than 25 percent of allocated GPU memory. The gap between 30 percent and 70 percent utilization, shaded in the figure, represents the operational reality for most organizations. Moving from 50 percent to 70 percent utilization on a 10,000-GPU cluster saves over \$35 million annually without purchasing a single additional GPU.
+@Fig-cost-idle-gpus makes this waste concrete by plotting annual wasted cost as a function of cluster size and utilization level. At 10,000 GPUs with 50 percent utilization, the annual waste exceeds \$87 million. Published measurements from production clusters suggest this is not hypothetical: Microsoft's Philly cluster study [@jeon2019analysis] measured mean GPU utilization of approximately 52 percent, and @li2023 found that 50 percent of jobs on NERSC's Perlmutter supercomputer used less than 25 percent of allocated GPU memory. The gap between 30 percent and 70 percent utilization, shaded in the figure, represents the operational reality for most organizations. Moving from 50 percent to 70 percent utilization on a 10,000-GPU cluster saves over \$35 million annually without purchasing a single additional GPU.
 
 ::: {#fig-cost-idle-gpus fig-env="figure" fig-pos="htb" fig-cap="**The Cost of Idle GPUs**: Annual wasted cost as a function of cluster size for different GPU utilization levels, assuming \$2/GPU-hour (cloud equivalent). The shaded region between 30 percent and 70 percent utilization represents the typical operating range for production clusters. At 10,000 GPUs with 50 percent utilization, organizations waste \$87.6M annually. The Microsoft Philly data point marks the published mean GPU utilization of 52 percent. Data sources: [@jeon2019analysis; @li2023]." fig-alt="Line chart of annual wasted cost in millions vs. cluster size with four utilization curves at 30, 50, 70, and 90 percent and shaded typical range."}
 
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ COST OF IDLE GPUS (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -1382,7 +1326,7 @@ Cloud providers offer **spot instances**[^fn-spot-instances-cloud] (AWS) or **pr
 
 [^fn-spot-instances-cloud]: **Spot Instances**: Named after commodity trading's "spot price" (the current market price for immediate delivery), spot instances sell spare cloud capacity at 60 to 90 percent discounts with the provider retaining reclamation rights. The critical asymmetry for ML training is the interruption notice window: AWS provides 2 minutes, GCP provides 30 seconds. A 175B-parameter model requires 3 to 5 minutes to checkpoint, so GCP's 30-second notice forces either continuous checkpointing overhead or acceptance of lost work on every interruption. \index{Spot Instances!cost optimization}
 
-The viability of spot instances for ML training depends on two factors that determine whether the discount translates into actual savings: the cost of each interruption (checkpoint overhead plus restart time plus lost work since the last checkpoint) and the frequency of interruption (which varies by instance type, region, time of day, and overall cloud demand). @eq-fleet-orchestration-spot-cost gives the **effective cost** of spot training:
+The viability of spot instances for ML training depends on two factors that determine whether the discount translates into actual savings: the cost of each interruption (checkpoint overhead plus restart time plus lost work since the last checkpoint) and the frequency of interruption (which varies by instance type, region, time of day, and overall cloud demand). @Eq-fleet-orchestration-spot-cost gives the **effective cost** of spot training:
 
 $$ C_{\text{effective}} = C_{\text{spot}} \times \frac{T_{\text{total}}}{T_{\text{productive}}} $$ {#eq-fleet-orchestration-spot-cost}
 
@@ -1433,8 +1377,6 @@ The optimal mix depends on workload characteristics and organizational prioritie
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-spot-training-economics
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ SPOT TRAINING ECONOMICS (LEGO)
@@ -1476,38 +1418,38 @@ class SpotTrainingEconomics:
     on_demand_cost_str = fmt(on_demand_cost, precision=0)
     spot_base_cost_str = fmt(spot_base_cost, precision=1)
     checkpoint_extra_hours_str = fmt(checkpoint_extra_hours, precision=1, commas=False)
-    restart_total_hours_str = fmt(restart_total_hours, precision=0, commas=False)
-    spot_total_hours_str = fmt(spot_total_hours, precision=1, commas=False)
+    restart_total_hours_str = fmt(restart_total_hours, precision=0, commas=False, suffix=' hours')
+    spot_total_hours_str = fmt(spot_total_hours, precision=1, commas=False, suffix=' hours')
     spot_total_cost_str = fmt(spot_total_cost, precision=1)
     savings_str = fmt(savings, precision=1)
     savings_pct_str = fmt(savings_pct, precision=1, commas=False)
     longer_pct_str = fmt(longer_pct, precision=1, commas=False)
-    spot_gpus_str = fmt(gpus, precision=0, commas=False)
-    spot_run_hours_str = fmt(run_hours, precision=0, commas=False)
+    spot_gpus_str = fmt(gpus, precision=0, commas=False, suffix=' GPUs')
+    spot_run_hours_str = fmt(run_hours, precision=0, commas=False, suffix=' hours')
     checkpoint_overhead_pct_str = MarkdownStr("5 percent")
     restart_interruptions_str = fmt(interruptions, precision=0, commas=False)
-    restart_hours_each_str = fmt(restart_hours, precision=1, commas=False)
-    restart_min_str = fmt(restart_hours * 60, precision=0, commas=False)
+    restart_hours_each_str = fmt(restart_hours, precision=1, commas=False, suffix=' hours')
+    restart_min_str = fmt(restart_hours * 60, precision=0, commas=False, suffix=' minutes')
     model_params_b_str = fmt(70, precision=0, commas=False, suffix="B")
     spot_run_days_str = fmt(run_hours // HOURS_PER_DAY, precision=0, commas=False)
-    spot_discount_pct_str = fmt((1 - spot_rate / on_demand_rate) * 100, precision=0, commas=False)
+    spot_discount_pct_str = fmt((1 - spot_rate / on_demand_rate) * 100, precision=0, commas=False, suffix=' percent')
 ```
 
 ::: {#psp-fleet-orchestration-spot-vs-demand-training .callout-perspective title="Spot vs. on-demand training"}
 
-Consider training a `{python} SpotTrainingEconomics.model_params_b_str` parameter model requiring `{python} SpotTrainingEconomics.spot_gpus_str` GPUs for `{python} SpotTrainingEconomics.spot_run_days_str` days.
+Consider training a `{python} SpotTrainingEconomics.model_params_b_str` parameter model requiring `{python} SpotTrainingEconomics.spot_gpus_str` for `{python} SpotTrainingEconomics.spot_run_days_str` days.
 
-**On-demand**\index{On-Demand Capacity}: `{python} SpotTrainingEconomics.spot_gpus_str` GPUs $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` hours $\times$ \$2.00/GPU-hour = **\$`{python} SpotTrainingEconomics.on_demand_cost_str`**
+**On-demand**\index{On-Demand Capacity}: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` $\times$ \$2.00/GPU-hour = \$`{python} SpotTrainingEconomics.on_demand_cost_str`
 
-**Spot** (`{python} SpotTrainingEconomics.spot_discount_pct_str` percent discount, `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` checkpoint overhead, `{python} SpotTrainingEconomics.restart_interruptions_str` interruption/day with `{python} SpotTrainingEconomics.restart_min_str` min restart):
+**Spot** (`{python} SpotTrainingEconomics.spot_discount_pct_str` discount, `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` checkpoint overhead, `{python} SpotTrainingEconomics.restart_interruptions_str` interruptions/day with `{python} SpotTrainingEconomics.restart_min_str` restart):
 
 - Base cost: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` $\times$ \$0.70 = \$`{python} SpotTrainingEconomics.spot_base_cost_str`
-- Checkpoint overhead: `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` hours = `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` extra hours
-- Restart overhead: `{python} SpotTrainingEconomics.restart_interruptions_str` interruptions $\times$ `{python} SpotTrainingEconomics.restart_hours_each_str` hours = `{python} SpotTrainingEconomics.restart_total_hours_str` hours
-- Total time: `{python} SpotTrainingEconomics.spot_run_hours_str` + `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` + `{python} SpotTrainingEconomics.restart_total_hours_str` = `{python} SpotTrainingEconomics.spot_total_hours_str` hours
-- Total cost: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_total_hours_str` $\times$ \$0.70 = **\$`{python} SpotTrainingEconomics.spot_total_cost_str`**
+- Checkpoint overhead: `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` = `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` extra hours
+- Restart overhead: `{python} SpotTrainingEconomics.restart_interruptions_str` interruptions $\times$ `{python} SpotTrainingEconomics.restart_hours_each_str` = `{python} SpotTrainingEconomics.restart_total_hours_str`
+- Total time: `{python} SpotTrainingEconomics.spot_run_hours_str` + `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` + `{python} SpotTrainingEconomics.restart_total_hours_str` = `{python} SpotTrainingEconomics.spot_total_hours_str`
+- Total cost: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_total_hours_str` $\times$ \$0.70 = \$`{python} SpotTrainingEconomics.spot_total_cost_str`
 
-**Savings**: \$`{python} SpotTrainingEconomics.savings_str` (`{python} SpotTrainingEconomics.savings_pct_str` percent), at the cost of approximately `{python} SpotTrainingEconomics.longer_pct_str` percent longer wall-clock time.
+**Savings**: \$`{python} SpotTrainingEconomics.savings_str` (`{python} SpotTrainingEconomics.savings_pct_str`), at the cost of approximately `{python} SpotTrainingEconomics.longer_pct_str` longer wall-clock time.
 
 The economics are compelling when fault tolerance infrastructure is already in place. Without checkpointing, a single interruption forces restart from scratch, potentially wasting days of compute and negating all savings.
 
@@ -1527,7 +1469,7 @@ Technical optimization must be paired with financial accountability through **ML
 
 Optimizing for spot instance availability or scheduling density addresses only the visible tip of the infrastructure iceberg. The Total Cost of Ownership (TCO) for a machine learning fleet extends far beyond simple GPU-hours. In high-performance clusters, the compute silicon typically accounts for only 40 to 60 percent of the total system cost. The remainder is consumed by the supporting infrastructure required to keep that silicon fed and cool: high-bandwidth networking (InfiniBand switches, optics, and cabling), parallel file systems for checkpointing, and specialized power and cooling delivery. A single rack of H100 nodes can draw upwards of 40 kW, ten times the density of a standard web server rack, forcing facilities to deploy liquid cooling or rear-door heat exchangers that radically alter the facility's capital requirements.
 
-For an organization deciding between building a private cluster or renting cloud capacity, the decision hinges on the **amortization equation**\index{Amortization Equation}. @eq-fleet-orchestration-tco expresses the TCO of an on-premise cluster over a typical three-year hardware lifecycle as the sum of Capital Expenditure $(C_{\text{cap}})$, Operational Expenditure $(C_{\text{ops}})$, and the often-overlooked Opportunity Cost $(C_{\text{opp}})$ of tying up capital in depreciating assets:
+For an organization deciding between building a private cluster or renting cloud capacity, the decision hinges on the **amortization equation**\index{Amortization Equation}. @Eq-fleet-orchestration-tco expresses the TCO of an on-premise cluster over a typical three-year hardware lifecycle as the sum of Capital Expenditure $(C_{\text{cap}})$, Operational Expenditure $(C_{\text{ops}})$, and the often-overlooked Opportunity Cost $(C_{\text{opp}})$ of tying up capital in depreciating assets:
 
 $$ \text{TCO}_{3\text{yr}} = C_{\text{cap}} + 3 \times C_{\text{ops}} + C_{\text{opp}} $$ {#eq-fleet-orchestration-tco}
 
@@ -1634,7 +1576,7 @@ The risk is not only implementation cost; scheduler behavior can also fail to ma
 
 :::
 
-This failure mode is not a rejection of ML-aware scheduling; it is a reminder that each scheduler must specify the workload class, signal, and objective it is allowed to optimize.
+A scheduler designed for general-purpose pod placement will mishandle workloads that require gang semantics, and adding gang awareness alone does not resolve priority conflicts among competing training jobs. Each of the four research schedulers examined above addresses one facet of this problem (runtime estimation, iteration-boundary preemption, fairness across finish times, or joint resource-hyperparameter tuning), but none addresses all facets simultaneously. The design space is therefore a set of explicit trade-offs rather than a single optimal policy.
 
 ::: {#chk-fleet-orchestration-custom-scheduler-design-space .callout-checkpoint title="Custom scheduler design space"}
 
@@ -1694,8 +1636,6 @@ To prevent **oscillation**\index{Oscillation}, where the scaler rapidly adds and
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-autoscaling-lag
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ AUTOSCALING LAG (LEGO)
@@ -1759,13 +1699,13 @@ class AutoscalingLag:
 
 ::: {#nbk-fleet-orchestration-autoscaling-lag .callout-notebook title="The autoscaling lag"}
 
-Consider a serving fleet with `{python} AutoscalingLag.as_replicas_str` replicas, each capable of `{python} AutoscalingLag.as_qps_per_replica_str` queries per second (QPS) while meeting the `{python} AutoscalingLag.as_slo_ms_str` ms SLO. Total capacity: `{python} AutoscalingLag.as_capacity_str` QPS.
+Consider a serving fleet with `{python} AutoscalingLag.as_replicas_str` replicas, each capable of `{python} AutoscalingLag.as_qps_per_replica_str` queries per second (QPS) while meeting the `{python} AutoscalingLag.as_slo_ms_str` SLO. Total capacity: `{python} AutoscalingLag.as_capacity_str`.
 
-**Scenario**: Traffic ramps from `{python} AutoscalingLag.as_traffic_start_str` QPS to `{python} AutoscalingLag.as_traffic_end_str` QPS linearly over `{python} AutoscalingLag.as_ramp_sec_str` seconds. Model load time: `{python} AutoscalingLag.as_load_time_min_str` minutes (`{python} AutoscalingLag.as_load_time_str` seconds).
+**Scenario**: Traffic ramps from `{python} AutoscalingLag.as_traffic_start_str` to `{python} AutoscalingLag.as_traffic_end_str` linearly over `{python} AutoscalingLag.as_ramp_sec_str`. Model load time: `{python} AutoscalingLag.as_load_time_min_str` (`{python} AutoscalingLag.as_load_time_str`).
 
-**Reactive scaling**\index{Reactive Scaling}: HPA detects overload at $t =$ `{python} AutoscalingLag.as_detect_str` s (when traffic hits `{python} AutoscalingLag.as_capacity_str` QPS). It requests `{python} AutoscalingLag.as_new_replicas_str` new replicas. These replicas become ready at $t =$ `{python} AutoscalingLag.as_ready_str` s (`{python} AutoscalingLag.as_detect_str` + `{python} AutoscalingLag.as_load_time_str`). From $t =$ `{python} AutoscalingLag.as_detect_str` s to $t =$ `{python} AutoscalingLag.as_ready_str` s, demand exceeds capacity. During the ramp, excess demand grows linearly from 0 to `{python} AutoscalingLag.as_excess_str` QPS; after the ramp reaches `{python} AutoscalingLag.as_traffic_end_str` QPS, the full `{python} AutoscalingLag.as_excess_str` QPS overload persists until the new replicas are ready. The area above capacity is approximately `{python} AutoscalingLag.as_violations_str` requests, all of which are queued or dropped and violate the SLO.
+**Reactive scaling**\index{Reactive Scaling}: HPA detects overload at $t =$ `{python} AutoscalingLag.as_detect_str` s (when traffic hits `{python} AutoscalingLag.as_capacity_str`). It requests `{python} AutoscalingLag.as_new_replicas_str` new replicas. These replicas become ready at $t =$ `{python} AutoscalingLag.as_ready_str` s (`{python} AutoscalingLag.as_detect_str` + `{python} AutoscalingLag.as_load_time_str`). From $t =$ `{python} AutoscalingLag.as_detect_str` s to $t =$ `{python} AutoscalingLag.as_ready_str` s, demand exceeds capacity. During the ramp, excess demand grows linearly from 0 to `{python} AutoscalingLag.as_excess_str`; after the ramp reaches `{python} AutoscalingLag.as_traffic_end_str`, the full `{python} AutoscalingLag.as_excess_str` overload persists until the new replicas are ready. The area above capacity is approximately `{python} AutoscalingLag.as_violations_str` requests, all of which are queued or dropped and violate the SLO.
 
-**Predictive scaling**: The scaler forecasts the ramp and triggers scale-up at $t =$ `{python} AutoscalingLag.as_pred_trigger_str` s. The `{python} AutoscalingLag.as_new_replicas_str` new replicas come online at $t = 0$ s, pushing capacity to `{python} AutoscalingLag.as_pred_capacity_str` QPS just as the ramp begins. Zero SLO violations.
+**Predictive scaling**: The scaler forecasts the ramp and triggers scale-up at $t =$ `{python} AutoscalingLag.as_pred_trigger_str` s. The `{python} AutoscalingLag.as_new_replicas_str` new replicas come online at $t = 0$ s, pushing capacity to `{python} AutoscalingLag.as_pred_capacity_str` just as the ramp begins. Zero SLO violations.
 
 :::
 
@@ -1802,8 +1742,6 @@ For a heterogeneous fleet, this logic dictates a bifurcated strategy. Our 175B p
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-gpu-sharing-roi
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ GPU SHARING ROI (LEGO)
@@ -1816,8 +1754,6 @@ from mlsysim.core.constants import *
 # │ Imports: mlsysim.book (fmt, check), mlsysim.constants (HOURS_PER_YEAR)
 # │ Exports: gs_* strings for callout
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim import *
-from mlsysim.core.constants import *
 from mlsysim.fmt import fmt_int,  fmt, check
 
 class GpuSharingRoi:
@@ -1850,16 +1786,16 @@ class GpuSharingRoi:
     check(abs(shared_util_pct - 65) < 1, f"Shared util: expected 65%, got {shared_util_pct}")
     check(abs(annual_savings - 876000) < 1000, f"Savings: expected ~876K, got {annual_savings}")
     # ┌── 4. OUTPUT ────────────────────────────────────────
-    gs_excl_util_str = fmt(excl_util_pct, precision=1)
-    gs_excl_total_mem_str = fmt_int(excl_total_mem_gb)
-    gs_excl_large_str = fmt(excl_large_gpus, precision=0)
-    gs_excl_total_str = fmt(excl_total, precision=0)
-    gs_shared_gpus_str = fmt(shared_small_gpus, precision=0)
-    gs_shared_mem_str = fmt(shared_mem_per_gpu, precision=0)
-    gs_shared_util_str = fmt(shared_util_pct, precision=0, commas=False)
-    gs_shared_total_str = fmt(shared_total, precision=0)
+    gs_excl_util_str = fmt(excl_util_pct, precision=1, suffix=' percent')
+    gs_excl_total_mem_str = fmt_int(excl_total_mem_gb, suffix=' GB')
+    gs_excl_large_str = fmt(excl_large_gpus, precision=0, suffix=' GPUs')
+    gs_excl_total_str = fmt(excl_total, precision=0, suffix=' GPUs')
+    gs_shared_gpus_str = fmt(shared_small_gpus, precision=0, suffix=' GPUs')
+    gs_shared_mem_str = fmt(shared_mem_per_gpu, precision=0, suffix=' GB')
+    gs_shared_util_str = fmt(shared_util_pct, precision=0, commas=False, suffix=' percent')
+    gs_shared_total_str = fmt(shared_total, precision=0, suffix=' GPUs')
     gs_saved_gpus_str = fmt(saved_gpus, precision=0)
-    gs_saved_pct_str = fmt(saved_pct, precision=1)
+    gs_saved_pct_str = fmt(saved_pct, precision=1, suffix=' percent')
     gs_annual_str = fmt(annual_savings, precision=0)
     small_model_params_b = Models.Language.Llama2_7B.parameters.m_as(Bparam)
     gs_small_model_b_str = fmt(small_model_params_b, precision=0, commas=False, suffix="B")
@@ -1869,25 +1805,25 @@ class GpuSharingRoi:
         commas=False,
     ) + "B"
     gs_n_small_str = fmt(n_small, precision=0, commas=False)
-    gs_a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False)
-    gs_small_footprint_str = fmt(small_footprint_gb, precision=0, commas=False)
+    gs_a100_mem_str = fmt(a100_mem_gb, precision=0, commas=False, suffix=' GB')
+    gs_small_footprint_str = fmt(small_footprint_gb, precision=0, commas=False, suffix=' GB')
     gs_models_per_gpu_str = fmt(models_per_gpu_shared, precision=0, commas=False)
     gs_n_large_str = fmt(n_large, precision=0, commas=False)
-    gs_gpus_per_large_str = fmt(gpus_per_large, precision=0, commas=False)
+    gs_gpus_per_large_str = fmt(gpus_per_large, precision=0, commas=False, suffix=' GPUs')
     gs_excl_used_mem_str = fmt(excl_used_mem_gb, precision=0, commas=False)
-    gs_large_footprint_str = fmt(large_footprint_gb, precision=0, commas=False)
+    gs_large_footprint_str = fmt(large_footprint_gb, precision=0, commas=False, suffix=' GB')
     gs_gpu_hour_rate_str = fmt(gpu_rate, precision=0, commas=False)
 ```
 
 ::: {#nbk-fleet-orchestration-gpu-sharing-roi .callout-notebook title="GPU sharing ROI"}
 
-Consider a fleet serving `{python} GpuSharingRoi.gs_n_small_str` distinct `{python} GpuSharingRoi.gs_small_model_b_str` models (`{python} GpuSharingRoi.gs_small_footprint_str` GB footprint each) and `{python} GpuSharingRoi.gs_n_large_str` distinct `{python} GpuSharingRoi.gs_large_model_b_str` models (`{python} GpuSharingRoi.gs_large_footprint_str` GB footprint each).
+Consider a fleet serving `{python} GpuSharingRoi.gs_n_small_str` distinct `{python} GpuSharingRoi.gs_small_model_b_str` models (`{python} GpuSharingRoi.gs_small_footprint_str` footprint each) and `{python} GpuSharingRoi.gs_n_large_str` distinct `{python} GpuSharingRoi.gs_large_model_b_str` models (`{python} GpuSharingRoi.gs_large_footprint_str` footprint each).
 
-**Strategy A -- Exclusive access (one model per GPU)**: The `{python} GpuSharingRoi.gs_small_model_b_str` models require `{python} GpuSharingRoi.gs_n_small_str` A100 GPUs (`{python} GpuSharingRoi.gs_a100_mem_str` GB each), achieving only `{python} GpuSharingRoi.gs_excl_util_str` percent memory utilization (`{python} GpuSharingRoi.gs_n_small_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` GB used out of `{python} GpuSharingRoi.gs_excl_total_mem_str` GB total). The `{python} GpuSharingRoi.gs_large_model_b_str` models require `{python} GpuSharingRoi.gs_excl_large_str` GPUs (`{python} GpuSharingRoi.gs_n_large_str` models $\times$ `{python} GpuSharingRoi.gs_gpus_per_large_str` GPUs each for tensor parallelism). Total fleet: `{python} GpuSharingRoi.gs_excl_total_str` GPUs.
+**Strategy A -- Exclusive access (one model per GPU)**: The `{python} GpuSharingRoi.gs_small_model_b_str` models require `{python} GpuSharingRoi.gs_n_small_str` A100 GPUs (`{python} GpuSharingRoi.gs_a100_mem_str` each), achieving only `{python} GpuSharingRoi.gs_excl_util_str` memory utilization (`{python} GpuSharingRoi.gs_n_small_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` used out of `{python} GpuSharingRoi.gs_excl_total_mem_str` total). The `{python} GpuSharingRoi.gs_large_model_b_str` models require `{python} GpuSharingRoi.gs_excl_large_str` (`{python} GpuSharingRoi.gs_n_large_str` models $\times$ `{python} GpuSharingRoi.gs_gpus_per_large_str` each for tensor parallelism). Total fleet: `{python} GpuSharingRoi.gs_excl_total_str`.
 
-**Strategy B -- Mixed sharing (MPS for small, exclusive for large)**: Pack `{python} GpuSharingRoi.gs_models_per_gpu_str` models per A100 for the `{python} GpuSharingRoi.gs_small_model_b_str` models (`{python} GpuSharingRoi.gs_models_per_gpu_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` = `{python} GpuSharingRoi.gs_shared_mem_str` GB, well within `{python} GpuSharingRoi.gs_a100_mem_str` GB), requiring only `{python} GpuSharingRoi.gs_shared_gpus_str` GPUs at `{python} GpuSharingRoi.gs_shared_util_str` percent memory utilization. The `{python} GpuSharingRoi.gs_large_model_b_str` models remain unchanged at `{python} GpuSharingRoi.gs_excl_large_str` GPUs. Total fleet: `{python} GpuSharingRoi.gs_shared_total_str` GPUs.
+**Strategy B -- Mixed sharing (MPS for small, exclusive for large)**: Pack `{python} GpuSharingRoi.gs_models_per_gpu_str` models per A100 for the `{python} GpuSharingRoi.gs_small_model_b_str` models (`{python} GpuSharingRoi.gs_models_per_gpu_str` $\times$ `{python} GpuSharingRoi.gs_small_footprint_str` = `{python} GpuSharingRoi.gs_shared_mem_str`, well within `{python} GpuSharingRoi.gs_a100_mem_str`), requiring only `{python} GpuSharingRoi.gs_shared_gpus_str` at `{python} GpuSharingRoi.gs_shared_util_str` memory utilization. The `{python} GpuSharingRoi.gs_large_model_b_str` models remain unchanged at `{python} GpuSharingRoi.gs_excl_large_str`. Total fleet: `{python} GpuSharingRoi.gs_shared_total_str`.
 
-Sharing reduces the fleet size by `{python} GpuSharingRoi.gs_saved_pct_str` percent (`{python} GpuSharingRoi.gs_saved_gpus_str` fewer GPUs). At \$`{python} GpuSharingRoi.gs_gpu_hour_rate_str`/GPU-hour, this saves approximately \$`{python} GpuSharingRoi.gs_annual_str` annually in compute costs, purely through scheduling policy.
+Sharing reduces the fleet size by `{python} GpuSharingRoi.gs_saved_pct_str` (`{python} GpuSharingRoi.gs_saved_gpus_str` fewer GPUs). At \$`{python} GpuSharingRoi.gs_gpu_hour_rate_str`/GPU-hour, this saves approximately \$`{python} GpuSharingRoi.gs_annual_str` annually in compute costs, purely through scheduling policy.
 
 :::
 
@@ -1912,8 +1848,6 @@ Inference traffic typically follows a "human curve": low at 3 AM, ramping up at 
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-diurnal-gpu-shift
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ DIURNAL GPU SHIFT (LEGO)
@@ -1926,7 +1860,7 @@ from mlsysim.core.constants import *
 # │ Imports: mlsysim.book (fmt, check), mlsysim.constants (HOURS_PER_YEAR)
 # │ Exports: ds_* strings for callout
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, check, MarkdownStr
+from mlsysim.fmt import fmt, fmt_int, check, MarkdownStr
 
 class DiurnalGpuShift:
     # ┌── 1. LOAD ──────────────────────────────────────────
@@ -1948,35 +1882,35 @@ class DiurnalGpuShift:
     check(static_active == 768, f"Static: expected 768, got {static_active}")
     check(static_util_pct == 75, f"Static util: expected 75%, got {static_util_pct}")
     check(dynamic_active == 901, f"Dynamic: expected 901, got {dynamic_active}")
-    check(dynamic_util_pct == 88, f"Dynamic util: expected 88%, got {dynamic_util_pct}")
+    check(round(dynamic_util_pct) == 88, f"Dynamic util: expected 88%, got {dynamic_util_pct}")
     check(serving_reclaimable - safety_buffer == reclaimed, f"Reclaimed mismatch: {serving_reclaimable - safety_buffer}")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     ds_static_active_str = fmt(static_active, precision=0)
-    ds_static_util_str = fmt(static_util_pct, precision=0)
+    ds_static_util_str = fmt(static_util_pct, precision=0, suffix=' percent')
     ds_dynamic_active_str = fmt(dynamic_active, precision=0)
-    ds_dynamic_util_str = fmt(dynamic_util_pct, precision=0)
-    ds_reclaimed_str = fmt(reclaimed, precision=0)
+    ds_dynamic_util_str = fmt_int(round(dynamic_util_pct), suffix=' percent')
+    ds_reclaimed_str = fmt(reclaimed, precision=0, suffix=' GPUs')
     ds_annual_str = fmt(annual_value / MILLION, precision=1, commas=False)
-    ds_serving_peak_str = fmt(serving_peak, precision=0, commas=False)
-    ds_serving_avg_str = fmt(serving_avg, precision=0, commas=False)
-    ds_training_fixed_str = fmt(training_fixed, precision=0, commas=False)
-    ds_fleet_gpus_str = fmt(fleet, precision=0, commas=True)
+    ds_serving_peak_str = fmt(serving_peak, precision=0, commas=False, suffix=' GPUs')
+    ds_serving_avg_str = fmt(serving_avg, precision=0, commas=False, suffix=' GPUs')
+    ds_training_fixed_str = fmt(training_fixed, precision=0, commas=False, suffix=' GPUs')
+    ds_fleet_gpus_str = fmt(fleet, precision=0, commas=True, suffix=' GPUs')
     ds_gpu_hour_rate_str = fmt(gpu_rate, precision=0, commas=False)
-    ds_serving_peak_util_str = fmt(serving_avg / serving_peak * 100, precision=1, commas=False)
+    ds_serving_peak_util_str = fmt(serving_avg / serving_peak * 100, precision=1, commas=False, suffix=' percent')
     ds_safety_buffer_str = fmt(safety_buffer, precision=0, commas=False)
-    ds_serving_reclaimable_str = fmt(serving_reclaimable, precision=0, commas=False)
+    ds_serving_reclaimable_str = fmt(serving_reclaimable, precision=0, commas=False, suffix=' GPUs')
     ds_training_full_util_str = MarkdownStr("100 percent")
 ```
 
 ::: {#nbk-fleet-orchestration-diurnal-gpu-shift .callout-notebook title="The diurnal GPU shift"}
 
-Consider a fleet of `{python} DiurnalGpuShift.ds_fleet_gpus_str` GPUs managed under two regimes:
+Consider a fleet of `{python} DiurnalGpuShift.ds_fleet_gpus_str` managed under two regimes:
 
-**Scenario A -- Static Partitioning**: The serving pool reserves `{python} DiurnalGpuShift.ds_serving_peak_str` GPUs to handle peak demand, but average usage is only `{python} DiurnalGpuShift.ds_serving_avg_str` GPUs (`{python} DiurnalGpuShift.ds_serving_peak_util_str` percent utilization). The training pool reserves `{python} DiurnalGpuShift.ds_training_fixed_str` GPUs, and backlog ensures `{python} DiurnalGpuShift.ds_training_full_util_str` utilization. Result: `{python} DiurnalGpuShift.ds_serving_avg_str` + `{python} DiurnalGpuShift.ds_training_fixed_str` = `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: **`{python} DiurnalGpuShift.ds_static_util_str` percent**.
+**Scenario A -- Static Partitioning**: The serving pool reserves `{python} DiurnalGpuShift.ds_serving_peak_str` to handle peak demand, but average usage is only `{python} DiurnalGpuShift.ds_serving_avg_str` (`{python} DiurnalGpuShift.ds_serving_peak_util_str` utilization). The training pool reserves `{python} DiurnalGpuShift.ds_training_fixed_str`, and backlog ensures `{python} DiurnalGpuShift.ds_training_full_util_str` utilization. Result: `{python} DiurnalGpuShift.ds_serving_avg_str` + `{python} DiurnalGpuShift.ds_training_fixed_str` = `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: `{python} DiurnalGpuShift.ds_static_util_str`.
 
-**Scenario B -- Dynamic Sharing**: Serving claims GPUs strictly as needed (average `{python} DiurnalGpuShift.ds_serving_avg_str`). Training reclaims unused serving GPUs (average `{python} DiurnalGpuShift.ds_serving_reclaimable_str`), minus a `{python} DiurnalGpuShift.ds_safety_buffer_str`-GPU safety buffer. The orchestrator shifts approximately `{python} DiurnalGpuShift.ds_reclaimed_str` GPUs between roles twice daily based on diurnal forecasts. Result: serving (`{python} DiurnalGpuShift.ds_serving_avg_str`) + training (`{python} DiurnalGpuShift.ds_training_fixed_str` + `{python} DiurnalGpuShift.ds_reclaimed_str`) = `{python} DiurnalGpuShift.ds_dynamic_active_str` active GPUs (the second training term is reclaimed serving capacity). Fleet utilization: **`{python} DiurnalGpuShift.ds_dynamic_util_str` percent**.
+**Scenario B -- Dynamic Sharing**: Serving claims GPUs strictly as needed (average `{python} DiurnalGpuShift.ds_serving_avg_str`). Training reclaims unused serving GPUs (average `{python} DiurnalGpuShift.ds_serving_reclaimable_str`), minus a `{python} DiurnalGpuShift.ds_safety_buffer_str`-GPU safety buffer. The orchestrator shifts approximately `{python} DiurnalGpuShift.ds_reclaimed_str` between roles twice daily based on diurnal forecasts. Result: serving (`{python} DiurnalGpuShift.ds_serving_avg_str`) + training (`{python} DiurnalGpuShift.ds_training_fixed_str` + `{python} DiurnalGpuShift.ds_reclaimed_str`) = `{python} DiurnalGpuShift.ds_dynamic_active_str` active GPUs (the second training term is reclaimed serving capacity). Fleet utilization: `{python} DiurnalGpuShift.ds_dynamic_util_str`.
 
-Dynamic sharing recovers `{python} DiurnalGpuShift.ds_reclaimed_str` GPUs of effective capacity. At \$`{python} DiurnalGpuShift.ds_gpu_hour_rate_str`/GPU-hour, this creates approximately \$`{python} DiurnalGpuShift.ds_annual_str` million per year in value without purchasing a single additional accelerator.
+Dynamic sharing recovers `{python} DiurnalGpuShift.ds_reclaimed_str` of effective capacity. At \$`{python} DiurnalGpuShift.ds_gpu_hour_rate_str`/GPU-hour, this creates approximately \$`{python} DiurnalGpuShift.ds_annual_str` million per year in value without purchasing a single additional accelerator.
 
 :::
 
@@ -1992,7 +1926,7 @@ Without explicit resource management policies, resource allocation degrades to a
 
 GPU quota allocation typically operates at the namespace or project level, defining how much of the cluster each team is entitled to use. The simplest approach allocates fixed GPU counts per team: Team A gets 500 GPUs, Team B gets 300 GPUs, Team C gets 200 GPUs. This approach is easy to understand and implement but leads to systematic underutilization when teams have variable workloads. If Team A's 500-GPU allocation sits 50 percent idle during a quiet period while Team B's queue overflows with urgent work, the cluster wastes 250 GPUs of capacity that rigid quotas forbid Team B from using. The alternative, allocating less quota to each team, creates a different problem: teams are blocked from running legitimate work during peak periods even when the cluster has overall spare capacity.
 
-Hierarchical quotas resolve this tension by enabling departmental limits with sub-team flexibility and cross-team borrowing. @eq-fleet-orchestration-quota bounds the effective quota for any team by both its own allocation and the remaining capacity within its parent organization:
+Hierarchical quotas resolve this tension by enabling departmental limits with sub-team flexibility and cross-team borrowing. @Eq-fleet-orchestration-quota bounds the effective quota for any team by both its own allocation and the remaining capacity within its parent organization:
 
 $$ Q_{\text{effective}} = \min\left(Q_{\text{team}},\ Q_{\text{department}} - \sum_{\text{other teams}} U_{\text{allocated}}\right) $$ {#eq-fleet-orchestration-quota}
 
@@ -2023,8 +1957,6 @@ Attribution in a shared fleet presents a forensic challenge. A single "training"
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-chargeback-example
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ CHARGEBACK EXAMPLE (LEGO)
@@ -2052,10 +1984,10 @@ class ChargebackExample:
     check(cost == 130560, f"Expected 130560, got {cost}")
     # ┌── 4. OUTPUT ────────────────────────────────────────
     chargeback_hours_str = fmt(hours, precision=0)
-    chargeback_cost_str = MarkdownStr(f"{cost / 1000:.0f},000")
+    chargeback_cost_str = MarkdownStr(f"{cost / THOUSAND:.0f},000")
 ```
 
-This data feeds the utilization dashboard, the cluster operator's primary instrument for fleet health. This view must synthesize per-team utilization against quotas, queue depth by priority class, and the **fragmentation index**\index{Fragmentation Index}, a measure of free GPUs that cannot be allocated due to topology constraints. Crucially, it must track the "cost of chaos": preemption rates, spot instance interruption frequencies, and the recovery overhead they induce. When these metrics are visible, they drive behavior. A 64-GPU 175B scheduling run that lasts 34 days consumes about \$`{python} ChargebackExample.chargeback_cost_str` of capacity (64 GPUs $\times$ `{python} ChargebackExample.chargeback_hours_str` hours $\times$ \$2.50/GPU-hour). Without proper accounting, this cost is invisible to the team that requested it. With chargeback, the team must justify this expenditure against the model's expected business value.
+This data feeds the utilization dashboard, the cluster operator's primary instrument for fleet health. This view must synthesize per-team utilization against quotas, queue depth by priority class, and the **fragmentation index**\index{Fragmentation Index}, a measure of free GPUs that cannot be allocated due to topology constraints. Crucially, it must track the "cost of chaos": preemption rates, spot instance interruption frequencies, and the recovery overhead they induce. When these metrics are visible, they drive behavior. A 64-GPU 175B scheduling run that lasts 34 days consumes about \$`{python} ChargebackExample.chargeback_cost_str` of capacity (64 GPUs $\times$ `{python} ChargebackExample.chargeback_hours_str` $\times$ \$2.50/GPU-hour). Without proper accounting, this cost is invisible to the team that requested it. With chargeback, the team must justify this expenditure against the model's expected business value.
 
 Automated anomaly detection turns these metrics into actionable signals. A sudden spike in a team's consumption to 3$\times$ their historical norm might indicate a runaway script spawning infinite jobs. A queue that grows faster than it drains signals a capacity shortfall that auto-scaling must address. Conversely, a sudden drop in cluster-wide power consumption typically precedes a mass job failure event, often due to a shared dependency like a storage outage. These alerts allow operators to intervene before the budget is drained or the queue becomes unmanageable.
 
@@ -2086,8 +2018,6 @@ The engineering cost of preemption extends far beyond the scheduling latency. Th
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-preemption-tax
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ PREEMPTION TAX (LEGO)
@@ -2127,7 +2057,7 @@ class PreemptionTax:
     wasted_gpu_hours_per_day_str = fmt(wasted_gpu_hours_per_day, precision=0)
 ```
 
-During this `{python} PreemptionTax.recovery_minutes_str`-minute recovery window, the GPUs are active but effectively unproductive. At \$2 per GPU-hour, a single preemption event costs \$`{python} PreemptionTax.cost_per_event_str` in wasted compute capital. If the scheduler allows unlimited preemption, 12 preemptions per day waste `{python} PreemptionTax.wasted_hours_per_day_str` hours of that job's allocation, or `{python} PreemptionTax.wasted_gpu_hours_per_day_str` GPU-hours/day for this 64-GPU run. To mitigate this, production systems enforce **preemption budgets**\index{Preemption Budgets}. These rate limits constrain disruption frequency, ensuring that a job cannot be preempted more than once per hour, or that total cluster preemption churn cannot exceed 5 percent of capacity in any 10-minute window. This forces the scheduler to wait for natural job completions rather than triggering a cascade, trading slightly higher pending times for significantly higher aggregate throughput.
+During this `{python} PreemptionTax.recovery_minutes_str`-minute recovery window, the GPUs are active but effectively unproductive. At \$2 per GPU-hour, a single preemption event costs \$`{python} PreemptionTax.cost_per_event_str` in wasted compute capital. If the scheduler allows unlimited preemption, 12 preemptions per day waste `{python} PreemptionTax.wasted_hours_per_day_str` of that job's allocation, or `{python} PreemptionTax.wasted_gpu_hours_per_day_str`-hours/day for this 64-GPU run. To mitigate this, production systems enforce **preemption budgets**\index{Preemption Budgets}. These rate limits constrain disruption frequency, ensuring that a job cannot be preempted more than once per hour, or that total cluster preemption churn cannot exceed 5 percent of capacity in any 10-minute window. This forces the scheduler to wait for natural job completions rather than triggering a cascade, trading slightly higher pending times for significantly higher aggregate throughput.
 
 ### Quota governance and organizational dynamics {#sec-fleet-orchestration-quota-governance}
 
@@ -2140,8 +2070,6 @@ Financial accountability further aligns incentives. Organizations typically begi
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: lego-quota-hoarding-cost
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ QUOTA HOARDING COST (LEGO)
@@ -2177,7 +2105,7 @@ A concrete quota scenario shows how quickly idle reservations become expensive.
 
 ::: {#exmp-fleet-orchestration-quota-hoarding .callout-example title="Quota hoarding"}
 
-**Scenario**: A team reserves a block of `{python} QuotaHoardingCost.hoarding_gpus_str` GPUs for a "critical" urgent model refresh.
+**Scenario**: A team reserves a block of `{python} QuotaHoardingCost.hoarding_gpus_str` for a "critical" urgent model refresh.
 
 **Failure mode**: Upstream data delays postpone the training jobs, but the team retains the reservation to ensure availability "when the data arrives."
 
@@ -2187,7 +2115,7 @@ A concrete quota scenario shows how quickly idle reservations become expensive.
 
 :::
 
-That policy works only when quota rules distinguish borrowed idle capacity from guaranteed reservations, which is the design pressure behind the next checkpoint.
+The "use it or lose it" reclamation policy addresses the most visible symptom of quota hoarding, but it raises a second-order question: when idle capacity is lent to another team, the system must distinguish borrowed capacity (preemptible on short notice) from guaranteed reservations (protected by SLOs). Defining borrowing, preemption, and guaranteed tiers as first-class policy primitives is the core multi-tenancy design decision.
 
 ::: {#chk-fleet-orchestration-multi-tenancy-design-decisions .callout-checkpoint title="Multi-tenancy design decisions"}
 
@@ -2209,8 +2137,6 @@ A cluster dashboard shows average GPU utilization stuck at 60 percent, yet devel
 
 ```{python}
 #| echo: false
-from mlsysim import *
-from mlsysim.core.constants import *
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ UTILIZATION PARADOX (FIGURE)
 # ├─────────────────────────────────────────────────────────────────────────────
@@ -2289,8 +2215,6 @@ fig = plt.gcf()
 ```{python}
 #| echo: false
 
-from mlsysim import *
-from mlsysim.core.constants import *
 #| label: debug-value-calc
 # ┌─────────────────────────────────────────────────────────────────────────────
 # │ DEBUGGING EXAMPLE: UTILIZATION RECOVERY (LEGO)
@@ -2345,7 +2269,7 @@ class DebugValueCalc:
 
 ::: {#exmp-fleet-orchestration-debugging-low-gpu-utilization .callout-example title="Debugging low GPU utilization"}
 
-**Problem**: A `{python} DebugValueCalc.debug_cluster_comma_str`-GPU cluster reports `{python} DebugValueCalc.debug_util_before_pct_str` percent average utilization despite a full job queue with over 50 pending jobs. Engineering leadership expects greater than `{python} DebugValueCalc.debug_target_util_pct_str` percent utilization given the capital investment. The standard monitoring dashboards show plenty of idle GPUs, yet users complain about long queue times. Identify the binding constraint and the systematic diagnostic path.
+**Problem**: A `{python} DebugValueCalc.debug_cluster_comma_str`-GPU cluster reports `{python} DebugValueCalc.debug_util_before_pct_str` average utilization despite a full job queue with over 50 pending jobs. Engineering leadership expects greater than `{python} DebugValueCalc.debug_target_util_pct_str` utilization given the capital investment. The standard monitoring dashboards show plenty of idle GPUs, yet users complain about long queue times. Identify the binding constraint and the systematic diagnostic path.
 
 The Fleet Stack framework in @fig-fleet-stack provides a structured approach: analyze the Infrastructure Layer first to understand hardware constraints, then the Distribution Layer to understand scheduling logic, and finally the interaction between layers to identify the root cause.
 
@@ -2356,19 +2280,17 @@ The Fleet Stack framework in @fig-fleet-stack provides a structured approach: an
 # ┌── LEGO ───────────────────────────────────────────────
 # │ Context: Debug inventory table — A100 NVLink bandwidth.
 # │ Exports: FleetDebugNvlinkRecap.nvlink_a100_str
-from mlsysim import *
-from mlsysim.core.constants import *
 class FleetDebugNvlinkRecap:
-    nvlink_a100_val = Hardware.Cloud.A100.memory_bw.m_as(GB/second)
+    nvlink_a100_val = Hardware.Cloud.A100.nvlink.bandwidth.m_as(GB/second)
     # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    nvlink_a100_str = fmt(nvlink_a100_val, precision=0)
+    nvlink_a100_str = fmt(nvlink_a100_val, precision=0, suffix=' GB/s')
 ```
 
-| **GPU Type**   | **Count** | **Memory**  | **Interconnect**                                               | **Nodes**                |
-|:---------------|----------:|:------------|:---------------------------------------------------------------|:-------------------------|
-| **A100-80 GB** |       400 | 80 GB HBM2e | NVLink (`{python} FleetDebugNvlinkRecap.nvlink_a100_str` GB/s) | 50 nodes $\times$ 8 GPUs |
-| **A100-40 GB** |       400 | 40 GB HBM2e | NVLink (`{python} FleetDebugNvlinkRecap.nvlink_a100_str` GB/s) | 50 nodes $\times$ 8 GPUs |
-| **V100-32 GB** |       200 | 32 GB HBM2  | PCIe Gen3 (16 GB/s)                                            | 50 nodes $\times$ 4 GPUs |
+| **GPU Type**   | **Count** | **Memory**  | **Interconnect**                                          | **Nodes**                |
+|:---------------|----------:|:------------|:----------------------------------------------------------|:-------------------------|
+| **A100-80 GB** |       400 | 80 GB HBM2e | NVLink (`{python} FleetDebugNvlinkRecap.nvlink_a100_str`) | 50 nodes $\times$ 8 GPUs |
+| **A100-40 GB** |       400 | 40 GB HBM2e | NVLink (`{python} FleetDebugNvlinkRecap.nvlink_a100_str`) | 50 nodes $\times$ 8 GPUs |
+| **V100-32 GB** |       200 | 32 GB HBM2  | PCIe Gen3 (16 GB/s)                                       | 50 nodes $\times$ 4 GPUs |
 
 : **Cluster Hardware Inventory**: Three procurement generations create distinct resource pools with different capabilities. A100 nodes support tensor parallelism via NVLink, while V100 nodes are limited to data parallelism. {#tbl-fleet-orchestration-debug-inventory}
 
@@ -2411,27 +2333,11 @@ The scheduler's allocation log shows A100-80 GB GPUs nearly saturated by a few r
 
 : **Utilization Recovery Results**: The distinction between "allocated" and "effective" utilization captures the policy-induced utilization gap: before the fix, A100-80 GB GPUs showed high allocation in Slurm but lower actual compute utilization, while strict job templates stranded other capable hardware pools. {#tbl-fleet-orchestration-debug-results}
 
-As @tbl-fleet-orchestration-debug-results shows, this utilization gain adds approximately `{python} DebugValueCalc.debug_productive_gain_str` fully utilized GPUs of productive work. That is equivalent to buying `{python} DebugValueCalc.debug_recovered_str` additional raw GPUs if those GPUs ran at the old `{python} DebugValueCalc.debug_util_before_pct_str` percent utilization. At \$2 per GPU-hour, the equivalent raw capacity represents approximately \$`{python} DebugValueCalc.debug_annual_str` million in annual recovered value, achieved through policy changes requiring zero additional hardware investment.
+As @tbl-fleet-orchestration-debug-results shows, this utilization gain adds approximately `{python} DebugValueCalc.debug_productive_gain_str` fully utilized GPUs of productive work. That is equivalent to buying `{python} DebugValueCalc.debug_recovered_str` additional raw GPUs if those GPUs ran at the old `{python} DebugValueCalc.debug_util_before_pct_str` utilization. At \$2 per GPU-hour, the equivalent raw capacity represents approximately \$`{python} DebugValueCalc.debug_annual_str` million in annual recovered value, achieved through policy changes requiring zero additional hardware investment.
 
 **The Fleet Stack lesson**: Surface-level diagnosis suggested a scheduling algorithm problem (Distribution Layer), perhaps requiring a more sophisticated scheduler like those discussed in @sec-fleet-orchestration-custom-schedulers. Management initially proposed evaluating Pollux or a custom scheduling solution, which would have required months of engineering effort and introduced operational risk. Deeper analysis revealed the root cause as a **mismatch between Infrastructure Layer heterogeneity and Distribution Layer policies designed for homogeneous infrastructure**. *The scheduler algorithm was not the problem; the policies it implemented were the problem.* The scheduler correctly implemented its configured policy; the policy itself created the utilization gap.
 
 Effective debugging required examining both layers and their interaction, recognizing that infrastructure evolution (adding A100-40 GB and V100 nodes to an originally homogeneous A100-80 GB cluster) had invalidated assumptions embedded in job templates and scheduling configuration. The fix addressed the policy layer, not the algorithm layer, and was implemented through configuration changes requiring zero code modifications and zero additional hardware investment. This pattern recurs across production ML infrastructure: the most common root cause of scheduling problems is not algorithmic insufficiency but policy-infrastructure mismatch, where operational policies designed for one infrastructure configuration are applied without adaptation to a changed infrastructure.
-
-:::
-
-A simple back-of-envelope calculation quantifies what that recovered capacity is actually worth.
-
-::: {#nbk-fleet-orchestration-value-policy-debugging .callout-notebook title="The value of policy debugging"}
-
-**Problem**: A platform team manages a `{python} DebugValueCalc.debug_cluster_str`-GPU cluster. Initial monitoring shows `{python} DebugValueCalc.debug_util_before_pct_str` percent average utilization. After a week of policy debugging (capability-based scheduling, topology-aware placement, backfill tuning, and workload-hardware guidance), utilization increases to `{python} DebugValueCalc.debug_util_after_pct_str` percent. What is the financial value of that one week of engineering work?
-
-**Math**:
-
-1. **Productive Gain**: `{python} DebugValueCalc.debug_cluster_str` GPUs $\times$ (`{python} DebugValueCalc.debug_util_after_str` - `{python} DebugValueCalc.debug_util_before_str`) = **`{python} DebugValueCalc.debug_productive_gain_str` fully utilized GPU-equivalents**.
-2. **Equivalent Raw Hardware**: `{python} DebugValueCalc.debug_productive_gain_str` GPU-equivalents $\div$ `{python} DebugValueCalc.debug_util_before_str` old utilization = **`{python} DebugValueCalc.debug_recovered_str` raw GPUs**.
-3. **Annual Value**: `{python} DebugValueCalc.debug_recovered_str` GPUs $\times$ \$2/hr $\times$ 8,760 hrs/year $\approx$ **\$`{python} DebugValueCalc.debug_annual_str` Million**.
-
-**Systems insight**: Policy debugging is not a "maintenance task"; it is a **Capacity Generator**. Increasing utilization from `{python} DebugValueCalc.debug_util_before_pct_str` percent to `{python} DebugValueCalc.debug_util_after_pct_str` percent adds **`{python} DebugValueCalc.debug_productive_gain_str` fully utilized GPU-equivalents**, the same productive capacity that **`{python} DebugValueCalc.debug_recovered_str` new raw GPUs** would deliver if they ran at the old utilization (costing ~\$12 Million in CapEx). In the Machine Learning Fleet, policy and performance engineering are often the most cost-effective way to scale: making existing GPUs more productive costs less than buying more hardware.
 
 :::
 

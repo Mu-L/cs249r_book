@@ -12,6 +12,12 @@ class DeploymentTier(BaseModel):
     typical_latency_budget: Quantity
 
 class NetworkFabric(BaseModel):
+    """
+    Represents the inter-node network interconnect.
+    
+    Captures the topology, raw bandwidth, latency, and oversubscription ratio 
+    of the cluster's switching fabric (e.g., InfiniBand NDR or Ethernet).
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     topology: str = "fat-tree"
@@ -32,8 +38,13 @@ class NetworkFabric(BaseModel):
             return 0.0
         return float(self.latency.m_as("microsecond"))
 
-
 class Node(BaseModel):
+    """
+    Represents a physical server chassis containing multiple accelerators.
+    
+    Essential for modeling the bandwidth gap between fast intra-node 
+    communication (e.g., NVLink) and slower inter-node communication.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     accelerator: HardwareNode
@@ -53,8 +64,14 @@ class PodEnvelope(BaseModel):
     power: Quantity
     metadata: Metadata = Field(default_factory=Metadata)
 
-
 class Fleet(BaseModel):
+    """
+    Layer D (Systems/Topology): The complete distributed cluster environment.
+    
+    A Fleet composes a `Node` configuration, a `NetworkFabric`, and a total 
+    count of nodes. It can optionally be situated in a specific `Datacenter` 
+    to enable unified calculations of distributed performance and sustainability.
+    """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     name: str
     node: Node

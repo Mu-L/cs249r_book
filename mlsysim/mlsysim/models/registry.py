@@ -6,6 +6,7 @@ from ..core.provenance import Provenance, ProvenanceKind
 from ..core import provenance_catalog as pc
 
 class LanguageModels(Registry):
+    """Registry namespace for LanguageModels."""
     GPT2 = TransformerWorkload(
         name="GPT-2 (1.5B)",
         architecture="Transformer",
@@ -160,6 +161,7 @@ class LanguageModels(Registry):
     )
 
 class VisionModels(Registry):
+    """Registry namespace for VisionModels."""
     ResNet18 = CNNWorkload(
         name="ResNet-18",
         architecture="CNN",
@@ -202,6 +204,7 @@ class VisionModels(Registry):
     )
 
 class TinyModels(Registry):
+    """Registry namespace for TinyModels."""
     DS_CNN = CNNWorkload(
         name="DS-CNN (KWS)",
         architecture="CNN",
@@ -267,6 +270,7 @@ class GenerativeVisionModels(Registry):
     )
 
 class Models(Registry):
+    """Registry namespace for Models."""
     Language = LanguageModels
     Vision = VisionModels
     Tiny = TinyModels

@@ -5,12 +5,9 @@ from . import config
 from . import evaluation
 from .constants import ureg, Q_
 
-# Point to the new vetted registries
-from ..hardware.registry import Hardware
-from ..models.registry import Models
-from ..platforms.registry import Platforms
-from ..systems.registry import Systems
-from ..infra.registry import Infrastructure
+# Sibling registry re-exports removed to avoid circular imports on
+# Python <3.12. Access via mlsysim.Hardware etc. (from __init__.py)
+# or import directly: from mlsysim.hardware.registry import Hardware
 
 from .scenarios import Scenario, Scenarios, Applications, Fleet
 from .resolver_factory import ResolverFactory

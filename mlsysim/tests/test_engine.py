@@ -8,10 +8,11 @@ import pytest
 from mlsysim.core.engine import Engine
 from mlsysim.hardware.registry import Hardware
 from mlsysim.models.registry import Models
+from mlsysim.core import calibration as cal
 
 
 def test_engine_energy_proportional():
-    """Engine energy uses the energy-proportional model: P = TDP * (0.3 + 0.7 * MFU).
+    """Engine energy uses the energy-proportional model: P = TDP * (idle_fraction + dynamic_fraction * MFU).
 
     For memory-bound workloads, MFU can reach 1.0 (the clamped ceiling) because
     achieved_flops/peak_flops exceeds 1 when latency is dominated by memory time.
@@ -25,8 +26,8 @@ def test_engine_energy_proportional():
 
     # Energy should always be positive
     assert perf.energy.to("J").magnitude > 0
-    # Energy = TDP * (0.3 + 0.7 * MFU) * latency
-    expected = (a100.tdp * (0.3 + 0.7 * perf.mfu) * perf.latency.to("s")).to("J").magnitude
+    # Energy = TDP * (idle_fraction + dynamic_fraction * MFU) * latency
+    expected = (a100.tdp * (cal.ENERGY_IDLE_FRACTION + cal.ENERGY_DYNAMIC_FRACTION * perf.mfu) * perf.latency.to("s")).to("J").magnitude
     assert perf.energy.to("J").magnitude == pytest.approx(expected, rel=0.01)
 
 

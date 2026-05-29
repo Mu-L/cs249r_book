@@ -40,11 +40,16 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    _labs_dir = Path(__file__).resolve().parents[1]
-    if str(_labs_dir) not in sys.path:
-        sys.path.insert(0, str(_labs_dir))
-    from bootstrap import setup_lab
-    await setup_lab(__file__)
+    if sys.platform == "emscripten":
+        import micropip
+        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
+        await micropip.install("../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False)
+    else:
+        _labs_dir = Path(__file__).resolve().parents[1]
+        if str(_labs_dir) not in sys.path:
+            sys.path.insert(0, str(_labs_dir))
+        from bootstrap import native_bootstrap
+        native_bootstrap(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger

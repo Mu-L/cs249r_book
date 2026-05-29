@@ -28,6 +28,7 @@ _LITERATURE_REF = re.compile(
 
 
 def _appendix_text() -> str:
+    """Reads the content of an appendix .qmd file with caching to prevent redundant disk I/O."""
     parts: list[str] = []
     for path in APPENDIX_ASSUMPTIONS_QMD:
         if path.is_file():

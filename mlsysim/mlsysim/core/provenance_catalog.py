@@ -13,6 +13,7 @@ def _ds(
     verified: str = "2025-03-06",
     notes: str | None = None,
 ) -> Provenance:
+    """Creates a Provenance object for a hardware datasheet or technical specification."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.DATASHEET,
@@ -31,6 +32,7 @@ def _lit(
     verified: str = "2025-03-06",
     notes: str | None = None,
 ) -> Provenance:
+    """Creates a Provenance object for peer-reviewed literature or academic whitepapers."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.LITERATURE,
@@ -49,6 +51,7 @@ def _est(
     url: str | None = None,
     verified: str = "2025-03-06",
 ) -> Provenance:
+    """Creates a Provenance object for expert estimates or rules of thumb."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.ESTIMATE,
@@ -60,6 +63,7 @@ def _est(
 
 
 def _conv(id: str, ref: str, *, notes: str | None = None) -> Provenance:
+    """Creates a Provenance object for widely accepted industry conventions."""
     return Provenance(
         id=id,
         kind=ProvenanceKind.CONVENTION,
@@ -466,6 +470,12 @@ BOOK_SCALING_EFFICIENCY_TIERS = _conv(
     "prov:book-scaling-efficiency-tiers",
     "MLSysBook illustrative scaling efficiency vs GPU count (32→1024 GPUs)",
     notes="8192-GPU tier uses MEGASCALE literature anchor separately.",
+)
+
+BOOK_ENERGY_HIERARCHY = _conv(
+    "prov:book-energy-hierarchy",
+    "MLSysBook simplified energy hierarchy: architecture-class effective pJ/FLOP (CPU→ASIC) and per-byte data-movement cost (register→network)",
+    notes="Order-of-magnitude teaching figures; effective system-level energy, consistent with the Horowitz (2014) energy trend.",
 )
 
 BOOK_WUE_ANCHORS = _conv(

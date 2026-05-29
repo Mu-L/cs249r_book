@@ -76,11 +76,11 @@ class TestMarimoStructure:
     def test_wasm_bootstrap(self, lab_path):
         """WASM bootstrap for browser deployment."""
         source = read_source(lab_path)
-        has_bootstrap = (
-            'sys.platform == "emscripten"' in source
-            or "from bootstrap import setup_lab" in source
+        assert 'sys.platform == "emscripten"' in source, (
+            "Missing inline WASM bootstrap (sys.platform == 'emscripten' guard). "
+            "Each lab must handle micropip.install inline because marimo's "
+            "html-wasm export bundles only the notebook file."
         )
-        assert has_bootstrap, "Missing WASM bootstrap (emscripten guard or labs/bootstrap.py)"
 
     def test_has_tabs(self, lab_path):
         """Labs should use mo.ui.tabs() for Part navigation."""
@@ -195,7 +195,7 @@ class TestWheelConsistency:
     """Ensure the micropip wheel URL in every lab matches the actual mlsysim version."""
 
     def test_micropip_url_matches_pyproject_version(self, lab_path):
-        """The micropip wheel URL must contain the version from mlsysim/pyproject.toml."""
+        """The inline micropip wheel URL must match the version from mlsysim/pyproject.toml."""
         try:
             import tomllib
         except ImportError:
@@ -208,27 +208,14 @@ class TestWheelConsistency:
         source = read_source(lab_path)
         expected_fragment = f"../../wheels/mlsysim-{version}-py3-none-any.whl"
         bad_depth = f"../../../wheels/mlsysim-{version}-py3-none-any.whl"
-        uses_shared_bootstrap = "from bootstrap import setup_lab" in source
         assert bad_depth not in source, (
             f"Micropip wheel path has one too many '../' segments (found '{bad_depth}'). "
             f"From labs/volN/ the repo root is two levels up; use '{expected_fragment}'."
         )
-        if uses_shared_bootstrap:
-            import sys
-            labs_dir = str(REPO_ROOT / "labs")
-            if labs_dir not in sys.path:
-                sys.path.insert(0, labs_dir)
-            from bootstrap import wheel_relpath
-            sample_lab = str(REPO_ROOT / "labs" / "vol1" / "lab_01_ml_intro.py")
-            assert wheel_relpath(sample_lab) == expected_fragment, (
-                f"labs/bootstrap.py wheel path mismatch: got {wheel_relpath(sample_lab)!r}, "
-                f"expected {expected_fragment!r} from mlsysim/pyproject.toml."
-            )
-        else:
-            assert expected_fragment in source, (
-                f"Wheel version mismatch or not relative. Expected '{expected_fragment}' in micropip URL "
-                f"but not found. Update the micropip.install() URL in this lab."
-            )
+        assert expected_fragment in source, (
+            f"Wheel version mismatch. Expected '{expected_fragment}' in micropip URL "
+            f"but not found. Update the micropip.install() URL in this lab."
+        )
 
     def test_no_absolute_wheel_url(self, lab_path):
         """Labs must use relative URLs for the wheel, not absolute mlsysbook.ai URLs."""

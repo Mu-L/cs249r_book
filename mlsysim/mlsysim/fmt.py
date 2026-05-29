@@ -25,6 +25,7 @@ class MarkdownStr(str):
     """
 
     def _repr_markdown_(self):
+        """Jupyter notebook hook to render the object as Markdown."""
         return str.__str__(self)
 
 
@@ -215,19 +216,24 @@ def fmt_unit(quantity, default="-"):
     return out
 
 
-def fmt_percent(ratio, precision=1, commas=False):
+def fmt_percent(ratio, precision=1, commas=False, suffix=""):
     """
     Format a ratio (0.0 to 1.0) as a percentage string for display.
+
     Use this for compound fractions (e.g. effective utilization) to avoid
     display bugs from Quantity or wrong scaling.
     Accepts Pint Quantity (uses magnitude) or plain float.
+
+    suffix=" percent" for body prose (MIT Press: spell out "percent").
+    suffix="%" for tables, equations, and constrained captions.
+    No suffix (default) when the prose context carries the meaning
+    (e.g., "50 MFU", "85 goodput").
     """
     if isinstance(ratio, ureg.Quantity):
-        # Crucial: convert to dimensionless first so units like flop/TFLOP cancel out!
         ratio = float(ratio.m_as(''))
     else:
         ratio = float(ratio)
-    return fmt(ratio * 100, precision=precision, commas=commas)
+    return fmt(ratio * 100, precision=precision, commas=commas, suffix=suffix)
 
 
 def fmt_sci(val, precision=2):
@@ -276,6 +282,45 @@ def fmt_frac(numerator, denominator, result=None, unit=None):
     out = MarkdownStr(latex)
     assert isinstance(out, MarkdownStr), "fmt_frac() must return MarkdownStr"
     return out
+
+
+def _compact_unit_suffix(display_unit) -> str:
+    """Derive a leading-space compact unit label from a pint display unit."""
+    from .core.units import USD
+
+    if display_unit is USD:
+        return " USD"
+    try:
+        one = 1 * display_unit
+        formatted = f"{one:~P}"
+    except Exception:
+        return f" {display_unit}"
+    parts = formatted.split(None, 1)
+    if len(parts) == 2:
+        return f" {parts[1]}"
+    return f" {display_unit}"
+
+
+def fmt_qty(
+    quantity,
+    display_unit,
+    *,
+    precision=1,
+    commas=False,
+    prefix="",
+    extra_suffix="",
+):
+    """Format a pint Quantity in ``display_unit`` with a canonical unit suffix.
+
+    Required OUTPUT path for physical quantities in LEGO cells.
+    """
+    if isinstance(quantity, ureg.Quantity):
+        q = quantity.to(display_unit)
+        val = q.magnitude
+    else:
+        val = _numeric_magnitude(quantity)
+    suffix = _compact_unit_suffix(display_unit) + extra_suffix
+    return fmt(val, precision=precision, commas=commas, prefix=prefix, suffix=suffix)
 
 
 def check(condition, message):

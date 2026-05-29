@@ -99,6 +99,7 @@ def render_scorecard(eval_obj, output_format: str):
     """Renders the unified 3-lens SystemEvaluation scorecard."""
     
     def _format_metric(k: str, v: Any) -> str:
+        """Formats a physical quantity or scalar into a human-readable string for CLI rendering."""
         if isinstance(v, float):
             val = f"{v:,.2f}"
             if "latency" in k.lower(): val += " ms"

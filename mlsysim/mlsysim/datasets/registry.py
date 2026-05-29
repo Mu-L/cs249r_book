@@ -11,6 +11,7 @@ _MNIST_TRAINING = 60_000 * count
 
 
 class Datasets(Registry):
+    """Registry namespace for Datasets."""
     ImageNet = DatasetProfile(
         name="ImageNet-1k",
         training_examples=_IMAGENET_TRAINING,

@@ -86,6 +86,7 @@ def evaluate_main(
                     all_metrics[f"macro.{k}"] = v
                     
                 def _parse_val(val):
+                    """Parses a command-line value into a typed physical Quantity or standard scalar."""
                     if isinstance(val, float) or isinstance(val, int): return val
                     if isinstance(val, str):
                         try:

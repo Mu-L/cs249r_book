@@ -160,6 +160,7 @@ class Grids(Registry):
 
 
 class Datacenters(Registry):
+    """Registry namespace for Datacenters."""
     Quebec_Hydro = Datacenter(name="Quebec Hydro Campus", grid=Grids.Quebec)
     Norway_Hydro = Datacenter(name="Norway Hydro Campus", grid=Grids.Norway)
     US_Hyperscale = Datacenter(name="US Hyperscale Region", grid=Grids.US_Avg)
@@ -170,6 +171,7 @@ class Datacenters(Registry):
 
 
 class Racks(Registry):
+    """Registry namespace for Racks."""
     Traditional = RackProfile(
         name="Traditional Enterprise",
         power_kw=RACK_POWER_TRADITIONAL_KW,
@@ -195,6 +197,7 @@ from .capacity import Capacity
 
 
 class Infrastructure(Registry):
+    """Registry namespace for Infrastructure."""
     Grids = Grids
     Datacenters = Datacenters
     Racks = Racks

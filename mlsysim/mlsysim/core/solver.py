@@ -64,6 +64,12 @@ class BaseResolver(ABC):
 
     @abstractmethod
     def solve(self, *args, **kwargs) -> Any:
+        """
+        Executes the analytical solver.
+        
+        Subclasses must implement this method to provide the mathematical 
+        resolution of the constraints they govern.
+        """
         pass
 
     @classmethod
@@ -320,9 +326,9 @@ class DistributedModel(BaseModel):
         # one after the column-parallel MLP, one after the row-parallel attention.
         # Volume per AllReduce = batch_size * seq_len * hidden_dim * precision_bytes
         # Source: Shoeybi et al. (2019), "Megatron-LM"
-        # NOTE: This models TP AllReduces as sequential (conservative upper bound).
-        # Real frameworks pipeline TP communication with the next layer's compute,
-        # reducing exposed latency. For v0.2.0: add tp_overlap_efficiency parameter.
+        # NOTE: This analytical model evaluates TP AllReduces as sequential to establish
+        # a conservative upper bound. In practice, modern frameworks overlap this
+        # communication with the next layer's computation to reduce exposed latency.
         if tp_size > 1:
             bpp = PRECISION_MAP.get(precision, BYTES_FP16)
             hidden_dim = getattr(model, 'hidden_dim', 4096) or 4096
@@ -976,12 +982,35 @@ class TrainingMemoryModel(BaseModel):
     requires = ("workload", "hardware")
     produces = TrainingMemoryResult
 
-    OPTIMIZER_STATE_BYTES = {
-        "adam": 12.0,   # FP32 master weights + first and second moments
-        "adamw": 12.0,
-        "sgd": 4.0,     # FP32 master weights
-        "none": 0.0,
-    }
+    def _get_optimizer_bytes(self, optimizer_key: str) -> float:
+        """
+        Retrieves the byte multiplier for the requested optimizer state.
+
+        Parameters
+        ----------
+        optimizer_key : str
+            The name of the optimizer (e.g., 'adam', 'sgd', 'none').
+
+        Returns
+        -------
+        float
+            The number of bytes required per parameter for the optimizer's state.
+            
+        Raises
+        ------
+        ValueError
+            If the requested optimizer is not supported.
+        """
+        mapping = {
+            "adam": cal.TRAINING_OPTIMIZER_BYTES_ADAM,   # FP32 master + first and second moments
+            "adamw": cal.TRAINING_OPTIMIZER_BYTES_ADAM,
+            "sgd": cal.TRAINING_OPTIMIZER_BYTES_SGD,     # FP32 master weights
+            "none": 0.0,
+        }
+        if optimizer_key not in mapping:
+            supported = ", ".join(sorted(mapping))
+            raise ValueError(f"Unknown optimizer '{optimizer_key}'. Supported: {supported}")
+        return mapping[optimizer_key]
 
     def solve(
         self,
@@ -1016,9 +1045,8 @@ class TrainingMemoryModel(BaseModel):
             supported = ", ".join(sorted(PRECISION_MAP))
             raise ValueError(f"precision '{precision}' is not supported. Supported precision values: {supported}")
         optimizer_key = optimizer.lower()
-        if optimizer_key not in self.OPTIMIZER_STATE_BYTES:
-            supported = ", ".join(sorted(self.OPTIMIZER_STATE_BYTES))
-            raise ValueError(f"optimizer '{optimizer}' is not supported. Supported optimizers: {supported}")
+        opt_bytes = self._get_optimizer_bytes(optimizer_key)
+        
         if activation_checkpointing not in {"none", "selective", "full"}:
             raise ValueError("activation_checkpointing must be 'none', 'selective', or 'full'")
         validate_at_least(batch_size, 1, "batch_size")
@@ -1041,7 +1069,7 @@ class TrainingMemoryModel(BaseModel):
 
         weights = params_per_rank * bpp * ureg.byte
         gradients = trainable_params_per_rank * bpp * ureg.byte
-        optimizer_state = trainable_params_per_rank * self.OPTIMIZER_STATE_BYTES[optimizer_key] * ureg.byte
+        optimizer_state = trainable_params_per_rank * opt_bytes * ureg.byte
 
         if zero_stage >= 1:
             optimizer_state = optimizer_state / dp_size
@@ -1818,10 +1846,10 @@ class OrchestrationModel(BaseModel):
     """
     Analyzes Cluster Orchestration and Queueing (Little's Law).
 
-    **Caveat:** This model uses an M/D/1 queue (single server, deterministic
-    service) which assumes one job at a time on the entire cluster. For
-    multi-tenant clusters with job packing and preemption, an M/G/c model
-    is more appropriate — planned for v0.2.0.
+    **Caveat:** This model uses a pedagogical M/D/1 queue (single server, deterministic
+    service) to establish macroscopic wait-time bounds for dedicated, monolithic cluster workloads. 
+    For detailed multi-tenant job packing and preemption, a discrete-event M/G/c 
+    scheduler simulation would be required.
 
     This model simulates the 'Wait Wall' in shared research clusters,
     calculating job completion times and researcher wait times based on
@@ -2572,7 +2600,9 @@ class BatchingOptimizer(BaseOptimizer):
               seq_len: int, sla_latency_ms: float, arrival_rate_qps: float,
               num_replicas: int = 1, precision: str = "fp16", 
               efficiency: float = 0.5, max_search_batch: int = 256) -> BatchingOptimizerResult:
-        
+        """
+        Determines the maximum batch size that satisfies a P99 tail latency SLA.
+        """
         from .optimization.registry import OptimizationRegistry
         serving_model = ServingModel()
         tail_model = TailLatencyModel()
@@ -2638,7 +2668,9 @@ class PlacementOptimizer(BaseOptimizer):
     def solve(self, fleet: Fleet, duration_days: float, 
               regions: List[str] = ["US_Avg", "Quebec", "Iowa"], 
               carbon_tax_per_ton: float = 100.0, mfu: float = 1.0) -> PlacementOptimizerResult:
-        
+        """
+        Determines the optimal data center location to minimize TCO and carbon taxes.
+        """
         from ..infra.registry import Infrastructure
         econ_model = EconomicsModel()
         

@@ -19,11 +19,16 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    _labs_dir = Path(__file__).resolve().parents[1]
-    if str(_labs_dir) not in sys.path:
-        sys.path.insert(0, str(_labs_dir))
-    from bootstrap import setup_lab
-    await setup_lab(__file__)
+    if sys.platform == "emscripten":
+        import micropip
+        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
+        await micropip.install("../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False)
+    else:
+        _labs_dir = Path(__file__).resolve().parents[1]
+        if str(_labs_dir) not in sys.path:
+            sys.path.insert(0, str(_labs_dir))
+        from bootstrap import native_bootstrap
+        native_bootstrap(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
@@ -970,7 +975,7 @@ $$
 - **$d$**: head dimension
 - **$M$**: SRAM size (on-chip memory per SM)
 
-Speedup $\\approx M / d$, which is 2-4x at typical dimensions. Tiling keeps Q, K, V blocks in SRAM, avoiding the $N^2$ materialization in HBM.
+Speedup $\\approx N / B$ (where $B$ is tile size), reaching ~10x at seq\_len=4096, tile=256. Tiling keeps Q, K, V blocks in SRAM, avoiding the $N^2$ materialization in HBM.
 """)
         }))
         return mo.vstack(items)

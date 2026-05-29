@@ -55,12 +55,16 @@ async def _():
     from pathlib import Path
     import numpy as np
 
-    # WASM bootstrap
-    _labs_dir = Path(__file__).resolve().parents[1]
-    if str(_labs_dir) not in sys.path:
-        sys.path.insert(0, str(_labs_dir))
-    from bootstrap import setup_lab
-    await setup_lab(__file__)
+    if sys.platform == "emscripten":
+        import micropip
+        await micropip.install(["pydantic", "pint", "plotly", "pandas"], keep_going=False)
+        await micropip.install("../../wheels/mlsysim-0.1.2-py3-none-any.whl", keep_going=False)
+    else:
+        _labs_dir = Path(__file__).resolve().parents[1]
+        if str(_labs_dir) not in sys.path:
+            sys.path.insert(0, str(_labs_dir))
+        from bootstrap import native_bootstrap
+        native_bootstrap(__file__)
 
     import plotly.graph_objects as go
     from mlsysim.labs.state import DesignLedger
@@ -185,7 +189,7 @@ def _(LAB_CSS, mo):
             </div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;">
                 <span class="badge badge-fail">H100 at 0.3% utilization</span>
-                <span class="badge badge-warn">FlashAttention 256x savings at 32K</span>
+                <span class="badge badge-warn">FlashAttention 128x savings at 32K</span>
                 <span class="badge badge-info">Profile first, optimize second</span>
             </div>
         </div>
@@ -874,7 +878,7 @@ materializations, not just the score matrix.
             <div style="font-style: italic; font-size: 1.0rem; color: #1e293b; line-height: 1.65;">
                 "Standard attention materializes an N x N score matrix in HBM, costing O(N^2)
                 memory. FlashAttention tiles the computation to SRAM, reducing memory to O(N).
-                The savings ratio grows linearly with sequence length: 32x at 8K, 256x at 32K."
+                The savings ratio grows linearly with sequence length: 32x at 8K, 128x at 32K."
             </div>
         </div>
         """))
@@ -1347,8 +1351,8 @@ Ratio      = N / (2d) = 32768 / 256 = {_actual_ratio:.0f}x
                     <div style="margin-bottom: 10px;">
                         <strong>2. Not all fusion is equal.</strong>
                         FlashAttention saves 60x more HBM traffic than elementwise fusion because
-                        the attention score matrix grows as O(N^2). The savings ratio widens to 256x
-                        at 32K tokens and 1024x at 128K tokens.
+                        the attention score matrix grows as O(N^2). The savings ratio widens to 128x
+                        at 32K tokens and 512x at 128K tokens.
                     </div>
                     <div>
                         <strong>3. Profile first, optimize second.</strong>
@@ -1416,7 +1420,7 @@ def _(COLORS, ledger, mo, pA_pred):
     if pA_pred.value is not None:
         ledger.save(chapter=9, design={
             "roofline_diagnostic": "memory-bound",
-            "flash_savings_ratio_32k": 256,
+            "flash_savings_ratio_32k": 128,
             "optimization_methodology": "profile-diagnose-treat",
         })
 
@@ -1431,7 +1435,7 @@ def _(COLORS, ledger, mo, pA_pred):
             <span style="color: #64748b;">roofline_diagnostic:</span>
             <span style="color: {COLORS['RedLine']};">memory-bound</span><br/>
             <span style="color: #64748b;">flash_savings_32k:</span>
-            <span style="color: {COLORS['GreenLine']};">256x</span><br/>
+            <span style="color: {COLORS['GreenLine']};">128x</span><br/>
             <span style="color: #64748b;">methodology:</span>
             <span style="color: {COLORS['BlueLine']};">profile &rarr; diagnose &rarr; treat</span>
         </div>

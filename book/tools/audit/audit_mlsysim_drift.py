@@ -41,8 +41,8 @@ CANONICAL = [
     ("h100_fp8",       1979,  0.02, 'Hardware.Cloud.H100.compute.precision_flops["fp8"]'),
     ("h100_tf32",      494,   0.02, 'Hardware.Cloud.H100.compute.precision_flops["tf32"]'),
     ("h100_int8",      1979,  0.02, 'Hardware.Cloud.H100.compute.precision_flops["int8"]'),
-    ("b200_fp16",      2250,  0.02, "Hardware.Cloud.B200.compute.peak_flops"),
-    ("b200_fp8",       4500,  0.02, 'Hardware.Cloud.B200.compute.precision_flops["fp8"]'),
+    ("b200_fp16",      4500,  0.02, "Hardware.Cloud.B200.compute.peak_flops"),
+    ("b200_fp8",       9000,  0.02, 'Hardware.Cloud.B200.compute.precision_flops["fp8"]'),
     ("mi300x_fp16",    1307,  0.02, "Hardware.Cloud.MI300X.compute.peak_flops"),
 
     # GPU memory (GiB, GB/s, TB/s)
@@ -54,6 +54,21 @@ CANONICAL = [
     ("h100_mem_gb",    80,    0.05, "Hardware.Cloud.H100.memory.capacity"),
     ("h100_mem_bw",    3350,  0.02, "Hardware.Cloud.H100.memory.bandwidth (GB/s)"),
     ("h100_mem_tbs",   3.35,  0.02, "Hardware.Cloud.H100.memory.bandwidth (TB/s)"),
+
+    # GPU on-chip memory hierarchy + microarchitecture (MB / KiB / count)
+    ("l2_cache",       50,    0.05, "Hardware.Cloud.H100.memory.l2_cache (MB)"),
+    ("h100_l2",        50,    0.05, "Hardware.Cloud.H100.memory.l2_cache (MB)"),
+    ("register_total", 33,    0.05, "Hardware.Cloud.H100 register file total = sm_count * register_file_per_sm (MiB)"),
+    ("register_file",  256,   0.02, "Hardware.Cloud.H100.memory.register_file_per_sm (KiB)"),
+    ("reg_per_sm",     256,   0.02, "Hardware.Cloud.H100.memory.register_file_per_sm (KiB)"),
+    ("shared_mem",     228,   0.02, "Hardware.Cloud.H100.memory.shared_memory_per_sm (KiB)"),
+    ("shared_per_sm",  228,   0.02, "Hardware.Cloud.H100.memory.shared_memory_per_sm (KiB)"),
+    ("sm_count",       132,   0.02, "Hardware.Cloud.H100.compute.sm_count"),
+
+    # On-chip / off-chip latency + access energy (ns / pJ) — core/constants.py
+    ("hbm_latency",    300,   0.05, "LATENCY_HBM3 (ns)"),
+    ("hbm_energy",     640,   0.05, "ENERGY_DRAM_ACCESS_PJ (pJ)"),
+    ("hbm_access",     640,   0.05, "ENERGY_DRAM_ACCESS_PJ (pJ)"),
     ("h200_mem_gb",    141,   0.05, "Hardware.Cloud.H200.memory.capacity"),
     ("h200_mem_tbs",   4.8,   0.02, "Hardware.Cloud.H200.memory.bandwidth (TB/s)"),
     ("b200_mem_gb",    192,   0.05, "Hardware.Cloud.B200.memory.capacity"),

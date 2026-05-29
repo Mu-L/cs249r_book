@@ -72,12 +72,14 @@ _IMPORT_DEFAULTS_SYMBOL = re.compile(
 
 
 def _symbol_replacements(text: str) -> str:
+    """Returns a mapping of legacy symbols to their new registry locations."""
     for old, new in _SYMBOL_MAP:
         text = text.replace(f"defaults.{old}", new)
     return text
 
 
 def _import_remap(symbol: str) -> str:
+    """Remaps legacy import statements to their new registry paths."""
     for old, new in _SYMBOL_MAP:
         if old == symbol:
             return new
@@ -89,6 +91,7 @@ def migrate_file(path: Path) -> bool:
     text = _symbol_replacements(original)
 
     def _replace_symbol_import(m: re.Match[str]) -> str:
+        """Performs AST replacement for migrated symbols."""
         sym = m.group(1)
         target = _import_remap(sym)
         if target.startswith("calibration."):
