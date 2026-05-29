@@ -3,10 +3,35 @@
 import React from "react";
 import clsx from "clsx";
 import GlossaryText from "./GlossaryText";
+import MathText from "./MathText";
 
 /**
- * Renders basic markdown-like text with bold, inline code, highlighted
- * numbers/units, and optional glossary acronym tooltips.
+ * Splits a string into alternating text and math segments. Math is matched
+ * FIRST (before bold/code/glossary processing) so the LaTeX body — which can
+ * contain `*`, `_`, `\`, and unit tokens — is never mangled by the markdown or
+ * number-highlighter passes. Display math (`$$...$$`) is matched before inline
+ * (`$...$`). A `$` immediately followed by a digit with no closing `$` on a
+ * short span is left alone by requiring a non-greedy body and a closing `$`.
+ */
+const MATH_SPLIT = /(\$\$[^$]+\$\$|\$[^$\n]+\$)/g;
+
+function renderMathAware(text: string, glossary: boolean): React.ReactNode {
+  const segments = text.split(MATH_SPLIT);
+  return segments.map((seg, i) => {
+    if (seg.startsWith("$$") && seg.endsWith("$$") && seg.length > 4) {
+      return <MathText key={`m${i}`} expr={seg.slice(2, -2).trim()} display />;
+    }
+    if (seg.startsWith("$") && seg.endsWith("$") && seg.length > 2) {
+      return <MathText key={`m${i}`} expr={seg.slice(1, -1).trim()} />;
+    }
+    return <MarkdownInline key={`t${i}`} text={seg} glossary={glossary} />;
+  });
+}
+
+/**
+ * Renders basic markdown-like text with KaTeX math (`$...$` / `$$...$$`),
+ * bold, inline code, highlighted numbers/units, and optional glossary acronym
+ * tooltips.
  */
 export default function MarkdownText({
   text,
@@ -18,13 +43,25 @@ export default function MarkdownText({
   glossary?: boolean;
 }) {
   if (!text) return null;
+  return <span className={className}>{renderMathAware(text, glossary)}</span>;
+}
+
+/** The original (non-math) markdown rendering: bold / code / strikethrough. */
+function MarkdownInline({
+  text,
+  glossary,
+}: {
+  text: string;
+  glossary: boolean;
+}) {
+  if (!text) return null;
 
   // Split on **bold** markers and inline code `backticks`
   // Match **bold**, `code`, and ~~strikethrough~~ (double tilde only — single ~ means "approximately")
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|~~[^~]+~~)/g);
 
   return (
-    <span className={className}>
+    <>
       {parts.map((part, i) => {
         if (part.startsWith("**") && part.endsWith("**")) {
           return (
@@ -55,7 +92,7 @@ export default function MarkdownText({
         }
         return <HighlightNumbers key={i} text={part} />;
       })}
-    </span>
+    </>
   );
 }
 
