@@ -132,7 +132,7 @@ class DistTrainReliabilityFacts:
 
 Part I built the physical fleet: @Sec-compute-infrastructure established the accelerator hierarchy, @sec-network-fabrics wired nodes into a high-bandwidth fabric, and @sec-data-storage completed the infrastructure with storage pipelines that keep the fleet fed. With the physical foundation in place, the algorithmic challenge that defines Part II is splitting a single training job across this hardware.
 
-A single GPU with 100 terabytes of memory and an exaflop of compute would make distributed training unnecessary. Because the laws of physics prevent this, training must be shattered across thousands of independent chips. In the Fleet Stack framework shown in @fig-fleet-stack, distributed training represents the distribution layer\index{Distribution Layer}—the logic that partitions the *mathematical* workload across the *physical* fleet.
+A single GPU with 100 terabytes of memory and an exaflop of compute would make distributed training unnecessary. Because the laws of physics prevent this, training must be shattered across thousands of independent chips. In the Fleet Stack framework shown in @fig-fleet-stack, distributed training represents the distribution layer\index{Distribution Layer}—the logic that partitions the *mathematical* workload across the *physical* fleet. The algorithms defined here (Ring AllReduce, Tensor Parallelism) dictate the bandwidth requirements for the physical interconnects (NVLink, InfiniBand) discussed in @sec-network-fabrics.
 
 ### The physics of the cluster {#sec-distributed-training-systems-physics-cluster-a42d}
 
@@ -144,12 +144,6 @@ The critical term is the communication-computation ratio $\rho = T_{\text{comm}}
 
 *   **Compute-bound (low ratio)**: $T_{\text{compute}}/N \gg T_{\text{comm}}(N)$. The GPUs spend most of their time multiplying matrices. This is the ideal state, typical for large batch sizes on dense models (like ResNet).
 *   **Communication-bound (high ratio)**: $T_{\text{comm}}(N) \approx T_{\text{compute}}/N$. The GPUs spend significant time waiting for gradients or activations to arrive. This is the common state for large language models (LLMs) and deep learning recommendation models (DLRMs), where parameter synchronization saturates the network.
-
-::: {#psp-distributed-training-fleet-stack-connection .callout-perspective title="Fleet stack connection"}
-
-In the Fleet Stack framework shown in @fig-fleet-stack, Distributed Training represents the Distribution Layer. We are defining *how* to split the math. The actual execution of these split workloads happens on the infrastructure layer\index{Infrastructure Layer}, which we built in Part I. The algorithms defined here (Ring AllReduce, Tensor Parallelism) dictate the bandwidth requirements for the physical interconnects (NVLink, InfiniBand) discussed in @sec-network-fabrics.
-
-:::
 
 ### Multi-machine training requirements {#sec-distributed-training-systems-systems-multimachine-training-requirements-0277}
 
@@ -327,20 +321,6 @@ Verify your understanding of how data parallelism distributes work:
 
 The method parallels gradient accumulation, where a single device accumulates gradients over multiple forward passes before updating parameters. Both techniques use the additive properties of gradients to process large batches efficiently. However, moving the same idea into a production cluster introduces operational challenges beyond this theoretical equivalence. Communication overhead, node failures, and cost constraints each impose second-order effects that the single-machine derivation does not capture.
 
-::: {#psp-distributed-training-data-parallelism-at-scale .callout-perspective title="Data parallelism at scale"}
-
-Data parallelism in production environments involves several operational considerations beyond the theoretical framework:
-
-- **Communication efficiency**: AllReduce operations for gradient synchronization become the bottleneck at scale. Production systems use optimized libraries like NCCL with ring or tree communication patterns to minimize overhead
-- **Fault tolerance**: Node failures during large-scale training require checkpoint/restart strategies. Production systems implement hierarchical checkpointing with both local and distributed storage
-- **Dynamic scaling**: Cloud environments require elastic scaling capabilities to add/remove workers based on demand and cost constraints, complicated by the need to maintain gradient synchronization
-- **Cost optimization**: Production data parallelism considers cost per GPU-hour across different instance types and preemptible instances, balancing training time against infrastructure costs
-- **Network bandwidth requirements**: Large models require careful network topology planning as gradient communication can consume 10--50 percent of training time depending on model size and batch size
-
-Production teams typically benchmark communication patterns and scaling efficiency before deploying large distributed training jobs to identify optimal configurations.
-
-:::
-
 ### Data parallelism implementation {#sec-distributed-training-systems-systems-data-parallelism-implementation-fa03}
 
 The mathematical foundation above (gradient averaging preserves the statistical properties of SGD) translates into concrete implementation steps. Each step corresponds to a phase in the gradient averaging process, from distributing data subsets to synchronizing the computed gradients.
@@ -407,13 +387,7 @@ The backward pass mirrors this independence but introduces the system's primary 
 
 #### Gradient synchronization {#sec-distributed-training-systems-systems-gradient-synchronization-614b}
 
-To maintain consistency across the distributed system, the gradients computed by each device must be synchronized. This coordination represents a distributed systems challenge in achieving global consensus while minimizing communication complexity, one significant enough to warrant its own chapter.
-
-::: {#psp-distributed-training-cross-reference-communication-algorithms .callout-perspective title="Cross-reference: Communication algorithms"}
-
-The specific algorithms for gradient synchronization—including Ring AllReduce\index{Ring AllReduce!bandwidth utilization}, Tree AllReduce\index{Tree AllReduce!latency reduction}, and Hierarchical AllReduce—are analyzed in depth in @sec-collective-communication. That chapter derives the bandwidth and latency bounds $(2(N-1)M/N)$, explains how topology-aware algorithms exploit NVLink vs. InfiniBand, and details the gradient compression techniques used to reduce this overhead.
-
-:::
+To maintain consistency across the distributed system, the gradients computed by each device must be synchronized. This coordination represents a distributed systems challenge in achieving global consensus while minimizing communication complexity, one significant enough to warrant its own chapter. @Sec-collective-communication derives the bandwidth and latency bounds $(2(N-1)M/N)$ for Ring AllReduce\index{Ring AllReduce!bandwidth utilization}, Tree AllReduce\index{Tree AllReduce!latency reduction}, and Hierarchical AllReduce, explains how topology-aware algorithms exploit NVLink vs. InfiniBand, and details the gradient compression techniques used to reduce this overhead.
 
 When synchronization performance deviates from theoretical expectations, the Fleet Stack framework provides a structured approach to isolating the bottleneck.
 
@@ -546,8 +520,6 @@ Asynchronous SGD\index{Asynchronous SGD!staleness penalty} eliminates synchroniz
 
 The key trade-offs across synchronization models are summarized in @tbl-sync-models, and @fig-sync-model-timeline illustrates how each strategy schedules work across workers over time.
 
-::: {#nbk-distributed-training-synchronization-model-tradeoffs .callout-notebook title="Synchronization model trade-offs"}
-
 | **Model** | **Consistency**   | **Throughput**            | **Convergence**                 | **Use Case**                         |
 |:----------|:------------------|:--------------------------|:--------------------------------|:-------------------------------------|
 | **BSP**   | Strong            | Bounded by slowest worker | Equivalent to single-GPU        | Final training runs, reproducibility |
@@ -555,8 +527,6 @@ The key trade-offs across synchronization models are summarized in @tbl-sync-mod
 | **Async** | Weak              | Maximum                   | Degraded, requires compensation | Large heterogeneous clusters         |
 
 : **Synchronization Model Trade-offs**: BSP, SSP, and asynchronous SGD trade consistency for throughput along a spectrum. BSP guarantees reproducibility but pays for the slowest worker; SSP unlocks throughput under bounded staleness; async maximizes throughput at the cost of convergence guarantees. {#tbl-sync-models}
-
-:::
 
 The same trade-off becomes clearer when the schedules are placed on a timeline.
 
@@ -1378,19 +1348,11 @@ $$
 \eta_{\text{large}} = k \cdot \eta_{\text{base}}
 $$
 
-This rule is justified by approximating one large-batch step at learning rate $k\eta$ as $k$ consecutive small-batch steps each at learning rate $\eta$. With batch size $kB$, the gradient variance decreases by factor $k$, so the larger step is well-conditioned; the approximation holds when parameters do not move much during those $k$ small-batch steps. The linear scaling rule works well for moderate batch sizes (up to 8K--16K for ImageNet, up to 32K for BERT) and requires a **warmup period** where the learning rate gradually increases from a small value to the target over the first 5--10 percent of training.
-
-::: {#psp-distributed-training-linear-scaling-warmup .callout-perspective title="Linear scaling warmup"}
-
-@goyal2017accurate demonstrated that linear scaling without warmup causes training instability for large batches. Their warmup schedule increases the learning rate linearly from $\eta_{\text{base}}$ to $k \cdot \eta_{\text{base}}$ over the first $W$ iterations:
+This rule is justified by approximating one large-batch step at learning rate $k\eta$ as $k$ consecutive small-batch steps each at learning rate $\eta$. With batch size $kB$, the gradient variance decreases by factor $k$, so the larger step is well-conditioned; the approximation holds when parameters do not move much during those $k$ small-batch steps. The linear scaling rule works well for moderate batch sizes (up to 8K--16K for ImageNet, up to 32K for BERT) but @goyal2017accurate demonstrated that applying it without warmup causes training instability for large batches. A **warmup period** that increases the learning rate linearly from $\eta_{\text{base}}$ to $k \cdot \eta_{\text{base}}$ over the first $W$ iterations (typically 5 epochs for ImageNet or 10K steps for language models) lets the model reach a region of the loss landscape where large learning rates are stable:
 
 $$
 \eta_t = \eta_{\text{base}} + \frac{t}{W}(k \cdot \eta_{\text{base}} - \eta_{\text{base}}) \quad \text{for } t < W
 $$
-
-The warmup period allows the model to reach a region of the loss landscape where large learning rates are stable. Typical warmup lengths are 5 epochs for ImageNet or 10K steps for language models.
-
-:::
 
 The square root scaling rule\index{Square Root Scaling Rule!batch size} applies when batch sizes grow so large that linear scaling fails:
 
@@ -2053,19 +2015,7 @@ class TensorParallelBandwidth:
 
 :::
 
-The interconnect topology dictates which form of model parallelism is viable at each level of the cluster hierarchy. Tensor parallelism's per-layer synchronization demands NVLink-class bandwidth; pipeline parallelism's boundary-only communication tolerates InfiniBand.
-
-::: {#psp-distributed-training-tensor-vs-pipeline-parallelism-design-choice .callout-perspective title="Tensor vs. pipeline parallelism: A design choice"}
-
-Both strategies split the model, but they split at different granularities and impose different network requirements:
-
-Tensor parallelism (intra-layer) splits individual operations (matrix multiplies, attention heads) across devices. Every forward pass requires a synchronization within each layer, so inter-GPU bandwidth must be NVLink-class (~`{python} TensorParallelBandwidth.nvlink_h100_str`) to avoid stalling on communication.
-
-**Pipeline Parallelism** (inter-layer) assigns complete layers to different devices, communicating only at stage boundaries. These boundary activations are much smaller than gradient tensors, so InfiniBand-class bandwidth (~`{python} TensorParallelBandwidth.pipeline_ib_lo_str`–`{python} TensorParallelBandwidth.pipeline_ib_hi_str`) is sufficient between nodes.
-
-Megatron-LM popularized tensor model parallelism within transformer layers [@shoeybi2019megatron]. This bandwidth pattern creates the design pressure for a hybrid: use tensor parallelism for bandwidth-intensive intra-layer splits and pipeline parallelism for coarser inter-layer splits. The individual definitions for each strategy appear in @sec-distributed-training-systems-systems-tensor-parallelism-d76e and @sec-distributed-training-systems-systems-pipeline-parallelism-8748.
-
-:::
+The interconnect topology dictates which form of model parallelism is viable at each level of the cluster hierarchy. Tensor parallelism's per-layer synchronization demands NVLink-class bandwidth; pipeline parallelism's boundary-only communication tolerates InfiniBand. This bandwidth pattern creates the design pressure for a hybrid: use tensor parallelism for bandwidth-intensive intra-layer splits and pipeline parallelism for coarser inter-layer splits.
 
 Megatron-style tensor parallelism[^fn-megatron] [@shoeybi2019megatron] partitions matrix multiplications in two ways. Examine @fig-tensor-parallel-split: column-parallel splitting divides weight matrices along columns for QKV projections, allowing independent computation across GPUs, while row-parallel splitting divides along rows for output layers, requiring AllReduce to combine partial sums at the end of each block.
 
