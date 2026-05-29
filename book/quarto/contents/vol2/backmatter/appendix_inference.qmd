@@ -1,77 +1,20 @@
-# Appendix A: Review of Machine Learning Systems Foundations {#sec-appendix-systems}
+# Inference Foundations {#sec-appendix-inference}
 
 ## Purpose {.unnumbered}
 
-_What foundational mechanics govern the behavior of machine learning systems on individual nodes?_
+_How do queuing dynamics and memory capacity determine the throughput and latency of a production inference service?_
 
-Machine learning systems at scale do not operate in a vacuum; they are an extension of the physical and algorithmic constraints that govern single-machine computation. This appendix provides a rigorous review of those foundations—spanning the memory hierarchy, the mechanics of backpropagation, and the "iron law" of performance. We treat these not as introductory topics, but as the first-order constraints that determine which distributed architectures are viable and which are physically impossible. @Fig-fleet-vs-single-stack illustrates the shift from single-machine to fleet-scale optimization.
+Serving a model at scale is governed by the mathematics of waiting lines and the physics of the key-value cache. This appendix develops the quantitative tools that the inference and operations chapters draw on: a queuing-theoretic model of batched serving that yields optimal batch sizes under stochastic arrivals, and the capacity arithmetic of the attention cache that frequently becomes the binding constraint on serving throughput. We treat these not as background, but as the first-order constraints that determine how many requests a fleet can serve within a latency budget.
 
-::: {#fig-fleet-vs-single-stack fig-env="figure" fig-pos="htb" fig-cap="**The Evolution of the Stack**: Moving from a single machine to the fleet shifts the systems focus from local hierarchies to global networks. (A) The single-machine stack optimizes for the local memory wall (SRAM/HBM/PCIe). (B) The fleet stack optimizes for the global bisection bandwidth wall (InfiniBand/Ethernet). This volume assumes mastery of (A) and focuses on the engineering of (B)." fig-alt="Side-by-side diagram of two system stacks. The single-machine stack shows application, ML framework, operating system, and hardware. The fleet stack shows governance, serving/ops, distribution, and infrastructure."}
-![](images/svg/system-map.svg)
-:::
+## How to Use This Appendix {.unnumbered}
 
-## A.1 The Three Computing Paradigms {#sec-appendix-systems-paradigms}
+This appendix is a quantitative reference for serving systems. Use the queuing model when you need to choose a batch size or predict tail latency under a given arrival rate; use the key-value cache arithmetic when you need to size memory or find the point at which the cache, rather than compute, caps throughput.
 
-Large-scale ML infrastructure represents a convergence of three distinct computing lineages. Understanding where ML inherits its assumptions is critical for diagnosing system failures. @Tbl-appendix-systems-hpc-wsc-ml contrasts five system properties across the three lineages:
+Reach for it from the inference and operations chapters: when those chapters cite a serving result, the derivation lives here. Read it linearly for the full argument, or jump to the worked GPT-3 example and the batch-size decision framework when you need a template to apply to your own system.
 
-| **Feature**    | **HPC (Supercomputer)** | **WSC (Warehouse-Scale)** | **ML Fleet (AI Cluster)**       |
-|:---------------|:------------------------|:--------------------------|:--------------------------------|
-| **Lineage**    | Scientific Simulation   | Web Services (Search/Ads) | **Distributed Intelligence**    |
-| **Coupling**   | Tight (Synchronous)     | Loose (Asynchronous)      | **Hybrid (BSP + Elastic)**      |
-| **State**      | Stateful (In-Memory)    | Stateless (Database)      | **Semi-Stateful (Weights/KV)**  |
-| **Faults**     | Stop-the-world          | Fail-over/Redundancy      | **Elastic Recovery**            |
-| **Bottleneck** | Compute (FLOP/s)        | I/O (Network/Disk)        | **Network/Bisection Bandwidth** |
+## Serving performance analysis {#sec-appendix-inference-serving}
 
-: **HPC, WSC, and ML Fleet Compared**: Five system properties (lineage, coupling, state, fault behavior, dominant bottleneck) across the three lineages that converge in modern ML infrastructure. The ML fleet inherits selectively from each—synchronous coupling from HPC, elastic recovery from WSC, and a fleet-scale bisection-bandwidth bottleneck unique to distributed deep learning. {#tbl-appendix-systems-hpc-wsc-ml}
-
-## A.2 Machine Learning as a Systems Workload {#sec-appendix-systems-workload}
-
-At the systems level, deep learning is characterized by two distinct computational phases: the **Forward Pass** (Inference) and the **Backward Pass** (Training).
-
-### The silicon contract (GEMM) {#sec-appendix-review-machine-learning-systems-foundations-silicon-contract-gemm-4a6d}
-The fundamental unit of ML computation is the **general matrix multiply (GEMM)**. Modern accelerators are designed around the "silicon contract": if the software can express its logic as large, dense matrix operations, the hardware guarantees near-peak utilization through specialized systolic arrays or tensor cores. Small, irregular, or sparse operations violate this contract, falling off the "performance cliff" into a regime dominated by instruction overhead rather than math.
-
-### The memory wave of backpropagation {#sec-appendix-review-machine-learning-systems-foundations-memory-wave-backpropagation-c221}
-Training introduces a unique memory challenge known as the **Activation Wave**. In standard backpropagation, many intermediate activations are cached during the forward pass so they can be reused during gradient computation. Activation checkpointing reduces this footprint by storing only selected tensors and recomputing others during the backward pass. Even with such techniques, activation memory scales with model depth and batch size, often exceeding the storage available for model weights by 3--5$\times$. This "memory wall" is the primary driver for distributed strategies like **Activation Checkpointing** and **ZeRO**.
-
-## A.3 The Single-Node Memory Hierarchy {#sec-appendix-systems-memory}
-
-The most significant constraint in ML systems is the gap between logic speed and data delivery. We quantify this through the memory hierarchy in @tbl-appendix-memory-hierarchy.
-
-| **Tier**      | **Technology** | **Typical Capacity** | **Typical Bandwidth** | **Latency (approx)** |
-|:--------------|:---------------|:---------------------|:----------------------|:---------------------|
-| **Compute**   | Registers      | ~20 MB               | ~300 TB/s             | < 1 ns               |
-| **Buffer**    | L1/SRAM        | ~40 MB               | ~20 TB/s              | ~10 ns               |
-| **Primary**   | HBM3/DRAM      | ~80 GB               | ~3 TB/s               | ~300 ns              |
-| **Secondary** | NVMe/Flash     | ~4 TB                | ~10 GB/s              | ~100,000 ns          |
-
-: **The Single-Node Memory Hierarchy**: The roughly 7$\times$ bandwidth gap between the table's SRAM and HBM figures, and the roughly 300$\times$ gap between HBM and Non-Volatile Memory Express (NVMe), help determine the "Arithmetic Intensity" required to saturate an accelerator. {#tbl-appendix-memory-hierarchy}
-
-## A.4 The Iron Law of ML Systems {#sec-appendix-systems-iron-law}
-
-To reason quantitatively about any ML system, we use the **iron law**, which decomposes the time $T$ required for an operation into three physical terms:
-
-$$T = \underbrace{\frac{D_{\text{vol}}}{\text{BW}}}_{\text{Data Movement}} + \underbrace{\frac{O}{R_{\text{peak}} \cdot \eta_{\text{hw}}}}_{\text{Calculation}} + \underbrace{L_{\text{lat}}}_{\text{Fixed Latency}}$$
-
-Every optimization technique in this book targets one of these terms:
-
-1.  **Quantization** (FP16 $\to$ INT8) reduces $D_{\text{vol}}$ to unblock the Bandwidth wall.
-2.  **Operator Fusion** keeps data in SRAM to eliminate $D_{\text{vol}}$ trips to HBM.
-3.  **Distributed Parallelism** divides $O$ across $N$ processors to increase effective $R_{\text{peak}}$.
-
-## A.5 The Data-Algorithm-Machine Taxonomy {#sec-appendix-systems-dam}
-
-We organize all system design decisions into the **Data · Algorithm · Machine** taxonomy, often abbreviated **D·A·M** as a mnemonic label rather than mathematical notation.
-
-*   **Data**: The volume, velocity, and quality of information.
-*   **Algorithm**: The mathematical structure, such as Transformers and convolutional neural networks (CNNs), and the optimization logic.
-*   **Machine**: The physical substrate (Accelerators, Interconnects, Storage).
-
-The central thesis of ML systems engineering is that these three vertices are **inseparable**. A change in the Machine (for example, switching from HBM2 to HBM3) reshapes which Algorithms are efficient, which in turn determines how much Data can be processed within a given power budget.
-
-## A.6 Inference Foundations {#sec-appendix-systems-inference}
-
-### A.6.1 queuing theory for batched inference {#sec-inference-scale-queuing-theory-batched-inference-bbf0}
+### Queuing theory for batched inference {#sec-inference-scale-queuing-theory-batched-inference-bbf0}
 
 The batching efficiency curve provides intuition about throughput-latency tradeoffs, but production systems require rigorous analysis to determine optimal batch sizes under stochastic arrival patterns. Queuing theory provides the mathematical framework to derive these optimal operating points and to understand why certain batch sizes outperform others under specific conditions.
 
@@ -183,9 +126,11 @@ This utilization-constrained sizing explains why LLMs (high $T_{\text{fixed}}$ f
 # │ Show: "175"B parameters.
 # │ How: pulling Models.Language.GPT3.parameters from mlsysim.core.constants.
 # │
-# │ Imports: mlsysim.core.constants (Models.Language.GPT3.parameters, param, BILLION)
+# │ Imports: mlsysim (Models); mlsysim.core.constants (param, BILLION); mlsysim.fmt (fmt_int, fmt)
 # │ Exports: Gpt3Scenario.gpt3_params_b_str
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import param, BILLION
 from mlsysim.fmt import fmt_int, fmt
 
 class Gpt3Scenario:
@@ -318,7 +263,9 @@ We can confirm these results by applying Little's Law as an internal consistency
 # │          LittlesLawVerify.in_service_str, LittlesLawVerify.in_queue_str,
 # │          LittlesLawVerify.batch_size_str, LittlesLawVerify.utilization_str,
 # │          LittlesLawVerify.expected_total_s_str
+# │ Imports: mlsysim.core.constants (ms, second); mlsysim.fmt (fmt_int, check, fmt)
 # └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.core.constants import ms, second
 from mlsysim.fmt import fmt_int, check, fmt
 
 class LittlesLawVerify:
@@ -430,7 +377,7 @@ The trade-off curve demonstrates several key insights:
 
 The queuing-theoretic framework provides the mathematical foundation for the batching strategies examined in the following sections. Where intuition might suggest "larger batches are better for throughput," stability constraints, latency targets, and diminishing returns create a well-defined optimal operating region that varies by model type and deployment requirements.
 
-### A.6.2 KV cache fundamentals {#sec-inference-scale-kv-cache-fundamentals-2ccd}
+### KV cache fundamentals {#sec-inference-scale-kv-cache-fundamentals-2ccd}
 
 ::: {#dfn-inference-kv-cache .callout-definition title="KV cache"}
 
@@ -456,3 +403,17 @@ where:
 - $B$ = batch size
 - $s_{\text{elem}}$ = storage size per element in bytes
 - Factor of 2 accounts for both keys and values
+
+## Summary {.unnumbered}
+
+::: {.callout-takeaways title="Serving performance is bounded by queues and memory"}
+
+* **Utilization has a hard ceiling**: As utilization $\rho$ approaches 1, queue depth and latency grow without bound. Production serving targets $\rho \leq 0.7$ to preserve latency headroom; the remaining 30 percent is not waste but the buffer that keeps tail latency finite.
+
+* **Batch size has an optimum, not a maximum**: Larger batches raise throughput but add batch-accumulation delay, producing a latency knee rather than monotonic improvement. Beyond the knee, doubling the batch can buy only 10--20 percent more throughput at the cost of doubled latency.
+
+* **Little's Law ties the system together**: $L = \lambda W$ relates the number of in-flight requests to the arrival rate and time-in-system, giving a one-line consistency check on any serving measurement.
+
+* **The KV cache is the binding constraint**: Cache memory scales linearly with sequence length and batch size and routinely exceeds the model weights, capping concurrent capacity. Naive allocation wastes 60--80 percent to fragmentation, which is why production systems manage it with a virtual-memory scheme.
+
+:::
