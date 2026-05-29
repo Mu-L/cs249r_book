@@ -42,6 +42,29 @@ class BatchSize(Registry):
     Default = 1024
 
 
+class Energy(Registry):
+    """Simplified pedagogical energy hierarchy for the sustainability chapter.
+
+    Architecture-class EFFECTIVE energy per FLOP (CPU->ASIC) and per-byte
+    data-movement cost (register->network). Order-of-magnitude teaching figures,
+    distinct from the device-level Horowitz raw-MAC/per-access constants in
+    ``core.constants`` (e.g. ``ENERGY_FLOP_FP32_PJ``). DRAM per-byte is NOT
+    duplicated here -- it uses the canonical device value
+    ``constants.ENERGY_DRAM_PJ_PER_BYTE`` (160).
+    """
+    # Architecture-class effective efficiency (pJ/FLOP)
+    EffCpuPjFlop = sourced(100, pc.BOOK_ENERGY_HIERARCHY, name="CPU energy efficiency (pJ/FLOP)", description="General-purpose CPU effective energy per FLOP.")
+    EffGpuPjFlop = sourced(10, pc.BOOK_ENERGY_HIERARCHY, name="GPU energy efficiency (pJ/FLOP)", description="GPU dense-tensor effective energy per FLOP.")
+    EffTpuPjFlop = sourced(1, pc.BOOK_ENERGY_HIERARCHY, name="TPU energy efficiency (pJ/FLOP)", description="TPU / systolic-array effective energy per FLOP.")
+    EffAsicPjFlop = sourced(0.1, pc.BOOK_ENERGY_HIERARCHY, name="ASIC energy efficiency (pJ/FLOP)", description="Custom low-precision ASIC effective energy per operation.")
+    # Per-byte data-movement hierarchy (pJ/byte); DRAM uses constants.ENERGY_DRAM_PJ_PER_BYTE
+    MoveRegPjByte = sourced(0.1, pc.BOOK_ENERGY_HIERARCHY, name="Register move energy (pJ/byte)", description="Per-byte register-file access energy.")
+    MoveL1PjByte = sourced(1, pc.BOOK_ENERGY_HIERARCHY, name="L1 cache move energy (pJ/byte)", description="Per-byte L1 cache access energy.")
+    MoveL2PjByte = sourced(5, pc.BOOK_ENERGY_HIERARCHY, name="L2 cache move energy (pJ/byte)", description="Per-byte L2 cache access energy.")
+    MoveNvmePjByte = sourced(1000, pc.BOOK_ENERGY_HIERARCHY, name="NVMe move energy (pJ/byte)", description="Per-byte NVMe SSD access energy.")
+    MoveNetPjByte = sourced(10000, pc.BOOK_ENERGY_HIERARCHY, name="Network move energy (pJ/byte)", description="Per-byte network transfer energy (lower bound).")
+
+
 class Literature(Registry):
     """Registry namespace for Literature."""
     Training = Training
@@ -50,3 +73,4 @@ class Literature(Registry):
     Chinchilla = Chinchilla
     Communication = Communication
     BatchSize = BatchSize
+    Energy = Energy
