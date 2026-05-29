@@ -76,6 +76,13 @@ ENERGY_ADD_FP16_PJ = 0.4 * ureg.picojoule
 ENERGY_ADD_INT32_PJ = 0.1 * ureg.picojoule
 ENERGY_ADD_INT8_PJ = 0.03 * ureg.picojoule
 
+# Architecture-class effective energy efficiency (CPU/GPU/TPU/ASIC pJ/FLOP) and
+# the per-byte data-movement hierarchy (register->network) are book-cited
+# pedagogical figures, so they live in the Literature registry, not here:
+#   Literature.Energy.Eff{Cpu,Gpu,Tpu,Asic}PjFlop
+#   Literature.Energy.Move{Reg,L1,L2,Nvme,Net}PjByte
+# (DRAM per-byte stays as the device constant ENERGY_DRAM_PJ_PER_BYTE above.)
+
 # Network transfer energy (reference)
 NETWORK_ENERGY_1KB_PJ = 1_000_000 * ureg.picojoule  # ~1 microjoule for 1KB
 
