@@ -472,6 +472,12 @@ BOOK_SCALING_EFFICIENCY_TIERS = _conv(
     notes="8192-GPU tier uses MEGASCALE literature anchor separately.",
 )
 
+BOOK_ENERGY_HIERARCHY = _conv(
+    "prov:book-energy-hierarchy",
+    "MLSysBook simplified energy hierarchy: architecture-class effective pJ/FLOP (CPU→ASIC) and per-byte data-movement cost (register→network)",
+    notes="Order-of-magnitude teaching figures; effective system-level energy, consistent with the Horowitz (2014) energy trend.",
+)
+
 BOOK_WUE_ANCHORS = _conv(
     "prov:book-wue-anchors",
     "MLSysBook water-usage effectiveness (WUE) tiers for sustainability examples",

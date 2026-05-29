@@ -650,11 +650,55 @@ class HbmTierBandwidth:
     host_dram_bw_gbs_str = fmt_qty(host_dram_bw, GB/second, precision=0, commas=False)
     hbm_host_dram_ratio_str = fmt(hbm_host_dram_ratio_val.m_as(ureg.dimensionless), precision=1, commas=False, suffix='×')
 ```
+```{python}
+#| echo: false
+#| label: data-storage-hbm-model-budget
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ HBM MODEL-MEMORY BUDGET — 175B WEIGHTS + ADAM (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-storage-tier0-hbm. The FP16-weights and Adam-optimizer figures
+# │          in the memory-budget paragraph.
+# │
+# │ Goal: Pin the weights/optimizer footprint to the canonical GPT-3 parameter
+# │       count and dtype byte widths so they cannot drift.
+# │ Show: FP16 weight footprint (GB) and the Adam-state derivation.
+# │ How:  weights = N x BYTES_FP16; Adam = N x BYTES_ADAM_STATE (= FP32 x 2 states).
+# │
+# │ Imports: mlsysim (Models), mlsysim.core.constants (BYTES_FP16, BYTES_FP32,
+# │          BYTES_ADAM_STATE), mlsysim.fmt (fmt, fmt_math, check)
+# │ Exports: weights_fp16_gb_str, adam_eq_math
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Models
+from mlsysim.core.constants import BYTES_FP16, BYTES_FP32, BYTES_ADAM_STATE
+from mlsysim.fmt import fmt, fmt_math, check
+
+class HbmModelBudget:
+    # ┌── 1. LOAD (Constants) ──────────────────────
+    params = Models.Language.GPT3.parameters.m_as('param')
+    bytes_fp16 = BYTES_FP16.m_as('byte')
+    bytes_fp32 = BYTES_FP32.m_as('byte')
+    adam_bytes = BYTES_ADAM_STATE.m_as('byte')
+    adam_states = 2  # Adam keeps two states per parameter: momentum and variance
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────
+    weights_fp16_gb = params * bytes_fp16 / 1e9
+    adam_gb = params * adam_bytes / 1e9
+
+    # ┌── 3. GUARD (Invariants) ────────────────────
+    check(abs(adam_bytes - bytes_fp32 * adam_states) < 1e-9, "Adam state bytes must equal FP32 x 2 states")
+    check(adam_gb > weights_fp16_gb > 0, "Adam footprint must exceed FP16 weights, both positive")
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────
+    weights_fp16_gb_str = fmt(weights_fp16_gb, precision=0, suffix=" GB")
+    _adam_res = fmt(adam_gb, precision=0).replace(",", "{,}")
+    adam_eq_math = fmt_math(rf"{params/1e9:.0f} \times 10^9 \times {bytes_fp32:.0f} \times {adam_states} = {_adam_res}")
+```
+
 ### Tier 0: GPU HBM {#sec-storage-tier0-hbm}
 
 \index{HBM!storage hierarchy}The most critical resource in the entire system is also the most scarce. High Bandwidth Memory (HBM) is the only storage tier where weights and activations can reside during active computation. As established in @sec-compute-hbm, HBM is a 3D-stacked memory technology that places DRAM dies vertically atop the accelerator, connected by thousands of through-silicon vias that provide aggregate bandwidth of `{python} HbmTierBandwidth.h100_bw_tbs_str` on an H100. This bandwidth is roughly 17$\times$ higher than the chapter's 200 GB/s host-DRAM figure and roughly 480$\times$ higher than a single 7 GB/s NVMe drive. That bandwidth is what makes modern deep learning feasible: a matrix multiplication involving billions of parameters requires reading those parameters from memory every forward and backward pass.
 
-The constraint at this tier is *capacity*, not *bandwidth*. An H100 provides 80 GB of HBM, enough to hold a 40-billion parameter model in FP16 (2 bytes per parameter), but nowhere near enough for the 175B parameter models that define the frontier. To understand the severity of this constraint, consider the memory budget for training our 175B model. The model weights in FP16 consume 350 GB. The Adaptive Moment Estimation (Adam) optimizer maintains two additional states (momentum and variance) in FP32, consuming $175 \times 10^9 \times 4 \times 2 = 1{,}400$ GB. Activations for a single batch, depending on sequence length and batch size, can consume another 100 to 400 GB. The total memory footprint reaches roughly 1.85--2.15 TB depending on activation size, approaching or exceeding 25$\times$ the capacity of a single H100's HBM. From the storage hierarchy perspective, HBM is the destination that every lower tier exists to serve. The data pipeline's purpose is to ensure that the 80 GB of HBM always contains the data the accelerator needs *next*, not the data it needed *a second ago*.
+The constraint at this tier is *capacity*, not *bandwidth*. An H100 provides 80 GB of HBM, enough to hold a 40-billion parameter model in FP16 (2 bytes per parameter), but nowhere near enough for the 175B parameter models that define the frontier. To understand the severity of this constraint, consider the memory budget for training our 175B model. The model weights in FP16 consume `{python} HbmModelBudget.weights_fp16_gb_str`. The Adaptive Moment Estimation (Adam) optimizer maintains two additional states (momentum and variance) in FP32, consuming `{python} HbmModelBudget.adam_eq_math` GB. Activations for a single batch, depending on sequence length and batch size, can consume another 100 to 400 GB. The total memory footprint reaches roughly 1.85--2.15 TB depending on activation size, approaching or exceeding 25$\times$ the capacity of a single H100's HBM. From the storage hierarchy perspective, HBM is the destination that every lower tier exists to serve. The data pipeline's purpose is to ensure that the 80 GB of HBM always contains the data the accelerator needs *next*, not the data it needed *a second ago*.
 
 Because HBM capacity is so limited relative to both model size and dataset size, the accelerator processes data in batches. Each batch occupies a fraction of HBM for the duration of one forward-backward pass, then is discarded to make room for the next. The rate at which batches must be supplied sets the bandwidth requirement for all lower tiers.
 

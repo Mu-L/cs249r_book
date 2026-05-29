@@ -63,6 +63,59 @@ from mlsysim.core.constants import *
 from mlsysim.fmt import fmt, check
 ```
 
+```{python}
+#| echo: false
+#| label: fault-tolerance-reliability-rates
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ FLEET RELIABILITY RATES — PERSISTENT (single source of truth)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: PERSISTENT. Per-GPU and fleet failure rates derived from canonical
+# │          MTTF/fleet constants. Consumed by the failure-rate footnote
+# │          [^fn-failure-rate-fits] and the Fallacies and Pitfalls section
+# │          (@sec-fault-tolerance-reliability-reliability-fallacies-pitfalls-74b8).
+# │
+# │ Goal: Derive lambda, FIT, and fleet failure cadence from one constant set so
+# │       every quoted reliability number is traceable and cannot drift.
+# │ Show: GPU FIT, lambda_hour, fleet FIT total, fleet failure rate, hours between.
+# │ How:  lambda = 1/MTTF; FIT = 10^9/MTTF; fleet rate = N/MTTF; interval = 1/rate.
+# │
+# │ Imports: mlsysim.constants (Systems, BILLION), mlsysim.fmt (fmt, fmt_math,
+# │          sci_latex, check)
+# │ Exports: gpu_mttf_str, fit_eq_math, lambda_eq_math, fleet_gpus_str,
+# │          fleet_fit_str, fleet_rate_eq_math, hours_between_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, fmt_math, sci_latex, check
+
+class FleetReliabilityRates:
+    # ┌── 1. LOAD (Constants) ──────────────────────
+    gpu_mttf_h = float(Systems.Reliability.Gpu.mttf_hours)
+    fleet_gpus = Systems.Clusters.Training_10K.total_accelerators
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────
+    lambda_gpu = 1 / gpu_mttf_h                 # per-GPU failure rate (per hour)
+    gpu_fit = BILLION / gpu_mttf_h              # failures per 10^9 device-hours
+    fleet_fit_total = fleet_gpus * gpu_fit      # aggregate FITs across the fleet
+    fleet_rate_per_h = fleet_gpus / gpu_mttf_h  # fleet failures per hour
+    hours_between = 1 / fleet_rate_per_h        # mean hours between fleet failures
+
+    # ┌── 3. GUARD (Invariants) ────────────────────
+    check(abs(gpu_fit * gpu_mttf_h - BILLION) < 1, "FIT definition: FIT x MTTF must equal 10^9")
+    check(abs(hours_between * fleet_rate_per_h - 1) < 1e-9, "interval must be reciprocal of fleet rate")
+    check(0 < fleet_rate_per_h < fleet_gpus, "fleet failure rate must be positive and below the GPU count")
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────
+    _fleet_tex = fmt(fleet_gpus, precision=0).replace(",", "{,}")
+    _mttf_tex = fmt(gpu_mttf_h, precision=0).replace(",", "{,}")
+    _fit_tex = fmt(gpu_fit, precision=0).replace(",", "{,}")
+    gpu_mttf_str = fmt(gpu_mttf_h, precision=0)
+    fleet_gpus_str = fmt(fleet_gpus, precision=0)
+    fleet_fit_str = fmt(fleet_fit_total, precision=0)
+    hours_between_str = fmt(hours_between, precision=0, commas=False)
+    fit_eq_math = fmt_math(rf"\text{{FIT}} = {_fit_tex}")
+    lambda_eq_math = fmt_math(rf"\lambda_{{\text{{hour}}}} = {sci_latex(lambda_gpu, precision=1)}")
+    fleet_rate_eq_math = fmt_math(f"{_fleet_tex}/{_mttf_tex} = {fmt(fleet_rate_per_h, precision=1, commas=False)}")
+```
+
 ## Failure Analysis at Scale {#sec-fault-tolerance-reliability-reliability-failure-analysis-scale-6b4b}
 
 Imagine a 10,000-GPU cluster midway through a three-month training run for a new foundation model. Statistically, a GPU will fail every few hours. If the system is not designed to absorb these continuous physical failures, the training process will halt entirely, wasting millions of dollars in compute time. In the Fleet Stack shown in @fig-fleet-stack, Fault Tolerance acts as the resilience layer for distributed execution. The challenges span the full failure spectrum, from transient bit flips through intermittent aging-related errors to permanent component failures, as @fig-fault-tolerance-failure-spectrum illustrates. Beyond these temporal categories, gray failures and silent data corruption (SDC) introduce a second axis of difficulty (low detection rate, high blast radius) that the rest of the chapter develops.
@@ -87,7 +140,7 @@ System reliability engineering provides the foundational framework for understan
 
 [^fn-poisson-failure]: **Poisson Process**: A statistical model for events occurring independently at a constant average rate. Reliability models assume hardware failures follow a Poisson distribution, leading to the exponential survival function $R(t) = e^{-\lambda t}$. This assumption simplifies fleet planning: the probability of at least one failure in a 10,000-component cluster is $1 - e^{-N \lambda t}$, making failure risk scale linearly with $N$ but exponentially with $t$. \index{Poisson Process!failure modeling}
 
-[^fn-failure-rate-fits]: **Failure Rate ($\lambda$)**: Expressed in FITs (Failures In Time), where 1 FIT equals one failure per billion device-hours. A data center GPU with 50,000-hour MTBF has $\text{FIT}=20{,}000$, corresponding to $\lambda_{\text{hour}} = 2.0 \times 10^{-5}$ failures/hour. That seems negligible for one device but becomes dominant at fleet scale: a 10,000-GPU cluster accumulates 200,000,000 FITs from GPUs alone, translating to an expected GPU failure every 5 hours. \index{Failure Rate!FITs}
+[^fn-failure-rate-fits]: **Failure Rate ($\lambda$)**: Expressed in FITs (Failures In Time), where 1 FIT equals one failure per billion device-hours. A data center GPU with `{python} FleetReliabilityRates.gpu_mttf_str`-hour MTBF has `{python} FleetReliabilityRates.fit_eq_math`, corresponding to `{python} FleetReliabilityRates.lambda_eq_math` failures/hour. That seems negligible for one device but becomes dominant at fleet scale: a `{python} FleetReliabilityRates.fleet_gpus_str`-GPU cluster accumulates `{python} FleetReliabilityRates.fleet_fit_str` FITs from GPUs alone, translating to an expected GPU failure every `{python} FleetReliabilityRates.hours_between_str` hours. \index{Failure Rate!FITs}
 
 $$ R_{\text{single}}(t) = e^{-\lambda t} $$ {#eq-single-component-reliability}
 
@@ -287,37 +340,117 @@ Without ECC memory protection, large-scale training is impossible as corruption 
 
 ### Worked example: Cluster MTBF calculation {#sec-fault-tolerance-reliability-reliability-worked-example-cluster-mtbf-calculation-9255}
 
+```{python}
+#| echo: false
+#| label: fault-tolerance-mtbf-cascade
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ CLUSTER MTBF CASCADE — WORKED EXAMPLE (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @sec-fault-tolerance-reliability-reliability-worked-example-cluster-
+# │          mtbf-calculation-9255. Drives the Steps 1-3 display equations and the
+# │          closing narrative (every 3.7 h, 6.5/day, ~45/week).
+# │
+# │ Goal: Reproduce the worked MTBF cascade from canonical MTTF/fleet constants so
+# │       every quoted rate is traceable and cannot drift.
+# │ Show: lambda per subsystem, total, system rate, cluster MTBF, failure cadence.
+# │ How:  lambda = 1/MTTF; power/network shared across the node's GPUs; system = N*total.
+# │       Narrative cadence follows the displayed rate (0.2708) for self-consistency.
+# │
+# │ Imports: mlsysim.constants (Systems), mlsysim.fmt (fmt, fmt_int, MarkdownStr, check)
+# │ Exports: setup strs (fleet_gpus_str, {gpu,pcie,psu,nic}_mttf_str, gpus_per_node_str);
+# │          7 *_eq_math display equations; mtbf_h_str, per_day_str, per_week_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim.fmt import fmt, fmt_int, MarkdownStr, check
+
+class FailureCascadeExample:
+    # ┌── 1. LOAD (Constants) ──────────────────────
+    fleet_gpus = Systems.Clusters.Training_10K.total_accelerators
+    gpu_mttf = float(Systems.Reliability.Gpu.mttf_hours)
+    pcie_mttf = float(Systems.Reliability.PcieSwitch.mttf_hours)
+    psu_mttf = float(Systems.Reliability.Psu.mttf_hours)
+    nic_mttf = float(Systems.Reliability.Nic.mttf_hours)
+    gpus_per_node = Systems.Nodes.DGX_H100.accelerators_per_node
+
+    # ┌── 2. EXECUTE (The Compute) ─────────────────
+    l_gpu = 1 / gpu_mttf
+    l_pcie = 1 / pcie_mttf
+    l_power = (1 / gpus_per_node) / psu_mttf
+    l_net = (1 / gpus_per_node) / nic_mttf
+    l_total = l_gpu + l_pcie + l_power + l_net
+    l_system = fleet_gpus * l_total
+    l_system_disp = round(l_system, 4)          # rate as displayed (0.2708)
+    mtbf_h = 1 / l_system_disp                  # narrative follows the displayed rate
+    per_day = 24 * l_system_disp
+    per_week = 24 * 7 * l_system_disp
+
+    # ┌── 3. GUARD (Invariants) ────────────────────
+    check(0 < l_gpu < 1, "per-GPU failure rate must be a small positive value")
+    check(2.0 < mtbf_h < 5.0, "10k-GPU cluster MTBF should be a few hours")
+    check(per_week > per_day > 1, "weekly failures must exceed daily, both above one")
+
+    # ┌── 4. OUTPUT (Formatting) ───────────────────
+    fleet_gpus_str = fmt(fleet_gpus, precision=0)
+    gpu_mttf_str = fmt(gpu_mttf, precision=0)
+    pcie_mttf_str = fmt(pcie_mttf, precision=0)
+    psu_mttf_str = fmt(psu_mttf, precision=0)
+    nic_mttf_str = fmt(nic_mttf, precision=0)
+    gpus_per_node_str = fmt(gpus_per_node, precision=0)
+    _gpu_d = gpu_mttf_str.replace(",", "{,}")
+    _pcie_d = pcie_mttf_str.replace(",", "{,}")
+    _psu_d = psu_mttf_str.replace(",", "{,}")
+    _nic_d = nic_mttf_str.replace(",", "{,}")
+    _fleet_d = fleet_gpus_str.replace(",", "{,}")
+    _npn = gpus_per_node_str
+    lambda_gpu_eq_math = MarkdownStr(
+        rf"$$ \lambda_{{\text{{GPU}}}} = \frac{{1}}{{{_gpu_d}}} = {l_gpu*1e5:.1f} \times 10^{{-5}} \text{{ failures/hour}} $$")
+    lambda_pcie_eq_math = MarkdownStr(
+        rf"$$ \lambda_{{\text{{PCIe}}}} = \frac{{1}}{{{_pcie_d}}} = {l_pcie*1e5:.1f} \times 10^{{-5}} \text{{ failures/hour}} $$")
+    lambda_power_eq_math = MarkdownStr(
+        rf"$$ \lambda_{{\text{{power/GPU}}}} = \frac{{1}}{{{_npn}}} \times \frac{{1}}{{{_psu_d}}} = {l_power*1e5:.3f} \times 10^{{-5}} \text{{ failures/hour}} $$")
+    lambda_net_eq_math = MarkdownStr(
+        rf"$$ \lambda_{{\text{{network/GPU}}}} = \frac{{1}}{{{_npn}}} \times \frac{{1}}{{{_nic_d}}} = {l_net*1e5:.3f} \times 10^{{-5}} \text{{ failures/hour}} $$")
+    lambda_total_eq_math = MarkdownStr(
+        rf"$$ \lambda_{{\text{{total/GPU}}}} = ({l_gpu*1e5:.1f} + {l_pcie*1e5:.1f} + {l_power*1e5:.3f} + {l_net*1e5:.3f}) \times 10^{{-5}} = {l_total*1e5:.3f} \times 10^{{-5}} \text{{ failures/hour}} $$")
+    lambda_system_eq_math = MarkdownStr(
+        rf"$$ \lambda_{{\text{{system}}}} = {_fleet_d} \times {l_total*1e5:.3f} \times 10^{{-5}} = {l_system:.4f} \text{{ failures/hour}} $$")
+    mtbf_eq_math = MarkdownStr(
+        rf"$$ \text{{MTBF}}_{{\text{{system}}}} = \frac{{1}}{{{l_system_disp:.4f}}} = {mtbf_h:.2f} \text{{ hours}} $$")
+    mtbf_h_str = fmt(mtbf_h, precision=1, commas=False)
+    per_day_str = fmt(per_day, precision=1, commas=False)
+    per_week_str = fmt_int(per_week)
+```
+
 Consider a training cluster designed for large language model development with the following specifications:
 
-- 10,000 NVIDIA H100 GPUs
-- Individual GPU MTBF: 50,000 hours
-- Each GPU connected to host via PCIe (MTBF: 200,000 hours)
-- Each node contains 8 GPUs with shared power supply (MTBF: 100,000 hours)
-- Network infrastructure per node (NIC, cables): MTBF 150,000 hours
+- `{python} FailureCascadeExample.fleet_gpus_str` NVIDIA H100 GPUs
+- Individual GPU MTBF: `{python} FailureCascadeExample.gpu_mttf_str` hours
+- Each GPU connected to host via PCIe (MTBF: `{python} FailureCascadeExample.pcie_mttf_str` hours)
+- Each node contains `{python} FailureCascadeExample.gpus_per_node_str` GPUs with shared power supply (MTBF: `{python} FailureCascadeExample.psu_mttf_str` hours)
+- Network infrastructure per node (NIC, cables): MTBF `{python} FailureCascadeExample.nic_mttf_str` hours
 
 #### Step 1: Calculate failure rate per GPU subsystem {.unnumbered}
 
 Each GPU operates within a failure domain that includes the GPU itself, its PCIe connection, and proportional shares of the power supply and network infrastructure.
 
-$$ \lambda_{\text{GPU}} = \frac{1}{50,000} = 2.0 \times 10^{-5} \text{ failures/hour} $$
+`{python} FailureCascadeExample.lambda_gpu_eq_math`
 
-$$ \lambda_{\text{PCIe}} = \frac{1}{200,000} = 0.5 \times 10^{-5} \text{ failures/hour} $$
+`{python} FailureCascadeExample.lambda_pcie_eq_math`
 
-$$ \lambda_{\text{power/GPU}} = \frac{1}{8} \times \frac{1}{100,000} = 0.125 \times 10^{-5} \text{ failures/hour} $$
+`{python} FailureCascadeExample.lambda_power_eq_math`
 
-$$ \lambda_{\text{network/GPU}} = \frac{1}{8} \times \frac{1}{150,000} = 0.083 \times 10^{-5} \text{ failures/hour} $$
+`{python} FailureCascadeExample.lambda_net_eq_math`
 
 #### Step 2: Calculate total per-GPU failure rate {.unnumbered}
 
-$$ \lambda_{\text{total/GPU}} = (2.0 + 0.5 + 0.125 + 0.083) \times 10^{-5} = 2.708 \times 10^{-5} \text{ failures/hour} $$
+`{python} FailureCascadeExample.lambda_total_eq_math`
 
 #### Step 3: Calculate system failure rate and MTBF {.unnumbered}
 
-$$ \lambda_{\text{system}} = 10,000 \times 2.708 \times 10^{-5} = 0.2708 \text{ failures/hour} $$
+`{python} FailureCascadeExample.lambda_system_eq_math`
 
-$$ \text{MTBF}_{\text{system}} = \frac{1}{0.2708} = 3.69 \text{ hours} $$
+`{python} FailureCascadeExample.mtbf_eq_math`
 
-This result means the cluster experiences a failure approximately every 3.7 hours on average. Over a 24-hour period, the expected number of failures is 6.5. A training run lasting one week will experience approximately forty-five failures. Any training system operating at this scale must treat failure as a continuous condition, not an exceptional event.
+This result means the cluster experiences a failure approximately every `{python} FailureCascadeExample.mtbf_h_str` hours on average. Over a 24-hour period, the expected number of failures is `{python} FailureCascadeExample.per_day_str`. A training run lasting one week will experience approximately `{python} FailureCascadeExample.per_week_str` failures. Any training system operating at this scale must treat failure as a continuous condition, not an exceptional event.
 
 @Tbl-cluster-mtbf-scaling isolates the GPU-only baseline across cluster sizes. The full-system calculation above is lower once PCIe, power, and network failure domains are included.
 
@@ -3653,7 +3786,7 @@ Reliability engineering must identify and mitigate correlation through diversity
 
 **Fallacy**: *Component MTTF values predict individual failure timing.*
 
-Engineers read a GPU MTTF of 50,000 hours and plan around a five-year replacement cadence per device. MTTF is a statistical property of a population, not a prediction for any single component. A GPU with MTTF 50,000 hours might fail at 200 hours or last 100,000; the distribution is broad. What MTTF reliably predicts is the aggregate failure rate: in a fleet of 10,000 GPUs, the steady-state failure rate is approximately $10{,}000/50{,}000 = 0.2$ failures per hour, or roughly one failure every five hours. Fleet-scale reliability engineering relies on this statistical regularity to size automated recovery, spare-pool depth, and on-call rotations. Trying to predict which individual GPU will fail next is a category error and a waste of monitoring effort.
+Engineers read a GPU MTTF of `{python} FleetReliabilityRates.gpu_mttf_str` hours and plan around a five-year replacement cadence per device. MTTF is a statistical property of a population, not a prediction for any single component. A GPU with MTTF `{python} FleetReliabilityRates.gpu_mttf_str` hours might fail at 200 hours or last 100,000; the distribution is broad. What MTTF reliably predicts is the aggregate failure rate: in a fleet of `{python} FleetReliabilityRates.fleet_gpus_str` GPUs, the steady-state failure rate is approximately `{python} FleetReliabilityRates.fleet_rate_eq_math` failures per hour, or roughly one failure every `{python} FleetReliabilityRates.hours_between_str` hours. Fleet-scale reliability engineering relies on this statistical regularity to size automated recovery, spare-pool depth, and on-call rotations. Trying to predict which individual GPU will fail next is a category error and a waste of monitoring effort.
 
 **Pitfall**: *Ignoring restart overhead in checkpoint planning.*
 
