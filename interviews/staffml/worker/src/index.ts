@@ -332,6 +332,49 @@ async function safeJson<T>(res: Response): Promise<T | null> {
   }
 }
 
+/**
+ * Typed error from request parsing — carries the HTTP status the handler
+ * should return. Mapped to a JSON response by bodyErrorResponse().
+ */
+class BodyError extends Error {
+  constructor(public readonly code: string, public readonly status: number) {
+    super(code);
+    this.name = "BodyError";
+  }
+}
+
+/**
+ * Parse + size-cap a JSON request body. Content-Type, size, and JSON-validity
+ * checks live here so every endpoint enforces them identically.
+ *
+ * The size cap is enforced against the ACTUAL decoded byte length, not just
+ * the client-supplied Content-Length header. The header is checked first as a
+ * cheap early reject, but a client can omit it or send chunked transfer
+ * encoding, so the header alone is not a real ceiling — we must measure the
+ * body we actually read.
+ */
+async function parseJsonRequest(request: Request, maxBytes: number): Promise<unknown> {
+  const contentType = (request.headers.get("Content-Type") || "").toLowerCase();
+  if (!contentType.startsWith("application/json")) {
+    throw new BodyError("expected application/json", 415);
+  }
+  // Cheap pre-check on the advertised length (may be absent or untruthful).
+  const advertised = parseInt(request.headers.get("Content-Length") || "0", 10);
+  if (Number.isFinite(advertised) && advertised > maxBytes) {
+    throw new BodyError("payload_too_large", 413);
+  }
+  const raw = await request.text();
+  // Authoritative check: measure the bytes we actually received.
+  if (new TextEncoder().encode(raw).length > maxBytes) {
+    throw new BodyError("payload_too_large", 413);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new BodyError("invalid_json", 400);
+  }
+}
+
 // ─── Adapter implementations ─────────────────────────────────
 
 async function callOpenAICompat(
@@ -532,7 +575,7 @@ async function callAdapter(
 
 interface RateLimitDecision {
   allowed: boolean;
-  reason?: "hourly_limit" | "daily_limit" | "global_quota";
+  reason?: "hourly_limit" | "daily_limit" | "global_quota" | "limiter_unavailable";
 }
 
 function todayUtcDate(): string {
@@ -543,6 +586,14 @@ function currentUtcHour(): string {
 }
 
 async function checkRateLimit(ip: string, env: Env): Promise<RateLimitDecision> {
+  // RATE_LIMIT_KV is a REQUIRED binding. If it is missing the worker is
+  // misconfigured — fail CLOSED rather than silently allowing unbounded LLM
+  // spend. Both /ask and /interview now treat this identically (previously
+  // /interview skipped limiting entirely when the binding was absent, while
+  // /ask threw and 500'd — an inconsistent and dangerous split).
+  if (!env.RATE_LIMIT_KV) {
+    return { allowed: false, reason: "limiter_unavailable" };
+  }
   // Use parseIntOrDefault to defend against malformed env vars that would
   // otherwise produce NaN and fail-open (any comparison with NaN is false).
   const perHour = parseIntOrDefault(env.RATE_LIMIT_PER_HOUR, 10);
@@ -616,6 +667,20 @@ function jsonResponse(env: Env, origin: string | null, body: unknown, status = 2
   });
 }
 
+/** Map a BodyError from parseJsonRequest() to a JSON response. */
+function bodyErrorResponse(
+  env: Env,
+  origin: string | null,
+  err: BodyError,
+  maxBytes: number,
+): Response {
+  const body =
+    err.code === "payload_too_large"
+      ? { error: err.code, limit_bytes: maxBytes }
+      : { error: err.code };
+  return jsonResponse(env, origin, body, err.status);
+}
+
 // ─── Waitlist handler ────────────────────────────────────────
 //
 // Endpoint: POST /waitlist
@@ -682,24 +747,15 @@ async function handleWaitlist(
     return jsonResponse(env, origin, { error: "waitlist_unavailable" }, 503);
   }
 
-  // Content-Type sanity
-  const contentType = request.headers.get("Content-Type") || "";
-  if (!contentType.toLowerCase().startsWith("application/json")) {
-    return jsonResponse(env, origin, { error: "expected application/json" }, 415);
-  }
-
-  // Body size cap (much smaller than /ask; waitlist payloads are tiny)
-  const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
-  if (Number.isFinite(contentLength) && contentLength > 4 * 1024) {
-    return jsonResponse(env, origin, { error: "payload_too_large" }, 413);
-  }
-
-  // Parse + validate
+  // Content-Type + size cap (much smaller than /ask; waitlist payloads are
+  // tiny) + parse, enforced against the actual decoded body length.
+  const WAITLIST_MAX_BYTES = 4 * 1024;
   let body: WaitlistRequest;
   try {
-    body = (await request.json()) as WaitlistRequest;
-  } catch {
-    return jsonResponse(env, origin, { error: "invalid_json" }, 400);
+    body = (await parseJsonRequest(request, WAITLIST_MAX_BYTES)) as WaitlistRequest;
+  } catch (e) {
+    if (e instanceof BodyError) return bodyErrorResponse(env, origin, e, WAITLIST_MAX_BYTES);
+    throw e;
   }
 
   const email = typeof body.email === "string" ? body.email.trim() : "";
@@ -888,33 +944,26 @@ function parseConductorMeta(rawMessage: string): { cleanMessage: string; meta: R
 }
 
 async function handleInterview(request: Request, env: Env, origin: string | null): Promise<Response> {
-  const contentType = request.headers.get("Content-Type") || "";
-  if (!contentType.toLowerCase().startsWith("application/json")) {
-    return jsonResponse(env, origin, { error: "expected application/json" }, 415);
-  }
-
-  const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
-  if (Number.isFinite(contentLength) && contentLength > MAX_INTERVIEW_BODY_BYTES) {
-    return jsonResponse(env, origin, { error: "payload_too_large", limit_bytes: MAX_INTERVIEW_BODY_BYTES }, 413);
-  }
-
   let body: InterviewRequest;
   try {
-    body = (await request.json()) as InterviewRequest;
-  } catch {
-    return jsonResponse(env, origin, { error: "invalid_json" }, 400);
+    body = (await parseJsonRequest(request, MAX_INTERVIEW_BODY_BYTES)) as InterviewRequest;
+  } catch (e) {
+    if (e instanceof BodyError) return bodyErrorResponse(env, origin, e, MAX_INTERVIEW_BODY_BYTES);
+    throw e;
   }
 
   if (!body.conductorContext || !Array.isArray(body.transcript)) {
     return jsonResponse(env, origin, { error: "invalid_interview_request" }, 400);
   }
 
-  if (env.RATE_LIMIT_KV) {
-    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-    const rl = await checkRateLimit(ip, env);
-    if (!rl.allowed) {
-      return jsonResponse(env, origin, { error: "rate_limited", reason: rl.reason }, 429);
-    }
+  // Always rate-limit. checkRateLimit fails closed (limiter_unavailable → 503)
+  // if the KV binding is missing, matching /ask — the conductor path drives the
+  // most tokens, so it must never silently run unmetered.
+  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const rl = await checkRateLimit(ip, env);
+  if (!rl.allowed) {
+    const status = rl.reason === "limiter_unavailable" ? 503 : 429;
+    return jsonResponse(env, origin, { error: "rate_limited", reason: rl.reason }, status);
   }
 
   const systemPrompt = buildConductorPrompt(body.conductorContext);
@@ -1023,26 +1072,15 @@ export default {
       return jsonResponse(env, origin, { error: "not_found" }, 404);
     }
 
-    // Enforce Content-Type to make sure we're parsing what we expect
-    const contentType = request.headers.get("Content-Type") || "";
-    if (!contentType.toLowerCase().startsWith("application/json")) {
-      return jsonResponse(env, origin, { error: "expected application/json" }, 415);
-    }
-
-    // Cap the request body size BEFORE we read it into memory. The Workers
-    // runtime will already enforce its own ceiling, but we want a much
-    // smaller per-endpoint limit to bound how much an attacker can send.
-    const contentLength = parseInt(request.headers.get("Content-Length") || "0", 10);
-    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
-      return jsonResponse(env, origin, { error: "payload_too_large", limit_bytes: MAX_REQUEST_BODY_BYTES }, 413);
-    }
-
-    // Parse + validate
+    // Content-Type + per-endpoint size cap + JSON parse. The size cap is
+    // enforced against the ACTUAL decoded body, not just the client's
+    // Content-Length header (which can be omitted or chunked away).
     let body: AskRequest;
     try {
-      body = (await request.json()) as AskRequest;
-    } catch {
-      return jsonResponse(env, origin, { error: "invalid_json" }, 400);
+      body = (await parseJsonRequest(request, MAX_REQUEST_BODY_BYTES)) as AskRequest;
+    } catch (e) {
+      if (e instanceof BodyError) return bodyErrorResponse(env, origin, e, MAX_REQUEST_BODY_BYTES);
+      throw e;
     }
     if (!body.question || typeof body.question !== "string" || body.question.length > MAX_QUESTION_CHARS) {
       return jsonResponse(env, origin, { error: "invalid_question", max_chars: MAX_QUESTION_CHARS }, 400);
@@ -1083,22 +1121,23 @@ export default {
       }
     }
 
-    // Rate limit
+    // Rate limit. A missing KV binding fails closed (limiter_unavailable → 503)
+    // rather than crashing the request, matching /interview's posture.
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     const limit = await checkRateLimit(ip, env);
     if (!limit.allowed) {
+      const status = limit.reason === "limiter_unavailable" ? 503 : 429;
+      const message =
+        limit.reason === "limiter_unavailable"
+          ? "AI interviewer is temporarily unavailable. Use the 'Copy as prompt' button to ask in your own LLM."
+          : limit.reason === "global_quota"
+            ? "AI interviewer is over today's global quota. Use the 'Copy as prompt' button to ask in your own LLM."
+            : "You've hit the rate limit for this hour. Try again later, or use 'Copy as prompt'.";
       return jsonResponse(
         env,
         origin,
-        {
-          error: "rate_limit",
-          reason: limit.reason,
-          message:
-            limit.reason === "global_quota"
-              ? "AI interviewer is over today's global quota. Use the 'Copy as prompt' button to ask in your own LLM."
-              : "You've hit the rate limit for this hour. Try again later, or use 'Copy as prompt'.",
-        },
-        429,
+        { error: "rate_limit", reason: limit.reason, message },
+        status,
       );
     }
 

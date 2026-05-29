@@ -1007,35 +1007,21 @@ class ResNetServingSpectrum:
 
 ::: {#psp-resnet-serving .callout-perspective title="ResNet-50 across the serving spectrum"}
 
-The same ResNet-50 architecture requires dramatically different serving strategies across deployment contexts:
-
-**`{python} ResNetServingSpectrum.cloud_name_str`**:
-
-- Model format: TensorRT FP16 engine (`{python} ResNetServingSpectrum.cloud_model_mb_str`)
-- Inference: `{python} ResNetServingSpectrum.cloud_inf_b1_ms_str` at batch-1, `{python} ResNetServingSpectrum.cloud_inf_b16_ms_str` at batch-16
-- Throughput: `{python} ResNetServingSpectrum.cloud_throughput_str` (batched)
-- Memory: `{python} ResNetServingSpectrum.cloud_vram_gb_str` VRAM (model + activations for batch-32)
-
-**`{python} ResNetServingSpectrum.mobile_name_str`**:
-
-- Model format: TensorFlow Lite INT8 (`{python} ResNetServingSpectrum.mobile_model_mb_str`)
-- Inference: `{python} ResNetServingSpectrum.mobile_inf_npu_ms_str` at batch-1 (NPU), `{python} ResNetServingSpectrum.mobile_inf_cpu_ms_str` (CPU fallback)
-- Throughput: ~`{python} ResNetServingSpectrum.mobile_throughput_str` (single-stream)
-- Memory: `{python} ResNetServingSpectrum.mobile_mem_mb_str` peak (shared with app)
-- Energy: `{python} ResNetServingSpectrum.mobile_energy_npu_mj_str` per inference (NPU), `{python} ResNetServingSpectrum.mobile_energy_cpu_mj_str` (CPU)
-
-**`{python} ResNetServingSpectrum.tiny_name_str`**:
-
-- Model format: Not feasible; ResNet-50 requires `{python} ResNetServingSpectrum.tiny_model_mb_str` weights
-- Alternative: MobileNetV2-0.35 quantized to INT8 (`{python} ResNetServingSpectrum.tiny_alt_mb_str`)
-- Inference: `{python} ResNetServingSpectrum.tiny_inf_ms_str` at batch-1
-- Throughput: ~`{python} ResNetServingSpectrum.tiny_throughput_str`
-- Memory: `{python} ResNetServingSpectrum.tiny_arena_kb_str` tensor arena (fits in `{python} ResNetServingSpectrum.tiny_sram_kb_str` SRAM)
-- Energy: `{python} ResNetServingSpectrum.tiny_energy_mj_str` per inference
+The same ResNet-50 architecture requires dramatically different serving strategies across deployment contexts. @Tbl-resnet-serving-spectrum compares the three tiers side by side: cloud serving runs the full FP16 engine at millisecond latency on a data center GPU; mobile serving compresses to INT8 and dispatches to an NPU at a fraction of the energy; TinyML cannot run ResNet-50 at all and instead serves a downsized MobileNetV2 in kilobytes of SRAM.
 
 **Systems insight**: The "same model" claim is misleading: each deployment requires different optimization and often different architectures entirely. TinyML serving cannot use ResNet-50; it requires architectures designed for the constraints from the start.
 
 :::
+
+| **Dimension**           |                                  **`{python} ResNetServingSpectrum.cloud_name_str`**                                   |                                       **`{python} ResNetServingSpectrum.mobile_name_str`**                                       |                                                    **`{python} ResNetServingSpectrum.tiny_name_str`**                                                    |
+|:------------------------|:----------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------:|
+| **Model format**        |                       TensorRT FP16 engine (`{python} ResNetServingSpectrum.cloud_model_mb_str`)                       |                           TensorFlow Lite INT8 (`{python} ResNetServingSpectrum.mobile_model_mb_str`)                            | Not feasible (`{python} ResNetServingSpectrum.tiny_model_mb_str`); alternative: MobileNetV2-0.35 INT8 (`{python} ResNetServingSpectrum.tiny_alt_mb_str`) |
+| **Inference (batch-1)** | `{python} ResNetServingSpectrum.cloud_inf_b1_ms_str` (batch-16: `{python} ResNetServingSpectrum.cloud_inf_b16_ms_str`) |    `{python} ResNetServingSpectrum.mobile_inf_npu_ms_str` (NPU), `{python} ResNetServingSpectrum.mobile_inf_cpu_ms_str` (CPU)    |                                                     `{python} ResNetServingSpectrum.tiny_inf_ms_str`                                                     |
+| **Throughput**          |                            `{python} ResNetServingSpectrum.cloud_throughput_str` (batched)                             |                             ~`{python} ResNetServingSpectrum.mobile_throughput_str` (single-stream)                              |                                                  ~`{python} ResNetServingSpectrum.tiny_throughput_str`                                                   |
+| **Memory**              |                           `{python} ResNetServingSpectrum.cloud_vram_gb_str` VRAM (batch-32)                           |                            `{python} ResNetServingSpectrum.mobile_mem_mb_str` peak (shared with app)                             |                `{python} ResNetServingSpectrum.tiny_arena_kb_str` arena (fits in `{python} ResNetServingSpectrum.tiny_sram_kb_str` SRAM)                 |
+| **Energy/inference**    |                                                           —                                                            | `{python} ResNetServingSpectrum.mobile_energy_npu_mj_str` (NPU), `{python} ResNetServingSpectrum.mobile_energy_cpu_mj_str` (CPU) |                                                   `{python} ResNetServingSpectrum.tiny_energy_mj_str`                                                    |
+
+: **ResNet-50 Across the Serving Spectrum**: Side-by-side comparison of cloud, mobile, and TinyML serving for the same target architecture, showing how the model format, latency, throughput, memory footprint, and energy budget shift by three to four orders of magnitude across deployment contexts. {#tbl-resnet-serving-spectrum tbl-colwidths="[20,26,27,27]"}
 
 ### The load balancer layer {#sec-model-serving-load-balancer-layer-9c4d}
 
@@ -2827,79 +2813,7 @@ Note: Times shown are pure inference time, excluding queue wait. @Sec-model-serv
 
 :::
 
-The table reveals the throughput-latency trade-off in stark terms: larger batches dramatically improve hardware efficiency but increase per-request latency. The 6.4$\times$ throughput gain from batch one to batch thirty-two comes at the cost of 5$\times$ higher inference time, and user-perceived latency compounds further once the batching window wait is included. In practice, the optimal batch size depends on both the latency Service Level Objective (SLO) and the arrival rate of requests. A system serving interactive recommendations under a 20 ms SLO cannot use batch thirty-two, even though hardware utilization at that point approaches 95 percent. The question facing every serving engineer is therefore quantitative: determining the largest batch size that still meets a given latency SLO. A small sweep over batch sizes turns that trade-off into an operating point.
-
-```{python}
-#| echo: false
-#| label: batching-sweetspot-calc
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ BATCHING SWEET SPOT
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: Callout "The Batching Sweet Spot"
-# │
-# │ Goal: Demonstrate the economic "sweet spot" for batching.
-# │ Show: That batch-8 yields 3× throughput gain while remaining within typical SLOs.
-# │ How: Model throughput and latency for small batches (1 to 8).
-# │
-# │ Imports: mlsysim.core.constants (ms, second), mlsysim.book (fmt)
-# │ Exports: batch1_ms_str, batch1_imgs_str, batch8_* strings,
-# │          latency_increase_str, throughput_ratio_str
-# └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt, fmt_int, fmt_qty, check
-
-class BatchingSweetspotCalc:
-    """Demonstrates that batch-8 yields ~3× throughput within a 20 ms SLO budget."""
-
-    # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    batch1_ms = 5.0 * ms
-    batch1_imgs = 200 * count / second
-    batch8_wait_ms = 5.0 * ms
-    batch8_inference_ms = 9.0 * ms
-
-    # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
-    batch8_user_latency_ms = batch8_wait_ms + batch8_inference_ms
-    batch8_throughput = (8 * count) / batch8_user_latency_ms.to(second)
-    latency_increase_value = batch8_user_latency_ms / batch1_ms
-    throughput_ratio_value = batch8_throughput / batch1_imgs
-    batch1_util_pct_value = 15
-    latency_budget_ms_value = 20
-
-    check(batch8_user_latency_ms.m_as(ms) == 14, "Batch-8 user latency should be 14 ms")
-    check(
-        abs(throughput_ratio_value - 40 / 14) < 0.01,
-        f"Batch-8 throughput gain should be about 2.9×, got {throughput_ratio_value:.2f}×",
-    )
-
-    # ┌── 4. OUTPUT (Formatting) ─────────────────────────────────────────────
-    batch1_ms_str = fmt_qty(batch1_ms, ms, precision=0, commas=False)
-    batch1_imgs_str = fmt_int(round(batch1_imgs.m_as(count / second)), commas=False, suffix=" img/s")
-    batch8_wait_ms_str = fmt_qty(batch8_wait_ms, ms, precision=0, commas=False)
-    batch8_inference_ms_str = fmt_qty(batch8_inference_ms, ms, precision=0, commas=False)
-    batch8_user_latency_str = fmt_qty(batch8_user_latency_ms, ms, precision=0, commas=False)
-    batch8_throughput_str = fmt_int(round(batch8_throughput.m_as(count / second)), commas=False, suffix=" img/s")
-    latency_increase_str = fmt(latency_increase_value, precision=1, commas=False, suffix="×")
-    throughput_ratio_str = fmt(throughput_ratio_value, precision=1, commas=False, suffix="×")
-    batch1_util_pct_str = fmt(batch1_util_pct_value, precision=0, commas=False, suffix="%")
-    batch8_min_arrival_str = fmt_int(round(batch8_throughput.m_as(count / second)), commas=False, suffix=" img/s")
-    latency_budget_ms_str = fmt(latency_budget_ms_value, precision=0, commas=False, suffix=" ms")
-```
-
-::: {#nbk-model-serving-batching-sweet-spot .callout-notebook title="The batching sweet spot"}
-
-**Problem**: A ResNet-50 model is served at $B = 1$, leaving the GPU mostly idle (`{python} BatchingSweetspotCalc.batch1_util_pct_str` utilization). The goal is to increase throughput to reduce cost, subject to a `{python} BatchingSweetspotCalc.latency_budget_ms_str` latency budget.
-
-**Math**:
-
-1.  **Baseline (Batch 1)**: Inference = `{python} BatchingSweetspotCalc.batch1_ms_str`. Throughput = `{python} BatchingSweetspotCalc.batch1_imgs_str`.
-2.  **Optimized (Batch 8)** (assumes offered load ≥ `{python} BatchingSweetspotCalc.batch8_min_arrival_str`, so the window can fill):
-    - **Wait time**: Up to `{python} BatchingSweetspotCalc.batch8_wait_ms_str` batching window before inference starts.
-    - **Inference time**: Batch 8 inference takes `{python} BatchingSweetspotCalc.batch8_inference_ms_str`.
-    - **User latency**: `{python} BatchingSweetspotCalc.batch8_wait_ms_str` (wait) + `{python} BatchingSweetspotCalc.batch8_inference_ms_str` (compute) = `{python} BatchingSweetspotCalc.batch8_user_latency_str` (worst case for the first request in a full batch).
-    - **Service throughput**: 8 images / `{python} BatchingSweetspotCalc.batch8_user_latency_str` ≈ `{python} BatchingSweetspotCalc.batch8_throughput_str`.
-
-**Systems insight**: By accepting a `{python} BatchingSweetspotCalc.latency_increase_str` increase in latency (`{python} BatchingSweetspotCalc.batch1_ms_str` → `{python} BatchingSweetspotCalc.batch8_user_latency_str`), the system achieves nearly `{python} BatchingSweetspotCalc.throughput_ratio_str` higher service throughput on the same hardware when load sustains batch-8 formation. As long as `{python} BatchingSweetspotCalc.batch8_user_latency_str` remains under the `{python} BatchingSweetspotCalc.latency_budget_ms_str` budget, this is "free" capacity relative to batch-1 serving.
-
-:::
+The table reveals the throughput-latency trade-off in stark terms: larger batches dramatically improve hardware efficiency but increase per-request latency. In practice, the optimal batch size depends on both the latency Service Level Objective (SLO) and the arrival rate of requests. The question facing every serving engineer is therefore quantitative: determining the largest batch size that still meets a given latency SLO. At batch size 8 with a 5 ms batching window, for example, the worst-case user latency is about 14 ms (5 ms wait plus 9 ms inference), comfortably below a 20 ms SLO budget. That earns nearly 3$\times$ higher service throughput than batch-1 serving on the same hardware, provided sustained load is high enough to fill the batching window.
 
 Plotting the same trade-off reveals the knee where extra batching stops paying for its latency cost.
 
@@ -4768,7 +4682,7 @@ The end-to-end request latency is governed by the two-phase execution model of a
 
 ##### Prefill phase (time to first token) {.unnumbered}
 
-The model processes the 1,000-token prompt in parallel\index{Prefill Phase!compute-bound}\index{Prefill Phase!parallel processing}. On an H100, this compute-bound operation achieves approximately 10,000 tokens/s: $T_{\text{prefill}} = 1000$ tokens/10{,}000 tokens/s = 100 ms. Accounting for 20 ms of system overhead (network ingress, tokenization), the TTFT is 120 ms, comfortably within the 200 ms SLO.
+The model processes the 1,000-token prompt in parallel\index{Prefill Phase!compute-bound}\index{Prefill Phase!parallel processing}. On an H100, this compute-bound operation achieves approximately 10,000 tokens/s: $T_{\text{prefill}} = 1000\text{ tokens} / 10{,}000\text{ tokens/s} = 100\text{ ms}$. Accounting for 20 ms of system overhead (network ingress, tokenization), the TTFT is 120 ms, comfortably within the 200 ms SLO.
 
 ##### Decode phase (time per output token) {.unnumbered}
 

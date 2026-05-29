@@ -1211,114 +1211,7 @@ The choice of network topology dictates the upper bound of training efficiency. 
 
 :::
 
-The qualitative topology choice becomes a financial decision once oversubscription enters the design. The next calculation isolates that cost by holding the cluster fixed and changing only the spine subscription ratio.
-
-::: {#nbk-bisection-bottleneck .callout-notebook title="The bisection bottleneck"}
-
-```{python}
-#| echo: false
-#| label: bisection-bottleneck
-# ┌─────────────────────────────────────────────────────────────────────────────
-# │ BISECTION BOTTLENECK ANALYSIS
-# ├─────────────────────────────────────────────────────────────────────────────
-# │ Context: Network Topology - Bisection Bandwidth impact.
-# │
-# │ Goal: Quantify the slowdown from network oversubscription.
-# │ Show: That cost-optimized (oversubscribed) networks throttle training.
-# │ How: Calculate AllReduce time for 1:1 vs 4:1 oversubscription.
-# │
-# │ Imports: mlsysim.core.constants
-# │ Exports: BisectionBottleneck.gpus_per_side_str,
-# │          BisectionBottleneck.bisec_bw_a_gbs_str,
-# │          BisectionBottleneck.bisec_bw_b_gbs_str,
-# │          BisectionBottleneck.bisec_bw_a_tbs_str,
-# │          BisectionBottleneck.bisec_bw_b_tbs_str,
-# │          BisectionBottleneck.data_crossing_gb_str,
-# │          BisectionBottleneck.time_a_ms_str,
-# │          BisectionBottleneck.time_b_ms_str,
-# │          BisectionBottleneck.waste_m_str
-# └─────────────────────────────────────────────────────────────────────────────
-
-# ┌── LEGO ───────────────────────────────────────────────
-class BisectionBottleneck:
-    """
-    Scenario: 1024 accelerators (128 nodes) running AllReduce.
-    Comparison of non-blocking (1:1) vs oversubscribed (4:1) fabric.
-    """
-
-    # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    from mlsysim import Hardware
-    num_gpus = Systems.Clusters.Training_1K.total_accelerators
-    num_nodes = Systems.Clusters.Training_1K.count
-    injection_bw = Systems.Fabrics.InfiniBand_NDR
-    gradient_size_gb = 100
-    oversub_ratio_b = 4
-    cluster_cost_m = 300
-    comm_fraction = 0.30
-
-    # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
-    # Step 1: BW_bisect (aggregate across the cut)
-    gpus_per_side = num_gpus // 2
-    total_bisec_bw_a = gpus_per_side * injection_bw.bandwidth.m_as(GB/second)
-    total_bisec_bw_b = total_bisec_bw_a/oversub_ratio_b
-
-    # Step 2: Time = Data/Bandwidth
-    total_data_crossing_bisection = gpus_per_side * gradient_size_gb
-    time_a_s = total_data_crossing_bisection/total_bisec_bw_a
-    time_b_s = total_data_crossing_bisection/total_bisec_bw_b
-
-    # Step 3: Economic impact
-    rel_throughput = 1 / ((1 - comm_fraction) + (comm_fraction * oversub_ratio_b))
-    waste_val = (1 - rel_throughput) * cluster_cost_m
-
-    # ┌── 3. GUARD (Invariants) ───────────────────────────────────────────
-    from mlsysim.fmt import check
-    check(num_gpus % 2 == 0, "Bisection model requires an even GPU count")
-    check(time_b_s == time_a_s * 4, "Scenario B must be 4x slower than Scenario A")
-
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    from mlsysim.fmt import fmt
-    gpus_per_side_str = fmt(gpus_per_side, precision=0, commas=False)
-    bisec_bw_a_gbs_str = fmt(total_bisec_bw_a, precision=0, suffix=" GB/s")
-    bisec_bw_b_gbs_str = fmt(total_bisec_bw_b, precision=0, suffix=" GB/s")
-    bisec_bw_a_tbs_str = fmt(total_bisec_bw_a / THOUSAND, precision=1, commas=False, suffix=" TB/s")
-    bisec_bw_b_tbs_str = fmt(total_bisec_bw_b / THOUSAND, precision=1, commas=False, suffix=" TB/s")
-    data_crossing_gb_str = fmt(total_data_crossing_bisection, precision=0, suffix=" GB")
-    num_gpus_str = fmt_int(num_gpus, commas=False)
-    num_nodes_str = fmt_int(num_nodes, commas=False, suffix=" nodes")
-    gradient_size_gb_str = fmt(gradient_size_gb, precision=0, commas=False, suffix=" GB")
-    time_a_ms_str = fmt(time_a_s * THOUSAND, precision=0, commas=False, suffix=" ms")
-    time_b_ms_str = fmt(time_b_s * THOUSAND, precision=0, commas=False, suffix=" ms")
-    waste_m_str = fmt(waste_val, precision=1, commas=False, prefix="$", suffix="M")
-```
-
-```{python}
-#| echo: false
-# ┌── LEGO ───────────────────────────────────────────────
-# │ Context: Bisection bottleneck callout — NDR injection bandwidth.
-# │ Exports: IbNdrTopologyRecap.ib_ndr_gbps_str, ib_ndr_gbs_str
-class IbNdrTopologyRecap:
-    # ┌── 4. OUTPUT (Formatting) ──────────────────────────────────────────────
-    ib_ndr_gbps_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(Gbps), precision=0, commas=False, suffix=" Gb/s")
-    ib_ndr_gbs_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second), precision=0, commas=False, suffix=" GB/s")
-```
-
-**Problem**: A cluster has `{python} BisectionBottleneck.num_gpus_str` accelerators across `{python} BisectionBottleneck.num_nodes_str`. Each accelerator has `{python} IbNdrTopologyRecap.ib_ndr_gbps_str` (`{python} IbNdrTopologyRecap.ib_ndr_gbs_str`) of network injection bandwidth. An AllReduce job requires full $\text{BW}_{\text{bisect}}$.
-
-**Scenario A (non-blocking fat-tree)**: 1:1 oversubscription ratio. Per-direction $\text{BW}_{\text{bisect}} =$ `{python} BisectionBottleneck.gpus_per_side_str` $\times 50 =$ `{python} BisectionBottleneck.bisec_bw_a_gbs_str` = `{python} BisectionBottleneck.bisec_bw_a_tbs_str`.
-
-**Scenario B (cost-optimized)**: 4:1 oversubscription at the spine layer. Per-direction $\text{BW}_{\text{bisect}} =$ `{python} BisectionBottleneck.bisec_bw_a_gbs_str` divided by 4 = `{python} BisectionBottleneck.bisec_bw_b_gbs_str` = `{python} BisectionBottleneck.bisec_bw_b_tbs_str`.
-
-**Math**: Suppose the AllReduce must exchange `{python} BisectionBottleneck.gradient_size_gb_str` of gradient data per accelerator. In this simplified per-direction bisection model, `{python} BisectionBottleneck.data_crossing_gb_str` crosses the cut.
-
-- Time on Scenario A: `{python} BisectionBottleneck.time_a_ms_str`
-- Time on Scenario B: `{python} BisectionBottleneck.time_b_ms_str`
-
-**Systems insight**: Saving money on spine switches (Scenario B) slows every synchronization step of the entire cluster by approximately 4$\times$. If AllReduce accounts for 30 percent of each training iteration, the cluster's effective throughput drops significantly. For a \$300 million supercomputer, this amounts to wasting approximately **\$`{python} BisectionBottleneck.waste_m_str`** worth of accelerator time waiting for the network. Network oversubscription is false economy for training workloads.
-
-:::
-
-The preceding analysis assumed a single workload type. In practice, clusters serve multiple workloads with different communication patterns, and topology selection must balance their competing demands.
+Bisection analysis alone assumes a single workload type. In practice, clusters serve multiple workloads with different communication patterns, and topology selection must balance their competing demands.
 
 ::: {#chk-network-fabrics-topology-selection-your-workload .callout-checkpoint title="Topology selection for your workload"}
 
@@ -1518,7 +1411,7 @@ class NetworkIncastClusterRecap:
 ML training is structurally susceptible to incast because of its synchronized communication patterns. When a layer finishes backward computation, thousands of nodes simultaneously initiate AllReduce, targeting the same switch ports. In our 175B model training across `{python} NetworkIncastClusterRecap.n_gpus_str`, each AllReduce involves every node injecting data simultaneously, creating a burst that can momentarily exceed the fabric's capacity at specific switch ports. Production clusters mitigate this by:
 
 1. **Layer-staggering**\index{Incast!layer-staggering mitigation}: Starting AllReduce for early layers while later layers are still computing.
-2. **Algorithm selection**\index{Incast!algorithm selection mitigation}: Using tree-based AllReduce instead of ring-based ones to reduce concurrent flow counts.
+2. **Algorithm selection**\index{Incast!algorithm selection mitigation}: Choosing collectives that limit the fan-in at any single port. Hierarchical and rail-local reductions aggregate gradients in stages so that no switch port must absorb all senders at once, in contrast to a flat reduction in which every node targets one aggregation point. Bandwidth-optimal ring AllReduce is itself point-to-point and creates no single aggregation hotspot; the incast pressure comes from many such flows converging on oversubscribed ports, which topology-aware placement and rail-optimized wiring relieve.
 3. **QoS Priority**\index{Quality of Service!priority traffic}: Tagging gradient traffic with highest priority to ensure it is not delayed by background storage or management traffic.
 
 Real fabrics have congestion and tail latency; the question becomes how to build end-to-end clusters that perform despite these realities.
@@ -1694,7 +1587,7 @@ The physical fabric and production architectures established in the preceding se
 
 ## Network Virtualization {#sec-network-fabrics-virtualization}
 
-Production ML clusters are rarely dedicated to a single training job, creating a massive economic imperative for efficient multi-tenancy. A \$300 million supercomputer that sits 30 percent idle because it cannot securely isolate concurrent workloads represents a \$90 million waste of capital. To recover this utility, the network must support virtualization\index{Network Virtualization}\index{SR-IOV} along three orthogonal dimensions: **bandwidth partitioning** (guaranteeing minimum throughput), **latency determinism** (preventing head-of-line blocking), and **security isolation** (preventing memory snooping between tenants). Technologies like SR-IOV and virtual lanes decouple the training job from the physical wire, much as hypervisors decoupled the operating system from the CPU. For our 175B model, this means the training job can reliably consume 80 percent of the cluster's $\text{BW}_{\text{bisect}}$ while a high-priority inference service and a background data preprocessing job share the remaining 20 percent, with the fabric enforcing hard boundaries that prevent the preprocessor's bursty traffic from stalling gradient updates.
+Production ML clusters are rarely dedicated to a single training job, creating a massive economic imperative for efficient multi-tenancy. A \$300 million supercomputer that sits 30 percent idle because it cannot securely isolate concurrent workloads represents a \$90 million waste of capital. To recover this utility, the network must support virtualization\index{Network Virtualization}\index{SR-IOV} along three orthogonal dimensions: **bandwidth partitioning** (guaranteeing minimum throughput), **latency determinism** (preventing head-of-line blocking), and **security isolation** (preventing memory snooping between tenants). Technologies like SR-IOV (Single Root I/O Virtualization) and virtual lanes decouple the training job from the physical wire, much as hypervisors decoupled the operating system from the CPU. For our 175B model, this means the training job can reliably consume 80 percent of the cluster's $\text{BW}_{\text{bisect}}$ while a high-priority inference service and a background data preprocessing job share the remaining 20 percent, with the fabric enforcing hard boundaries that prevent the preprocessor's bursty traffic from stalling gradient updates.
 
 ### SR-IOV: Hardware NIC virtualization {#sec-network-fabrics-sriov}
 
@@ -1793,7 +1686,7 @@ For latency-sensitive synchronization, `ib_write_lat` measures round-trip times 
 
 When a training job reports lower-than-expected throughput, the following diagnostic sequence isolates the cause:
 
-1. **Check GPU utilization**\index{GPU Utilization!check}: Rule out compute bottlenecks using `dcgmi` or `nvidia-smi`. If SM utilization is 100 percent, the network is not the bottleneck.
+1. **Check GPU utilization**\index{GPU Utilization!check}: Rule out compute bottlenecks using `dcgmi` or `nvidia-smi`. If SM utilization is 100 percent, the network is not the bottleneck. Low utilization does not automatically implicate the fabric, however: a starved input pipeline (data loading or storage) produces the same symptom, so confirm the data path is keeping the accelerators fed before investigating the network.
 2. **Inspect NCCL logs**\index{NCCL!debug logs}: Set `NCCL_DEBUG=INFO` to reveal which network transport was selected, the detected bandwidth between nodes, and any fallbacks to slower protocols.
 3. **Run point-to-point tests**\index{Perftest!point-to-point bandwidth tests}: Use `ib_write_bw` between specific nodes in the job. A single degraded link can bottleneck the entire ring in a Ring AllReduce.
 4. **Check PFC/ECN counters**\index{Congestion Control!PFC and ECN counters}: Inspect switch counters along the path. Sustained PFC activity indicates persistent congestion that should be investigated at the scheduler or routing level.

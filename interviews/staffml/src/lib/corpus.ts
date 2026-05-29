@@ -1,4 +1,5 @@
 import corpusData from '../data/corpus-summary.json';
+import { QUESTION_COUNT } from './stats';
 
 /**
  * Question shape matching vault schema v1.0.
@@ -99,11 +100,22 @@ export function getQuestions(): Question[] {
 }
 
 /**
- * Marketing-friendly question count string. Rounds the live corpus length
- * down to the nearest thousand and appends a `+` so the headline never goes
- * stale until the next 1,000-question milestone is crossed.
+ * Marketing-friendly question count string, e.g. "8,000+". Derived from the
+ * authoritative manifest count (QUESTION_COUNT in stats.ts — the single source
+ * of truth for user-visible counts), NOT from the runtime bundle length, which
+ * can be a partial/filtered corpus in local dev. Rounds DOWN to a sensible
+ * granularity and appends `+` so the headline never goes stale or overstates.
+ *
+ * The granularity adapts to magnitude so a small or partial corpus never
+ * renders the old "0+" bug (Math.floor(900/1000)*1000 = 0).
  */
-export const QUESTION_COUNT_DISPLAY = `${(Math.floor(questions.length / 1000) * 1000).toLocaleString("en-US")}+`;
+export function roundedFloorForDisplay(n: number): number {
+  if (n >= 1000) return Math.floor(n / 1000) * 1000;
+  if (n >= 100) return Math.floor(n / 100) * 100;
+  if (n >= 10) return Math.floor(n / 10) * 10;
+  return Math.max(0, Math.floor(n)); // tiny corpus: show the exact floor
+}
+export const QUESTION_COUNT_DISPLAY = `${roundedFloorForDisplay(QUESTION_COUNT).toLocaleString("en-US")}+`;
 
 export function getQuestionById(id: string): Question | undefined {
   return questions.find((q) => q.id === id);
@@ -310,7 +322,19 @@ export function checkNapkinMath(
     tinyml: 0.05,
   };
   const tolerance = tolerances[track] || 0.25;
-  const ratio = Math.abs(userAnswer - modelAnswer) / Math.max(modelAnswer, 1);
+  // Relative error against the magnitude of the model answer. The old code
+  // divided by Math.max(modelAnswer, 1), which collapsed the denominator to 1
+  // for any sub-unit answer — so a model answer of 0.5 vs. a user answer of 1.0
+  // (a 2× miss) scored as ratio 0.5 ("ballpark") instead of 1.0. ML napkin
+  // answers are frequently < 1 (fractions of a GB, sub-second latencies), so
+  // this systematically under-penalized small magnitudes.
+  const denom = Math.abs(modelAnswer);
+  const ratio =
+    denom > 0
+      ? Math.abs(userAnswer - modelAnswer) / denom
+      : userAnswer === 0
+        ? 0
+        : Infinity; // model answer is exactly 0; any nonzero guess is "way off"
 
   if (ratio <= tolerance * 0.5) {
     return { grade: 'exact', ratio, tolerance, label: 'Spot on', maxSelfScore: 3 };
@@ -324,7 +348,9 @@ export function checkNapkinMath(
   if (ratio <= 5.0) {
     return { grade: 'off', ratio, tolerance, label: `Off by ${ratio.toFixed(1)}×`, maxSelfScore: 1 };
   }
-  return { grade: 'way_off', ratio, tolerance, label: `Off by ${ratio.toFixed(0)}×`, maxSelfScore: 1 };
+  // ratio can be Infinity when the model answer is 0; guard the label.
+  const offLabel = Number.isFinite(ratio) ? `Off by ${ratio.toFixed(0)}×` : 'Way off';
+  return { grade: 'way_off', ratio, tolerance, label: offLabel, maxSelfScore: 1 };
 }
 
 // Clean scenario text: strip markdown interviewer prefix and stray quotes
@@ -362,16 +388,26 @@ export function isNumericQuestion(question: { scenario: string; details: { napki
   return false;
 }
 
-// Extract the user's final answer number
+// Extract the user's final answer number.
+//
+// Every numeric token must START with a digit (`\d[\d,]*...`). The old pattern
+// `[\d,]+` matched a lone comma, so `Number("".replace(/,/g,""))` → 0 was
+// accepted as a valid answer — a stray comma in the prose silently became the
+// "final number". Requiring a leading digit rejects that. We deliberately do
+// NOT accept a leading minus: a range like "10-20 ms" must read as 20, not -20.
+const NUMERIC_TOKEN = /\d[\d,]*(?:\.\d+)?/g;
+
 export function extractFinalNumber(text: string): number | null {
-  const markerMatch = text.match(/(?:^|\n)\s*(?:=>|answer:|final:)\s*([\d,]+(?:\.\d+)?)/im);
+  // Explicit marker form ("=> 42", "answer: 1,024", "final: 3.5") wins.
+  const markerMatch = text.match(/(?:^|\n)\s*(?:=>|answer:|final:)\s*(\d[\d,]*(?:\.\d+)?)/im);
   if (markerMatch) {
     const num = Number(markerMatch[1].replace(/,/g, ''));
-    if (!isNaN(num) && isFinite(num)) return num;
+    if (Number.isFinite(num)) return num;
   }
 
-  const numbers = text.match(/[\d,]+(?:\.\d+)?/g)?.map(s => Number(s.replace(/,/g, ''))) || [];
-  const valid = numbers.filter(n => !isNaN(n) && isFinite(n));
+  // Otherwise take the LAST numeric token in the text.
+  const numbers = text.match(NUMERIC_TOKEN)?.map(s => Number(s.replace(/,/g, ''))) ?? [];
+  const valid = numbers.filter(n => Number.isFinite(n));
   return valid.length > 0 ? valid[valid.length - 1] : null;
 }
 
@@ -601,20 +637,17 @@ export function getChainEntryPoint(
 
 // ─── Async worker fetchers (for scenario/details, post-bundle-shrink) ──────
 
-/** URL of the Cloudflare Worker that serves full question data. */
-const VAULT_API = process.env.NEXT_PUBLIC_VAULT_API
-  ?? "https://staffml-vault.mlsysbook-ai-account.workers.dev";
+import { getVaultApiBase, getVaultMode } from "./vault-config";
+import { vaultFetchJson } from "./vault-fetch";
 
 // In-memory cache for hydrated questions during one session.
 const _detailsCache = new Map<string, Question>();
+// IDs we have successfully hydrated. Tracked explicitly rather than inferred
+// from `details.realistic_solution` being truthy — a recall/MCQ question can
+// have a legitimately empty realistic_solution, and inferring hydration from
+// it caused those questions to re-fetch from the worker on every access.
+const _hydratedIds = new Set<string>();
 let _staticDetailsCache: Map<string, Question> | null = null;
-
-// Opt-in offline / local-dev mode. Set NEXT_PUBLIC_VAULT_FALLBACK=static and
-// run `vault build --local-json` to materialize corpus.json on disk. Not a
-// prod safety net: production deploys neither emit nor bundle corpus.json.
-function shouldUseStaticDetails(): boolean {
-  return process.env.NEXT_PUBLIC_VAULT_FALLBACK?.toLowerCase() === "static";
-}
 
 async function getStaticFullDetail(id: string, summary: Question): Promise<Question | undefined> {
   if (!_staticDetailsCache) {
@@ -644,6 +677,7 @@ async function getStaticFullDetail(id: string, summary: Question): Promise<Quest
     },
   };
   _detailsCache.set(id, merged);
+  _hydratedIds.add(id);
   return merged;
 }
 
@@ -655,32 +689,33 @@ async function getStaticFullDetail(id: string, summary: Question): Promise<Quest
  * NEXT_PUBLIC_VAULT_FALLBACK=static and is handled earlier.)
  */
 export async function getQuestionFullDetail(id: string): Promise<Question | undefined> {
-  const cached = _detailsCache.get(id);
-  if (cached?.scenario && cached.details?.realistic_solution) return cached;
+  // Hydration is tracked explicitly (see _hydratedIds): a question whose
+  // realistic_solution is legitimately empty is still fully hydrated and must
+  // not re-fetch on every access.
+  if (_hydratedIds.has(id)) return _detailsCache.get(id);
 
   const summary = questions.find(q => q.id === id);
   if (!summary) return undefined;
 
-  if (shouldUseStaticDetails()) {
+  if (getVaultMode() === "static") {
     return getStaticFullDetail(id, summary);
   }
 
-  const res = await fetch(`${VAULT_API}/questions/${encodeURIComponent(id)}`, {
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!res.ok) throw new Error(`worker ${res.status}`);
+  const apiBase = getVaultApiBase();
+  if (!apiBase) throw new Error("vault worker base URL unavailable");
+
   // Worker returns a DENORMALIZED row (flat fields straight from the D1
   // questions table) — common_mistake / realistic_solution / napkin_math
   // live at the top level, NOT under `details`. Re-nest to match the
   // site's Question shape before returning, otherwise callers get
   // `current.details.napkin_math` → TypeError on an undefined details.
-  const full = await res.json() as {
+  const full = await vaultFetchJson<{
     scenario?: string;
     common_mistake?: string;
     realistic_solution?: string;
     napkin_math?: string;
     details?: Question["details"];   // future-proof if worker changes
-  };
+  }>(`${apiBase}/questions/${encodeURIComponent(id)}`);
   const workerDetails = full.details ?? {
     common_mistake: full.common_mistake ?? "",
     realistic_solution: full.realistic_solution ?? "",
@@ -696,6 +731,7 @@ export async function getQuestionFullDetail(id: string): Promise<Question | unde
     },
   };
   _detailsCache.set(id, merged);
+  _hydratedIds.add(id);
   return merged;
 }
 

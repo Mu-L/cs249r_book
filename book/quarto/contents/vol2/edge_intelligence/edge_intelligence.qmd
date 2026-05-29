@@ -930,6 +930,16 @@ The quantitative disparity is stark:
 
 A 30--50$\times$ bandwidth gap means that even if a model fits in mobile RAM, it will generate tokens 30--50$\times$ slower than a data center GPU. On-device large language model (LLM) serving therefore requires aggressive quantization (INT4 or even INT2) as a **bandwidth survival strategy**\index{Bandwidth!survival strategy}, not just a capacity optimization. Reducing model size by 8$\times$ effectively increases the relative bandwidth, making interactive generation speeds possible on mobile hardware.
 
+::: {#psp-edge-intelligence-bandwidth-binding-constraint .callout-perspective title="Why bandwidth, not TOPS, is the binding constraint"}
+
+Edge accelerator marketing emphasizes peak compute throughput (TOPS), but for autoregressive workloads the relevant ceiling is set by memory bandwidth, not arithmetic. Each generated token requires streaming the model's weights from memory to the compute units, so the iron law's Data term $(D_{\text{vol}} / \text{BW})$ dominates the Compute term whenever weights exceed on-chip cache, which is the case for any billion-parameter model on current mobile silicon.
+
+The 30 to 50$\times$ bandwidth gap between data center HBM3 and mobile LPDDR5X therefore propagates directly into a 30 to 50$\times$ gap in tokens per second, regardless of how many TOPS the NPU advertises. This is why mobile LLM deployment leans on aggressive quantization (INT4 or INT2) and weight-sharing techniques: their first-order effect is to shrink $D_{\text{vol}}$ so the same LPDDR5X budget feeds more tokens per second, not to reduce arithmetic per token.
+
+A practical corollary: when ranking edge accelerator options for transformer decoding, the figure of merit is the GB/s a chip can sustain to its on-package memory, not the peak TOPS on its spec sheet. The two diverge by orders of magnitude on modern mobile silicon.
+
+:::
+
 ### Edge hardware integration challenges {#sec-edge-intelligence-edge-hardware-integration-challenges-a240}
 
 Beyond the individual constraints of models, data, and computation, on-device learning systems must navigate the underlying physics of mobile computing: power dissipation, thermal limits, and energy budgets. These physical constraints are fundamental design drivers that determine the entire feasible space of on-device learning algorithms.
@@ -1601,7 +1611,7 @@ In smartphone camera pipelines, environmental lighting, user preferences, and le
 
 Selecting the right adaptation strategy requires quantitative analysis of the resource-expressivity spectrum. For a 10M parameter model, the trade-offs are concrete. Bias-only updates are the most efficient, requiring just 50 KB of trainable parameters and negligible compute overhead, but they struggle to adapt to structural domain shifts like changing sensor geometries or new object categories. At the other extreme, full fine-tuning offers maximum expressivity but demands 40 MB or more of gradients and optimizer states, making it infeasible for background training on typical mobile devices. Low-rank techniques (LoRA) and residual adapters occupy the strategic middle ground: a rank-16 LoRA configuration requires approximately 2 MB of trainable memory, while a standard residual adapter needs approximately 5 MB.
 
-The decision between LoRA and residual adapters often hinges on inference latency constraints. LoRA matrices can be mathematically merged into the frozen backbone weights during inference $(W_{\text{final}} = W_{\text{frozen}} + AB)$, resulting in zero additional inference latency. This makes LoRA ideal for latency-critical paths like real-time video processing where every millisecond matters. Residual adapters, conversely, remain distinct modules ($y = f(x) + \text{Adapter}(x)$), adding 1--3 percent to inference latency due to the extra forward pass through the adapter layers. However, this separation enables the hot-swapping capability described earlier: switching adapters requires loading only the small adapter weights rather than recomputing merged matrices.
+The decision between LoRA and residual adapters often hinges on inference latency constraints. LoRA matrices can be mathematically merged into the frozen backbone weights during inference $(W_{\text{final}} = W_{\text{frozen}} + U V^\top)$, resulting in zero additional inference latency. This makes LoRA ideal for latency-critical paths like real-time video processing where every millisecond matters. Residual adapters, conversely, remain distinct modules ($y = f(x) + \text{Adapter}(x)$), adding 1--3 percent to inference latency due to the extra forward pass through the adapter layers. However, this separation enables the hot-swapping capability described earlier: switching adapters requires loading only the small adapter weights rather than recomputing merged matrices.
 
 Implementing these adaptation techniques requires system-level support for dynamic computation graphs and the ability to selectively inject trainable parameters. Not all deployment environments or inference engines support such capabilities natively. TensorFlow Lite and Open Neural Network Exchange (ONNX) Runtime Mobile provide increasingly robust support for adapter-style architectures, but custom inference stacks on microcontrollers may require manual implementation of the adapter forward pass.
 
@@ -1759,6 +1769,16 @@ Aside from KWS, practical examples of these strategies abound. In wearable healt
 Few-shot and streaming adaptation form the foundation for more advanced memory and replay strategies that address the stability challenges of continuous on-device learning.
 
 ### Experience replay {#sec-edge-intelligence-experience-replay-737e}
+
+::: {#dfn-edge-intelligence-catastrophic-forgetting .callout-definition title="Catastrophic forgetting"}
+
+***Catastrophic Forgetting***\index{Catastrophic Forgetting!definition} is the phenomenon in which a neural network trained sequentially on new tasks or data distributions rapidly loses performance on previously learned tasks, because gradient updates that optimize the new objective overwrite weight configurations that supported the old ones.
+
+1.  **Significance (quantitative)**: Without explicit mitigation, fine-tuning a deployed classifier on a new domain can drop prior-task accuracy by 30 to 80 percent within hundreds of update steps, even when the new domain is closely related to the old one [@kirkpatrick2017]. This is the central failure mode of on-device and federated learning: every device that adapts locally to its user's recent data risks erasing the general capabilities the centralized training run paid for, and the loss is invisible until inference encounters out-of-recent-context inputs.
+2.  **Distinction (durable)**: Catastrophic forgetting is distinct from overfitting, which is a generalization failure on a single fixed task, and from distribution shift, which is a deployment-time mismatch between training and inference data. Forgetting is a training-time phenomenon caused by the sequential structure of the update stream itself; the model's capacity is sufficient, but its weights cannot encode the new objective without disturbing the encoding of the old one.
+3.  **Common pitfall**: Treating a small experience-replay buffer as sufficient protection. Naive replay of 100 to 1,000 stored samples can mask short-horizon forgetting on a held-out validation set yet still degrade rare-class or long-tail performance, because the buffer's sampling distribution under-represents the tails. Production deployments require capacity-proportional buffers, prioritized replay, or weight-regularization methods such as elastic weight consolidation (@sec-edge-intelligence-lifelong-adaptation-without-forgetting-9200).
+
+:::
 
 Experience replay addresses catastrophic forgetting in continuous learning scenarios by maintaining a buffer of representative examples from previous learning episodes. This technique, originally developed for reinforcement learning [@mnih2015], proves essential in on-device learning where sequential data streams can cause models to overfit to recent examples. We introduce experience replay here to address immediate stability needs; the deeper challenge of lifelong adaptation without forgetting receives comprehensive treatment in the bio-inspired learning section below (@sec-edge-intelligence-lifelong-adaptation-without-forgetting-9200).
 
@@ -3152,6 +3172,18 @@ This integrated approach transforms on-device learning from a collection of tech
 \draw[Line,-latex](B7.east)node[above right]{No}-|(B9);
 \end{tikzpicture}
 ```
+
+:::
+
+::: {#chk-edge-intelligence-tiered-adaptation .callout-checkpoint title="Integrating the three pillars across device tiers"}
+
+The chapter built three pillars for on-device learning: model adaptation (bias-only updates, adapters, full fine-tuning), data efficiency (few-shot, experience replay, contrastive), and federated coordination (aggregation, secure aggregation, drift handling). @Fig-tiered-adaptation maps each technique to device-class capability. Test whether you can integrate the three pillars across the same deployment.
+
+- [ ] **Device-tier capability matching**: A fleet contains Cortex-M0+ wake-word sensors, Cortex-A78 smartphones, and edge servers. Which adaptation technique from @fig-tiered-adaptation does each tier support, and what fails if you try to push a single technique across all three tiers?
+- [ ] **Fairness in federated participation**: When 90 percent of a federated round's compute comes from the top 10 percent of devices by capability, what does that imply for the global model's representation of long-tail user behavior, and which defense from the data efficiency pillar addresses it?
+- [ ] **Drift detection without labels**: A deployed personalization model has no ground-truth labels at the edge. How can the device detect that its local distribution has shifted enough to warrant a federated round, using only signals available to the on-device inference path?
+- [ ] **Secure aggregation's participation floor**: Secure aggregation requires a minimum number of participants per round to provide a useful privacy guarantee. If the floor is 100 devices and the fleet has only 30 active devices in a given hour, what does the system do, and which pillar must compensate?
+- [ ] **The auditable-autonomy trade-off**: Federated learning lets devices learn without uploading raw data, but central operators still need to audit that the global model is converging correctly and not being poisoned. What can the operator observe, what must remain hidden, and where does the catastrophic forgetting risk land in this split?
 
 :::
 
