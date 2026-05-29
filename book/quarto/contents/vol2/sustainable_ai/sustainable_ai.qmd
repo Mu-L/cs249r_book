@@ -1173,16 +1173,55 @@ Precision directly affects energy per operation. INT8 integer arithmetic consume
 
 Data movement often dominates energy consumption in modern AI systems. The energy cost of memory access spans five orders of magnitude across the storage hierarchy:
 
+```{python}
+#| echo: false
+#| label: sustainable-ai-memory-hierarchy-energy
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │ PER-BYTE MEMORY-HIERARCHY ENERGY (LEGO)
+# ├─────────────────────────────────────────────────────────────────────────────
+# │ Context: @tbl-energy-per-byte rows.
+# │ Goal: Single-source the per-byte data-movement hierarchy from mlsysim.
+# │ How:  Literature.Energy.Move* (pedagogical per-byte rungs); DRAM = device
+# │       constant ENERGY_DRAM_PJ_PER_BYTE (160) per the single-source decision.
+# │ Imports: mlsysim (Literature.Energy.Move*), mlsysim.core.constants
+# │          (ENERGY_DRAM_PJ_PER_BYTE), mlsysim.fmt (fmt, check)
+# │ Exports: reg_str, l1_str, l2_str, dram_str, nvme_str, net_str
+# └─────────────────────────────────────────────────────────────────────────────
+from mlsysim import Literature
+from mlsysim.core.constants import ENERGY_DRAM_PJ_PER_BYTE
+from mlsysim.fmt import fmt, check
+
+class MemoryHierarchyEnergy:
+    # ┌── 1. LOAD (Constants) ──────────────────────
+    reg = float(Literature.Energy.MoveRegPjByte)
+    l1 = float(Literature.Energy.MoveL1PjByte)
+    l2 = float(Literature.Energy.MoveL2PjByte)
+    dram = ENERGY_DRAM_PJ_PER_BYTE.m_as('picojoule/byte')
+    nvme = float(Literature.Energy.MoveNvmePjByte)
+    net = float(Literature.Energy.MoveNetPjByte)
+
+    # ┌── 2. GUARD (Invariants) ────────────────────
+    check(reg < l1 < l2 < dram < nvme < net, "per-byte energy must increase down the memory hierarchy")
+
+    # ┌── 3. OUTPUT (Formatting) ───────────────────
+    reg_str = fmt(reg, precision=1, commas=False)
+    l1_str = fmt(l1, precision=0, commas=False)
+    l2_str = fmt(l2, precision=0, commas=False)
+    dram_str = fmt(dram, precision=0, commas=False)
+    nvme_str = fmt(nvme, precision=0)
+    net_str = fmt(net, precision=0)
+```
+
 @Tbl-energy-per-byte reveals a critical insight: moving data from DRAM consumes 10 to 100 times more energy than performing arithmetic operations. For a GPU operating at 10 pJ/FLOP, accessing one FP32 operand from DRAM (4 bytes times 160 pJ/byte = 640 pJ) costs 64 times more than the computation itself. This energy gap drives architectural innovations including:
 
-| **Memory Level**             | **Energy Cost** **(pJ/byte)** |    **Access Latency** |
-|:-----------------------------|------------------------------:|----------------------:|
-| **Register**                 |                   0.1 pJ/byte |               1 cycle |
-| **L1 Cache**\index{L1 Cache} |                     1 pJ/byte |            3-5 cycles |
-| **L2 Cache**\index{L2 Cache} |                     5 pJ/byte |          10-20 cycles |
-| **DRAM**\index{DRAM}         |                   160 pJ/byte |        200-300 cycles |
-| **NVMe SSD**                 |                 1,000 pJ/byte | 50,000-100,000 cycles |
-| **Network**                  |               10,000+ pJ/byte |    Millions of cycles |
+| **Memory Level**             |                     **Energy Cost** **(pJ/byte)** |    **Access Latency** |
+|:-----------------------------|--------------------------------------------------:|----------------------:|
+| **Register**                 |  `{python} MemoryHierarchyEnergy.reg_str` pJ/byte |               1 cycle |
+| **L1 Cache**\index{L1 Cache} |   `{python} MemoryHierarchyEnergy.l1_str` pJ/byte |            3-5 cycles |
+| **L2 Cache**\index{L2 Cache} |   `{python} MemoryHierarchyEnergy.l2_str` pJ/byte |          10-20 cycles |
+| **DRAM**\index{DRAM}         | `{python} MemoryHierarchyEnergy.dram_str` pJ/byte |        200-300 cycles |
+| **NVMe SSD**                 | `{python} MemoryHierarchyEnergy.nvme_str` pJ/byte | 50,000-100,000 cycles |
+| **Network**                  | `{python} MemoryHierarchyEnergy.net_str`+ pJ/byte |    Millions of cycles |
 
 : **Memory Hierarchy Energy Costs**\index{Memory Hierarchy!energy costs}: Energy per byte increases by orders of magnitude moving down the memory hierarchy. Data movement can easily dominate computation energy. {#tbl-energy-per-byte}
 
@@ -1220,17 +1259,18 @@ $$\text{AI}_{\text{crossover}} = \frac{E_{\text{move}}}{E_{\text{compute}}}$$ {#
 # │ How:  E_compute = ENERGY_EFF_GPU (architecture-effective); E_move =
 # │       ENERGY_DRAM_PJ_PER_BYTE (device). crossover = E_move/E_compute.
 # │
-# │ Imports: mlsysim.core.constants (ENERGY_EFF_GPU_PJ_PER_FLOP,
-# │          ENERGY_DRAM_PJ_PER_BYTE, BYTES_FP32), mlsysim.fmt (fmt, MarkdownStr, check)
+# │ Imports: mlsysim (Literature.Energy.EffGpuPjFlop), mlsysim.core.constants
+# │          (ENERGY_DRAM_PJ_PER_BYTE, BYTES_FP32), mlsysim.fmt (fmt, MarkdownStr, check)
 # │ Exports: e_compute_str, e_move_str, crossover_eq_math, n_small_str,
 # │          {ai,comp,mem}_{small,large,vec}_eq_math, vec_bytes_eq_math
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.core.constants import ENERGY_EFF_GPU_PJ_PER_FLOP, ENERGY_DRAM_PJ_PER_BYTE, BYTES_FP32
+from mlsysim import Literature
+from mlsysim.core.constants import ENERGY_DRAM_PJ_PER_BYTE, BYTES_FP32
 from mlsysim.fmt import fmt, MarkdownStr, check
 
 class MatMulEnergyAnalysis:
     # ┌── 1. LOAD (Constants) ──────────────────────
-    e_compute = ENERGY_EFF_GPU_PJ_PER_FLOP.m_as('picojoule/flop')   # 10 (effective)
+    e_compute = float(Literature.Energy.EffGpuPjFlop)              # 10 (effective)
     e_move = ENERGY_DRAM_PJ_PER_BYTE.m_as('picojoule/byte')         # 160 (device)
     bytes_fp32 = BYTES_FP32.m_as('byte')                            # 4
     n_large = 1000
@@ -3433,24 +3473,23 @@ Many deep learning models rely on billions of parameters, requiring trillions of
 # │ Show: "1000" efficiency range—inline in footnote and prose.
 # │ How: Scalar ratio of CPU vs ASIC pJ/FLOP energy costs.
 # │
-# │ Imports: mlsysim.core.constants (ENERGY_EFF_{CPU,GPU,TPU,ASIC}_PJ_PER_FLOP)
+# │ Imports: mlsysim (Literature.Energy.Eff{Cpu,Gpu,Tpu,Asic}PjFlop)
 # │ Exports: cpu_pj_per_flop, gpu_pj_per_flop, tpu_pj_per_flop,
 # │          asic_pj_per_flop, efficiency_range_str
 # └─────────────────────────────────────────────────────────────────────────────
 
 # ┌── LEGO ───────────────────────────────────────────────
-from mlsysim.core.constants import (ENERGY_EFF_CPU_PJ_PER_FLOP,
-    ENERGY_EFF_GPU_PJ_PER_FLOP, ENERGY_EFF_TPU_PJ_PER_FLOP, ENERGY_EFF_ASIC_PJ_PER_FLOP)
+from mlsysim import Literature
 
 class EnergyEfficiencyRange:
     """Namespace for hardware energy efficiency range across CPU to ASIC."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    # Architecture-class efficiency hierarchy — single source of truth: mlsysim.
-    cpu_pj_per_flop = ENERGY_EFF_CPU_PJ_PER_FLOP.m_as('picojoule/flop')
-    gpu_pj_per_flop = ENERGY_EFF_GPU_PJ_PER_FLOP.m_as('picojoule/flop')
-    tpu_pj_per_flop = ENERGY_EFF_TPU_PJ_PER_FLOP.m_as('picojoule/flop')
-    asic_pj_per_flop = ENERGY_EFF_ASIC_PJ_PER_FLOP.m_as('picojoule/flop')
+    # Architecture-class efficiency hierarchy — single source of truth: Literature.Energy.
+    cpu_pj_per_flop = float(Literature.Energy.EffCpuPjFlop)
+    gpu_pj_per_flop = float(Literature.Energy.EffGpuPjFlop)
+    tpu_pj_per_flop = float(Literature.Energy.EffTpuPjFlop)
+    asic_pj_per_flop = float(Literature.Energy.EffAsicPjFlop)
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     efficiency_range = cpu_pj_per_flop / asic_pj_per_flop
