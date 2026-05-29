@@ -345,38 +345,7 @@ class InferenceEconomics:
     sec_per_day_str = fmt_int(SEC_PER_DAY, commas=False)
 ```
 
-::: {#nbk-inference-serving-cost-multiplier-2 .callout-notebook title="The serving cost multiplier"}
-
-**Problem**: A recommendation model (DLRM) costs `{python} InferenceEconomics.training_cost_brief_str` to train and then serves `{python} InferenceEconomics.qps_str` queries per second over `{python} InferenceEconomics.serve_duration_days_str` days. By what factor does the lifetime serving cost exceed the one-time training cost?
-
-**Training Cost** $(C_{\text{train}})$
-
-- Hardware: `{python} InferenceEconomics.n_gpu_hours_str` @ `{python} InferenceEconomics.cost_per_gpu_hour_str`/hr = `{python} InferenceEconomics.training_hardware_cost_str`
-- Engineering Overhead (Data/Exp): `{python} InferenceEconomics.engineering_multiplier_str`$\times$ Hardware = `{python} InferenceEconomics.engineering_overhead_cost_str`
-- **Total Training**\index{Training!total}: `{python} InferenceEconomics.training_cost_total_str`
-
-**Serving Cost** $(C_{\text{serve}})$
-
-- Deployment: `{python} InferenceEconomics.serve_duration_days_str` days (constant updates, amortized)
-- Traffic: `{python} InferenceEconomics.qps_str` Queries Per Second (QPS)
-- Efficiency: `{python} InferenceEconomics.cost_per_million_str` dollars per million queries
-
-**Lifetime Volume** $(Q_{\text{total}})$
-$Q_{\text{total}} \approx$ **`{python} InferenceEconomics.lifetime_queries_latex_math` queries**
-(`{python} InferenceEconomics.qps_str` $\times$ `{python} InferenceEconomics.sec_per_day_str` s/day $\times$ `{python} InferenceEconomics.serve_duration_days_str` days)
-
-**Total Serving Cost**
-
-$C_{\text{serve\_total}} =$ `{python} InferenceEconomics.lifetime_queries_latex_math` $\times \$10^{-5} =$ **`{python} InferenceEconomics.serving_cost_total_str`**
-
-**Systems insight**:
-
-Ratio = `{python} InferenceEconomics.serving_cost_total_str`/`{python} InferenceEconomics.training_cost_total_str` $\approx$ **`{python} InferenceEconomics.leverage_ratio_str`$\times$**
-Serving optimization leverage is `{python} InferenceEconomics.leverage_ratio_str`$\times$ higher than training optimization. A 1 percent serving efficiency gain saves significant capital, far exceeding the entire training budget.
-
-:::
-
-The cost dominance ratio varies by application. @Tbl-cost-ratios quantifies this disparity:
+The same leverage holds across application categories with different cost structures. A recommendation model (DLRM) trained for `{python} InferenceEconomics.training_cost_total_str` (`{python} InferenceEconomics.n_gpu_hours_str` of hardware at `{python} InferenceEconomics.cost_per_gpu_hour_str`/hr, amplified by a `{python} InferenceEconomics.engineering_multiplier_str`$\times$ engineering overhead for data and experimentation) and served at `{python} InferenceEconomics.qps_str` QPS for `{python} InferenceEconomics.serve_duration_days_str` days accumulates `{python} InferenceEconomics.lifetime_queries_latex_math` lifetime queries, which at `{python} InferenceEconomics.cost_per_million_str` dollars per million costs `{python} InferenceEconomics.serving_cost_total_str` to serve—a `{python} InferenceEconomics.leverage_ratio_str`$\times$ leverage on serving optimization over training optimization. The cost dominance ratio varies by application. @Tbl-cost-ratios quantifies this disparity:
 
 | **Application**               | **Training Cost** | **Annual Serving Cost** |         **Ratio** |
 |:------------------------------|------------------:|------------------------:|------------------:|
@@ -1391,13 +1360,7 @@ $$\text{Wasted compute} = \frac{(100 - 10) \times 1}{100 \times 8} = 11.25\%$$
 
 For realistic output length distributions with high variance, wasted compute can exceed 50 percent.
 
-Continuous batching (also called iteration-level batching) decouples batch membership from iteration boundaries. At each decode iteration, the system checks for completed sequences, removes completed sequences from the batch immediately, inserts waiting sequences into freed slots, and processes the reorganized batch for the next iteration. This technique is central to the throughput-latency trade-off that defines large-scale LLM serving.
-
-::: {#lhs-inference-archetype-gpt-4-llama-3-throughput-latency .callout-lighthouse title="Archetype A (GPT-4/Llama-3): Throughput-latency"}
-
-**Archetype A (GPT-4/Llama-3)** (@sec-vol2-introduction-archetypes) relies on continuous batching to solve its primary efficiency paradox. The decode phase is memory-bandwidth bound, meaning the GPU compute cores are idle waiting for weights to load. Continuous batching saturates this bandwidth by processing unrelated requests together. Without this technique, serving Archetype A (GPT-4/Llama-3) models would be economically unviable due to low GPU utilization.
-
-:::
+Continuous batching (also called iteration-level batching) decouples batch membership from iteration boundaries. At each decode iteration, the system checks for completed sequences, removes completed sequences from the batch immediately, inserts waiting sequences into freed slots, and processes the reorganized batch for the next iteration. This technique is central to the throughput-latency trade-off that defines large-scale LLM serving—Archetype A workloads (GPT-4/Llama-3, @sec-vol2-introduction-archetypes) would be economically unviable without it, because their memory-bandwidth-bound decode phase leaves compute cores idle waiting for weights to load, and only by interleaving unrelated requests can the bandwidth be saturated.
 
 Unlike static or dynamic batching, which group requests at the *request* level, continuous batching operates at the *iteration* level, dynamically reshaping the compute tensor at each clock cycle. As @fig-continuous-batching-comparison illustrates, static batching leaves the GPU idle while waiting for the longest request, whereas continuous batching keeps it saturated.
 
@@ -2146,23 +2109,11 @@ Request-aware batching adds a third dimension by considering request characteris
 - Group requests by prompt length to minimize padding
 - Prioritize latency-sensitive requests in smaller batches
 
-Production serving infrastructure embodies these adaptive principles. The NVIDIA Triton Inference Server implements a configurable adaptive batching system that illustrates how SLO-aware and request-aware strategies operate in practice.
-
-::: {#exmp-inference-adaptive-batching-triton .callout-example title="Adaptive batching: Triton"}
-
-Triton Inference Server implements adaptive batching with three configurable parameters:
-
-1. **max_batch_size**\index{Batching!max batch size}: Upper bound on batch size
-2. **batching_timeout_ms**\index{Batching!timeout parameter}: Maximum time to wait for batch formation
-3. **preferred_batch_size**\index{Batching!preferred batch size}: Target batch sizes that align with kernel efficiency
-
-The scheduler maintains separate queues for each preferred batch size and routes requests to minimize total latency:
+Production serving infrastructure embodies these adaptive principles. The NVIDIA Triton Inference Server implements a configurable adaptive batching system that illustrates how SLO-aware and request-aware strategies operate in practice. Triton exposes three knobs: **max_batch_size**\index{Batching!max batch size} (the upper bound on batch size), **batching_timeout_ms**\index{Batching!timeout parameter} (the maximum time to wait for batch formation), and **preferred_batch_size**\index{Batching!preferred batch size} (target batch sizes that align with kernel efficiency). Internally, the scheduler maintains separate queues for each preferred batch size and routes requests to minimize total latency:
 
 $$\text{Queue selection} = \operatorname{arg\,min}_{q} \left( \text{wait}_q + \text{exec}(|q| + 1) \right)$$
 
-This optimization considers both the current queue length and the efficiency of the resulting batch size. @Tbl-inference-triton-adaptive-batching shows the result for ResNet-50 on V100: the scheduler automatically increases batch size to maintain throughput as traffic grows, with measured throughput tracking offered load until saturation near 2,000 QPS.
-
-:::
+This optimization weighs both the current queue length and the kernel-efficiency of the resulting batch size. @Tbl-inference-triton-adaptive-batching shows the result for ResNet-50 on V100: the scheduler automatically increases batch size to maintain throughput as traffic grows, with measured throughput tracking offered load until saturation near 2,000 QPS.
 
 | **Traffic Level** | **Avg Batch Size** | **Avg Latency** | **Throughput** |
 |:------------------|-------------------:|----------------:|---------------:|
@@ -5958,15 +5909,7 @@ These serving optimizations span continuous batching, PagedAttention, global loa
 
 ## Case Studies {#sec-inference-scale-case-studies-9689}
 
-Production-scale serving systems test the batching, sharding, caching, and routing techniques developed above against real workload variance, latency budgets, and operational constraints. ChatGPT-style services handle unpredictable global request volume; TikTok-style recommenders serve ranked content at sub-100-millisecond latency. The case studies below show how each system combines the chapter's techniques to meet its specific cost and latency targets.
-
-::: {#exmp-inference-continuous-batching-revolution .callout-example title="The continuous batching revolution"}
-
-Before late 2022, LLM serving was plagued by the "straggler problem." Frameworks used static batching, meaning the GPU had to wait for the longest sequence in a batch to finish generation before accepting new work, leaving compute units idle during the tail end of decoding. The Orca paper introduced iteration-level scheduling, allowing the serving engine to eject finished sequences and insert new requests into the batch at every token step. This technique, popularized as "continuous batching" by vLLM, improved throughput by 2--3$\times$ without model changes. It transformed serving from a coarse-grained batch process into a fluid, high-utilization stream.
-
-:::
-
-Each case study demonstrates how the principles of batching, sharding, load balancing, and autoscaling combine to meet specific requirements.
+Production-scale serving systems test the batching, sharding, caching, and routing techniques developed above against real workload variance, latency budgets, and operational constraints. ChatGPT-style services handle unpredictable global request volume; TikTok-style recommenders serve ranked content at sub-100-millisecond latency. The case studies below show how each system combines the chapter's techniques to meet its specific cost and latency targets, working from the iteration-level scheduling popularized by vLLM in 2022 (which transformed LLM serving from a coarse-grained batch process into a fluid, high-utilization stream) through global request routing and embedding-server topologies.
 
 ### Meta recommendation serving {#sec-inference-scale-meta-recommendation-serving-bede}
 
