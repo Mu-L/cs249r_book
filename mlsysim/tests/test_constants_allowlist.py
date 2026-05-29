@@ -50,7 +50,7 @@ MIGRATION_PENDING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(ML_WORKFLOW_|SYNTHETIC_|LOGIC_WALL_)"),
 )
 # Lower this with each migration phase; it must never increase.
-BACKLOG_CEILING = 61  # P7b moved casestudy (GMAIL/GOOGLE/WAYMO/ANOMALY) -> Scenarios; target 0
+BACKLOG_CEILING = 56  # P6a moved storage BW (NVMe/DDR/host-DRAM) -> Hardware.Tech.Storage; target 0
 
 
 def _defined_names(source: str) -> set[str]:

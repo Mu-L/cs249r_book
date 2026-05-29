@@ -121,12 +121,8 @@ ML_WORKFLOW_CONSTRAINT_COST_BASE = 2
 # GOOGLE_SEARCHES_PER_DAY, GMAIL_EMAILS_PER_DAY -> Scenarios.Workloads
 
 # --- Storage (I/O Bandwidth) ---
-NVME_GEN3_SEQUENTIAL_BW = 3.5 * GB / second
-NVME_SEQUENTIAL_BW = 7.0 * GB / second    # NVMe SSD sequential read (Gen 4)
-NVME_GEN5_SEQUENTIAL_BW = 14.0 * GB / second
-SYSTEM_MEMORY_BW = 50 * GB / second        # DDR4/DDR5 typical
-HOST_DRAM_BW = 200 * GB / second
-LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count
+# NVME_*/SYSTEM_MEMORY_BW/HOST_DRAM_BW -> Hardware.Tech.Storage (tech-class bandwidth)
+LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count  # TODO(taxonomy): node config -> Systems
 
 # --- Case Studies --- (WAYMO_*, ANOMALY_MODEL_* -> Scenarios.Workloads / Scenarios.AnomalyModel)
 

@@ -45,7 +45,7 @@ INTERCONNECT_FIELDS: list[tuple[str, str]] = [
     ("INFINIBAND_GXDR_BW", "Systems.Fabrics.InfiniBand_GXDR.bandwidth"),
     ("PCIE_GEN4_BW", "Hardware.Cloud.A100.interconnect.bandwidth"),
     ("PCIE_GEN5_BW", "Hardware.Cloud.H100.interconnect.bandwidth"),
-    ("NVME_SEQUENTIAL_BW", "constants.NVME_SEQUENTIAL_BW"),
+    ("NVME_SEQUENTIAL_BW", "Hardware.Tech.Storage.NvmeGen4.bandwidth"),
     ("NETWORK_10G_BW", "constants.NETWORK_10G_BW"),
     ("NETWORK_100G_BW", "constants.NETWORK_100G_BW"),
     ("SPEED_OF_LIGHT_FIBER_KM_S", "constants.SPEED_OF_LIGHT_FIBER_KM_S"),
