@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .provenance import Provenance, Sourced
+from ..core.provenance import Provenance, Sourced
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 APPENDIX_ASSUMPTIONS_QMD = (

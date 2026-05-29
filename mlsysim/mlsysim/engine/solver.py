@@ -25,7 +25,7 @@ from ..physics import (
     calc_failure_probability,
     calc_pipeline_bubble
 )
-from .constants import (
+from ..core.constants import (
     ureg, Q_, PRECISION_MAP,
     BYTES_FP16,
 )
@@ -34,7 +34,7 @@ from ..literature.registry import Literature
 from ..systems.reliability import Reliability
 from . import calibration as cal
 
-from .types import Quantity
+from ..core.types import Quantity
 from ..models.types import Workload, TransformerWorkload, SparseTransformerWorkload
 from ..hardware.types import HardwareNode
 from ..systems.types import Fleet, NetworkFabric, Node
@@ -260,7 +260,7 @@ class DistributedModel(BaseModel):
             and the final Scaling Efficiency.
         """
         # 0. Input validation
-        from ._validation import validate_at_least, validate_range
+        from ..core._validation import validate_at_least, validate_range
         validate_at_least(tp_size, 1, "tp_size")
         validate_at_least(pp_size, 1, "pp_size")
         validate_at_least(ep_size, 1, "ep_size")
@@ -469,7 +469,7 @@ class NetworkRooflineModel(BaseModel):
         """
         Solves for the distributed performance bound.
         """
-        from ._validation import validate_range
+        from ..core._validation import validate_range
         validate_range(efficiency, 1e-9, 1.0, "efficiency")
         if model.parameters is None:
             raise ValueError("NetworkRooflineModel requires a workload with a parameter count.")
@@ -712,7 +712,7 @@ class SustainabilityModel(BaseModel):
              from ..infrastructure.registry import Grids
              region = Grids.US_Avg
 
-        from ._validation import validate_range, validate_nonnegative
+        from ..core._validation import validate_range, validate_nonnegative
         validate_range(mfu, 0.0, 1.0, "mfu")
         validate_nonnegative(embodied_carbon_per_device, "embodied_carbon_per_device")
 
@@ -1044,7 +1044,7 @@ class TrainingMemoryModel(BaseModel):
         ZeRO then shards optimizer, gradient, and parameter states across the
         data-parallel group according to its stage.
         """
-        from ._validation import validate_at_least, validate_range
+        from ..core._validation import validate_at_least, validate_range
         from ..physics import calc_activation_memory
 
         if precision not in PRECISION_MAP:
@@ -1169,7 +1169,7 @@ class ServingCapacityModel(BaseModel):
         service_time_cv: float = 1.0,
     ) -> ServingCapacityResult:
         """Return the minimum replica count that satisfies the target P99."""
-        from ._validation import validate_at_least, validate_nonnegative, validate_positive, validate_range
+        from ..core._validation import validate_at_least, validate_nonnegative, validate_positive, validate_range
 
         validate_positive(qps, "qps")
         validate_positive(target_p99_latency_ms, "target_p99_latency_ms")
@@ -1306,7 +1306,7 @@ class MoERoutingModel(BaseModel):
         fleet: Optional[Fleet] = None,
     ) -> MoERoutingResult:
         """Estimate effective active parameters and optional EP all-to-all latency."""
-        from ._validation import validate_at_least, validate_range
+        from ..core._validation import validate_at_least, validate_range
 
         if precision not in PRECISION_MAP:
             supported = ", ".join(sorted(PRECISION_MAP))
@@ -1602,7 +1602,7 @@ class TailLatencyModel(BaseModel):
             When CV != 1, applies Kingman's M/G/1 correction factor
             (cv^2 + 1) / 2 to queue wait times, approximating M/G/c behavior.
         """
-        from ._validation import validate_nonnegative
+        from ..core._validation import validate_nonnegative
         validate_nonnegative(service_time_cv, "service_time_cv")
         from ..physics import calc_queue_latency_mmc
 
@@ -1958,7 +1958,7 @@ class CompressionModel(BaseModel):
             Compression metrics including memory savings, inference speedup,
             and estimated accuracy delta.
         """
-        from ._validation import validate_at_least, validate_range
+        from ..core._validation import validate_at_least, validate_range
         validate_at_least(target_bitwidth, 1, "target_bitwidth")
         validate_range(sparsity, 0.0, 1.0, "sparsity")
         original_size = model.size_in_bytes(Q_("4 byte")) # FP32 baseline
@@ -2609,7 +2609,7 @@ class BatchingOptimizer(BaseOptimizer):
         """
         Determines the maximum batch size that satisfies a P99 tail latency SLA.
         """
-        from .optimization.registry import OptimizationRegistry
+        from ..core.optimization.registry import OptimizationRegistry
         serving_model = ServingModel()
         tail_model = TailLatencyModel()
         

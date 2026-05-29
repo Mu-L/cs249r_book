@@ -1,10 +1,10 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
-from .constants import ureg, Q_, BYTES_FP16, PRECISION_MAP
+from ..core.constants import ureg, Q_, BYTES_FP16, PRECISION_MAP
 from . import calibration as cal
 from ..physics import calc_bottleneck
-from .exceptions import OOMError
-from ._validation import validate_range, validate_at_least
+from ..core.exceptions import OOMError
+from ..core._validation import validate_range, validate_at_least
 from ..models.types import Workload
 from ..hardware.types import HardwareNode, Quantity
 

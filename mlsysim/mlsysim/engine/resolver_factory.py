@@ -37,7 +37,7 @@ class ResolverFactory:
         register_subclasses(solver.BaseResolver)
         
         # 2. Register Third-Party Plugins
-        from .registry.plugin_manager import solver_registry
+        from ..core.registry.plugin_manager import solver_registry
         plugins = solver_registry.all()
         for name, plugin_class in plugins.items():
             if issubclass(plugin_class, solver.BaseResolver):

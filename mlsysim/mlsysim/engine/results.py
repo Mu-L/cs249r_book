@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, ConfigDict, Field
-from .types import Quantity
+from ..core.types import Quantity
 
 
 class SolverResult(BaseModel):

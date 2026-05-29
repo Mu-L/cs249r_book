@@ -5,8 +5,8 @@ when callers omit explicit arguments. Not appendix-facing — use ``Literature.*
 ``Systems.*``, and ``Infrastructure.*`` for book-cited numbers.
 """
 
-from .provenance import sourced
-from . import provenance_catalog as pc
+from ..core.provenance import sourced
+from ..core import provenance_catalog as pc
 
 # Engine: software stack latency (CUDA programming guide order of magnitude)
 KERNEL_LAUNCH_LATENCY_US = 15.0
