@@ -44,18 +44,59 @@ def _resolve(node: Any, tech_root: Any) -> Any:
     return node
 
 
-def load_registry(data_dir, model_cls, *, name: str, doc: str = "", tech_root: Any = None) -> type:
-    """Build a ``Registry`` subclass from the ``*.yaml`` files in ``data_dir``.
+def _instantiate(raw: dict, *, model_cls, type_map, tech_root):
+    """Validate one entry dict into its pydantic model.
 
-    Each file becomes one validated ``model_cls`` instance, exposed as a class
-    attribute named by the file's ``__key__`` field (falling back to the file
-    stem). Files are read in sorted order; ``Registry.list()`` and attribute
-    access are order-independent, so this matches the former definition order.
+    Polymorphic schemas (e.g. the ``Workload`` family) carry a ``__type__``
+    tag selecting the concrete class from ``type_map``; uniform schemas omit it
+    and use ``model_cls``.
+    """
+    raw = dict(raw)
+    type_name = raw.pop("__type__", None)
+    if type_name is not None:
+        if not type_map or type_name not in type_map:
+            raise ValueError(f"unknown __type__ {type_name!r} (type_map keys: {sorted(type_map or [])})")
+        cls = type_map[type_name]
+    else:
+        cls = model_cls
+    if cls is None:
+        raise ValueError("no model class: supply model_cls or a __type__ in the data")
+    return cls(**_resolve(raw, tech_root))
+
+
+def _build(entries: dict, *, name: str, doc: str, model_cls, type_map, tech_root) -> type:
+    attrs: dict[str, Any] = {"__doc__": doc}
+    for key, raw in entries.items():
+        attrs[key] = _instantiate(raw, model_cls=model_cls, type_map=type_map, tech_root=tech_root)
+    return type(name, (Registry,), attrs)
+
+
+def load_registry(data_dir, model_cls=None, *, name: str, doc: str = "",
+                  tech_root: Any = None, type_map: dict | None = None) -> type:
+    """Build a ``Registry`` subclass from one-entry-per-file YAML in ``data_dir``.
+
+    Each ``*.yaml`` becomes one validated instance, exposed as a class attribute
+    named by the file's ``__key__`` field (falling back to the file stem). Files
+    are read sorted; ``Registry.list()`` and attribute access are
+    order-independent, so this matches the former definition order. Used for
+    per-chip hardware data.
     """
     data_dir = Path(data_dir)
-    attrs: dict[str, Any] = {"__doc__": doc}
+    entries: dict[str, Any] = {}
     for yaml_file in sorted(data_dir.glob("*.yaml")):
         raw = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
-        key = raw.pop("__key__", yaml_file.stem)
-        attrs[key] = model_cls(**_resolve(raw, tech_root))
-    return type(name, (Registry,), attrs)
+        entries[raw.pop("__key__", yaml_file.stem)] = raw
+    return _build(entries, name=name, doc=doc, model_cls=model_cls, type_map=type_map, tech_root=tech_root)
+
+
+def load_collection(yaml_file, model_cls=None, *, name: str, doc: str = "",
+                    tech_root: Any = None, type_map: dict | None = None) -> type:
+    """Build a ``Registry`` subclass from a single per-category YAML file.
+
+    The file is a mapping ``{attr_name: entry_dict}``; each entry validates into
+    ``model_cls`` (or its ``__type__`` from ``type_map`` for polymorphic
+    schemas). Used for per-category model data, where the cohesive set is more
+    useful read together than split across files.
+    """
+    raw = yaml.safe_load(Path(yaml_file).read_text(encoding="utf-8"))
+    return _build(raw, name=name, doc=doc, model_cls=model_cls, type_map=type_map, tech_root=tech_root)
