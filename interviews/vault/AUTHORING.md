@@ -281,16 +281,25 @@ python3 interviews/vault-cli/scripts/validate_drafts.py --no-llm-judge
 python3 interviews/vault-cli/scripts/validate_drafts.py
 ```
 
-## The teaching-power bar
+## The teaching-power bar (Bloom-graded)
 
-Every question must pass the `teaching_power` gate: it must force genuine
-quantitative systems reasoning, not test recall or vocabulary with decorative
-math. A question that is correct but answerable from memory or intuition — or
-whose `napkin_math` *asserts* a trade-off instead of *computing* it — is
-**vacuous** and is rejected (`tp < 3` or `vacuous: true`). The gate calibrates
-against gold-standard exemplars, not same-cell peers, so "in-family with the
-other mediocre questions in this cell" is not a pass. Before submitting, ask:
-*does answering this require computing a trade-off?* If not, it will not pass.
+The `teaching_power` gate enforces that a question delivers the cognitive depth
+its **level** promises — recall at the bottom of Bloom's ladder, reasoning at the
+top. It is NOT a blanket "every question must compute": recall is a first-class
+skill, and L1/Remember & L2/Understand questions are warm-up and screening, so a
+clean recall item there passes. The gate fails only when a question scores BELOW
+the floor for its level:
+
+| Level (Bloom) | Floor | Meaning |
+|---|---|---|
+| L1 remember / L2 understand | `tp >= 1` | recall is the job — passes |
+| L3 apply | `tp >= 2` | must apply a formula, not just recall |
+| L4 analyze / L5 evaluate / L6+ create | `tp >= 3` | must reason; recall masquerading as hard fails |
+
+The failure mode is a **mismatch**: a question tagged L5/evaluate that is really an
+L1 lookup. The fix is to lift its reasoning to match the level, or relabel it to
+the level it actually tests. The gate calibrates against gold-standard exemplars,
+not mediocre same-cell peers.
 
 ## End-to-end flow
 

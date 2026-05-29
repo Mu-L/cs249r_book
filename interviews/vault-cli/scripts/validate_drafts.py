@@ -340,6 +340,22 @@ _TP_ANCHORS = (
     "               computing; trivia or vocab with decorative arithmetic bolted on.\n"
 )
 
+# Teaching-power expectation RISES with Bloom level (paper sec:levels, tab:levels).
+# L1/Remember & L2/Understand are warm-up/screening — recall IS their job, so a low
+# score is not a failure. Apply must compute; Analyze/Evaluate/Create must reason.
+# The gate fails only when a question scores BELOW the floor its own level promises —
+# catching recall-masquerading-as-L5, not recall-doing-its-job-at-L1.
+_BLOOM_FLOOR = {"remember": 1, "understand": 1, "apply": 2,
+                "analyze": 3, "evaluate": 3, "create": 3}
+_LEVEL_FLOOR = {"L1": 1, "L2": 1, "L3": 2, "L4": 3, "L5": 3, "L6+": 3}
+
+
+def _tp_floor(draft: dict) -> int:
+    b = (draft.get("bloom_level") or "").strip().lower()
+    if b in _BLOOM_FLOOR:
+        return _BLOOM_FLOOR[b]
+    return _LEVEL_FLOOR.get((draft.get("level") or "").strip(), 3)
+
 
 def gate_teaching_power(draft: dict) -> tuple[bool, str, dict]:
     """Gate on TEACHING POWER — does the question force genuine quantitative
@@ -367,10 +383,13 @@ Return STRICT JSON with no prose or fences:
         return False, "no judge response", {}
     tp = resp.get("tp")
     vac = bool(resp.get("vacuous"))
-    detail = {"tp": tp, "vacuous": vac, "rationale": resp.get("rationale", "")}
-    if isinstance(tp, (int, float)) and tp >= 3 and not vac:
+    floor = _tp_floor(draft)
+    detail = {"tp": tp, "vacuous": vac, "floor": floor, "rationale": resp.get("rationale", "")}
+    if isinstance(tp, (int, float)) and tp >= floor:
         return True, "", detail
-    return False, f"teaching_power={tp}, vacuous={vac}: {resp.get('rationale', '')}", detail
+    return False, (f"teaching_power={tp} below floor {floor} for "
+                   f"{draft.get('bloom_level') or draft.get('level')}: "
+                   f"{resp.get('rationale', '')}"), detail
 
 
 # ─── runner ───────────────────────────────────────────────────────────────
