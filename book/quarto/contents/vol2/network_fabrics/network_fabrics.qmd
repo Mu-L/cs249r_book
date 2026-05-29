@@ -219,7 +219,7 @@ plt.close()
 
 :::
 
-@Fig-bandwidth-hierarchy reveals that the NVLink-to-InfiniBand ratio has remained between 12$\times$ and 25$\times$ across four GPU generations, despite absolute bandwidth improvements at every tier. The persistent cliff reflects fundamental physics: on-package interconnects (NVLink) operate over millimeters of copper, while inter-node links (InfiniBand) span meters of cable and must traverse switches. The ratio determines which parallelism strategies are efficient. Tensor parallelism, which requires continuous high-bandwidth exchange of activations, is viable within a node but impractical across nodes. Pipeline and data parallelism, which tolerate lower inter-node bandwidth, must carry the burden of cross-node communication. Every topology and protocol decision in the remainder of this chapter attempts to minimize the impact of this hierarchy on collective communication performance.
+@Fig-bandwidth-hierarchy reveals that this cliff is not a current-generation artifact: the NVLink-to-InfiniBand ratio has remained between 12$\times$ and 25$\times$ across four GPU generations (the H100 cliff quoted above sits mid-range), despite absolute bandwidth improvements at every tier. The persistent cliff reflects fundamental physics: on-package interconnects (NVLink) operate over millimeters of copper, while inter-node links (InfiniBand) span meters of cable and must traverse switches. The ratio determines which parallelism strategies are efficient. Tensor parallelism, which requires continuous high-bandwidth exchange of activations, is viable within a node but impractical across nodes. Pipeline and data parallelism, which tolerate lower inter-node bandwidth, must carry the burden of cross-node communication. Every topology and protocol decision in the remainder of this chapter attempts to minimize the impact of this hierarchy on collective communication performance.
 
 To see *why* this ratio matters so viscerally, consider *what* happens during a single training step. @Fig-bandwidth-cliff-gantt uses a normalized timeline: the compute phases are held fixed at 100 ms, and the AllReduce block represents a small gradient shard chosen to make the intra-node and inter-node contrast visible. It is not the full 175B-parameter gradient exchange; it isolates how crossing the node boundary changes utilization.
 
@@ -996,7 +996,7 @@ class NetworkFatTreeRecap:
     production_2k_gpus_str = fmt(Systems.Clusters.Production_2K.total_accelerators, precision=0, commas=True)
 ```
 
-A fat-tree built from switches with radix[^fn-switch-radix-density] $k$ supports $N_{\text{hosts}} = k^3/4$ hosts at three tiers, or $k^2/2$ at two tiers. In a two-tier leaf-spine fabric using radix-64 switches (with $k$ leaves each providing $k/2$ host ports and $k/2$ spine uplinks), the topology supports up to `{python} NetworkFatTreeRecap.production_2k_gpus_str`, comfortably accommodating our `{python} NetworkFatTreeRecap.n_gpus_str` reference cluster with only leaf and spine layers. (A standard fat-tree pod with the leaf-aggregation pair supports $(k/2)^2 =$ `{python} NetworkFatTreeRecap.n_gpus_str` per pod; the difference is whether the second tier uplinks to a core layer or terminates as spines.)
+A fat-tree built from switches with radix[^fn-switch-radix-density] $k$ supports $N_{\text{hosts}} = k^3/4$ hosts at three tiers, or $k^2/2$ at two tiers. In a two-tier leaf-spine fabric using radix-64 switches (with $k$ leaves each providing $k/2$ host ports and $k/2$ spine uplinks), the topology supports up to `{python} NetworkFatTreeRecap.production_2k_gpus_str` hosts. The same radix-64 switch admits a second two-tier framing: a leaf-aggregation pod reaches only $(k/2)^2 =$ `{python} NetworkFatTreeRecap.n_gpus_str` per pod, the difference being whether the upper tier terminates as spines or uplinks to a core layer. Either comfortably accommodates our `{python} NetworkFatTreeRecap.n_gpus_str` reference cluster with only leaf and spine layers.
 
 A concrete bisection estimate shows how quickly oversubscription turns into synchronization delay.
 
@@ -1093,7 +1093,7 @@ As @fig-rail-optimized-cabling shows, in modern ML nodes GPUs are partitioned in
 
 :::
 
-The wiring pattern in @fig-rail-optimized-cabling ensures that same-rank inter-node communication between corresponding GPUs (GPU 0 to GPU 0, GPU 1 to GPU 1) travels over a dedicated rail switch rather than competing for shared ToR bandwidth. In standard 3D parallelism with tensor parallelism confined intra-node, this same-rank traffic is the data-parallel AllReduce path, eliminating cross-traffic congestion on the gradient-synchronization critical path.
+@Fig-rail-optimized-cabling shows the wiring pattern: corresponding GPUs across nodes (GPU 0 to GPU 0, GPU 1 to GPU 1) connect through dedicated rail switches rather than a shared ToR switch.
 
 In distributed training, data parallelism\index{Data Parallelism} creates a deterministic and highly stratified communication pattern that standard topologies fail to exploit. When tensor-parallel groups stay inside each node, the same local GPU rank in every replica owns the corresponding shard of the model. GPU 0 on one node therefore synchronizes that shard's gradients with GPU 0 on other nodes, but rarely with GPU 1. A **rail-optimized topology**\index{Rail-Optimized Topology!definition} physically hardwires this logic by isolating these same-rank communication paths into dedicated networks. Instead of connecting all 8 GPUs in a node to a single ToR switch, the network connects all GPU 0s across the entire cluster to a dedicated "Rail 0" switch fabric, all GPU 1s to "Rail 1," and so on.
 
@@ -1704,7 +1704,7 @@ The diagnostic sequence progresses from application-level symptoms to physical-l
 
 :::
 
-Monitoring reveals problems, but before examining common misconceptions about how networks behave at scale, we must look at the emerging technologies attempting to solve these physical bottlenecks.
+The monitoring tools above keep today's fabrics honest, but observability cannot push past a physical ceiling that copper itself is now approaching.
 
 ## Emerging Network Technologies {#sec-network-fabrics-emerging}
 
@@ -1870,6 +1870,10 @@ Level 3 (Topology) demonstrated how non-blocking fat-trees and rail-optimized de
 
 Looking forward, the physical limits of copper and the operational complexity of Ethernet are driving a new generation of interconnects. Technologies like the Ultra Ethernet Consortium (UEC) standards, Co-Packaged Optics (CPO), and CXL memory pooling promise to flatten topologies and reduce the power tax of moving data. Yet, as our monitoring workflow discussion emphasized, no technology eliminates the need for rigorous observability. Whether debugging a single degraded transceiver or optimizing a multi-tenant scheduler, the ability to correlate physical counters with application-level throughput remains the ultimate safeguard against silent waste in the machine learning fleet.
 
+The practical value of this layered understanding is diagnostic precision. When a distributed training job underperforms, the complaint is invariably "the network is slow," but slowness has many causes: a failing transceiver degrading a single link, a PFC storm cascading across a subnet, a topology bottleneck starving one communication pattern while adequately serving another. Engineers who understand the Five-Level Model can isolate the layer at fault, correlate physical counters with transport behavior, and distinguish a topology limitation from a congestion control misconfiguration. This capacity to reason across abstraction layers, from SerDes signal integrity to cluster-wide $\text{BW}_{\text{bisect}}$, is what separates routine troubleshooting from genuine systems engineering.
+
+Equally important, the $\alpha$-$\beta$ cost model provides a quantitative vocabulary for making architectural decisions before hardware is purchased and racks are wired. Choices between InfiniBand and RoCE, between fat-tree and rail-optimized topologies, and between 400G and 800G link speeds are all decisions with multi-million-dollar consequences that hinge on the interaction between message size distributions, collective algorithms, and physical link characteristics. The framework developed in this chapter equips practitioners to evaluate these trade-offs with analytical rigor rather than vendor benchmarks alone.
+
 ::: {.callout-takeaways title="The network is the bottleneck"}
 
 * **Network as computer**: At scale, the interconnect\index{Interconnect!performance role} is a primary determinant of system performance. Bandwidth and topology constrain training speed as fundamentally as accelerator FLOP/s.
@@ -1879,10 +1883,6 @@ Looking forward, the physical limits of copper and the operational complexity of
 * **Monitor or waste**: Systematic telemetry\index{Network Telemetry!observability} (PFC counters, bandwidth baselines) is the only way to detect subtle network-induced training slowdowns before they waste significant GPU-hours.
 
 :::
-
-The practical value of this layered understanding is diagnostic precision. When a distributed training job underperforms, the complaint is invariably "the network is slow," but slowness has many causes: a failing transceiver degrading a single link, a PFC storm cascading across a subnet, a topology bottleneck starving one communication pattern while adequately serving another. Engineers who understand the Five-Level Model can isolate the layer at fault, correlate physical counters with transport behavior, and distinguish a topology limitation from a congestion control misconfiguration. This capacity to reason across abstraction layers, from SerDes signal integrity to cluster-wide $\text{BW}_{\text{bisect}}$, is what separates routine troubleshooting from genuine systems engineering.
-
-Equally important, the $\alpha$-$\beta$ cost model provides a quantitative vocabulary for making architectural decisions before hardware is purchased and racks are wired. Choices between InfiniBand and RoCE, between fat-tree and rail-optimized topologies, and between 400G and 800G link speeds are all decisions with multi-million-dollar consequences that hinge on the interaction between message size distributions, collective algorithms, and physical link characteristics. The framework developed in this chapter equips practitioners to evaluate these trade-offs with analytical rigor rather than vendor benchmarks alone.
 
 ::: {.callout-chapter-connection title="From wires to data pipelines"}
 
