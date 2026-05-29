@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from .types import GridProfile, RackProfile, Datacenter, CoolingProfile
 from ..core.provenance import sourced
 from ..core.registry import Registry
+from ..core.loader import load_collection
 from ..core.types import Metadata
 from ..core import provenance_catalog as pc
 
@@ -29,134 +32,12 @@ class FacilityCooling(Registry):
     StateOfArt = CoolingProfile(name="State of Art", pue=PUE_STATE_OF_ART, wue=WUE_EVAPORATIVE, metadata=Metadata(provenance=pc.UPTIME_PUE_2022))
 
 
-class Grids(Registry):
-    """Regional grid carbon intensity (gCO2/kWh) with typical facility PUE/WUE."""
-    Quebec = GridProfile(
-        name="Quebec (Hydro)",
-        carbon_intensity_g_kwh=sourced(20, pc.IEA_WEO_2023, name="Carbon Intensity (Quebec)", description="Quebec grid carbon intensity in gCO2/kWh."),
-        pue=PUE_LIQUID_COOLED,
-        wue=WUE_LIQUID,
-        primary_source="hydro",
-        lat=52.9399,
-        lon=-73.5491,
-        renewable_pct=99.0,
-        metadata=Metadata(provenance=pc.HYDRO_QUEBEC_GRID),
-    )
-    Norway = GridProfile(
-        name="Norway (Hydro)",
-        carbon_intensity_g_kwh=sourced(10, pc.IEA_WEO_2023, name="Carbon Intensity (Norway)", description="Norway grid carbon intensity in gCO2/kWh."),
-        pue=PUE_LIQUID_COOLED,
-        wue=WUE_LIQUID,
-        primary_source="hydro",
-        lat=60.472,
-        lon=8.4689,
-        renewable_pct=98.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    US_Avg = GridProfile(
-        name="US Average",
-        carbon_intensity_g_kwh=sourced(429, pc.IEA_WEO_2023, name="Carbon Intensity (US Average)", description="US national average grid carbon intensity in gCO2/kWh."),
-        pue=PUE_BEST_AIR,
-        wue=WUE_EVAPORATIVE,
-        primary_source="mixed",
-        lat=39.8283,
-        lon=-98.5795,
-        renewable_pct=21.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    EU_Avg = GridProfile(
-        name="EU Average",
-        carbon_intensity_g_kwh=sourced(270, pc.IEA_WEO_2023, name="Carbon Intensity (EU Average)", description="EU average grid carbon intensity in gCO2/kWh."),
-        pue=PUE_BEST_AIR,
-        wue=WUE_EVAPORATIVE,
-        primary_source="mixed",
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    France = GridProfile(
-        name="France (Nuclear)",
-        carbon_intensity_g_kwh=sourced(50, pc.IEA_WEO_2023, name="Carbon Intensity (France)", description="France grid carbon intensity in gCO2/kWh."),
-        pue=PUE_BEST_AIR,
-        wue=WUE_EVAPORATIVE,
-        primary_source="nuclear",
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    Iowa = GridProfile(
-        name="Iowa (Coal/Gas Reference)",
-        carbon_intensity_g_kwh=sourced(680, pc.BOOK_ILLUSTRATIVE_IOWA_CARBON, name="Carbon Intensity (Iowa reference)", description="High-carbon US grid mix for tutorial contrast."),
-        pue=PUE_BEST_AIR,
-        wue=WUE_EVAPORATIVE,
-        primary_source="coal_gas",
-        lat=42.0329,
-        lon=-93.5815,
-        renewable_pct=12.0,
-        metadata=Metadata(provenance=pc.BOOK_ILLUSTRATIVE_IOWA_CARBON),
-    )
-    Poland = GridProfile(
-        name="Poland (Coal)",
-        carbon_intensity_g_kwh=sourced(820, pc.IEA_WEO_2023, name="Carbon Intensity (Poland)", description="Poland grid carbon intensity in gCO2/kWh."),
-        pue=PUE_LEGACY,
-        wue=WUE_EVAPORATIVE,
-        primary_source="coal",
-        lat=51.9194,
-        lon=19.1451,
-        renewable_pct=17.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    Iceland = GridProfile(
-        name="Iceland (Geothermal)",
-        carbon_intensity_g_kwh=sourced(28, pc.IEA_WEO_2023, name="Carbon Intensity (Iceland)", description="Iceland grid carbon intensity in gCO2/kWh."),
-        pue=PUE_LIQUID_COOLED,
-        wue=WUE_LIQUID,
-        primary_source="geothermal",
-        lat=64.9631,
-        lon=-19.0208,
-        renewable_pct=100.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    Texas = GridProfile(
-        name="Texas (ERCOT)",
-        carbon_intensity_g_kwh=sourced(400, pc.IEA_WEO_2023, name="Carbon Intensity (Texas)", description="Texas grid carbon intensity in gCO2/kWh (EPA eGRID South Central)."),
-        pue=PUE_BEST_AIR,
-        wue=WUE_EVAPORATIVE,
-        primary_source="mixed",
-        lat=31.9686,
-        lon=-99.9018,
-        renewable_pct=28.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    Germany = GridProfile(
-        name="Germany (Coal+Wind)",
-        carbon_intensity_g_kwh=sourced(385, pc.IEA_WEO_2023, name="Carbon Intensity (Germany)", description="Germany grid carbon intensity in gCO2/kWh."),
-        pue=PUE_BEST_AIR,
-        wue=WUE_EVAPORATIVE,
-        primary_source="mixed",
-        lat=51.1657,
-        lon=10.4515,
-        renewable_pct=46.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    China_Avg = GridProfile(
-        name="China Average",
-        carbon_intensity_g_kwh=sourced(555, pc.IEA_WEO_2023, name="Carbon Intensity (China Average)", description="China national average grid carbon intensity in gCO2/kWh."),
-        pue=PUE_TYPICAL,
-        wue=WUE_EVAPORATIVE,
-        primary_source="coal",
-        lat=35.8617,
-        lon=104.1954,
-        renewable_pct=30.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
-    India_Avg = GridProfile(
-        name="India Average",
-        carbon_intensity_g_kwh=sourced(720, pc.IEA_WEO_2023, name="Carbon Intensity (India Average)", description="India national average grid carbon intensity in gCO2/kWh."),
-        pue=PUE_LEGACY,
-        wue=WUE_EVAPORATIVE,
-        primary_source="coal",
-        lat=20.5937,
-        lon=78.9629,
-        renewable_pct=22.0,
-        metadata=Metadata(provenance=pc.IEA_WEO_2023),
-    )
+# Regional grid carbon intensity (gCO2/kWh) with typical facility PUE/WUE — leaf
+# reference data, loaded from YAML (composition below — Datacenters — stays Python).
+Grids = load_collection(
+    Path(__file__).parent / "data" / "grids.yaml", GridProfile, name="Grids",
+    doc="Regional grid carbon intensity (gCO2/kWh) with typical facility PUE/WUE.",
+)
 
 
 class Datacenters(Registry):
