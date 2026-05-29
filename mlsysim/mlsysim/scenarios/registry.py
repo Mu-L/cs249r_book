@@ -59,9 +59,39 @@ class EnergyAnchors(Registry):
         name="Boiling 1 L of water", description="Approximate energy to bring one liter of water to a boil.")
 
 
+class MobilePower(Registry):
+    """Mobile/edge device + workload power-envelope reference figures."""
+
+    MobileNpuTypical = sourced_qty(3 * ureg.watt, pc.BOOK_DEVICE_ANCHORS,
+        name="Mobile NPU typical power", description="Typical sustained power for on-device mobile inference.")
+    MobileNpuPeak = sourced_qty(4 * ureg.watt, pc.BOOK_DEVICE_ANCHORS,
+        name="Mobile NPU peak power", description="Higher-bound mobile inference power envelope.")
+    ObjectDetector = sourced_qty(2 * ureg.watt, pc.BOOK_DEVICE_ANCHORS,
+        name="Object-detector power", description="Reference power draw of an always-on object-detection workload.")
+
+
+class PhoneBattery(Registry):
+    """Flagship smartphone battery reference figures.
+
+    Note: EnergyWh (15 Wh, a flagship pack rating) and EnergyJ (capacity x voltage =
+    3000 mAh x 3.7 V = 11.1 Wh) are two DISTINCT battery models the book uses in
+    different examples; both are preserved as-is rather than reconciled."""
+
+    CapacityMah = sourced_qty(3000 * ureg.milliampere_hour, pc.BOOK_DEVICE_ANCHORS,
+        name="Phone battery capacity", description="Typical flagship smartphone battery charge capacity.")
+    VoltageV = sourced_qty(3.7 * ureg.volt, pc.BOOK_DEVICE_ANCHORS,
+        name="Phone battery voltage", description="Nominal Li-ion cell voltage.")
+    EnergyJ = sourced_qty((3000 * ureg.milliampere_hour * 3.7 * ureg.volt).to(ureg.joule), pc.BOOK_DEVICE_ANCHORS,
+        name="Phone battery energy (capacity x voltage)", description="Battery energy derived from capacity x voltage.")
+    EnergyWh = sourced_qty(15 * ureg.watt * ureg.hour, pc.BOOK_DEVICE_ANCHORS,
+        name="Flagship phone battery energy", description="Modern flagship smartphone battery pack energy rating.")
+
+
 class Scenarios(Registry):
     """Registry namespace for real-world case studies and workload statistics."""
 
     Workloads = Workloads
     AnomalyModel = AnomalyModel
     EnergyAnchors = EnergyAnchors
+    MobilePower = MobilePower
+    PhoneBattery = PhoneBattery

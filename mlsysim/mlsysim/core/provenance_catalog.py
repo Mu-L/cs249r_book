@@ -113,6 +113,12 @@ BOOK_ENERGY_ANCHORS = Provenance(
     ref="Everyday energy-scale comparison anchors (smartphone charge ~40 kJ, boiling 1 L water ~100 kJ) for order-of-magnitude intuition about ML energy",
     verified="2025-03-06",
 )
+BOOK_DEVICE_ANCHORS = Provenance(
+    id="prov:book-device-anchors",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Mobile/edge device reference figures (flagship phone battery ~15 Wh / 3000 mAh @ 3.7 V, mobile NPU power 3-4 W, object-detector ~2 W) for on-device ML intuition",
+    verified="2025-03-06",
+)
 
 # --- Hardware technology-class facts (Hardware.Tech) ---
 HOROWITZ_ENERGY = _lit(

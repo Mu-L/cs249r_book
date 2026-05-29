@@ -28,8 +28,7 @@ from .units import *  # noqa: F401,F403 — re-export full unit registry
 # NVMe SSD            -> Hardware.Tech.Storage.NvmeGen4.latency
 # InfiniBand (fabric) -> Systems.Fabrics.InfiniBand_NDR.latency
 
-# Mobile NPU
-MOBILE_INFERENCE_TDP_HIGH = 4 * watt
+# Mobile NPU peak power -> Scenarios.MobilePower.MobileNpuPeak
 
 # Standard dimensions
 IMAGE_DIM_RESNET = 224  # TODO(taxonomy P7): -> Datasets.ImageNet.image_width
@@ -52,10 +51,9 @@ ENERGY_MOBILENET_INF_MJ = 0.1 * ureg.millijoule  # TODO(taxonomy): MobileNet inf
 # --- Physical Constants ---
 SPEED_OF_LIGHT_FIBER_KM_S = 200000 * ureg.kilometer / second
 
-# --- Mobile / Battery ---
-MOBILE_TDP_W = 3 * watt
-PHONE_BATTERY_WH = 15 * watt * hour
-OBJECT_DETECTOR_POWER_W = 2 * watt
+# --- Mobile / Battery --- (device reference figures -> Scenarios)
+# mobile NPU + object-detector power -> Scenarios.MobilePower.*
+# flagship phone battery (Wh) -> Scenarios.PhoneBattery.EnergyWh
 
 # Reference energy-scale anchors -> Scenarios.EnergyAnchors.{SmartphoneCharge,BoilingWater}
 
@@ -87,10 +85,7 @@ LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count  # TODO(taxonomy): node config -> Sys
 
 # --- Case Studies --- (WAYMO_*, ANOMALY_MODEL_* -> Scenarios.Workloads / Scenarios.AnomalyModel)
 
-# --- Additional Constants for ML Systems Chapter ---
-BATTERY_CAPACITY_MAH = 3000 * ureg.milliampere_hour
-BATTERY_VOLTAGE_V = 3.7 * ureg.volt
-BATTERY_ENERGY_J = (BATTERY_CAPACITY_MAH * BATTERY_VOLTAGE_V).to(joule)
+# Phone battery capacity/voltage/energy -> Scenarios.PhoneBattery.{CapacityMah,VoltageV,EnergyJ}
 
 # PRECISION_MAP -> core/units.py (precision-string -> byte-width is a measurement fact)
 
