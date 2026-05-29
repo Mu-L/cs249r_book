@@ -94,6 +94,20 @@ BOOK_CLUSTER_TIERS = _conv(
     "MLSysBook editorial cluster tiers (256 / 2k / 8k / 100k GPUs)",
 )
 
+# --- Real-world case-study / workload scale anchors (Scenarios registry) ---
+BOOK_WORKLOAD_SCALE = Provenance(
+    id="prov:book-workload-scale",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Illustrative real-world scale anchors (Gmail volume, Google searches, Waymo sensor rate) for order-of-magnitude intuition",
+    verified="2025-03-06",
+)
+BOOK_ANOMALY_CASE = Provenance(
+    id="prov:book-anomaly-tinyml-case",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="TinyML anomaly-detection case study (latency / AUC / energy) used as a benchmarking example",
+    verified="2025-03-06",
+)
+
 RELIABILITY_MTTF_LITERATURE = _lit(
     "prov:reliability-mttf-literature",
     "Kokolis et al. (2025, HPCA); Zu et al. (2024, NSDI); Barroso et al. (2019) — order-of-magnitude steady-state MTTF",

@@ -24,6 +24,7 @@ from .platforms.registry import Platforms
 from .systems.registry import Systems
 from .infra.registry import Infrastructure
 from .literature.registry import Literature
+from .scenarios.registry import Scenarios
 from .ops import Ops, Monitoring
 from .core import calibration
 

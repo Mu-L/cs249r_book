@@ -118,9 +118,7 @@ ML_WORKFLOW_STAGE_DEPLOYMENT = 5
 ML_WORKFLOW_STAGE_MONITORING = 6
 ML_WORKFLOW_CONSTRAINT_COST_BASE = 2
 
-# Google Search (Reference)
-GOOGLE_SEARCHES_PER_DAY = 8.5e9
-GMAIL_EMAILS_PER_DAY = 121e9
+# GOOGLE_SEARCHES_PER_DAY, GMAIL_EMAILS_PER_DAY -> Scenarios.Workloads
 
 # --- Storage (I/O Bandwidth) ---
 NVME_GEN3_SEQUENTIAL_BW = 3.5 * GB / second
@@ -130,14 +128,7 @@ SYSTEM_MEMORY_BW = 50 * GB / second        # DDR4/DDR5 typical
 HOST_DRAM_BW = 200 * GB / second
 LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count
 
-# --- Case Studies ---
-WAYMO_DATA_PER_HOUR_LOW = 1 * TB / hour
-WAYMO_DATA_PER_HOUR_HIGH = 19 * TB / hour
-
-# --- Anomaly Detection Case Study ---
-ANOMALY_MODEL_LATENCY = 10.4 * ureg.ms
-ANOMALY_MODEL_AUC = 0.86
-ANOMALY_MODEL_ENERGY = 516 * ureg.microjoule
+# --- Case Studies --- (WAYMO_*, ANOMALY_MODEL_* -> Scenarios.Workloads / Scenarios.AnomalyModel)
 
 # --- Additional Constants for ML Systems Chapter ---
 BATTERY_CAPACITY_MAH = 3000 * ureg.milliampere_hour
