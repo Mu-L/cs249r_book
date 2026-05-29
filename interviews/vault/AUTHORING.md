@@ -277,9 +277,20 @@ vault check --strict
 # 2. Format-marker compliance (no LLM call)
 python3 interviews/vault-cli/scripts/validate_drafts.py --no-llm-judge
 
-# 3. Full LLM-judge gate (level_fit, coherence, bridge)
+# 3. Full LLM-judge gate (level_fit, coherence, bridge, teaching_power)
 python3 interviews/vault-cli/scripts/validate_drafts.py
 ```
+
+## The teaching-power bar
+
+Every question must pass the `teaching_power` gate: it must force genuine
+quantitative systems reasoning, not test recall or vocabulary with decorative
+math. A question that is correct but answerable from memory or intuition — or
+whose `napkin_math` *asserts* a trade-off instead of *computing* it — is
+**vacuous** and is rejected (`tp < 3` or `vacuous: true`). The gate calibrates
+against gold-standard exemplars, not same-cell peers, so "in-family with the
+other mediocre questions in this cell" is not a pass. Before submitting, ask:
+*does answering this require computing a trade-off?* If not, it will not pass.
 
 ## End-to-end flow
 

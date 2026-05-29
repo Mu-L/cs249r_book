@@ -329,6 +329,50 @@ Return STRICT JSON with no prose or fences:
     return False, f"bridge=no: {resp.get('rationale', '')}", {"rationale": resp.get("rationale")}
 
 
+# Compact calibration anchors: what 5/5 vs vacuous looks like, so the gate
+# calibrates against EXCELLENCE, not mediocre same-cell peers (the blind spot
+# that lets level_fit propagate vacuity). Full anchor set: tp_gate anchors.json.
+_TP_ANCHORS = (
+    "CALIBRATION (match this bar; do NOT grade against mediocre peers):\n"
+    "  tp=5 GOLD  — forces a computed trade-off; distractors encode real misconceptions;\n"
+    "               transferable systems principle (e.g. 'Partitioning an A100 MIG for 7B+1B').\n"
+    "  tp=1-2 VACUOUS — answerable from memory/intuition; napkin-math gestures without\n"
+    "               computing; trivia or vocab with decorative arithmetic bolted on.\n"
+)
+
+
+def gate_teaching_power(draft: dict) -> tuple[bool, str, dict]:
+    """Gate on TEACHING POWER — does the question force genuine quantitative
+    systems reasoning, or is it correct-but-vacuous (recall/vocab + decorative
+    math)? Passes iff tp >= 3 and not vacuous. This is the gate the pipeline was
+    missing: every prior gate checks correctness/form, none asks 'does it teach?'."""
+    prompt = f"""Score this interview question's TEACHING POWER. The vault's promise is that
+questions force genuine quantitative systems reasoning ("you cannot prompt your way out of a
+silicon bottleneck"), not recall/vocabulary dressed up with decorative math.
+{_TP_ANCHORS}
+Judge:
+  - Does answering REQUIRE computing a trade-off, or can it be done from memory/intuition?
+  - Does the napkin-math actually compute the result, or merely gesture/assert it?
+  - If multiple-choice, do the distractors encode real misconceptions (not filler)?
+  - Does it teach a transferable systems principle, or a one-off fact?
+
+CANDIDATE:
+{_judge_block(draft)}
+
+Return STRICT JSON with no prose or fences:
+{{"tp": <1-5>, "vacuous": true | false, "rationale": "<one sentence>"}}
+"""
+    resp = call_gemini_judge(prompt)
+    if resp is None:
+        return False, "no judge response", {}
+    tp = resp.get("tp")
+    vac = bool(resp.get("vacuous"))
+    detail = {"tp": tp, "vacuous": vac, "rationale": resp.get("rationale", "")}
+    if isinstance(tp, (int, float)) and tp >= 3 and not vac:
+        return True, "", detail
+    return False, f"teaching_power={tp}, vacuous={vac}: {resp.get('rationale', '')}", detail
+
+
 # ─── runner ───────────────────────────────────────────────────────────────
 
 
@@ -381,12 +425,14 @@ def evaluate_draft(
         rec["level_fit"] = "skipped"
         rec["coherence"] = "skipped"
         rec["bridge"]    = "skipped"
+        rec["teaching_power"] = "skipped"
     else:
         for name, gate in [("level_fit", gate_level_fit),
                            ("coherence", gate_coherence),
-                           ("bridge", gate_bridge)]:
+                           ("bridge", gate_bridge),
+                           ("teaching_power", gate_teaching_power)]:
             try:
-                if name == "coherence":
+                if name in ("coherence", "teaching_power"):
                     ok, why, detail = gate(draft)
                 else:
                     ok, why, detail = gate(draft, corpus)
