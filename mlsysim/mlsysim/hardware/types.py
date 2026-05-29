@@ -13,6 +13,10 @@ class ComputeCore(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     peak_flops: Quantity
     precision_flops: Dict[str, Quantity] = Field(default_factory=dict)
+    # Streaming-multiprocessor count. Present for GPUs; absent (None) for device
+    # classes that have no SM concept (MCUs, TPUs). Pairs with the per-SM memory
+    # fields below to derive chip-level totals (e.g. register file across the die).
+    sm_count: Optional[int] = None
 
 class MemoryHierarchy(BaseModel):
     """
@@ -32,6 +36,10 @@ class MemoryHierarchy(BaseModel):
     flash_capacity: Optional[Quantity] = None
     flash_bandwidth: Optional[Quantity] = None
     l2_cache: Optional[Quantity] = None
+    # Per-SM on-chip memory. Present for GPUs; absent (None) for device classes
+    # without SMs. Multiply by ComputeCore.sm_count to derive chip-level totals.
+    register_file_per_sm: Optional[Quantity] = None
+    shared_memory_per_sm: Optional[Quantity] = None
 
 class StorageHierarchy(BaseModel):
     """
