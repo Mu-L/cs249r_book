@@ -10,8 +10,8 @@ between each stage and `run()` to execute the chain.
 
 Example
 -------
->>> from mlsysim.core.pipeline import Pipeline
->>> from mlsysim.core.solver import ScalingModel, DistributedModel, EconomicsModel
+>>> from mlsysim.engine.pipeline import Pipeline
+>>> from mlsysim.engine.solver import ScalingModel, DistributedModel, EconomicsModel
 >>> pipe = Pipeline([ScalingModel(), DistributedModel(), EconomicsModel()])
 >>> pipe.explain()  # Shows the DAG and identifies gaps
 >>> result = pipe.run(compute_budget=Q_("1e21 FLOP"), fleet=cluster)
