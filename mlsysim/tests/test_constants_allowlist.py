@@ -50,7 +50,7 @@ MIGRATION_PENDING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(ML_WORKFLOW_|SYNTHETIC_|LOGIC_WALL_)"),
 )
 # Lower this with each migration phase; it must never increase.
-BACKLOG_CEILING = 79  # 2026-05-29 start; lower with each migration phase, target 0
+BACKLOG_CEILING = 73  # P2 moved encoding/format facts to units.py (was 79); target 0
 
 
 def _defined_names(source: str) -> set[str]:

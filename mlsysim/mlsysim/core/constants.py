@@ -36,9 +36,8 @@ LATENCY_NVME_SSD = 100000 * NS
 MOBILE_INFERENCE_TDP_HIGH = 4 * watt
 
 # Standard dimensions
-IMAGE_DIM_RESNET = 224
-IMAGE_CHANNELS_RGB = 3
-COLOR_DEPTH_8BIT = 256
+IMAGE_DIM_RESNET = 224  # TODO(taxonomy P7): -> Datasets.ImageNet.image_width
+# IMAGE_CHANNELS_RGB, COLOR_DEPTH_8BIT -> core/units.py (encoding facts)
 
 # --- Network & Interconnect ---
 NETWORK_10G_BW = 10 * Gbps
@@ -99,11 +98,7 @@ OBJECT_DETECTOR_POWER_W = 2 * watt
 ENERGY_SMARTPHONE_CHARGE_J = 40000 * joule
 ENERGY_BOILING_WATER_J = 100000 * joule
 
-# --- Video ---
-VIDEO_1080P_WIDTH = 1920
-VIDEO_1080P_HEIGHT = 1080
-VIDEO_BYTES_PER_PIXEL_RGB = 3 * byte
-VIDEO_FPS_STANDARD = Q_(30, 'Hz')
+# --- Video --- (VIDEO_* encoding/format facts -> core/units.py)
 
 # Reference model/dataset dimensions
 TRANSFORMER_DECODE_FLOPS_PER_PARAM = 2
@@ -112,9 +107,7 @@ TRANSFORMER_HIDDEN_DIM_EXAMPLE = 768
 TRANSFORMER_SEQ_LEN_EXAMPLE = 512
 TRANSFORMER_HEADS_EXAMPLE = 12
 SYSTOLIC_ARRAY_DIM = 128
-SIMD_REGISTER_BITS = 512
-FP32_BITS = 32
-INT8_BITS = 8
+# SIMD_REGISTER_BITS, FP32_BITS, INT8_BITS -> core/units.py (bit widths)
 # Synthetic Data Constraints
 SYNTHETIC_PROVENANCE_OVERHEAD = 0.4
 SYNTHETIC_VERIFICATION_PASSES = 3
@@ -154,15 +147,5 @@ BATTERY_CAPACITY_MAH = 3000 * ureg.milliampere_hour
 BATTERY_VOLTAGE_V = 3.7 * ureg.volt
 BATTERY_ENERGY_J = (BATTERY_CAPACITY_MAH * BATTERY_VOLTAGE_V).to(joule)
 
-# --- Shared Precision Map ---
-# Used by Engine, ServingModel, SynthesisSolver to map precision strings to byte widths.
-PRECISION_MAP = {
-    "fp32": BYTES_FP32,      # 4 bytes
-    "tf32": BYTES_FP32,      # 4 bytes storage, TF32 compute (19-bit effective mantissa)
-    "bf16": BYTES_FP16,      # 2 bytes (Brain Float 16, default training precision)
-    "fp16": BYTES_FP16,      # 2 bytes (IEEE half-precision)
-    "fp8":  BYTES_INT8,      # 1 byte  (E4M3/E5M2, Hopper+ training/inference)
-    "int8": BYTES_INT8,      # 1 byte  (quantized inference)
-    "int4": BYTES_INT4,      # 0.5 bytes (aggressive quantization)
-}
+# PRECISION_MAP -> core/units.py (precision-string -> byte-width is a measurement fact)
 
