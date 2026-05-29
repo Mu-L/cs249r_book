@@ -22,15 +22,11 @@ from .units import *  # noqa: F401,F403 — re-export full unit registry
 # --- System ratios / physics ---
 # (Chip-specific numbers live in mlsysim/hardware/registry.py)
 
-# --- Latency Hierarchy (2025 Reference) ---
-LATENCY_REGISTER_REF = 0.3 * NS
-LATENCY_L1_REGISTER = 1 * NS
-LATENCY_L2_CACHE = 4 * NS
-LATENCY_HBM3 = 300 * NS
-LATENCY_NVLINK = 500 * NS
-LATENCY_PCIE_GEN5 = 1000 * NS
-LATENCY_INFINIBAND = 5000 * NS
-LATENCY_NVME_SSD = 100000 * NS
+# --- Latency Hierarchy --- (tech-class access latency -> Hardware.Tech)
+# register/L1/L2/HBM3 -> Hardware.Tech.Memory.*.latency
+# NVLink/PCIe-Gen5    -> Hardware.Tech.Interconnect.*.latency
+# NVMe SSD            -> Hardware.Tech.Storage.NvmeGen4.latency
+# InfiniBand (fabric) -> Systems.Fabrics.InfiniBand_NDR.latency
 
 # Mobile NPU
 MOBILE_INFERENCE_TDP_HIGH = 4 * watt

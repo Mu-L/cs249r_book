@@ -50,7 +50,7 @@ MIGRATION_PENDING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(ML_WORKFLOW_|SYNTHETIC_|LOGIC_WALL_)"),
 )
 # Lower this with each migration phase; it must never increase.
-BACKLOG_CEILING = 56  # P6a moved storage BW (NVMe/DDR/host-DRAM) -> Hardware.Tech.Storage; target 0
+BACKLOG_CEILING = 48  # P6b moved latency hierarchy -> Hardware.Tech.{Memory,Interconnect,Storage} + Systems.Fabrics; target 0
 
 
 def _defined_names(source: str) -> set[str]:

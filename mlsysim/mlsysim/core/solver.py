@@ -27,7 +27,7 @@ from ..physics import (
 )
 from .constants import (
     ureg, Q_, PRECISION_MAP,
-    BYTES_FP16, LATENCY_INFINIBAND, LATENCY_NVLINK,
+    BYTES_FP16,
 )
 from ..infra.registry import Infrastructure
 from ..literature.registry import Literature
@@ -41,16 +41,22 @@ from ..systems.types import Fleet, NetworkFabric, Node
 from ..infra.types import Datacenter
 
 def _intra_node_latency(node: Node):
-    """Resolve NVLink latency from the node's accelerator spec."""
+    """Resolve NVLink latency from the node's accelerator spec, falling back to
+    the NVLink technology-class latency (``Hardware.Tech.Interconnect``)."""
     nvlink = node.accelerator.nvlink
     if nvlink and nvlink.latency is not None:
         return nvlink.latency
-    return LATENCY_NVLINK
+    from ..hardware.tech import Tech
+    return Tech.Interconnect.NVLink.latency
 
 
 def _inter_node_latency(fabric: NetworkFabric):
-    """Resolve fabric latency, falling back to reference IB latency."""
-    return fabric.latency or LATENCY_INFINIBAND
+    """Resolve fabric latency, falling back to the reference InfiniBand-NDR
+    fabric latency (``Systems.Fabrics``)."""
+    if fabric.latency is not None:
+        return fabric.latency
+    from ..systems.registry import Systems
+    return Systems.Fabrics.InfiniBand_NDR.latency
 
 
 class BaseResolver(ABC):

@@ -4,8 +4,8 @@ from ..core.provenance import Provenance, ProvenanceKind
 from ..core import provenance_catalog as pc
 from ..core.constants import (
     GB, GiB, KiB, MB, PB, PFLOPs, TB, TFLOPs, TOPS, USD, kilowatt, ms, second, ureg, watt,
-    LATENCY_NVLINK,
 )
+from .tech import Tech as _Tech  # technology-class facts (NVLink latency, etc.)
 
 _H100_L2_CACHE = 50 * MB
 # H100 (SXM5) microarchitecture: 132 SMs, 256 KiB register file/SM, 228 KiB
@@ -26,7 +26,7 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=125 * TFLOPs / second, precision_flops={"fp32": 15.7 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=32 * GiB, bandwidth=900 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen3 x16", bandwidth=15.75 * GB / second),
-        nvlink=IOInterconnect(name="NVLink 2.0", bandwidth=300 * GB / second, latency=LATENCY_NVLINK),
+        nvlink=IOInterconnect(name="NVLink 2.0", bandwidth=300 * GB / second, latency=_Tech.Interconnect.NVLink.latency),
         tdp=300 * watt,
         unit_cost=10000 * USD,
         dispatch_tax=0.02 * ureg.ms,
@@ -47,7 +47,7 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=312 * TFLOPs / second, precision_flops={"fp32": 19.5 * TFLOPs / second, "tf32": 156 * TFLOPs / second, "int8": 624 * TOPS, "fp16_sparse": 624 * TFLOPs / second}),
         memory=MemoryHierarchy(capacity=80 * GiB, bandwidth=2039 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen4 x16", bandwidth=32 * GB / second),
-        nvlink=IOInterconnect(name="NVLink 3.0", bandwidth=600 * GB / second, latency=LATENCY_NVLINK),
+        nvlink=IOInterconnect(name="NVLink 3.0", bandwidth=600 * GB / second, latency=_Tech.Interconnect.NVLink.latency),
         tdp=400 * watt,
         unit_cost=15000 * USD,
         embodied_carbon_kg=130.0,  # Gupta et al. 2022 estimate
@@ -76,7 +76,7 @@ class CloudHardware(Registry):
         ),
         storage=StorageHierarchy(capacity=2 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
-        nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=LATENCY_NVLINK),
+        nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=_Tech.Interconnect.NVLink.latency),
         tdp=700 * watt,
         unit_cost=30000 * USD,
         embodied_carbon_kg=150.0,  # Gupta et al. 2022 estimate for high-end datacenter GPU
@@ -99,7 +99,7 @@ class CloudHardware(Registry):
         memory=MemoryHierarchy(capacity=131 * GiB, bandwidth=4.8 * TB / second),
         storage=StorageHierarchy(capacity=4 * ureg.TB, bandwidth=7.0 * GB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
-        nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=LATENCY_NVLINK),
+        nvlink=IOInterconnect(name="NVLink 4.0", bandwidth=900 * GB / second, latency=_Tech.Interconnect.NVLink.latency),
         tdp=700 * watt,
         unit_cost=35000 * USD,
         dispatch_tax=0.01 * ureg.ms,
@@ -112,7 +112,7 @@ class CloudHardware(Registry):
         compute=ComputeCore(peak_flops=2250 * TFLOPs / second, precision_flops={"fp8": 4500 * TFLOPs / second, "fp4": 9000 * TFLOPs / second, "int4": 9000 * TOPS}),
         memory=MemoryHierarchy(capacity=192 * GiB, bandwidth=8 * TB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
-        nvlink=IOInterconnect(name="NVLink 5.0", bandwidth=1800 * GB / second, latency=LATENCY_NVLINK),
+        nvlink=IOInterconnect(name="NVLink 5.0", bandwidth=1800 * GB / second, latency=_Tech.Interconnect.NVLink.latency),
         tdp=1000 * watt,
         unit_cost=40000 * USD,
         dispatch_tax=0.008 * ureg.ms,
@@ -506,8 +506,6 @@ class TinyHardware(Registry):
         dispatch_tax=2.0 * ureg.ms,
         metadata={"provenance": pc.HIMAX_WE1},
     )
-
-from .tech import Tech as _Tech
 
 
 class Hardware(Registry):

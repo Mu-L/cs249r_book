@@ -49,6 +49,19 @@ class StorageTier(BaseModel):
     metadata: Metadata = Field(default_factory=Metadata)
 
 
+class InterconnectTier(BaseModel):
+    """Interconnect technology generation: link access latency (technology-class).
+
+    Per-instance link *bandwidth* lives on each node's IOInterconnect (it varies
+    part-to-part); the access *latency* floor is a property of the interconnect
+    generation, ~constant across parts, so it lives here."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str
+    latency: Optional[Quantity] = None
+    metadata: Metadata = Field(default_factory=Metadata)
+
+
 class OpEnergy(BaseModel):
     """Per-operation energy for an arithmetic op (technology/process-class)."""
 
@@ -71,7 +84,7 @@ class Storage(Registry):
     """Generic storage / off-chip memory bandwidth tiers."""
 
     NvmeGen3 = StorageTier(name="NVMe SSD (Gen3)", bandwidth=3.5 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
-    NvmeGen4 = StorageTier(name="NVMe SSD (Gen4)", bandwidth=7.0 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
+    NvmeGen4 = StorageTier(name="NVMe SSD (Gen4)", bandwidth=7.0 * GB / second, latency=100_000 * _ns, metadata=_md(pc.BOOK_STORAGE_TIERS))
     NvmeGen5 = StorageTier(name="NVMe SSD (Gen5)", bandwidth=14.0 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
     SystemMemory = StorageTier(name="System memory (DDR4/5)", bandwidth=50 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
     HostDram = StorageTier(name="Host DRAM", bandwidth=200 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
@@ -89,12 +102,23 @@ class Op(Registry):
     AddInt8 = OpEnergy(name="INT8 add (45 nm)", energy=0.03 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
 
 
+class Interconnect(Registry):
+    """Interconnect technology generations (link access-latency floor).
+
+    NVLink/PCIe per-generation latency. End-to-end *fabric* latency (InfiniBand,
+    Ethernet, RoCE) is a composition property and lives on Systems.Fabrics."""
+
+    NVLink = InterconnectTier(name="NVLink", latency=500 * _ns, metadata=_md(pc.BOOK_LATENCY_HIERARCHY))
+    PCIeGen5 = InterconnectTier(name="PCIe Gen5", latency=1000 * _ns, metadata=_md(pc.BOOK_LATENCY_HIERARCHY))
+
+
 class Tech(Registry):
     """Technology-class reference facts: latency / energy / generic bandwidth."""
 
     Memory = Memory
     Storage = Storage
     Op = Op
+    Interconnect = Interconnect
 
 
 def resolve_latency(instance_latency, tech_default):
