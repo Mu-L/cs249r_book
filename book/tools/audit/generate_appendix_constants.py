@@ -48,7 +48,7 @@ INTERCONNECT_FIELDS: list[tuple[str, str]] = [
     ("NVME_SEQUENTIAL_BW", "Hardware.Tech.Storage.NvmeGen4.bandwidth"),
     ("NETWORK_10G_BW", "Systems.Fabrics.Ethernet_10G.bandwidth"),
     ("NETWORK_100G_BW", "Systems.Fabrics.Ethernet_100G.bandwidth"),
-    ("SPEED_OF_LIGHT_FIBER_KM_S", "constants.SPEED_OF_LIGHT_FIBER_KM_S"),
+    ("SPEED_OF_LIGHT_FIBER_KM_S", "SPEED_OF_LIGHT_FIBER_KM_S"),
 ]
 
 @dataclass
@@ -111,6 +111,7 @@ def _exec_preamble() -> str:
         from mlsysim import *
         from mlsysim.core.constants import *
         from mlsysim.core import constants
+        from mlsysim.physics import SPEED_OF_LIGHT_FIBER_KM_S
         from mlsysim.fmt import fmt, fmt_val, fmt_unit, fmt_int, MarkdownStr, check, sci_latex, fmt_math
         """
     ).strip()

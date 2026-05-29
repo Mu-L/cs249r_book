@@ -1,21 +1,20 @@
 # constants.py
-# The Analytical Engine of Machine Learning Systems
-# 
+#
 # ⚠️ ARCHITECTURAL RULE ⚠️
-# This file is strictly for universal physics (e.g., speed of light), standard units,
-# and generalized economic baselines.
-# 
-# DO NOT add specific hardware numbers (like H100 memory bandwidth) or specific 
-# model definitions (like GPT-3 parameter counts) here. 
+# This module is now ONLY a re-export surface for measurement units (core/units.py).
+# It holds NO domain values: every hardware/model/systems/literature/scenario figure
+# has moved to its category registry, every physical constant to physics/constants.py,
+# and every byte/bit width + PRECISION_MAP to core/units.py (the taxonomy refactor).
 #
-# Hardware specifications belong in: `mlsysim/hardware/registry.py`
-# Model specifications belong in: `mlsysim/models/registry.py`
-# Architecture formulas belong in: `mlsysim/physics/`
-#
-# Measurement units live in units.py; domain assumptions live in registries
-# (Systems, Literature, Infrastructure) and core/calibration.py — not re-exported here.
-#
-# CI: mlsysim/tests/test_constants_allowlist.py guards this contract.
+# DO NOT add a hardware/model/fleet/physics value here — it will hard-fail CI
+# (mlsysim/tests/test_constants_allowlist.py). Homes:
+#   Hardware specs        -> mlsysim/hardware/registry.py (+ Hardware.Tech.*)
+#   Model specs           -> mlsysim/models/registry.py
+#   Systems / fabrics     -> mlsysim/systems/registry.py
+#   Case-study figures    -> mlsysim/scenarios/registry.py
+#   Cited field figures   -> mlsysim/literature/registry.py
+#   Formulas + physics    -> mlsysim/physics/ (incl. physics/constants.py)
+#   Units / bit widths    -> mlsysim/core/units.py
 
 from .units import *  # noqa: F401,F403 — re-export full unit registry
 
@@ -47,9 +46,8 @@ from .units import *  # noqa: F401,F403 — re-export full unit registry
 
 # Network transfer energy -> Systems.NetworkEnergy.{Per5gMb, Per1Kb}
 
-# --- Physics ---
-# --- Physical Constants ---
-SPEED_OF_LIGHT_FIBER_KM_S = 200000 * ureg.kilometer / second
+# --- Physics --- (universal physical constants -> physics/constants.py)
+# SPEED_OF_LIGHT_FIBER_KM_S -> physics/constants.py
 
 # --- Mobile / Battery --- (device reference figures -> Scenarios)
 # mobile NPU + object-detector power -> Scenarios.MobilePower.*
