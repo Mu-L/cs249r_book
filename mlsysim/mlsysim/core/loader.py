@@ -100,6 +100,33 @@ def load_registry(data_dir, model_cls=None, *, name: str, doc: str = "",
     return _build(entries, name=name, doc=doc, model_cls=model_cls, type_map=type_map, tech_root=tech_root)
 
 
+def load_sourced_registry(yaml_file, *, name: str, doc: str = "") -> type:
+    """Build a ``Registry`` of provenance-carrying scalars from a YAML file.
+
+    For literature/anchor registries whose entries are ``sourced(value, prov, …)``
+    scalars (a ``float`` subclass carrying provenance) rather than pydantic models.
+    Each entry is either:
+
+    * a mapping ``{value, provenance: <catalog-key>, name?, description?}`` →
+      rebuilt via ``sourced(value, provenance_catalog.<key>, …)``; or
+    * a bare scalar (``int``/``float``) → stored as-is (e.g. critical batch sizes).
+    """
+    from .provenance import sourced
+    from . import provenance_catalog as pc
+
+    raw = yaml.safe_load(Path(yaml_file).read_text(encoding="utf-8"))
+    attrs: dict[str, Any] = {"__doc__": doc}
+    for key, v in raw.items():
+        if isinstance(v, dict) and "provenance" in v:
+            attrs[key] = sourced(
+                v["value"], getattr(pc, v["provenance"]),
+                name=v.get("name", ""), description=v.get("description", ""),
+            )
+        else:
+            attrs[key] = v
+    return type(name, (Registry,), attrs)
+
+
 def load_collection(yaml_file, model_cls=None, *, name: str, doc: str = "",
                     tech_root: Any = None, type_map: dict | None = None) -> type:
     """Build a ``Registry`` subclass from a single per-category YAML file.
