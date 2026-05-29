@@ -21,9 +21,9 @@ from mlsysim.hardware.registry import (
     TinyHardware,
     WorkstationHardware,
 )
-from mlsysim.infra.registry import Grids
-from mlsysim.infra.pricing import Cloud, Storage, Labeling, Fleet, Capital, OnPremises
-from mlsysim.infra.capacity import Capacity
+from mlsysim.infrastructure.registry import Grids
+from mlsysim.infrastructure.pricing import Cloud, Storage, Labeling, Fleet, Capital, OnPremises
+from mlsysim.infrastructure.capacity import Capacity
 from mlsysim.literature.registry import Training, Scaling, Overheads, Chinchilla, Communication
 from mlsysim.models.registry import (
     GenerativeVisionModels,

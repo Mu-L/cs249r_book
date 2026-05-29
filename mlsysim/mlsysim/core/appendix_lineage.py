@@ -62,7 +62,7 @@ def audit_appendix_defaults() -> list[str]:
 
 
 def audit_appendix_pricing() -> list[str]:
-    from ..infra.registry import Infrastructure
+    from ..infrastructure.registry import Infrastructure
 
     issues: list[str] = []
     section_map = {

@@ -29,7 +29,7 @@ from .constants import (
     ureg, Q_, PRECISION_MAP,
     BYTES_FP16,
 )
-from ..infra.registry import Infrastructure
+from ..infrastructure.registry import Infrastructure
 from ..literature.registry import Literature
 from ..systems.reliability import Reliability
 from . import calibration as cal
@@ -38,7 +38,7 @@ from .types import Quantity
 from ..models.types import Workload, TransformerWorkload, SparseTransformerWorkload
 from ..hardware.types import HardwareNode
 from ..systems.types import Fleet, NetworkFabric, Node
-from ..infra.types import Datacenter
+from ..infrastructure.types import Datacenter
 
 def _intra_node_latency(node: Node):
     """Resolve NVLink latency from the node's accelerator spec, falling back to
@@ -709,7 +709,7 @@ class SustainabilityModel(BaseModel):
             region = dc or fleet.region
         
         if not region:
-             from ..infra.registry import Grids
+             from ..infrastructure.registry import Grids
              region = Grids.US_Avg
 
         from ._validation import validate_range, validate_nonnegative
@@ -2677,7 +2677,7 @@ class PlacementOptimizer(BaseOptimizer):
         """
         Determines the optimal data center location to minimize TCO and carbon taxes.
         """
-        from ..infra.registry import Infrastructure
+        from ..infrastructure.registry import Infrastructure
         econ_model = EconomicsModel()
         
         candidates = []

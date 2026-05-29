@@ -9,7 +9,7 @@ from . import core
 from . import hardware
 from . import models
 from . import platforms
-from . import infra
+from . import infrastructure
 from . import systems
 from . import sim
 from . import physics
@@ -22,7 +22,7 @@ from .models.registry import Models
 from .platforms.registry import Platforms
 # Datasets loaded lazily via __getattr__ below.
 from .systems.registry import Systems
-from .infra.registry import Infrastructure
+from .infrastructure.registry import Infrastructure
 from .literature.registry import Literature
 from .scenarios.registry import Scenarios
 from .ops import Ops, Monitoring

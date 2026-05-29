@@ -31,7 +31,7 @@ from mlsysim.core.solver import (
     WeightStreamingModel,
 )
 from mlsysim.hardware.registry import Hardware
-from mlsysim.infra.registry import Grids, Infrastructure
+from mlsysim.infrastructure.registry import Grids, Infrastructure
 from mlsysim.models.registry import Models
 from mlsysim.models.types import TransformerWorkload
 from mlsysim.systems.registry import Systems

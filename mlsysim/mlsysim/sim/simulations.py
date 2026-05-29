@@ -15,7 +15,7 @@ from ..core.scenarios import Scenario
 from ..core.engine import Engine
 from ..core.solver import SustainabilityModel, EconomicsModel, ReliabilityModel
 from ..systems.types import Fleet
-from ..infra.registry import Infrastructure
+from ..infrastructure.registry import Infrastructure
 
 @dataclass
 class SimulationResult:

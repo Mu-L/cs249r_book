@@ -15,7 +15,7 @@ pytestmark = pytest.mark.solver
 from mlsysim.hardware.registry import Hardware
 from mlsysim.models.registry import Models
 from mlsysim.systems.registry import Systems
-from mlsysim.infra.registry import Infrastructure, Grids
+from mlsysim.infrastructure.registry import Infrastructure, Grids
 from mlsysim.core.solver import (
     SingleNodeModel,
     ServingModel,
