@@ -142,6 +142,24 @@ HARDCODED_DATASET = re.compile(
     re.I,
 )
 
+# Hardcoded hardware-spec literals that belong in Hardware.Cloud.* (the registry
+# is the single source of truth). Each entry is a name+value pair caught in a real
+# drift incident; banning it keeps the rendered prose pinned to the registry so a
+# spec update propagates instead of silently diverging. Add a new alternation here
+# whenever a hardcoded hardware spec is found in a LEGO cell.
+#   2026-05-29 (no-constant-specs reconciliation): H100 L2 / register file /
+#   shared memory / SM count / HBM access latency + energy.
+HARDCODED_HARDWARE = re.compile(
+    r"\bl2_cache(?:_mb)?\s*=\s*50\b|"
+    r"\bregister_total_mb\s*=\s*33\b|"
+    r"\bsm_count\s*=\s*132\b|"
+    r"\b(?:reg(?:ister)?_(?:file_)?per_sm)(?:_kib|_kb)?\s*=\s*256\b|"
+    r"\b(?:shared_mem(?:ory)?)(?:_per_sm)?(?:_kib|_kb)?\s*=\s*228\b|"
+    r"\bhbm_latency(?:_ns)?\s*=\s*300\b|"
+    r"\bhbm_(?:access_)?energy(?:_pj)?\s*=\s*640\b",
+    re.I,
+)
+
 # Hardcoded literature/infrastructure scalars that belong in registries.
 HARDCODED_REGISTRY = re.compile(
     r"\b(?:scaling_factor|cf_scaling_factor|training_flops_per_token_param)\s*=\s*6\b|"
@@ -244,6 +262,11 @@ def check_file(path: Path) -> list[str]:
                 issues.append(
                     f"cell {idx}: forbidden constants.{sym} — use registry path"
                 )
+        if HARDCODED_HARDWARE.search(block):
+            issues.append(
+                f"cell {idx}: hardcoded hardware spec literal — use Hardware.Cloud.* "
+                f"(registry is the single source of truth; keeps prose pinned to it)"
+            )
         if HARDCODED_GRID.search(block):
             issues.append(
                 f"cell {idx}: hardcoded grid carbon intensity — use Infrastructure.Grids.*"
