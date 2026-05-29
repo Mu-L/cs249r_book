@@ -3437,9 +3437,9 @@ To optimize data movement, we must understand the physical topology of the compu
 # │ Exports: InterconnectHierarchy.nvlink_a100,
 # │          InterconnectHierarchy.nvlink_h100, InterconnectHierarchy.ib_hdr,
 # │          InterconnectHierarchy.ib_ndr, InterconnectHierarchy.ib_hdr_str,
-# │          InterconnectHierarchy.ib_ndr_str
+# │          InterconnectHierarchy.ib_ndr_str, InterconnectHierarchy.taper_eq_math
 # └─────────────────────────────────────────────────────────────────────────────
-from mlsysim.fmt import fmt
+from mlsysim.fmt import fmt, MarkdownStr
 
 # ┌── LEGO ───────────────────────────────────────────────
 class InterconnectHierarchy:
@@ -3475,6 +3475,17 @@ class InterconnectHierarchy:
     nvlink_h100_str = fmt(nvlink_h100, precision=0, commas=False, suffix=" GB/s")
     ib_hdr_str = fmt(ib_hdr_gbps, precision=0, commas=False, suffix=" Gb/s")
     ib_ndr_str = fmt(ib_ndr_gbps, precision=0, commas=False, suffix=" Gb/s")
+
+    # Bandwidth-taper equation — one consistent chip (H100-class) so HBM, NVLink,
+    # PCIe (Gen5), and the NDR network link cannot mix incompatible generations.
+    taper_hbm_gbs = Hardware.Cloud.H100.memory.bandwidth.m_as(GB/second)
+    taper_nvlink_gbs = nvlink_h100
+    taper_pcie_gbs = Hardware.Cloud.H100.interconnect.bandwidth.m_as(GB/second)
+    taper_net_gbs = Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second)
+    check(taper_hbm_gbs > taper_nvlink_gbs > taper_pcie_gbs > taper_net_gbs,
+          "bandwidth taper HBM > NVLink > PCIe > Network must hold")
+    taper_eq_math = MarkdownStr(
+        rf"$$\begin{{aligned}} \text{{HBM ({taper_hbm_gbs:.0f} GB/s)}} &\gg \text{{NVLink ({taper_nvlink_gbs:.0f} GB/s)}} \\ &\gg \text{{PCIe ({taper_pcie_gbs:.0f} GB/s)}} \gg \text{{Network ({taper_net_gbs:.0f} GB/s)}} \end{{aligned}}$$")
 ```
 
 1. **Device-Device Interconnect (NVLink/Infinity Fabric)**[^fn-nvlink-bandwidth]\index{NVLink!GPU interconnect}\index{GPU Interconnect!switching fabric}\index{Infinity Fabric!AMD interconnect}: Modern multi-GPU nodes use specialized high-speed bridges like NVLink to connect accelerators directly, bypassing the host CPU. Bandwidth ranges from `{python} InterconnectHierarchy.nvlink_a100_str` to `{python} InterconnectHierarchy.nvlink_h100_str` per GPU. The primary use case is gradient synchronization (AllReduce)\index{AllReduce!gradient synchronization}[^fn-allreduce-gradient-sync] during distributed training. This bandwidth is critical for scaling; without it, multi-GPU training often scales poorly.
@@ -3490,12 +3501,8 @@ class InterconnectHierarchy:
 [^fn-infiniband-rdma]: **InfiniBand**: Its key feature for multi-node scaling is RDMA (Remote Direct Memory Access), which allows a GPU in one node to access memory in another directly, bypassing the host CPU. Without RDMA, the interconnect becomes limited by protocol latency, as the CPU must manage every gradient synchronization packet. By reducing this overhead from milliseconds (TCP/IP) to microseconds, RDMA ensures that scaling is constrained by raw physical bandwidth, not protocol processing. \index{InfiniBand!RDMA for ML training}
 
 These three levels produce a characteristic bandwidth taper:
-$$
-\begin{aligned}
-\text{HBM (2000 GB/s)} &\gg \text{NVLink (900 GB/s)} \\
-&\gg \text{PCIe (64 GB/s)} \gg \text{Network (50 GB/s)}
-\end{aligned}
-$$
+
+`{python} InterconnectHierarchy.taper_eq_math`
 
 System efficiency depends on keeping data as high up this hierarchy as possible. Once data drops to PCIe or Network speeds, it encounters a 30--100$\times$ slowdown.
 
