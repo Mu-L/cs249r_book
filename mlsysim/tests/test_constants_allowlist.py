@@ -50,7 +50,7 @@ MIGRATION_PENDING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(ML_WORKFLOW_|SYNTHETIC_|LOGIC_WALL_)"),
 )
 # Lower this with each migration phase; it must never increase.
-BACKLOG_CEILING = 11  # P6e moved device/battery figures -> Scenarios.{MobilePower,PhoneBattery}; target 0
+BACKLOG_CEILING = 0  # P6f moved misc/workflow tail (IMAGE_DIM->Datasets, MOBILENET->Models, pedagogical scalars inlined); backlog EMPTY — fold into FORBIDDEN at P8
 
 
 def _defined_names(source: str) -> set[str]:

@@ -1,8 +1,9 @@
 from ..core.units import count
-from ..core.constants import IMAGE_CHANNELS_RGB, IMAGE_DIM_RESNET
+from ..core.constants import IMAGE_CHANNELS_RGB
 from ..core.registry import Registry
 from .types import DatasetProfile
 
+_IMAGENET_IMAGE_DIM = 224  # ImageNet-1k native training resolution (224x224)
 _IMAGENET_TRAINING = 1_281_167 * count
 _IMAGENET_TEST = 50_000 * count
 _IMAGENET_CLASSES = 1000
@@ -17,8 +18,8 @@ class Datasets(Registry):
         training_examples=_IMAGENET_TRAINING,
         test_examples=_IMAGENET_TEST,
         num_classes=_IMAGENET_CLASSES,
-        image_width=IMAGE_DIM_RESNET,
-        image_height=IMAGE_DIM_RESNET,
+        image_width=_IMAGENET_IMAGE_DIM,
+        image_height=_IMAGENET_IMAGE_DIM,
         image_channels=IMAGE_CHANNELS_RGB,
     )
     CIFAR10 = DatasetProfile(

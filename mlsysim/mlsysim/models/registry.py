@@ -183,6 +183,7 @@ class VisionModels(Registry):
         architecture="CNN",
         parameters=3.5e6 * param,
         inference_flops=0.3e9 * ureg.flop,
+        inference_energy=0.1 * ureg.millijoule,  # per-inference on-device energy (pedagogical)
         layers=54,
         metadata=Metadata(provenance=pc.SANDLER_MOBILENETV2),
     )

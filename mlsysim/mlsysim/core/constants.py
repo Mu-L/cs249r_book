@@ -31,7 +31,7 @@ from .units import *  # noqa: F401,F403 — re-export full unit registry
 # Mobile NPU peak power -> Scenarios.MobilePower.MobileNpuPeak
 
 # Standard dimensions
-IMAGE_DIM_RESNET = 224  # TODO(taxonomy P7): -> Datasets.ImageNet.image_width
+# IMAGE_DIM_RESNET -> Datasets.ImageNet.image_width
 # IMAGE_CHANNELS_RGB, COLOR_DEPTH_8BIT -> core/units.py (encoding facts)
 
 # --- Network & Interconnect --- (network is a composition fact -> Systems)
@@ -43,7 +43,7 @@ IMAGE_DIM_RESNET = 224  # TODO(taxonomy P7): -> Datasets.ImageNet.image_width
 # DRAM access / per-byte    -> Hardware.Tech.Memory.HBM3.energy_per_access / energy_per_byte
 # SRAM L1/L2, register file  -> Hardware.Tech.Memory.{L1,L2,Register}.energy_per_access
 # Architecture-class efficiency + per-byte movement hierarchy -> Literature.Energy.*
-ENERGY_MOBILENET_INF_MJ = 0.1 * ureg.millijoule  # TODO(taxonomy): MobileNet inference energy -> Models/Scenarios
+# MobileNet inference energy -> Models.Vision.MobileNetV2.inference_energy
 
 # Network transfer energy -> Systems.NetworkEnergy.{Per5gMb, Per1Kb}
 
@@ -62,26 +62,16 @@ SPEED_OF_LIGHT_FIBER_KM_S = 200000 * ureg.kilometer / second
 # Reference model/dataset dimensions
 # TRANSFORMER FLOP ratios -> Literature.Chinchilla.{ComputeConstant(6PD), DecodeConstant(2P)}
 # TRANSFORMER_*_EXAMPLE dims -> inlined in the one worked example that used them (hw_acceleration)
-SYSTOLIC_ARRAY_DIM = 128
 # SIMD_REGISTER_BITS, FP32_BITS, INT8_BITS -> core/units.py (bit widths)
-# Synthetic Data Constraints
-SYNTHETIC_PROVENANCE_OVERHEAD = 0.4
-SYNTHETIC_VERIFICATION_PASSES = 3
-
-# Inference Scaling
-LOGIC_WALL_REASONING_STEPS_EXAMPLE = 128
-
-# ML workflow lifecycle stages
-ML_WORKFLOW_STAGE_PROBLEM_DEFINITION = 1
-ML_WORKFLOW_STAGE_DEPLOYMENT = 5
-ML_WORKFLOW_STAGE_MONITORING = 6
-ML_WORKFLOW_CONSTRAINT_COST_BASE = 2
-
+# Single-chapter pedagogical example scalars are inlined in their LEGO cells (no
+# canonical registry home, per the architecture's pedagogical-input carve-out):
+#   SYSTOLIC_ARRAY_DIM -> hw_acceleration; SYNTHETIC_* -> data_storage;
+#   LOGIC_WALL_REASONING_STEPS_EXAMPLE -> inference; ML_WORKFLOW_STAGE_*/COST_BASE -> ml_workflow
 # GOOGLE_SEARCHES_PER_DAY, GMAIL_EMAILS_PER_DAY -> Scenarios.Workloads
 
 # --- Storage (I/O Bandwidth) ---
 # NVME_*/SYSTEM_MEMORY_BW/HOST_DRAM_BW -> Hardware.Tech.Storage (tech-class bandwidth)
-LOCAL_NVME_DRIVES_PER_NODE_REF = 4 * count  # TODO(taxonomy): node config -> Systems
+# LOCAL_NVME_DRIVES_PER_NODE_REF -> inlined node-config in data_storage (pedagogical)
 
 # --- Case Studies --- (WAYMO_*, ANOMALY_MODEL_* -> Scenarios.Workloads / Scenarios.AnomalyModel)
 
