@@ -101,11 +101,8 @@ ENERGY_BOILING_WATER_J = 100000 * joule
 # --- Video --- (VIDEO_* encoding/format facts -> core/units.py)
 
 # Reference model/dataset dimensions
-TRANSFORMER_DECODE_FLOPS_PER_PARAM = 2
-TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN = 6
-TRANSFORMER_HIDDEN_DIM_EXAMPLE = 768
-TRANSFORMER_SEQ_LEN_EXAMPLE = 512
-TRANSFORMER_HEADS_EXAMPLE = 12
+# TRANSFORMER FLOP ratios -> Literature.Chinchilla.{ComputeConstant(6PD), DecodeConstant(2P)}
+# TRANSFORMER_*_EXAMPLE dims -> inlined in the one worked example that used them (hw_acceleration)
 SYSTOLIC_ARRAY_DIM = 128
 # SIMD_REGISTER_BITS, FP32_BITS, INT8_BITS -> core/units.py (bit widths)
 # Synthetic Data Constraints

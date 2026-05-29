@@ -28,7 +28,8 @@ class Overheads(Registry):
 
 class Chinchilla(Registry):
     TokensPerParam = sourced(20, pc.CHINCHILLA, name="Compute-Optimal Token Ratio", description="Optimal training tokens per parameter (D ≈ 20P).")
-    ComputeConstant = sourced(6, pc.CHINCHILLA, name="Training Compute Constant (C ≈ 6PD)", description="Training FLOPs multiplier (6PD).")
+    ComputeConstant = sourced(6, pc.CHINCHILLA, name="Training Compute Constant (C ≈ 6PD)", description="Training FLOPs multiplier (6PD): 2 forward + 4 backward FLOPs per parameter per token.")
+    DecodeConstant = sourced(2, pc.CHINCHILLA, name="Decode Compute Constant (2P)", description="Autoregressive decode FLOPs multiplier (2P): 2 forward FLOPs per parameter per token.")
 
 
 class Communication(Registry):
