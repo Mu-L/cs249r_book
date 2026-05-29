@@ -102,7 +102,7 @@ class CloudHardware(Registry):
     B200 = HardwareNode(
         name="NVIDIA B200",
         release_year=2024,
-        compute=ComputeCore(peak_flops=4500 * TFLOPs / second, precision_flops={"fp8": 9000 * TFLOPs / second, "fp4": 18000 * TFLOPs / second, "int4": 18000 * TOPS}),
+        compute=ComputeCore(peak_flops=2250 * TFLOPs / second, precision_flops={"fp8": 4500 * TFLOPs / second, "fp4": 9000 * TFLOPs / second, "int4": 9000 * TOPS}),
         memory=MemoryHierarchy(capacity=192 * GiB, bandwidth=8 * TB / second),
         interconnect=IOInterconnect(name="PCIe Gen5 x16", bandwidth=64 * GB / second),
         nvlink=IOInterconnect(name="NVLink 5.0", bandwidth=1800 * GB / second, latency=LATENCY_NVLINK),
@@ -113,7 +113,7 @@ class CloudHardware(Registry):
             "provenance": Provenance(
                 id="prov:nvidia-b200-datasheet",
                 kind=ProvenanceKind.DATASHEET,
-                ref="NVIDIA Blackwell product documentation",
+                ref="NVIDIA Blackwell product documentation (Dense numbers)",
                 url="https://www.nvidia.com/en-us/data-center/blackwell/",
                 verified="2025-03-06",
             ),
@@ -124,12 +124,12 @@ class CloudHardware(Registry):
         name="NVIDIA GB200 NVL72",
         release_year=2024,
         compute=ComputeCore(
-            peak_flops=324 * PFLOPs / second,
+            peak_flops=162 * PFLOPs / second,
             precision_flops={
-                "fp16": 324 * PFLOPs / second,
-                "bf16": 324 * PFLOPs / second,
-                "fp8": 648 * PFLOPs / second,
-                "fp4": 1440 * PFLOPs / second,
+                "fp16": 162 * PFLOPs / second,
+                "bf16": 162 * PFLOPs / second,
+                "fp8": 324 * PFLOPs / second,
+                "fp4": 648 * PFLOPs / second,
             },
         ),
         memory=MemoryHierarchy(capacity=13.8 * TB, bandwidth=576 * TB / second),

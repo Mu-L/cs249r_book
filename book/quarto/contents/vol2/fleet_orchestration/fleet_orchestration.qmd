@@ -193,12 +193,12 @@ class GangSchedulingDeadlock:
 
 **Math**:
 
-1. **Team A Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = **0 percent**.
-2. **Team B Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = **0 percent**.
+1. **Team A Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = 0 percent.
+2. **Team B Status**: Holds `{python} GangSchedulingDeadlock.gs_partial_gpus_str`, Needs `{python} GangSchedulingDeadlock.gs_gpus_per_job_str`. Progress = 0 percent.
 3. **Cluster Status**: `{python} GangSchedulingDeadlock.gs_n_gpus_str` allocated, 0 samples processed.
 4. **Waste**: `{python} GangSchedulingDeadlock.gs_waste_m_str` dollars per hour in idle electricity and capital.
 
-**Systems insight**: This is a **Circular Dependency**\index{Deadlock!circular dependency}: Team A is waiting for Team B's GPUs, and Team B is waiting for Team A's. Without **Gang Scheduling** (all-or-nothing allocation), cluster efficiency drops to zero. In a large fleet, even a 5-minute deadlock can cost thousands of dollars. Schedulers like Kubernetes (via Coscheduling plugins) and Slurm enforce atomicity to ensure that if a job cannot run in full, it does not run at all.
+**Systems insight**: This is a circular dependency\index{Deadlock!circular dependency}: Team A is waiting for Team B's GPUs, and Team B is waiting for Team A's. Without gang scheduling (all-or-nothing allocation), cluster efficiency drops to zero. In a large fleet, even a 5-minute deadlock can cost thousands of dollars. Schedulers like Kubernetes (via Coscheduling plugins) and Slurm enforce atomicity to ensure that if a job cannot run in full, it does not run at all.
 
 :::
 
@@ -340,7 +340,7 @@ Consider a 64-node cluster with 8 GPUs per node, totaling `{python} FleetFragmen
 
 ML workloads make bin packing multi-dimensional in ways that traditional scheduling rarely encounters. Each job requires GPUs together with CPU cores for data preprocessing, host memory for data loading and augmentation pipelines, local SSD storage for dataset caching, and network bandwidth for gradient synchronization. A job requesting 4 GPUs, 32 CPU cores, and 256 GB of RAM may not fit on a node that has 4 free GPUs but only 16 free CPU cores because other jobs have consumed the host CPU for preprocessing. The scheduler must simultaneously satisfy all resource dimensions, and the job fits only if every dimension has sufficient capacity on the selected node. This multi-dimensional constraint dramatically reduces the solution space compared to single-dimensional packing, because a bottleneck in any single resource dimension can strand capacity in all others.
 
-Locality constraints further restrict placement beyond simple resource availability. A training job using tensor parallelism requires GPUs connected via NVLink within the same node, since cross-node communication over InfiniBand is an order of magnitude slower (`{python} FleetFragmentation.nvlink_h100_str` intra-node vs. `{python} FleetFragmentation.ib_ndr_gbs_str` inter-node). A job requesting "4 GPUs with NVLink connectivity" cannot use 2 GPUs from node A and 2 from node B, even if all 4 GPUs are individually available and the total capacity is sufficient. These topology constraints transform a packing problem into a placement problem where *which* specific resources matter as much as *how many* resources are available. The placement problem is strictly harder than the packing problem because it adds spatial constraints to the existing capacity constraints.
+Locality constraints further restrict placement beyond simple resource availability. A training job using tensor parallelism requires GPUs connected via NVLink within the same node, since cross-node communication over InfiniBand is an order of magnitude slower (`{python} FleetFragmentation.nvlink_h100_str` intra-node vs. `{python} FleetFragmentation.ib_ndr_gbs_str` inter-node). A job requesting "4 GPUs with NVLink connectivity" cannot use 2 GPUs from node A and 2 from node B, even if all 4 GPUs are individually available and the total capacity is sufficient. These topology constraints transform a packing problem into a placement problem where which specific resources matter as much as how many resources are available. The placement problem is strictly harder than the packing problem because it adds spatial constraints to the existing capacity constraints.
 
 Production schedulers address fragmentation through several complementary strategies, each targeting a different aspect of the problem.
 
@@ -755,7 +755,7 @@ Before the chapter turns to topology-aware scheduling, review the core trade-off
 
 :::
 
-The scheduling paradigms discussed earlier provide the infrastructure for resource allocation, but they treat GPUs as *interchangeable units* within a partition. The next section examines a critical refinement: how the *physical location* of allocated GPUs within the cluster's network topology affects training performance, and how topology-aware scheduling algorithms exploit this structure.
+The scheduling paradigms discussed earlier provide the infrastructure for resource allocation, but they treat GPUs as interchangeable units within a partition. The next section examines a critical refinement: how the physical location of allocated GPUs within the cluster's network topology affects training performance, and how topology-aware scheduling algorithms exploit this structure.
 
 ## Topology-Aware Scheduling {#sec-fleet-orchestration-topology-aware}
 
@@ -930,11 +930,11 @@ class TopologyPlacement:
 
 The physical location of GPUs on the network switch fabric dramatically impacts collective performance. Consider an AllReduce operation across 64 GPUs: <!-- lego-ok: latencies are input assumptions -->
 
-*   **Random placement**: Spread across many racks $\rightarrow$ Traffic traverses core switches $\rightarrow$ **120 ms** latency.
-*   **Rack-aware**: Confined to a single rack (Top-of-Rack switch) $\rightarrow$ **85 ms**.
-*   **Rail-optimized**: Aligned to specialized "rails" (dedicated standard IB switches) $\rightarrow$ **40 ms**.
-*   **Topology-optimal**: All GPUs on the same leaf switch $\rightarrow$ **25 ms**.
-Proper scheduling yields a **`{python} TopologyPlacement.speedup_str`$\times$ speedup** purely by respecting the network topology, with zero changes to the model code.
+*   **Random placement**: Spread across many racks $\rightarrow$ Traffic traverses core switches $\rightarrow$ 120 ms latency.
+*   **Rack-aware**: Confined to a single rack (Top-of-Rack switch) $\rightarrow$ 85 ms.
+*   **Rail-optimized**: Aligned to specialized "rails" (dedicated standard IB switches) $\rightarrow$ 40 ms.
+*   **Topology-optimal**: All GPUs on the same leaf switch $\rightarrow$ 25 ms.
+Proper scheduling yields a `{python} TopologyPlacement.speedup_str`$\times$ speedup purely by respecting the network topology, with zero changes to the model code.
 
 :::
 
@@ -992,49 +992,25 @@ Migration is not free; it requires a coordinated checkpoint, a job kill, a resch
 
 The topology-aware use of **taints and tolerations**[^fn-taints-tolerations] discussed here improves performance for allocated jobs by matching logical communication patterns to physical network structure. The complementary problem is how jobs adapt when the resources available to them change dynamically. Rather than treating resource allocation as fixed for a job's lifetime, elastic training allows jobs to grow, shrink, and recover without full restarts.
 
-## Elastic Training {#sec-fleet-orchestration-elastic-training}
+## Elastic Scheduling {#sec-fleet-orchestration-elastic-training}
 
-In that adaptive view, resource allocation becomes a contract that can change during execution.
+@Sec-fault-tolerance-reliability-reliability-elastic-training-4f87 develops the recovery mechanics of elastic training: how a distributed job adjusts its worker count, recalibrates batch size and learning rate, and reconstructs its communication group after a failure. Those mechanisms solve a reliability problem. From the scheduler's perspective, the same capability solves a fundamentally different problem: resource allocation under fluctuating demand.
 
-::: {#dfn-fleet-orchestration-elastic-training .callout-definition title="Elastic training"}
+When cluster demand fluctuates, rigid allocation creates two categories of waste. During off-peak hours, a job running on 256 GPUs cannot absorb idle resources to speed up training. During peak demand, the same job cannot release excess resources to accommodate higher-priority work without being fully preempted. The scheduler's only options are "let it keep all its resources" or "kill it entirely," with nothing in between.
 
-***Elastic Training***\index{Training!elastic, definition} is the capability of a distributed training job to dynamically adjust its worker count during execution without requiring a full restart.
+Elastic scheduling eliminates this binary choice. A training job might start with 128 GPUs (the minimum needed for reasonable throughput), scale up to 256 when resources become available, and scale back to 192 when higher-priority work arrives, all while maintaining continuous training progress. This flexibility transforms the scheduler's action space from a *binary* {continue, preempt} to a *continuous* spectrum of resource allocation levels.
 
-1.  **Significance (quantitative)**: It maximizes the system duty cycle by allowing training to continue through node failures and by absorbing idle capacity in the cluster. It requires Learning Rate Recalibration and gradient accumulation adjustment to maintain mathematical consistency as the global batch size changes.
-2.  **Distinction (durable)**: Unlike Standard Fault Tolerance (which relies on checkpoint-restart), Elastic Training is Always-Live\index{Always-Live}: the optimization loop never stops, it only changes its parallel width.
-3.  **Common pitfall**: A frequent misconception is that elasticity is "automatic." In reality, it is a Distributed Coordination Problem\index{Distributed Coordination Problem}: the training framework, the data loader, and the orchestrator must all synchronize their state to ensure that no data samples are lost or double-counted during worker scaling.
+### The scheduler-framework contract {#sec-fleet-orchestration-elastic-contract}
 
-:::
+Elastic scheduling requires a well-defined contract between the scheduler and the training framework. The scheduler guarantees that resource changes are communicated through defined signals, with sufficient advance notice for graceful adaptation. The framework guarantees that it can handle resource changes without corrupting model state, using the batch size adjustment, learning rate recalibration, and communication group reconstruction mechanisms developed in @sec-fault-tolerance-reliability-reliability-elastic-training-mechanisms-49b1.
 
-Consider what happens when a top-of-rack switch fails, taking out 8 GPUs from a 1,024-GPU training run. Under traditional rigid scheduling, the entire job crashes and must wait for 8 new GPUs to become available. Elastic training shatters this rigid contract, allowing the model to dynamically downscale to 1,016 GPUs and continue learning without interruption.
+From the scheduler's side, the contract has three parameters. First, the **elastic range** $[N_{\text{min}}, N_{\text{max}}]$ specifies the worker counts between which the job can operate. Second, the **transition cost** (typically 10 to 60 seconds for a rendezvous cycle) determines how frequently the scheduler can resize without the overhead negating the throughput gain. Third, the **scaling efficiency curve** tells the scheduler how much additional throughput each added worker delivers, which determines whether assigning idle GPUs to this job is more productive than holding them for a pending gang-scheduled job.
 
-In the traditional non-elastic case, when a node fails, the entire job must stop, synchronize all remaining workers, reload the most recent checkpoint, and restart with a new allocation that replaces the failed node. The restart overhead (checkpoint loading, optimizer state reconstruction, data pipeline warmup) wastes minutes to hours depending on model size and checkpoint storage bandwidth. During this time, all the surviving workers sit idle, waiting for the new allocation to be provisioned and the new worker to catch up. For a 1,024-GPU job where a single node (8 GPUs) fails, the remaining 1,016 GPUs are entirely unproductive during recovery.
+The scheduler must also account for the constraint that elastic scaling changes the effective batch size ($B_{\text{effective}} = B_{\text{per-worker}} \times W$). The two strategies for handling this (constant batch size vs. adaptive learning rate) impose different limits on how aggressively the scheduler can resize: constant batch size preserves convergence but may violate per-GPU memory limits at low worker counts, while adaptive learning rate simplifies worker management but introduces convergence risk during rapid scaling.
 
-When cluster demand fluctuates, rigid allocation creates a second category of waste. During off-peak hours, a job running on 256 GPUs cannot absorb idle resources to speed up training. During peak demand, the same job cannot release excess resources to accommodate higher-priority work without being fully preempted. The scheduler's only options are "let it keep all its resources" or "kill it entirely," with nothing in between.
+The scheduler interface to frameworks like TorchElastic exposes these parameters directly, as @lst-fleet-orchestration-torchelastic illustrates:
 
-Elastic training eliminates this binary choice by enabling jobs to dynamically adjust their worker count without full restart. A training job might start with 128 GPUs (the minimum needed for reasonable throughput), scale up to 256 when resources become available, and scale back to 192 when higher-priority work arrives, all while maintaining continuous training progress. This flexibility transforms the scheduler's action space from a *binary* {continue, preempt} to a *continuous* spectrum of resource allocation levels.
-
-### The elastic training contract {#sec-fleet-orchestration-elastic-contract}
-
-Elastic training requires a well-defined contract between the scheduler and the training framework, specifying what each side guarantees and what each side must handle. The scheduler guarantees that resource changes are communicated through defined signals, with sufficient advance notice for graceful adaptation. The framework guarantees that it can handle resource changes without corrupting model state. The framework must implement three fundamental operations.
-
-Scale-up (adding workers) is the simpler direction but still requires coordination across the entire training group. The framework must redistribute the dataset across the new worker count (so no data shard is orphaned or duplicated), adjust the effective batch size or per-worker batch size (depending on the scaling strategy), initialize new workers with current model parameters (requiring a parameter broadcast from existing workers), and join new workers into the communication group (reconstructing the AllReduce ring or tree). The initialization step is the most expensive: transferring the full model state to a new worker over InfiniBand takes seconds for a 70B parameter model, during which the existing workers must either pause or buffer gradient updates.
-
-Scale-down (removing workers) is conceptually the reverse but operationally more challenging because it must handle both voluntary departures (the scheduler reclaiming resources) and involuntary departures (worker failure). The framework must redistribute work from departing workers to remaining ones, adjust batch size to maintain convergence properties, cleanly remove workers from the communication group, and optionally save a checkpoint to simplify recovery if scale-down was triggered by preemption. The critical requirement is that the communication group reconstruction is atomic with respect to gradient updates: no gradient update should be in flight during the transition, because a partially completed AllReduce with a changing participant set would produce incorrect gradients.
-
-Worker replacement (substituting failed workers) combines scale-down and scale-up atomically, removing the failed worker and adding a replacement without changing the total worker count. This operation is the most common in practice and is the foundation of fault-tolerant training, connecting directly to the elastic recovery concepts introduced in @sec-fault-tolerance-reliability. Worker replacement must handle the additional complexity that the failed worker may not have completed its most recent communication, requiring the remaining workers to detect the incomplete operation (through timeouts) and reinitialize the communication group before adding the replacement.
-
-The mathematical implications of elastic scaling interact with the optimization dynamics of stochastic gradient descent in ways that affect convergence. The effective batch size changes with worker count according to $B_{\text{effective}} = B_{\text{per-worker}} \times W$, where $W$ is the active worker count. Changing $W$ mid-training alters the gradient noise level, which can affect convergence speed and final model quality. Two strategies handle this tension, each with distinct trade-offs.
-
-The first approach, constant batch size scaling, adjusts $B_{\text{per-worker}}$ inversely with $W$ to maintain $B_{\text{effective}}$ at its original value. When workers are added, each worker processes fewer samples per step; when workers are removed, each processes more. This approach preserves the optimization dynamics exactly (the gradient noise level is unchanged), but changes per-worker compute and memory requirements. If $B_{\text{per-worker}}$ becomes too small after aggressive scale-up, per-GPU utilization drops because the batch cannot saturate the GPU's compute units. If $B_{\text{per-worker}}$ becomes too large after scale-down, it may exceed per-GPU memory capacity.
-
-The alternative, adaptive batch size scaling, keeps $B_{\text{per-worker}}$ constant and adjusts the learning rate using scaling rules like the linear scaling rule of @goyal2017accurate, which increases the learning rate proportionally with batch size. This approach accepts changed optimization dynamics (larger batch sizes produce lower-variance gradient estimates, which may require different learning rate schedules) in exchange for simpler worker management (each worker's compute and memory requirements remain constant regardless of group size). For many practical workloads, adaptive batch size with linear learning rate scaling produces equivalent convergence outcomes, but the interaction between batch size scaling and other training hyperparameters (warmup schedule, weight decay, momentum) requires careful tuning.
-
-### Framework support {#sec-fleet-orchestration-elastic-frameworks}
-
-TorchElastic\index{TorchElastic!launch configuration} (torchelastic), integrated into PyTorch's `torch.distributed.elastic` module, provides the runtime infrastructure for elastic training. Jobs specify minimum and maximum worker counts, and TorchElastic manages worker lifecycle, as @lst-fleet-orchestration-torchelastic illustrates:
-
-::: {#lst-fleet-orchestration-torchelastic lst-cap="**TorchElastic Launch Configuration**: Elastic training specification allowing a job to run with between 32 and 128 GPUs. The rendezvous backend coordinates worker group membership changes, while the framework handles gradient synchronization group reconstruction when workers join or leave."}
+::: {#lst-fleet-orchestration-torchelastic lst-cap="**TorchElastic Launch Configuration**: The `--nnodes=4:16` range tells the scheduler that this job can operate with 32 to 128 GPUs. The scheduler places the job at any point within this range based on current cluster load and resizes it as demand changes."}
 
 ```{.bash}
 # Launch elastic training with min 32 to max 128 workers
@@ -1049,7 +1025,7 @@ torchrun \
 
 :::
 
-The `--nnodes=4:16` specification declares that the job can operate with anywhere from 4 to 16 nodes (32 to 128 GPUs with 8 GPUs per node). When a node fails, TorchElastic triggers a **rendezvous**[^fn-rendezvous-elastic-fleet] where surviving workers re-form the communication group and continue training. When additional nodes become available, new workers join through the same rendezvous mechanism.
+The `--nnodes=4:16` specification declares that the job can operate with anywhere from 4 to 16 nodes (32 to 128 GPUs with 8 GPUs per node). This range is the scheduler's action space: it can place the job at any point within this range based on current cluster load, and resize it as demand changes.
 
 ::: {#psp-fleet-orchestration-elastic-vs-rigid-scheduling .callout-perspective title="Elastic vs. rigid scheduling"}
 
@@ -1075,21 +1051,11 @@ The elastic job completes in approximately 26.5 hours (8 hours of scaled-up trai
 
 :::
 
-[^fn-rendezvous-elastic-fleet]: **Rendezvous**: From French *rendez-vous* ("present yourselves"), a coordination barrier where all participants must arrive before any can proceed. In TorchElastic, the rendezvous protocol must handle concurrent worker arrivals and departures without deadlock, typically taking 10 to 60 seconds depending on group size. When 1,000 workers simultaneously attempt rendezvous after a switch failure, this "thundering herd" can overwhelm the coordination service (etcd), turning a single hardware fault into a cascading scheduling failure. \index{Rendezvous!elastic training}
+### Scheduling constraints on elastic jobs {#sec-fleet-orchestration-elastic-limitations}
 
-Horovod's original design [@sergeev2018horovod] provides the ring AllReduce foundation for Horovod-based training. Elastic variants build on that foundation: when workers change, the training job must pause briefly while the communication topology is rebuilt and workers synchronize their state.
+The scheduler cannot treat every job as elastic. The most significant constraint is **incompatibility with model parallelism**. Elastic scaling is fundamentally a data-parallel operation: the scheduler adds or removes replicas of the model, changing the global batch size but keeping the model architecture constant. For a 175B-parameter job that relies on 8-way tensor parallelism within each node, elasticity operates strictly at the *node* level. The job can scale from 128 nodes (1,024 GPUs) to 120 nodes (960 GPUs), changing the data-parallel degree. It *cannot* elastically remove a single GPU from a tensor-parallel group; doing so would require re-sharding the model weights, equivalent to a full checkpoint-and-restart cycle. Pipeline parallelism permits limited elasticity in principle, but adding or removing stages forces a recalculation of the pipeline schedule that often negates the benefit.
 
-The key architectural difference between TorchElastic and Elastic Horovod lies in their coordination models. TorchElastic uses a centralized rendezvous mechanism (backed by etcd or the C10d backend) where all workers agree on group membership through a coordinator. Elastic Horovod uses a driver process that manages the ring topology externally and notifies workers of changes. The centralized rendezvous approach is more robust to simultaneous failures (multiple workers failing at the same time) but introduces a single point of coordination that must itself be fault-tolerant. The driver-based approach is simpler to implement but may produce inconsistent states if the driver and workers disagree about group membership during rapid changes.
-
-Both frameworks share a common limitation: the elastic transition period (the time between detecting a change and completing the group reconfiguration) is a period of reduced or zero training throughput. For TorchElastic, this transition typically takes 10 to 60 seconds depending on the number of workers and the rendezvous backend's performance. For Elastic Horovod, the transition is faster (5 to 30 seconds) but requires the driver process to be reachable. Minimizing transition time is important because frequent transitions (for example, in a highly volatile spot instance environment) can accumulate enough overhead to negate the cost savings from elastic scheduling.
-
-### Elastic training limitations and failure modes {#sec-fleet-orchestration-elastic-limitations}
-
-Elastic training offers theoretical resilience, but the physics of distributed deep learning imposes hard constraints on its practical utility. The most significant limitation is **incompatibility with model parallelism**. Elastic scaling is fundamentally a data-parallel operation: we add or remove replicas of the model, changing the global batch size but keeping the model architecture constant. For our 175B-parameter example, which relies on 8-way tensor parallelism within each node, elasticity operates strictly at the *node* level. The job can scale from 128 nodes (1,024 GPUs) to 120 nodes (960 GPUs), changing the data-parallel degree. However, it *cannot* elastically remove a *single GPU* from a tensor-parallel group; doing so would require re-sharding the 350 GB of model weights across the remaining 7 GPUs, a process equivalent to a full checkpoint-and-restart cycle. Similarly, pipeline parallelism allows for limited elasticity. Adding or removing pipeline stages is possible in principle, but it forces a complete recalculation of the pipeline schedule to balance computation, often negating the benefits of dynamic scaling.
-
-At scale, the mechanics of recovery introduce their own failure modes, most notably the **communication group reconstruction storm**\index{Communication Group Reconstruction Storm}. When a top-of-rack switch fails, causing 64 GPUs to vanish simultaneously, the remaining 960 workers do not immediately detect the loss. Instead, they hang on collective operations until a timeout expires (typically 30 to 60 seconds). Once the timeout triggers, every surviving worker simultaneously attempts to reconnect to the coordination service (for example, etcd or ZooKeeper) to establish a new rendezvous. This thundering herd of nearly 1,000 concurrent requests can overwhelm the key-value store, causing the rendezvous itself to time out and triggering a cascading failure loop where the job never successfully restabilizes. Production systems mitigate this through exponential backoff with jitter on rendezvous retries and by deploying high-availability coordination services with sufficient capacity to absorb burst traffic.
-
-The mathematical integrity of the training process is also compromised by **gradient staleness during transitions**\index{Gradient Staleness}. When new workers join the fleet to replace failed ones, they receive the latest model parameters but often miss the gradient updates that were in-flight during the transition window. This results in a temporary inconsistency in the global optimizer state, manifesting as a sharp spike in the training loss curve. For a 175B model training on 1,024 GPUs, a recovery event typically incurs 30 to 90 seconds of rendezvous latency and 15 to 45 seconds of parameter broadcast overhead (saturating InfiniBand links). The resulting loss spike from stale gradients usually self-corrects within 50 to 200 iterations, but if this occurs during a critical phase such as a learning rate warmup or decay, it can permanently destabilize convergence. Careful scheduling of elastic transitions to avoid sensitive training phases, combined with gradient clipping that limits the impact of stale updates, reduces this risk in practice.
+The transition cost also constrains the scheduler's resize frequency. Each scaling event incurs 10 to 60 seconds of reduced throughput while the framework reconstructs its communication group. A scheduler that resizes a job every time a single node becomes available accumulates enough transition overhead to yield net negative progress compared to a stable allocation. The scheduler must amortize transition cost over the subsequent run duration, which means small resize increments are only worthwhile if the job will run at the new scale for significantly longer than the transition window.
 
 ### Scheduler integration {#sec-fleet-orchestration-elastic-scheduler-integration}
 
@@ -1473,7 +1439,7 @@ class SpotTrainingEconomics:
 
 Consider training a `{python} SpotTrainingEconomics.model_params_b_str` parameter model requiring `{python} SpotTrainingEconomics.spot_gpus_str` for `{python} SpotTrainingEconomics.spot_run_days_str` days.
 
-**On-demand**\index{On-Demand Capacity}: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` $\times$ \$2.00/GPU-hour = **\$`{python} SpotTrainingEconomics.on_demand_cost_str`**
+**On-demand**\index{On-Demand Capacity}: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` $\times$ \$2.00/GPU-hour = \$`{python} SpotTrainingEconomics.on_demand_cost_str`
 
 **Spot** (`{python} SpotTrainingEconomics.spot_discount_pct_str` discount, `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` checkpoint overhead, `{python} SpotTrainingEconomics.restart_interruptions_str` interruptions/day with `{python} SpotTrainingEconomics.restart_min_str` restart):
 
@@ -1481,7 +1447,7 @@ Consider training a `{python} SpotTrainingEconomics.model_params_b_str` paramete
 - Checkpoint overhead: `{python} SpotTrainingEconomics.checkpoint_overhead_pct_str` $\times$ `{python} SpotTrainingEconomics.spot_run_hours_str` = `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` extra hours
 - Restart overhead: `{python} SpotTrainingEconomics.restart_interruptions_str` interruptions $\times$ `{python} SpotTrainingEconomics.restart_hours_each_str` = `{python} SpotTrainingEconomics.restart_total_hours_str`
 - Total time: `{python} SpotTrainingEconomics.spot_run_hours_str` + `{python} SpotTrainingEconomics.checkpoint_extra_hours_str` + `{python} SpotTrainingEconomics.restart_total_hours_str` = `{python} SpotTrainingEconomics.spot_total_hours_str`
-- Total cost: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_total_hours_str` $\times$ \$0.70 = **\$`{python} SpotTrainingEconomics.spot_total_cost_str`**
+- Total cost: `{python} SpotTrainingEconomics.spot_gpus_str` $\times$ `{python} SpotTrainingEconomics.spot_total_hours_str` $\times$ \$0.70 = \$`{python} SpotTrainingEconomics.spot_total_cost_str`
 
 **Savings**: \$`{python} SpotTrainingEconomics.savings_str` (`{python} SpotTrainingEconomics.savings_pct_str`), at the cost of approximately `{python} SpotTrainingEconomics.longer_pct_str` longer wall-clock time.
 
@@ -1610,7 +1576,7 @@ The risk is not only implementation cost; scheduler behavior can also fail to ma
 
 :::
 
-This failure mode is not a rejection of ML-aware scheduling; it is a reminder that each scheduler must specify the workload class, signal, and objective it is allowed to optimize.
+A scheduler designed for general-purpose pod placement will mishandle workloads that require gang semantics, and adding gang awareness alone does not resolve priority conflicts among competing training jobs. Each of the four research schedulers examined above addresses one facet of this problem (runtime estimation, iteration-boundary preemption, fairness across finish times, or joint resource-hyperparameter tuning), but none addresses all facets simultaneously. The design space is therefore a set of explicit trade-offs rather than a single optimal policy.
 
 ::: {#chk-fleet-orchestration-custom-scheduler-design-space .callout-checkpoint title="Custom scheduler design space"}
 
@@ -1940,9 +1906,9 @@ class DiurnalGpuShift:
 
 Consider a fleet of `{python} DiurnalGpuShift.ds_fleet_gpus_str` managed under two regimes:
 
-**Scenario A -- Static Partitioning**: The serving pool reserves `{python} DiurnalGpuShift.ds_serving_peak_str` to handle peak demand, but average usage is only `{python} DiurnalGpuShift.ds_serving_avg_str` (`{python} DiurnalGpuShift.ds_serving_peak_util_str` utilization). The training pool reserves `{python} DiurnalGpuShift.ds_training_fixed_str`, and backlog ensures `{python} DiurnalGpuShift.ds_training_full_util_str` utilization. Result: `{python} DiurnalGpuShift.ds_serving_avg_str` + `{python} DiurnalGpuShift.ds_training_fixed_str` = `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: **`{python} DiurnalGpuShift.ds_static_util_str`**.
+**Scenario A -- Static Partitioning**: The serving pool reserves `{python} DiurnalGpuShift.ds_serving_peak_str` to handle peak demand, but average usage is only `{python} DiurnalGpuShift.ds_serving_avg_str` (`{python} DiurnalGpuShift.ds_serving_peak_util_str` utilization). The training pool reserves `{python} DiurnalGpuShift.ds_training_fixed_str`, and backlog ensures `{python} DiurnalGpuShift.ds_training_full_util_str` utilization. Result: `{python} DiurnalGpuShift.ds_serving_avg_str` + `{python} DiurnalGpuShift.ds_training_fixed_str` = `{python} DiurnalGpuShift.ds_static_active_str` active GPUs. Fleet utilization: `{python} DiurnalGpuShift.ds_static_util_str`.
 
-**Scenario B -- Dynamic Sharing**: Serving claims GPUs strictly as needed (average `{python} DiurnalGpuShift.ds_serving_avg_str`). Training reclaims unused serving GPUs (average `{python} DiurnalGpuShift.ds_serving_reclaimable_str`), minus a `{python} DiurnalGpuShift.ds_safety_buffer_str`-GPU safety buffer. The orchestrator shifts approximately `{python} DiurnalGpuShift.ds_reclaimed_str` between roles twice daily based on diurnal forecasts. Result: serving (`{python} DiurnalGpuShift.ds_serving_avg_str`) + training (`{python} DiurnalGpuShift.ds_training_fixed_str` + `{python} DiurnalGpuShift.ds_reclaimed_str`) = `{python} DiurnalGpuShift.ds_dynamic_active_str` active GPUs (the second training term is reclaimed serving capacity). Fleet utilization: **`{python} DiurnalGpuShift.ds_dynamic_util_str`**.
+**Scenario B -- Dynamic Sharing**: Serving claims GPUs strictly as needed (average `{python} DiurnalGpuShift.ds_serving_avg_str`). Training reclaims unused serving GPUs (average `{python} DiurnalGpuShift.ds_serving_reclaimable_str`), minus a `{python} DiurnalGpuShift.ds_safety_buffer_str`-GPU safety buffer. The orchestrator shifts approximately `{python} DiurnalGpuShift.ds_reclaimed_str` between roles twice daily based on diurnal forecasts. Result: serving (`{python} DiurnalGpuShift.ds_serving_avg_str`) + training (`{python} DiurnalGpuShift.ds_training_fixed_str` + `{python} DiurnalGpuShift.ds_reclaimed_str`) = `{python} DiurnalGpuShift.ds_dynamic_active_str` active GPUs (the second training term is reclaimed serving capacity). Fleet utilization: `{python} DiurnalGpuShift.ds_dynamic_util_str`.
 
 Dynamic sharing recovers `{python} DiurnalGpuShift.ds_reclaimed_str` of effective capacity. At \$`{python} DiurnalGpuShift.ds_gpu_hour_rate_str`/GPU-hour, this creates approximately \$`{python} DiurnalGpuShift.ds_annual_str` million per year in value without purchasing a single additional accelerator.
 
@@ -2149,7 +2115,7 @@ A concrete quota scenario shows how quickly idle reservations become expensive.
 
 :::
 
-That policy works only when quota rules distinguish borrowed idle capacity from guaranteed reservations, which is the design pressure behind the next checkpoint.
+The "use it or lose it" reclamation policy addresses the most visible symptom of quota hoarding, but it raises a second-order question: when idle capacity is lent to another team, the system must distinguish borrowed capacity (preemptible on short notice) from guaranteed reservations (protected by SLOs). Defining borrowing, preemption, and guaranteed tiers as first-class policy primitives is the core multi-tenancy design decision.
 
 ::: {#chk-fleet-orchestration-multi-tenancy-design-decisions .callout-checkpoint title="Multi-tenancy design decisions"}
 
