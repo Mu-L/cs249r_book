@@ -76,6 +76,23 @@ ENERGY_ADD_FP16_PJ = 0.4 * ureg.picojoule
 ENERGY_ADD_INT32_PJ = 0.1 * ureg.picojoule
 ENERGY_ADD_INT8_PJ = 0.03 * ureg.picojoule
 
+# --- Architecture-class energy efficiency (simplified pedagogical hierarchy) ---
+# System-level EFFECTIVE energy per FLOP by accelerator class, used by the
+# sustainable_ai energy chapter (@tbl-energy-per-op and the energy-efficiency
+# footnotes). These are deliberately simplified, order-of-magnitude
+# architecture-COMPARISON figures (CPU -> GPU -> TPU -> ASIC), and are DISTINCT
+# from the device-level Horowitz raw-MAC values above (ENERGY_FLOP_FP32_PJ = 3.7):
+# they fold in real-system overhead (control, data movement, limited utilization),
+# which is why a GPU lands near 10 pJ/FLOP effective rather than the 3.7 pJ raw
+# FP32 MAC. Provenance: the book's sustainability-chapter teaching hierarchy,
+# consistent with the order-of-magnitude trend in Horowitz (2014) and standard
+# accelerator-efficiency surveys. Single source for the book's architecture-
+# efficiency comparisons -- do not hardcode these in QMD cells.
+ENERGY_EFF_CPU_PJ_PER_FLOP = 100 * ureg.picojoule / flop   # general-purpose CPU
+ENERGY_EFF_GPU_PJ_PER_FLOP = 10 * ureg.picojoule / flop    # GPU, dense tensor ops
+ENERGY_EFF_TPU_PJ_PER_FLOP = 1 * ureg.picojoule / flop     # TPU / systolic array
+ENERGY_EFF_ASIC_PJ_PER_FLOP = 0.1 * ureg.picojoule / flop  # custom low-precision ASIC
+
 # Network transfer energy (reference)
 NETWORK_ENERGY_1KB_PJ = 1_000_000 * ureg.picojoule  # ~1 microjoule for 1KB
 
