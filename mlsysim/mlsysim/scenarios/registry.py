@@ -14,6 +14,7 @@ from ..core import provenance_catalog as pc
 from ..core.units import ureg, TB
 
 _hour = ureg.hour
+_joule = ureg.joule
 
 
 class Workloads(Registry):
@@ -47,8 +48,20 @@ class AnomalyModel(Registry):
         name="Anomaly model energy", description="Per-inference energy of the TinyML anomaly detector.")
 
 
+class EnergyAnchors(Registry):
+    """Everyday energy-scale comparison anchors (order-of-magnitude intuition)."""
+
+    SmartphoneCharge = sourced_qty(
+        40_000 * _joule, pc.BOOK_ENERGY_ANCHORS,
+        name="Smartphone full charge", description="Approximate energy to fully charge a smartphone battery.")
+    BoilingWater = sourced_qty(
+        100_000 * _joule, pc.BOOK_ENERGY_ANCHORS,
+        name="Boiling 1 L of water", description="Approximate energy to bring one liter of water to a boil.")
+
+
 class Scenarios(Registry):
     """Registry namespace for real-world case studies and workload statistics."""
 
     Workloads = Workloads
     AnomalyModel = AnomalyModel
+    EnergyAnchors = EnergyAnchors

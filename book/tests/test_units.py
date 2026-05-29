@@ -390,16 +390,19 @@ def test_interconnect_specs():
 def test_energy_specs():
     """Verify energy constants are consistent."""
     ok = True
+    # Op/memory energy is a tech-class fact (Hardware.Tech), not a flat constant.
+    op = Hardware.Tech.Op
+    mem = Hardware.Tech.Memory
     # FP32 > FP16 > INT8 (energy ordering)
-    fp32 = ENERGY_FLOP_FP32_PJ.magnitude
-    fp16 = ENERGY_FLOP_FP16_PJ.magnitude
-    int8 = ENERGY_OP_INT8_PJ.m_as(ureg.picojoule / count)
+    fp32 = op.FlopFp32.energy.magnitude
+    fp16 = op.FlopFp16.energy.magnitude
+    int8 = op.OpInt8.energy.m_as(ureg.picojoule / count)
     if not (fp32 > fp16 > int8):
         FAILURES.append(f"  ✗ Energy ordering: FP32={fp32} > FP16={fp16} > INT8={int8}")
         ok = False
-    ok &= check("DRAM >> compute", ENERGY_DRAM_ACCESS_PJ.magnitude / ENERGY_FLOP_FP32_PJ.magnitude, 173.0, tol=0.05)
+    ok &= check("DRAM >> compute", mem.HBM3.energy_per_access.magnitude / op.FlopFp32.energy.magnitude, 173.0, tol=0.05)
     ok &= check("L2 > L1 > reg",
-                 ENERGY_SRAM_L2_PJ.magnitude / ENERGY_SRAM_L1_PJ.magnitude, 4.0)
+                 mem.L2.energy_per_access.magnitude / mem.L1.energy_per_access.magnitude, 4.0)
     return ok
 
 

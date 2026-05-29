@@ -54,31 +54,14 @@ ETHERNET_1P6T_BW = 1600 * Gbps
 SWITCH_ASIC_51T2_BW = 51_200 * Gbps
 SWITCH_ASIC_102T4_BW = 102_400 * Gbps
 
-# --- Energy (Horowitz, 2014 @ 45nm) ---
-ENERGY_DRAM_ACCESS_PJ = 640 * ureg.picojoule
-ENERGY_DRAM_PJ_PER_BYTE = 160 * ureg.picojoule / byte
-ENERGY_FLOP_FP32_PJ = 3.7 * ureg.picojoule / flop   # FP32 multiply-add
-ENERGY_FLOP_FP16_PJ = 1.1 * ureg.picojoule / flop   # FP16 multiply-add
-ENERGY_OP_INT8_PJ = 0.2 * ureg.picojoule / count    # INT8 multiply-add
-ENERGY_SRAM_L1_PJ = 0.5 * ureg.picojoule             # L1 cache access
-ENERGY_SRAM_L2_PJ = 2.0 * ureg.picojoule             # L2 cache access
-ENERGY_REG_PJ = 0.01 * ureg.picojoule                # Register file access
-ENERGY_MOBILENET_INF_MJ = 0.1 * ureg.millijoule  # millijoule (not megajoule); matches the ENERGY_*_PJ = picojoule convention used in this block
+# --- Energy --- (per-op / per-byte energy is a tech-class fact -> Hardware.Tech)
+# FLOP/ADD/INT8 op energy   -> Hardware.Tech.Op.*.energy        (Horowitz 2014, 45 nm)
+# DRAM access / per-byte    -> Hardware.Tech.Memory.HBM3.energy_per_access / energy_per_byte
+# SRAM L1/L2, register file  -> Hardware.Tech.Memory.{L1,L2,Register}.energy_per_access
+# Architecture-class efficiency + per-byte movement hierarchy -> Literature.Energy.*
+ENERGY_MOBILENET_INF_MJ = 0.1 * ureg.millijoule  # TODO(taxonomy): MobileNet inference energy -> Models/Scenarios
 
-# Addition energy (Horowitz 2014, 45nm process)
-ENERGY_ADD_FP32_PJ = 0.9 * ureg.picojoule
-ENERGY_ADD_FP16_PJ = 0.4 * ureg.picojoule
-ENERGY_ADD_INT32_PJ = 0.1 * ureg.picojoule
-ENERGY_ADD_INT8_PJ = 0.03 * ureg.picojoule
-
-# Architecture-class effective energy efficiency (CPU/GPU/TPU/ASIC pJ/FLOP) and
-# the per-byte data-movement hierarchy (register->network) are book-cited
-# pedagogical figures, so they live in the Literature registry, not here:
-#   Literature.Energy.Eff{Cpu,Gpu,Tpu,Asic}PjFlop
-#   Literature.Energy.Move{Reg,L1,L2,Nvme,Net}PjByte
-# (DRAM per-byte stays as the device constant ENERGY_DRAM_PJ_PER_BYTE above.)
-
-# Network transfer energy (reference)
+# Network transfer energy (reference) — TODO(taxonomy): -> Systems network-energy
 NETWORK_ENERGY_1KB_PJ = 1_000_000 * ureg.picojoule  # ~1 microjoule for 1KB
 
 # --- Physics ---
@@ -90,9 +73,7 @@ MOBILE_TDP_W = 3 * watt
 PHONE_BATTERY_WH = 15 * watt * hour
 OBJECT_DETECTOR_POWER_W = 2 * watt
 
-# Reference energies
-ENERGY_SMARTPHONE_CHARGE_J = 40000 * joule
-ENERGY_BOILING_WATER_J = 100000 * joule
+# Reference energy-scale anchors -> Scenarios.EnergyAnchors.{SmartphoneCharge,BoilingWater}
 
 # --- Video --- (VIDEO_* encoding/format facts -> core/units.py)
 

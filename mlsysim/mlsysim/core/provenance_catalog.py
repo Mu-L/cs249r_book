@@ -107,6 +107,12 @@ BOOK_ANOMALY_CASE = Provenance(
     ref="TinyML anomaly-detection case study (latency / AUC / energy) used as a benchmarking example",
     verified="2025-03-06",
 )
+BOOK_ENERGY_ANCHORS = Provenance(
+    id="prov:book-energy-anchors",
+    kind=ProvenanceKind.ILLUSTRATIVE,
+    ref="Everyday energy-scale comparison anchors (smartphone charge ~40 kJ, boiling 1 L water ~100 kJ) for order-of-magnitude intuition about ML energy",
+    verified="2025-03-06",
+)
 
 # --- Hardware technology-class facts (Hardware.Tech) ---
 HOROWITZ_ENERGY = _lit(
