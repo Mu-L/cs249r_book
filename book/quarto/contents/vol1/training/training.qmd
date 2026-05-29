@@ -4348,20 +4348,18 @@ class MixedPrecisionMemory:
     v100_capacity_str = fmt(Hardware.Cloud.V100.memory.capacity.m_as(GiB), precision=0, commas=False, suffix=" GiB")
 ```
 
-::: {#nbk-training-gpt-2-mixed-precision-training-impact .callout-notebook title="GPT-2 mixed precision training impact"}
+::: {#nbk-training-gpt-2-mixed-precision-memory .callout-notebook title="GPT-2 mixed precision memory savings"}
 
-GPT-2 training heavily relies on mixed-precision (FP16) to fit within accelerator memory constraints.
+**Problem**: Can GPT-2 XL (1.5B parameters) be trained on a single V100 GPU, and what does mixed precision plus gradient checkpointing buy us in memory footprint?
 
-**Memory Savings**
-
-FP32 Baseline:
+**FP32 baseline**:
 
 - Parameters and gradients (FP32): `{python} MixedPrecisionMemory.fp32_pg_str` (`{python} MixedPrecisionMemory.fp32_p_str` parameters + `{python} MixedPrecisionMemory.fp32_g_str` gradients)
 - Activations (batch = `{python} MixedPrecisionMemory.mp_batch_size_str`): ~`{python} MixedPrecisionMemory.fp32_act_str`
 - Optimizer states (Adam m, v in FP32): `{python} MixedPrecisionMemory.fp32_opt_str`
 - Total: ~`{python} MixedPrecisionMemory.fp32_t_str` (exceeds any single GPU)
 
-FP16 Mixed Precision:
+**FP16 mixed precision**:
 
 - Parameters (FP16): `{python} MixedPrecisionMemory.gpt2_b_str` parameters at 2 bytes each = `{python} MixedPrecisionMemory.fp16_p_str`
 - Activations (FP16): ~`{python} MixedPrecisionMemory.fp16_act_str`
@@ -4370,26 +4368,28 @@ FP16 Mixed Precision:
 - Optimizer states (Adam m, v in FP32): `{python} MixedPrecisionMemory.opt_str`
 - Total: ~`{python} MixedPrecisionMemory.fp16_t_str` (still tight, but manageable with optimizations)
 
-With Mixed Precision + Gradient Checkpointing:
+**Mixed precision + gradient checkpointing**:
 
 - Activations reduced to ~`{python} MixedPrecisionMemory.ckpt_act_str` (recompute during backward)
 - Total: ~`{python} MixedPrecisionMemory.ckpt_total_str` → fits in `{python} MixedPrecisionMemory.v100_capacity_str` V100
 
-**Computational Speedup**
+**Systems insight**: Mixed precision halves the parameter and gradient footprint; gradient checkpointing then trades a backward-pass recompute for an additional activation-memory cut. Together they bring GPT-2 XL within V100 capacity, turning an out-of-memory configuration into a trainable one.
 
-On NVIDIA V100 (Tensor Cores enabled):
+:::
 
-- FP32 throughput: ~`{python} MixedPrecisionSpeedup.throughput_fp32_str` samples/sec
-- FP16 throughput: ~`{python} MixedPrecisionSpeedup.throughput_fp16_str` samples/sec
-- Speedup: `{python} MixedPrecisionSpeedup.v100_mp_speedup_str` faster training
+Memory savings alone do not guarantee correct or stable training. FP16's limited dynamic range demands specific implementation choices to keep gradients representable and weight updates nonzero.
 
 ```{python}
 #| echo: false
 from mlsysim.fmt import fmt, MarkdownStr, fmt_int
 #| label: mixed-precision-loss-scaling-calc
 # ┌── LEGO ───────────────────────────────────────────────
-# │ Goal: Loss-scaling exponent, gradient range, and learning rate for callout.
-# │ Exports: MixedPrecisionLossScaling.{loss_scale,grad_range,small_lr}_*_str
+# │ Goal: Loss-scaling exponent, gradient range, learning rate, and V100
+# │       training cost figures for the mixed-precision implementation and
+# │       throughput-cost notebooks.
+# │ Exports: MixedPrecisionLossScaling.{loss_scale,grad_range,small_lr,
+# │          n_v100_gpus,fp32_weeks,fp16_weeks,fp32_cost,fp16_cost,
+# │          savings_cost,savings_days}_*_str
 class MixedPrecisionLossScaling:
     loss_scale_exp = 15
     grad_range_min_exp = -6
@@ -4416,22 +4416,29 @@ class MixedPrecisionLossScaling:
     savings_days_str = fmt(savings_days, precision=0, commas=False, suffix=' days')
 ```
 
-**Critical Implementation Details**
+Three implementation details make mixed precision viable. *Loss scaling* multiplies the loss by a factor (typically starting at `{python} MixedPrecisionLossScaling.loss_scale_eqn_str` and dynamically halved when overflow is detected) so that small gradients land in FP16's representable range. Attention-layer gradients can span `{python} MixedPrecisionLossScaling.grad_range_min_eqn_str` to `{python} MixedPrecisionLossScaling.grad_range_max_eqn_str`, and without scaling the smallest of these would underflow to zero. *FP32 master weights* are then required for the optimizer update: a small learning rate (`{python} MixedPrecisionLossScaling.small_lr_str`) multiplied by an FP16 gradient can round to zero, but FP32 accumulation preserves these tiny updates. *Selective FP32 computation* covers the two operations that cannot tolerate FP16—LayerNorm, where variance computation needs high precision, and Softmax, where the exponential needs the full FP32 range—while every other operation runs in FP16.
 
-1. Loss Scaling: Start with `{python} MixedPrecisionLossScaling.loss_scale_eqn_str`, dynamically reduce if overflow detected. Gradients in attention layers can range from `{python} MixedPrecisionLossScaling.grad_range_min_eqn_str` to `{python} MixedPrecisionLossScaling.grad_range_max_eqn_str`, so loss scaling prevents underflow.
-2. FP32 Master Weights: Optimizer updates in FP32 prevent weight stagnation. Small learning rate (`{python} MixedPrecisionLossScaling.small_lr_str`) $\times$ FP16 gradient might round to zero; FP32 accumulation preserves these tiny updates.
-3. Selective FP32 Operations:
-   - LayerNorm: Computed in FP32 (requires high precision for variance calculation)
-   - Softmax: Computed in FP32 (exponentials need full range)
-   - All else: FP16
+With these stability mechanisms in place, the gains from mixed precision are measurable in throughput and dollars.
 
-**Training Cost Impact**
+::: {#nbk-training-gpt-2-mixed-precision-throughput-cost .callout-notebook title="GPT-2 mixed precision throughput and cost"}
 
-- FP32: ~\$`{python} MixedPrecisionLossScaling.fp32_cost_str` for `{python} MixedPrecisionLossScaling.fp32_weeks_str` on `{python} MixedPrecisionLossScaling.n_v100_gpus_str`
-- FP16: ~\$`{python} MixedPrecisionLossScaling.fp16_cost_str` for `{python} MixedPrecisionLossScaling.fp16_weeks_str` on `{python} MixedPrecisionLossScaling.n_v100_gpus_str`
-- Savings: \$`{python} MixedPrecisionLossScaling.savings_cost_str` + `{python} MixedPrecisionLossScaling.savings_days_str` faster iteration
+**Problem**: For the same GPT-2 XL training job on V100 Tensor Cores, how much faster and how much cheaper does mixed precision make training compared to FP32?
 
-**Quality impact**: Minimal. GPT-2 perplexity within 0.5 percent of FP32 baseline, well within noise margin.
+**V100 throughput** (Tensor Cores enabled):
+
+- FP32 throughput: ~`{python} MixedPrecisionSpeedup.throughput_fp32_str` samples/sec
+- FP16 throughput: ~`{python} MixedPrecisionSpeedup.throughput_fp16_str` samples/sec
+- Speedup: `{python} MixedPrecisionSpeedup.v100_mp_speedup_str` faster training
+
+**Cost impact** on a `{python} MixedPrecisionLossScaling.n_v100_gpus_str` cluster:
+
+- FP32: ~\$`{python} MixedPrecisionLossScaling.fp32_cost_str` for `{python} MixedPrecisionLossScaling.fp32_weeks_str`
+- FP16: ~\$`{python} MixedPrecisionLossScaling.fp16_cost_str` for `{python} MixedPrecisionLossScaling.fp16_weeks_str`
+- Savings: \$`{python} MixedPrecisionLossScaling.savings_cost_str` and `{python} MixedPrecisionLossScaling.savings_days_str` faster iteration
+
+**Quality impact**: minimal. GPT-2 perplexity stays within 0.5 percent of the FP32 baseline, well within noise margin.
+
+**Systems insight**: Mixed precision converts the same `{python} MixedPrecisionLossScaling.n_v100_gpus_str` cluster from a `{python} MixedPrecisionLossScaling.fp32_weeks_str`, \$`{python} MixedPrecisionLossScaling.fp32_cost_str` job into a `{python} MixedPrecisionLossScaling.fp16_weeks_str`, \$`{python} MixedPrecisionLossScaling.fp16_cost_str` job with no measurable convergence cost—a quality-neutral speedup that pays for itself in `{python} MixedPrecisionLossScaling.savings_days_str` of saved wall-clock time.
 
 :::
 
