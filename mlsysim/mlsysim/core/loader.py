@@ -26,21 +26,32 @@ import yaml
 from .registry import Registry
 
 _TECH_PREFIX = "@tech:"
+_PROV_PREFIX = "@prov:"
 
 
 def _resolve(node: Any, tech_root: Any) -> Any:
-    """Recursively resolve ``@tech:`` reference markers against ``tech_root``."""
+    """Recursively resolve reference markers.
+
+    * ``@tech:PATH`` → dotted-attribute lookup against ``tech_root`` (preserves the
+      instance→tech-class single source of truth).
+    * ``@prov:KEY`` → the named ``Provenance`` in ``core/provenance_catalog`` (so
+      a provenance record shared by many entries lives once in the catalog).
+    """
     if isinstance(node, dict):
         return {k: _resolve(v, tech_root) for k, v in node.items()}
     if isinstance(node, list):
         return [_resolve(v, tech_root) for v in node]
-    if isinstance(node, str) and node.startswith(_TECH_PREFIX):
-        if tech_root is None:
-            raise ValueError(f"{node!r} found but no tech_root supplied to load_registry")
-        obj = tech_root
-        for part in node[len(_TECH_PREFIX):].split("."):
-            obj = getattr(obj, part)
-        return obj
+    if isinstance(node, str):
+        if node.startswith(_TECH_PREFIX):
+            if tech_root is None:
+                raise ValueError(f"{node!r} found but no tech_root supplied to load_registry")
+            obj = tech_root
+            for part in node[len(_TECH_PREFIX):].split("."):
+                obj = getattr(obj, part)
+            return obj
+        if node.startswith(_PROV_PREFIX):
+            from . import provenance_catalog as pc
+            return getattr(pc, node[len(_PROV_PREFIX):])
     return node
 
 

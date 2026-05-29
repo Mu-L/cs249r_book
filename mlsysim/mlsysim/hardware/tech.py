@@ -6,26 +6,22 @@ counterpart to the per-instance specs on the Hardware.Cloud/Edge/Mobile/Tiny nod
 (capacity, bandwidth, TDP, price), which genuinely vary part-to-part.
 See .claude/rules/mlsysim.md -> Canonical organization (the instance-vs-tech-class split).
 
-Energy figures are Horowitz (2014), 45 nm — process-stamped in the names and provenance
-so a future process node can coexist rather than overwrite the teaching anchor (invariant #3).
+The tier *data* lives as YAML under ``hardware/data/tech/<category>.yaml`` (loaded +
+validated against the tier schemas below); the tier *types*, the ``Tech`` namespace, and
+the instance→tech-class fallback resolver are code. Energy figures are Horowitz (2014),
+45 nm — process-stamped in the names and provenance so a future process node can coexist
+rather than overwrite the teaching anchor (invariant #3).
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..core.types import Quantity, Metadata
 from ..core.registry import Registry
-from ..core import provenance_catalog as pc
-from ..core.units import ureg, GB, byte, flop, count, second
-
-_ns = ureg.ns
-_pj = ureg.picojoule
-
-
-def _md(prov):
-    return Metadata(provenance=prov)
+from ..core.loader import load_collection
 
 
 class MemoryTier(BaseModel):
@@ -71,45 +67,24 @@ class OpEnergy(BaseModel):
     metadata: Metadata = Field(default_factory=Metadata)
 
 
-class Memory(Registry):
-    """On-chip memory hierarchy tiers (access latency + 45 nm access energy)."""
+_DATA = Path(__file__).parent / "data" / "tech"
 
-    Register = MemoryTier(name="Register file", latency=0.3 * _ns, energy_per_access=0.01 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-    L1 = MemoryTier(name="L1 / SRAM", latency=1 * _ns, energy_per_access=0.5 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-    L2 = MemoryTier(name="L2 cache", latency=4 * _ns, energy_per_access=2.0 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-    HBM3 = MemoryTier(name="HBM3", latency=300 * _ns, energy_per_access=640 * _pj, energy_per_byte=160 * _pj / byte, metadata=_md(pc.HOROWITZ_ENERGY))
-
-
-class Storage(Registry):
-    """Generic storage / off-chip memory bandwidth tiers."""
-
-    NvmeGen3 = StorageTier(name="NVMe SSD (Gen3)", bandwidth=3.5 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
-    NvmeGen4 = StorageTier(name="NVMe SSD (Gen4)", bandwidth=7.0 * GB / second, latency=100_000 * _ns, metadata=_md(pc.BOOK_STORAGE_TIERS))
-    NvmeGen5 = StorageTier(name="NVMe SSD (Gen5)", bandwidth=14.0 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
-    SystemMemory = StorageTier(name="System memory (DDR4/5)", bandwidth=50 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
-    HostDram = StorageTier(name="Host DRAM", bandwidth=200 * GB / second, metadata=_md(pc.BOOK_STORAGE_TIERS))
-
-
-class Op(Registry):
-    """Per-operation arithmetic energy (Horowitz 2014, 45 nm)."""
-
-    FlopFp32 = OpEnergy(name="FP32 multiply-add (45 nm)", energy=3.7 * _pj / flop, metadata=_md(pc.HOROWITZ_ENERGY))
-    FlopFp16 = OpEnergy(name="FP16 multiply-add (45 nm)", energy=1.1 * _pj / flop, metadata=_md(pc.HOROWITZ_ENERGY))
-    OpInt8 = OpEnergy(name="INT8 multiply-add (45 nm)", energy=0.2 * _pj / count, metadata=_md(pc.HOROWITZ_ENERGY))
-    AddFp32 = OpEnergy(name="FP32 add (45 nm)", energy=0.9 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-    AddFp16 = OpEnergy(name="FP16 add (45 nm)", energy=0.4 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-    AddInt32 = OpEnergy(name="INT32 add (45 nm)", energy=0.1 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-    AddInt8 = OpEnergy(name="INT8 add (45 nm)", energy=0.03 * _pj, metadata=_md(pc.HOROWITZ_ENERGY))
-
-
-class Interconnect(Registry):
-    """Interconnect technology generations (link access-latency floor).
-
-    NVLink/PCIe per-generation latency. End-to-end *fabric* latency (InfiniBand,
-    Ethernet, RoCE) is a composition property and lives on Systems.Fabrics."""
-
-    NVLink = InterconnectTier(name="NVLink", latency=500 * _ns, metadata=_md(pc.BOOK_LATENCY_HIERARCHY))
-    PCIeGen5 = InterconnectTier(name="PCIe Gen5", latency=1000 * _ns, metadata=_md(pc.BOOK_LATENCY_HIERARCHY))
+Memory = load_collection(
+    _DATA / "memory.yaml", MemoryTier, name="Memory",
+    doc="On-chip memory hierarchy tiers (access latency + 45 nm access energy).",
+)
+Storage = load_collection(
+    _DATA / "storage.yaml", StorageTier, name="Storage",
+    doc="Generic storage / off-chip memory bandwidth tiers.",
+)
+Op = load_collection(
+    _DATA / "op.yaml", OpEnergy, name="Op",
+    doc="Per-operation arithmetic energy (Horowitz 2014, 45 nm).",
+)
+Interconnect = load_collection(
+    _DATA / "interconnect.yaml", InterconnectTier, name="Interconnect",
+    doc="Interconnect technology generations (link access-latency floor).",
+)
 
 
 class Tech(Registry):
