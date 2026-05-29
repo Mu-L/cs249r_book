@@ -97,9 +97,15 @@ QUARTO_XREF_PREFIXES = ("@sec-", "@fig-", "@tbl-", "@eq-", "@lst-", "@thm-",
 # Matched against `Path(path_part).name`, so subdirectory variants
 # (`./mlsysim-paper.pdf`, `../mlsysim-paper.pdf`) are also skipped.
 # Source: mlsysim-publish-live.yml copies pdf-artifacts/paper.pdf into
-# mlsysim/docs/mlsysim-paper.pdf at deploy.
+# mlsysim/docs/mlsysim-paper.pdf at deploy. mlsysim-update-pdfs.yml builds
+# tutorial_module{1..4}.pdf from mlsysim/tutorial/slides/*.tex and copies
+# them into mlsysim/ on gh-pages (referenced from mlsysim/docs/slides.qmd).
 CI_INJECTED_BASENAMES = {
     "mlsysim-paper.pdf",
+    "tutorial_module1.pdf",
+    "tutorial_module2.pdf",
+    "tutorial_module3.pdf",
+    "tutorial_module4.pdf",
 }
 
 # Match explicit Quarto / Pandoc anchor syntax inside headings:
