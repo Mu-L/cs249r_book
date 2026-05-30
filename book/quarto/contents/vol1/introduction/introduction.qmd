@@ -80,7 +80,7 @@ class AIMomentStats:
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
     from mlsysim.fmt import fmt, check, MarkdownStr
-    searches_per_day = GOOGLE_SEARCHES_PER_DAY
+    searches_per_day = Scenarios.Workloads.GoogleSearchesPerDay
     h100_flops = Hardware.Cloud.H100.compute.peak_flops
     cpu_flops = Hardware.Cloud.ReferenceCPU.compute.peak_flops
 
@@ -232,6 +232,7 @@ class VerificationGap:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    IMAGE_DIM_RESNET = Datasets.ImageNet.image_width
     width = IMAGE_DIM_RESNET
     height = IMAGE_DIM_RESNET
     channels = IMAGE_CHANNELS_RGB
@@ -1667,7 +1668,7 @@ class DeploymentSystems:
     compute_span_math = fmt_math(f"10^{{{round(math.log10(compute_scaling))}}}")
 ```
 
-The D·A·M taxonomy serves as a diagnostic lens throughout this text. Scale in ML systems is the relentless pursuit of the *moving bottleneck*. Alleviating a constraint along one axis often shifts the limitation to another. Upgrading to faster GPUs (Machine) might reveal that storage cannot feed data fast enough (Data). Collecting a massive dataset (Data) might reveal that the model lacks capacity to learn from it (Algorithm). Switching to a larger model (Algorithm) might exceed available memory (Machine). Understanding these dynamics is central to ML systems engineering. Part III formalizes this diagnostic approach in @tbl-dam-bottleneck, and the D·A·M Taxonomy appendix provides the complete diagnostic guide, intersection landscape, and troubleshooting matrix (@sec-dam-taxonomy).
+The D·A·M taxonomy serves as a diagnostic lens throughout this text. Scale in ML systems is the relentless pursuit of the *moving bottleneck*. Alleviating a constraint along one axis often shifts the limitation to another. Upgrading to faster GPUs (Machine) might reveal that storage cannot feed data fast enough (Data). Collecting a massive dataset (Data) might reveal that the model lacks capacity to learn from it (Algorithm). Switching to a larger model (Algorithm) might exceed available memory (Machine). Understanding these dynamics is central to ML systems engineering. Part III formalizes this diagnostic approach in @tbl-dam-bottleneck, and @sec-appdx-dam-taxonomy-diagnostic-summary-9f73 maps each axis to its binding physical constraint and the high-leverage optimization pathway that relieves it, giving the reader a single reference for where to intervene once the dominant axis is identified.
 
 ::: {#psp-deployment-archetypes .callout-perspective title="The ML systems landscape: Four archetypes"}
 
@@ -1762,7 +1763,7 @@ The additive form assumes sequential execution; in practice, systems can overlap
 $$T_{\text{pipelined}} = \max\left(\frac{D_{\text{vol}}}{\text{BW}}, \frac{O}{R_{\text{peak}} \cdot \eta_{\text{hw}}}\right) + L_{\text{lat}}$$ {#eq-intro-iron-law-pipelined}
 
 \index{Amdahl's Law!diagnostic analogy}
-We retain "iron law" because, like Amdahl's Law, its value lies in diagnostic power: identifying which physical constraint dominates before optimizing. The iron law is useful precisely because it simplifies the complexity of the full stack into three manageable terms. @Sec-dam-taxonomy presents the refined treatment, including pipelining and overlap techniques that transform the additive model into the max-based formulation used in practice.
+We retain "iron law" because, like Amdahl's Law, its value lies in diagnostic power: identifying which physical constraint dominates before optimizing. The iron law is useful precisely because it simplifies the complexity of the full stack into three manageable terms. @Sec-appdx-dam-taxonomy presents the refined treatment, including pipelining and overlap techniques that transform the additive model into the max-based formulation used in practice.
 
 :::
 
@@ -1770,7 +1771,7 @@ As George Box famously said, "All models are wrong, but some are useful."[^fn-bo
 
 [^fn-box-ironlaw]: **"All models are wrong, but some are useful"**: Statistician George Box's aphorism applies directly to the iron law: the additive decomposition ignores pipelining, memory hierarchy effects, and communication overhead. Yet this deliberate simplification is precisely what makes it diagnostic. Engineers who try to model every interaction before profiling never ship; engineers who identify which of three terms dominates ship systems that work.
 
-@Sec-machine-foundations develops the deeper mathematical treatment, including the Roofline Model that visualizes how data movement and computation trade off on specific hardware.
+@Sec-appdx-machine-foundations develops the deeper mathematical treatment, and @sec-appdx-machine-foundations-roofline-model-2529 visualizes how the data and compute terms trade off on real hardware through the Roofline Model, showing where a workload's arithmetic intensity places it relative to the ridge point that separates memory-bound from compute-bound regimes.
 
 Throughout this book, every optimization technique we study, from pruning to kernel fusion, is a method for manipulating one of these variables. A GPT-3-class training estimate makes that manipulation concrete by showing how an efficiency change propagates through the iron law.
 
@@ -1887,7 +1888,7 @@ class GPT3Training:
 
 :::
 
-The equation is dimensionally consistent: each term resolves to seconds. One *cannot* add FLOPs to bytes any more than one can add meters to kilograms; the iron law adds time to time to time. @Sec-machine-foundations-dimensional-analysis-76b3 provides a formal dimensional analysis verifying this consistency and demonstrates how unit tracking prevents common modeling errors.
+The equation is dimensionally consistent: each term resolves to seconds. One *cannot* add FLOPs to bytes any more than one can add meters to kilograms; the iron law adds time to time to time. @Sec-appdx-machine-foundations-dimensional-analysis-76b3 provides a formal dimensional analysis verifying this consistency and demonstrates how unit tracking prevents common modeling errors.
 
 The iron law governs *time*, but time is not the only constraint. For mobile devices, edge systems, and large-scale training clusters, *energy* often matters more than raw speed.
 
@@ -1906,7 +1907,8 @@ $$ E_{\text{total}} \approx \underbrace{ D_{\text{vol}} \times E_{\text{move}} }
 # │ Show: DRAM byte movement is about 145× FP16 arithmetic and 800× INT8 arithmetic.
 # │ How: Compare one off-chip DRAM byte energy with one operation energy.
 # │
-# │ Imports: mlsysim.core.constants (ENERGY_* constants, byte, flop, count),
+# │ Imports: mlsysim Hardware.Tech.Memory.HBM3.energy_per_byte, Hardware.Tech.Op.FlopFp16.energy,
+# │          Hardware.Tech.Op.OpInt8.energy; mlsysim.core.constants (byte, flop, count),
 # │          mlsysim.fmt (fmt, check)
 # │ Exports: EnergyMovementRatios.fp16_ratio_str, int8_ratio_str
 # └─────────────────────────────────────────────────────────────────────────────
@@ -1917,6 +1919,9 @@ class EnergyMovementRatios:
     """Compare off-chip data movement energy with local arithmetic energy."""
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
+    ENERGY_DRAM_PJ_PER_BYTE = Hardware.Tech.Memory.HBM3.energy_per_byte
+    ENERGY_FLOP_FP16_PJ     = Hardware.Tech.Op.FlopFp16.energy
+    ENERGY_OP_INT8_PJ       = Hardware.Tech.Op.OpInt8.energy
     dram_byte_energy = ENERGY_DRAM_PJ_PER_BYTE * byte
     fp16_op_energy = ENERGY_FLOP_FP16_PJ * flop
     int8_op_energy = ENERGY_OP_INT8_PJ * count
@@ -3108,8 +3113,8 @@ The interdependencies across the D·A·M axes create specific challenge categori
 # │ Show: The TB/hour scale of real-world multimodal data ingestion.
 # │ How: List low and high data rates from Waymo's public specifications.
 # │
-# │ Imports: mlsysim.core.constants (WAYMO_DATA_PER_HOUR_LOW, WAYMO_DATA_PER_HOUR_HIGH,
-# │          TB, hour), mlsysim.book (fmt)
+# │ Imports: mlsysim (Scenarios.Workloads.WaymoDataPerHour{Low,High}), mlsysim.core.constants
+# │          (TB, hour), mlsysim.book (fmt)
 # │ Exports: WaymoStats.low_str, WaymoStats.high_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt, check
@@ -3122,9 +3127,9 @@ class WaymoStats:
     """
 
     # ┌── 1. LOAD (Constants) ───────────────────────────────────────────────
-    # From constants (Waymo data-rate range)
-    rate_low_raw = WAYMO_DATA_PER_HOUR_LOW
-    rate_high_raw = WAYMO_DATA_PER_HOUR_HIGH
+    # Waymo data-rate range (Scenarios registry)
+    rate_low_raw = Scenarios.Workloads.WaymoDataPerHourLow
+    rate_high_raw = Scenarios.Workloads.WaymoDataPerHourHigh
 
     # ┌── 2. EXECUTE (The Compute) ─────────────────────────────────────────
     val_low = rate_low_raw.m_as(TB/hour)
