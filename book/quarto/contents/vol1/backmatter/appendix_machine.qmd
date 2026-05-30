@@ -46,7 +46,8 @@ from mlsysim.core.constants import *
 # │ How: Scalar extraction via .m_as(unit); ratios remain stable across
 # │       hardware generations.
 # │
-# │ Imports: mlsysim.core.constants (*), mlsysim.book (fmt)
+# │ Imports: mlsysim.core.constants (*), mlsysim.book (fmt); energy figures via
+# │          Hardware.Tech.{Memory,Op} (energy-per-access / energy)
 # │ Exports: dram_vs_compute_str, fp32_vs_int8_str, fp32_vs_fp16_str,
 # │          l1_vs_reg_str, hbm_vs_register_str, ssd_vs_register_str,
 # │          network_vs_local_str, gpu_bw_vs_pcie_str, lat_l1_ns_str,
@@ -60,15 +61,11 @@ from mlsysim.core.constants import *
 
 from mlsysim.fmt import fmt_int, fmt_int, fmt, MarkdownStr
 from mlsysim.core.constants import (
-    SPEED_OF_LIGHT_FIBER_KM_S, ENERGY_DRAM_ACCESS_PJ, ENERGY_FLOP_FP16_PJ,
-    ENERGY_FLOP_FP32_PJ, ENERGY_OP_INT8_PJ, ENERGY_SRAM_L1_PJ, ENERGY_SRAM_L2_PJ, ENERGY_REG_PJ,
-    LATENCY_REGISTER_REF, LATENCY_HBM3, LATENCY_NVME_SSD, LATENCY_INFINIBAND,
-    LATENCY_L1_REGISTER, LATENCY_L2_CACHE, SYSTEM_MEMORY_BW,
-    NVME_SEQUENTIAL_BW, LATENCY_PCIE_GEN5, TOPS,
+    TOPS,
     SECONDS_PER_MINUTE, SEC_PER_HOUR, SEC_PER_DAY,
-    TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN,
 )
-from mlsysim.core import calibration
+from mlsysim.physics import SPEED_OF_LIGHT_FIBER_KM_S
+from mlsysim.engine import calibration
 # ┌── LEGO ───────────────────────────────────────────────
 class NumbersToKnow:
     """Namespace for machine-foundations reference numbers (ratios and hardware specs)."""
@@ -78,6 +75,21 @@ class NumbersToKnow:
     h_h100 = Hardware.Cloud.H100
     h_a100 = Hardware.Cloud.A100
     f = Systems.Fabrics
+    # Energy hierarchy: sourced from Hardware.Tech (taxonomy refactor; energy-as-property).
+    ENERGY_DRAM_ACCESS_PJ = Hardware.Tech.Memory.HBM3.energy_per_access
+    ENERGY_FLOP_FP16_PJ   = Hardware.Tech.Op.FlopFp16.energy
+    ENERGY_FLOP_FP32_PJ   = Hardware.Tech.Op.FlopFp32.energy
+    ENERGY_OP_INT8_PJ     = Hardware.Tech.Op.OpInt8.energy
+    ENERGY_SRAM_L1_PJ     = Hardware.Tech.Memory.L1.energy_per_access
+    ENERGY_REG_PJ         = Hardware.Tech.Memory.Register.energy_per_access
+    # Latency hierarchy: sourced from Hardware.Tech / Systems.Fabrics (taxonomy refactor).
+    LATENCY_REGISTER_REF = Hardware.Tech.Memory.Register.latency
+    LATENCY_L1_REGISTER = Hardware.Tech.Memory.L1.latency
+    LATENCY_L2_CACHE = Hardware.Tech.Memory.L2.latency
+    LATENCY_HBM3 = Hardware.Tech.Memory.HBM3.latency
+    LATENCY_PCIE_GEN5 = Hardware.Tech.Interconnect.PCIeGen5.latency
+    LATENCY_NVME_SSD = Hardware.Tech.Storage.NvmeGen4.latency
+    LATENCY_INFINIBAND = round(Systems.Fabrics.InfiniBand_NDR.latency.m_as(NS)) * NS  # µs→ns, round to exact 5000
 
     # ┌── 2. EXECUTE (The Compute) ────────────────────────────────────────
     # Step 1: Physics Constants (Eternal)
@@ -105,7 +117,7 @@ class NumbersToKnow:
     lat_ssd_ns = int(LATENCY_NVME_SSD.m_as(NS))
 
     bw_pcie5 = int(Hardware.Cloud.H100.interconnect.bandwidth.m_as(GB/second))
-    bw_dram = int(SYSTEM_MEMORY_BW.m_as(GB/second))
+    bw_dram = int(Hardware.Tech.Storage.SystemMemory.bandwidth.m_as(GB/second))
     bw_ib = int(f.InfiniBand_NDR.bandwidth.m_as(GB/second))
 
     flops_h100_fp16 = int(h_h100.compute.peak_flops.m_as(TFLOPs/second))
@@ -141,7 +153,7 @@ class NumbersToKnow:
     bw_pcie5_str = fmt(bw_pcie5, precision=0, commas=False)
     bw_dram_str = fmt(bw_dram, precision=0, commas=False)
     bw_ib_str = fmt(bw_ib, precision=0, commas=False)
-    bw_nvme_str = fmt(NVME_SEQUENTIAL_BW.m_as(GB/second), precision=0, commas=False)
+    bw_nvme_str = fmt(Hardware.Tech.Storage.NvmeGen4.bandwidth.m_as(GB/second), precision=0, commas=False)
 
     flops_h100_fp16_str = fmt(flops_h100_fp16, precision=0, commas=False)
     flops_h100_fp8_str = fmt(flops_h100_fp8, precision=0, commas=False)
@@ -670,7 +682,7 @@ class TrainingTimeRef:
     n_gpus_str = fmt_int(n_gpus, commas=False)
     u_mfu_pct_str = fmt_int(u_mfu * 100, commas=False, suffix=' percent')
     a100_fp16_str = fmt(x_flops, precision=0, commas=False, suffix=' TFLOP/s')
-    total_flops_eq = fmt_math(f"\\text{{Total FLOPs}} = {TRANSFORMER_TRAINING_FLOPS_PER_PARAM_TOKEN} \\times {sci_latex(p_params, 0)} \\times {sci_latex(d_tokens, 0)} = {sci_latex(total_flops, 1)} \\text{{ FLOPs}}")
+    total_flops_eq = fmt_math(f"\\text{{Total FLOPs}} = {int(Literature.Chinchilla.ComputeConstant)} \\times {sci_latex(p_params, 0)} \\times {sci_latex(d_tokens, 0)} = {sci_latex(total_flops, 1)} \\text{{ FLOPs}}")
     throughput_eq = fmt_math(f"\\text{{Throughput}} = {int(n_gpus)} \\times ({sci_latex(x_flops*TRILLION, 2)}) \\times {u_mfu:.2f} \\approx {sci_latex(throughput, 2)} \\text{{ FLOP/s}}")
     time_eq = fmt_math(f"T = \\frac{{{sci_latex(total_flops, 1)}}}{{{sci_latex(throughput, 2)}}} \\approx {fmt(t_seconds_value, precision=1, commas=True)} \\text{{ seconds}} \\approx {fmt(t_minutes_value, precision=1, commas=True)} \\text{{ minutes}}")
 ```
@@ -797,6 +809,21 @@ class ArchReferenceTables:
     """Latency hierarchy, accelerator cheatsheet, and physical hierarchy reference."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
+    # Energy hierarchy: sourced from Hardware.Tech (taxonomy refactor; energy-as-property).
+    ENERGY_DRAM_ACCESS_PJ = Hardware.Tech.Memory.HBM3.energy_per_access
+    ENERGY_FLOP_FP16_PJ   = Hardware.Tech.Op.FlopFp16.energy
+    ENERGY_REG_PJ         = Hardware.Tech.Memory.Register.energy_per_access
+    ENERGY_SRAM_L1_PJ     = Hardware.Tech.Memory.L1.energy_per_access
+    ENERGY_SRAM_L2_PJ     = Hardware.Tech.Memory.L2.energy_per_access
+    # Latency hierarchy: sourced from Hardware.Tech / Systems.Fabrics (taxonomy refactor).
+    LATENCY_REGISTER_REF = Hardware.Tech.Memory.Register.latency
+    LATENCY_L1_REGISTER = Hardware.Tech.Memory.L1.latency
+    LATENCY_L2_CACHE = Hardware.Tech.Memory.L2.latency
+    LATENCY_HBM3 = Hardware.Tech.Memory.HBM3.latency
+    LATENCY_NVLINK = Hardware.Tech.Interconnect.NVLink.latency
+    LATENCY_PCIE_GEN5 = Hardware.Tech.Interconnect.PCIeGen5.latency
+    LATENCY_NVME_SSD = Hardware.Tech.Storage.NvmeGen4.latency
+    LATENCY_INFINIBAND = round(Systems.Fabrics.InfiniBand_NDR.latency.m_as(NS)) * NS  # µs→ns, round to exact 5000
     h100_l2_mb_value = Hardware.Cloud.H100.memory.l2_cache.m_as(MB)
     tpuv5_l2_mb_value = Hardware.Cloud.TPUv5p.memory.l2_cache.m_as(MB)
     register_ns_value = LATENCY_REGISTER_REF.m_as(NS)
@@ -871,8 +898,8 @@ class ArchReferenceTables:
     bw_hbm_str = fmt(Hardware.Cloud.H100.memory.bandwidth.m_as(GB/second), precision=0)
     bw_nvlink_str = fmt(Hardware.Cloud.H100.nvlink.bandwidth.m_as(GB/second), precision=0)
     bw_pcie_str = fmt(Hardware.Cloud.H100.interconnect.bandwidth.m_as(GB/second), precision=0)
-    bw_dram_str = fmt(SYSTEM_MEMORY_BW.m_as(GB/second), precision=0)
-    bw_ssd_str = fmt(NVME_SEQUENTIAL_BW.m_as(GB/second), precision=0, commas=False)
+    bw_dram_str = fmt(Hardware.Tech.Storage.SystemMemory.bandwidth.m_as(GB/second), precision=0)
+    bw_ssd_str = fmt(Hardware.Tech.Storage.NvmeGen4.bandwidth.m_as(GB/second), precision=0, commas=False)
     bw_net_str = fmt(Systems.Fabrics.InfiniBand_NDR.bandwidth.m_as(GB/second), precision=0, commas=False)
 
     e_reg_str = MarkdownStr(f"{ENERGY_REG_PJ.m_as(ureg.picojoule):.2f}")
@@ -1025,14 +1052,13 @@ For small transfers (for example, single-token inference), latency dominates. Fo
 # │ Exports: bw_gbps_str, ping_ms_str, data_kb_str
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt_int, fmt
-from mlsysim.core.constants import NETWORK_10G_BW
 
 # ┌── LEGO ───────────────────────────────────────────────
 class BandwidthLatencySetup:
     """Namespace for bandwidth-latency lead-in constants."""
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
-    bw_gbps_value = NETWORK_10G_BW.m_as(Gbps)
+    bw_gbps_value = Systems.Fabrics.Ethernet_10G.bandwidth.m_as(Gbps)
     ping_ms_value = 10    # Network latency in ms
     data_kb_value = 1     # Packet size in KB
 
@@ -1067,7 +1093,7 @@ Consider sending data over a `{python} BandwidthLatencySetup.bw_gbps_str` link w
 # │ Exports: tx_time_us_str, large_data_gb_str, eq_large_tx, eq_large_total
 # └─────────────────────────────────────────────────────────────────────────────
 from mlsysim.fmt import fmt_int, fmt, fmt_math
-from mlsysim.core.constants import NETWORK_10G_BW, BITS_PER_BYTE
+from mlsysim.core.constants import BITS_PER_BYTE
 
 # ┌── LEGO ───────────────────────────────────────────────
 class BandwidthLatencyExample:
@@ -1075,7 +1101,7 @@ class BandwidthLatencyExample:
 
     # ┌── 1. LOAD (Constants) ──────────────────────────────────────────────
     data_kb_value = (1 * KB).m_as(byte)
-    bw_gbps_value = NETWORK_10G_BW.m_as(Gbps) * BILLION
+    bw_gbps_value = Systems.Fabrics.Ethernet_10G.bandwidth.m_as(Gbps) * BILLION
     large_data_gb_value = 1
     ping_ms_value = 10
 

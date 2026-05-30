@@ -347,7 +347,7 @@ A data center engineer cannot predict how long it takes to send ten megabytes ac
 
 ### The reality: When physics fights back {#sec-communication-collective-operations-collective-operations-alphabeta-model-f9b4}
 
-Every step our gradient takes is governed by the linear cost model $T(n) = \alpha + n/\beta$. This is not merely a formula; it is the "Physics of Failure" for distributed systems.
+Every message our gradient sends obeys the linear cost model $T(n) = \alpha + n/\beta$—a fixed startup tax plus a per-byte transit fee. Those two terms decide every algorithm choice in this chapter.
 
 ::: {#dfn-collective-communication-model-hockney-model .callout-definition title="α-β model (Hockney Model)"}
 
@@ -780,7 +780,7 @@ In practice, MoE routing is rarely perfectly uniform. Popular experts receive mo
 
 The FSDP/ZeRO strategy deserves special attention because its communication pattern differs fundamentally from standard data parallelism. In standard data parallelism, each GPU holds a complete copy of the model, computes gradients locally, and synchronizes via a single AllReduce at the end of the backward pass. FSDP eliminates this redundancy by sharding the model parameters across GPUs, so each GPU holds only $1/N$ of the model.
 
-The memory optimization transforms the communication pattern. Before each layer's forward pass, the GPU must reconstruct the full parameter tensor by calling AllGather to collect the shards from all other GPUs. After the backward pass, the gradients are reduced and redistributed via ReduceScatter, so each GPU holds gradients only for its own parameter shard. The sharded parameters can then be discarded (freed from memory) until the next forward pass needs them.
+Because each GPU now holds only $1/N$ of the parameters, it must reconstruct the full tensor before it can use a layer, and that reconstruction is what transforms the communication pattern. Before each layer's forward pass, the GPU calls AllGather to collect the shards from all other GPUs. After the backward pass, the gradients are reduced and redistributed via ReduceScatter, so each GPU holds gradients only for its own parameter shard. The sharded parameters can then be discarded (freed from memory) until the next forward pass needs them.
 
 The consequence is a trade-off between memory and communication frequency. Standard data parallelism communicates once per training step (a single AllReduce of the full gradient). FSDP communicates twice per layer per step (AllGather in forward, ReduceScatter in backward), but each communication is smaller (only that layer's parameters, sharded across ranks). For a model with $N_L$ layers, FSDP issues $2N_L$ collective operations per step instead of 1; across all those operations, the total communication volume can be comparable to the single full-gradient AllReduce, but it is spread across many smaller operations.
 
@@ -792,7 +792,7 @@ The collective primitives catalog above defines *what* must be communicated; the
 
 ## Engineering the Flow: AllReduce Algorithms {#sec-communication-collective-operations-collective-operations-allreduce-algorithms-7545}
 
-Imagine 1,000 GPUs, each holding a 1 GB gradient, all needing the exact sum of those 1,000 gradients simultaneously. If they all send their data to a central server, that server's network card will instantly saturate and stall the entire cluster. The AllReduce is the heartbeat of the fleet, and its algorithmic design dictates our scaling limits.
+A correct AllReduce must give all 1,000 GPUs the exact sum of all 1,000 one-gigabyte gradients, and the algorithm that delivers it sets the cluster's scaling ceiling. The naive answer—every GPU sends to one central server, whose network card instantly saturates—fails first, which makes it the right place to start.
 
 ### Naive approaches vs. the bandwidth bottleneck {#sec-communication-collective-operations-naive-vs-optimal}
 
@@ -1515,7 +1515,7 @@ The most common method is **Top-k compression**\index{Top-k Sparsification}: for
 
 $$\text{TopK}(g) = g \odot \mathbf{1}_{|g| \geq |g|_{(K_{\text{top}})}}$$
 
-where $|g|_{(K_{\text{top}})}$ is the $K_{\text{top}}$-th largest element by magnitude. With $K_{\text{top}} = 0.001 \times d_{\text{grad}}$ (keeping only 0.1 percent of elements), this achieves THOUSAND$\times$ compression.
+where $|g|_{(K_{\text{top}})}$ is the $K_{\text{top}}$-th largest element by magnitude. With $K_{\text{top}} = 0.001 \times d_{\text{grad}}$ (keeping only 0.1 percent of elements), this achieves 1000$\times$ compression.
 
 #### Encoding sparse gradients {#sec-collective-communication-encoding-sparse-gradients-ddee}
 
